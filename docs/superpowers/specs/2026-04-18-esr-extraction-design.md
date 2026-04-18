@@ -229,6 +229,8 @@ Standardised `:telemetry` events consumable by observers, verifier, `esr trace`:
 - `[:esr, :topology, :activated]`
 - `[:esr, :topology, :deactivated]`
 
+**Storage.** A rolling buffer in ETS retains the last 15 minutes of events by default (configurable per-instance in `~/.esrd/<instance>/config.yaml`). `esr trace --last <duration>` queries this buffer. Events older than the window are dropped. External persistence is out of scope for v0.1 (§11).
+
 ### 3.7 Management Surfaces
 
 Three layers, each with a distinct responsibility:
@@ -398,7 +400,7 @@ The earlier design proposed a third check (cleared-globals invocation) but was d
 ### 4.4 Action Types
 
 ```python
-Action = Emit | Route
+Action = Emit | Route | InvokeCommand
 
 @dataclass(frozen=True)
 class Emit:
@@ -410,11 +412,18 @@ class Emit:
 class Route:
     target: str        # actor_id within this esrd instance
     msg: Any           # payload (must be JSON-serialisable)
+
+@dataclass(frozen=True)
+class InvokeCommand:
+    name: str          # registered command (sub-topology) name
+    params: dict       # params to substitute into the sub-topology template
 ```
 
 The runtime validates each action against the actor's declared action set before executing.
 
-**Why only two action types in v0.1.** State mutation is the handler's tuple return — it is the single source of truth for state change; no separate `Update` action is needed. Handler-emitted `Spawn` / `Stop` are deliberately omitted: dynamic actor creation would break the "topology is first-class, runtime reconciles to match" principle (§3.5). Actors spawn and stop through `esr cmd run` / `esr cmd stop` (CLI-driven), not through handler logic. Dynamic topology is a v0.2 concern.
+**Why these three.** State mutation is the handler's tuple return — it is the single source of truth for state change; no separate `Update` action is needed. Raw handler-emitted `Spawn` / `Stop` are deliberately omitted: "create an arbitrary actor from nothing" breaks the "topology is first-class" principle (§3.5). What replaces that capability is **`InvokeCommand`** — a handler can trigger instantiation of an already-registered command (sub-topology), which spawns the actors declared by that command's template. This keeps topology the single source of truth while enabling on-demand topology growth (e.g. `/new-thread foo` in Feishu triggers the `feishu-thread-session` command; see §6.2 for the worked example).
+
+`InvokeCommand` is semantically identical to invoking `esr cmd run <name> <params>` from the CLI — two entry points into the same mechanism. The runtime records the invocation in its topology registry exactly as if it came from CLI, so `esr cmd list` and `esr actors list` reflect handler-triggered instantiations too.
 
 **Cross-boundary naming carve-out.** `Route.target` and `Emit.adapter` are plain strings within a single esrd instance — they identify resources in the local PeerRegistry / AdapterRegistry and cross only the Python → Elixir IPC, not the Elixir → external-machine boundary. §7.5 allows this: short strings are legal when both sides share the same esrd instance. References to resources on *other* esrd instances (or to exposed interfaces) always use full `esr://` URIs.
 
@@ -589,126 +598,176 @@ Commands are the unit of business-level composition. Running a Command instantia
 
 ### 6.2 Authoring (Python EDSL — primary surface)
 
+The feishu-to-cc scenario decomposes into **two patterns**: a singleton that binds to a Feishu app and stays alive, and a per-thread pattern spawned on demand when a user runs `/new-thread` in Feishu.
+
 ```python
-from esr import command, node, port, compose
+from esr import command, node
 
-@command("feishu-to-core")
-def feishu_to_core():
-    src = port.input("src", type="feishu_chat")
-    mid = port.output("mid", type="core_actor")
+@command("feishu-app-session")
+def feishu_app_session():
+    """Singleton per Feishu app. Spawned once via `esr cmd run`.
+    Listens for `/new-thread <name>` messages and triggers the thread
+    sub-topology via InvokeCommand."""
 
-    n_src = node(
-        id=src,
-        actor_type="feishu_chat",
-        adapter="feishu",
-        handler="feishu_inbound.on_msg",
-        params={"chat_id": "{{src.chat_id}}"},
+    node(
+        id="feishu-app:{{app_id}}",
+        actor_type="feishu_app_proxy",
+        adapter="feishu-{{instance_name}}",
+        handler="feishu_app.on_msg",
+        params={"app_id": "{{app_id}}"},
     )
-    n_mid = node(
-        id=mid,
-        actor_type="core_actor",
-        handler="core_router.on_msg",
-        params={"proxy_for": "{{src.chat_id}}"},
+
+
+@command("feishu-thread-session")
+def feishu_thread_session():
+    """Per-thread sub-topology. Instantiated per user-created thread.
+    Entry: CLI `esr cmd run feishu-thread-session {thread_id: ...}` OR
+    a handler Action: `InvokeCommand("feishu-thread-session", {...})`."""
+
+    thread = node(
+        id="thread:{{thread_id}}",
+        actor_type="feishu_thread_proxy",
+        handler="feishu_thread.on_msg",
+        params={"thread_id": "{{thread_id}}"},
     )
-    n_src >> n_mid
-
-
-@command("core-to-cc")
-def core_to_cc():
-    mid = port.input("mid", type="core_actor")
-    trg = port.output("trg", type="cc_session")
-
-    n_mid = node(id=mid, actor_type="core_actor", handler="core_router.on_msg")
-    n_trg = node(
-        id=trg,
-        actor_type="cc_session",
+    tmux = node(
+        id="tmux:{{thread_id}}",
+        actor_type="tmux_proxy",
         adapter="cc_tmux",
-        handler="cc_session.on_msg",
-        params={"session": "{{trg.session_name}}"},
+        handler="tmux_proxy.on_msg",
+        depends_on=[thread],
     )
-    n_mid >> n_trg
+    cc = node(
+        id="cc:{{thread_id}}",
+        actor_type="cc_proxy",
+        handler="cc_session.on_msg",
+        depends_on=[tmux],
+    )
+    thread >> tmux >> cc
 
 
-@command("feishu-to-cc")
-def feishu_to_cc():
-    compose.serial(feishu_to_core, core_to_cc)
-
-
-@command("cc-to-feishu")
-def cc_to_feishu():
-    # symmetric reverse path (cc_tmux → core_actor → feishu_chat)
+@command("cc-to-feishu-reply")
+def cc_to_feishu_reply():
+    """Reverse path: cc output routes back to feishu thread.
+    Not a separate topology — just declares the reverse edges.
+    Spawned together with feishu-thread-session via a shared thread_id."""
     ...
 ```
 
+**How the `/new-thread foo` flow works in this design:**
+
+1. Operator runs `esr cmd run feishu-app-session {app_id: "cli_xxx", instance_name: "shared"}` once at boot — a single `feishu-app:cli_xxx` actor is alive.
+2. User types `/new-thread foo` in Feishu. Message arrives at `feishu-app:cli_xxx`.
+3. `feishu_app.on_msg` handler parses the slash command. It checks its state: is there already a `thread:foo` binding? No.
+4. Handler returns `[InvokeCommand("feishu-thread-session", {"thread_id": "foo"})]`.
+5. Runtime executes the invocation → instantiates the three-actor sub-tree (`thread:foo → tmux:foo → cc:foo`) per `feishu-thread-session`'s declared nodes and depends_on order.
+6. Handler state updates to record the binding so a repeat `/new-thread foo` is idempotent.
+7. Subsequent messages in that thread route `feishu-app:cli_xxx → thread:foo → tmux:foo → cc:foo`.
+
+No `Spawn` action from handler code; no dynamic actor invention. The topology is declared in `feishu-thread-session`, and the handler can only trigger it as a whole.
+
 ### 6.3 Canonical YAML Artifact (Topology)
 
-`esr cmd compile feishu-to-cc` produces a **topology artifact**. The name "topology" is kept deliberately — it is a subset of ESR v0.3 §5.2, not a separate concept. v0.2 will extend this same file format with `description`, `trigger`, `participants` (role metadata), `flows` (typed message-exchange descriptions), and `acceptance_criteria`; migration will be additive, no rename. Implementers should treat the v0.1 artifact as an early cut of the ESR v0.3 topology.
+`esr cmd compile <name>` produces a **topology artifact**. The name "topology" is kept deliberately — it is a subset of ESR v0.3 §5.2, not a separate concept. v0.2 will extend this same file format with `description`, `trigger`, `participants` (role metadata), `flows` (typed message-exchange descriptions), and `acceptance_criteria`; migration will be additive, no rename. Implementers should treat the v0.1 artifact as an early cut of the ESR v0.3 topology.
 
 ```yaml
-# patterns/.compiled/feishu-to-cc.yaml
+# patterns/.compiled/feishu-app-session.yaml
 schema_version: esr/v0.1
-name: feishu-to-cc
+name: feishu-app-session
 params:
-  - {name: "src.chat_id",       type: string, required: true}
-  - {name: "trg.session_name",  type: string, required: true}
-ports:
-  in:  [{name: src, type: feishu_chat}]
-  out: [{name: trg, type: cc_session}]
+  - {name: "app_id",        type: string, required: true}
+  - {name: "instance_name", type: string, required: true}
 nodes:
-  - id: "feishu:{{src.chat_id}}"
-    actor_type: feishu_chat
-    adapter: feishu
-    handler: feishu_inbound.on_msg
-  - id: "core:{{src.chat_id}}-proxy"
-    actor_type: core_actor
-    handler: core_router.on_msg
-  - id: "cc:{{trg.session_name}}"
-    actor_type: cc_session
+  - id: "feishu-app:{{app_id}}"
+    actor_type: feishu_app_proxy
+    adapter: "feishu-{{instance_name}}"
+    handler: feishu_app.on_msg
+edges: []
+```
+
+```yaml
+# patterns/.compiled/feishu-thread-session.yaml
+schema_version: esr/v0.1
+name: feishu-thread-session
+params:
+  - {name: "thread_id", type: string, required: true}
+nodes:
+  - id: "thread:{{thread_id}}"
+    actor_type: feishu_thread_proxy
+    handler: feishu_thread.on_msg
+  - id: "tmux:{{thread_id}}"
+    actor_type: tmux_proxy
     adapter: cc_tmux
+    handler: tmux_proxy.on_msg
+    depends_on: ["thread:{{thread_id}}"]
+  - id: "cc:{{thread_id}}"
+    actor_type: cc_proxy
     handler: cc_session.on_msg
+    depends_on: ["tmux:{{thread_id}}"]
 edges:
-  - {from: "feishu:{{src.chat_id}}",        to: "core:{{src.chat_id}}-proxy"}
-  - {from: "core:{{src.chat_id}}-proxy",    to: "cc:{{trg.session_name}}"}
+  - {from: "thread:{{thread_id}}", to: "tmux:{{thread_id}}"}
+  - {from: "tmux:{{thread_id}}",   to: "cc:{{thread_id}}"}
 ```
 
 **Optional node fields:**
 
-- `depends_on: [<node_id>, ...]` — explicit lifecycle dependency. Listed nodes must be spawned before this one and must stay alive for its lifetime. Used for adapter substrate scenarios (§5.5). Dependencies form a DAG; cycles fail compilation.
+- `depends_on: [<node_id>, ...]` — explicit lifecycle dependency (§5.5). Listed nodes must be spawned before this one and must stay alive for its lifetime. Dependencies form a DAG; cycles fail compilation.
 
 Two artifacts per command:
 
 - `patterns/<name>.py` — EDSL source, human-edited, diff-reviewed
 - `patterns/.compiled/<name>.yaml` — CI-generated, reproducible, Elixir-consumed
 
-### 6.4 Composition: Serial (v0.1 only)
+### 6.4 Composition: Serial (available, used sparingly)
 
-`compose.serial(A, B)` matches A's output ports with B's input ports by name + type.
+The EDSL offers `compose.serial(A, B)` for patterns that share a typed port and should be chained. A's outputs match B's inputs by name + type:
 
-Rules:
-
-- For each shared port name, types must be equal (or structurally compatible — subtype rules are a v0.2 concern)
+- Shared port name requires equal type (or structurally compatible — subtype rules are a v0.2 concern)
 - Shared ports merge into one node (CSE — §6.7)
-- A's unmatched outputs and B's unmatched inputs become the composite's outputs/inputs respectively
-- Unmatched ports at the top level of a runnable command are an error
+- Unmatched A-outputs and B-inputs become the composite's outputs/inputs
+- Top-level unmatched ports in a runnable command are an error
 
-Parallel and feedback are explicit non-goals for v0.1 (see `CHECKLIST.md`).
+The feishu-to-cc scenario in §6.2 does not use `compose.serial` — the two patterns are related by `InvokeCommand`, not by graph composition. Composition is available for genuinely pipelined scenarios (e.g. data → transformer → sink); invocation is the right mechanism when one pattern triggers another on demand.
 
-### 6.5 Instantiation
+Parallel and feedback composition are explicit non-goals for v0.1 (see `CHECKLIST.md`).
+
+### 6.5 Instantiation — two entry points
+
+A registered command can be instantiated in two ways; both reach the same mechanism:
+
+**(a) CLI-driven:**
 
 ```
-esr cmd run feishu-to-cc {
-  "src.chat_id": "oc_abc",
-  "trg.session_name": "alice-work"
+esr cmd run feishu-app-session {
+  "app_id":        "cli_xxx",
+  "instance_name": "shared"
+}
+
+esr cmd run feishu-thread-session {
+  "thread_id": "foo"
 }
 ```
 
-Runtime:
+**(b) Handler-driven** (from a pure handler action):
 
-1. Loads `feishu-to-cc.compiled.yaml`
-2. Substitutes params; rejects if required params are missing
-3. Sends the instantiated artifact to the Elixir runtime
-4. Elixir spawns actors, binds adapter/handler, opens routes
-5. Returns a handle for `esr cmd stop`
+```python
+return (new_state, [
+    InvokeCommand("feishu-thread-session", {"thread_id": "foo"}),
+])
+```
+
+Runtime flow (identical for both):
+
+1. Load `<name>.compiled.yaml`
+2. Substitute params; reject if required params missing
+3. Send the instantiated artifact to the Elixir Topology.Registry
+4. Spawn nodes in `depends_on` order; bind adapters/handlers; open routes
+5. Register the instantiation; `esr cmd list --active` shows it regardless of invocation source
+6. Return a handle — CLI receives it as stdout; handler's invocation ack arrives as a telemetry event `[:esr, :topology, :activated]`
+
+**Idempotency.** If an instantiation with the same `(name, params)` already exists, a second invocation is a no-op that returns the existing handle — no duplicate actors. Handler code can re-issue `InvokeCommand` without tracking state.
+
+**Tear-down.** `esr cmd stop <name> <params>` (CLI) or the runtime auto-stopping on parent failure (§5.5) are the only paths; handler code does **not** stop commands.
 
 ### 6.6 Compilation Pipeline
 
@@ -1005,9 +1064,11 @@ Eight tracks. Each track gets one or more acceptance tests, defined in the imple
 
 **Track B — Scheduling & Multi-session Concurrency**
 
-- Spawn 3 concurrent sessions with distinct (chat_id, session_name)
-- `esr actors list` shows 9 actors (3 × {feishu, core, cc})
-- `esr actors tree` shows 3 independent sub-trees
+- Boot: `esr cmd run feishu-app-session {app_id, instance_name}` — 1 app-proxy actor alive
+- Spawn via CLI: `esr cmd run feishu-thread-session {thread_id: "t1"}` three times with t1, t2, t3 — 9 additional actors (3 × {thread, tmux, cc})
+- **Spawn via Feishu slash command**: user types `/new-thread t4` in the Feishu chat bound to the app-proxy. The `feishu_app.on_msg` handler returns `InvokeCommand("feishu-thread-session", {"thread_id": "t4"})`. Runtime instantiates the sub-topology; the three t4 actors appear in `esr actors list` within 1s
+- Idempotency: a repeat `/new-thread t4` produces no duplicate actors (verified by `esr actors list`)
+- `esr actors tree` shows 1 app-proxy + 4 independent thread sub-trees
 
 **Track C — Bidirectional Flow**
 
@@ -1099,7 +1160,7 @@ Bottlenecks are expected on the Python side (JSON ser/de, pydantic validation), 
 | `channel_server/adapters/feishu/*` | `adapters/feishu/` | Strip decision logic; keep I/O |
 | `channel_server/adapters/cc/*` | `adapters/cc_tmux/` | Strip decision logic |
 | `channel_server/commands/registry.py`, `dispatcher.py`, `scope.py`, `parse.py`, `context.py` | `py/src/esr/command.py` + `py/src/esr/cli/` | Reimplemented as EDSL + compiler + CLI |
-| `channel_server/commands/builtin/spawn.py` | `patterns/feishu-to-cc.py` (+ reverse) | Reimagined as patterns |
+| `channel_server/commands/builtin/spawn.py` | `patterns/feishu-app-session.py` + `patterns/feishu-thread-session.py` + `handlers/feishu_app/on_msg.py` | Renamed `/spawn` → `/new-thread`; split into singleton + per-thread sub-topology; handler returns `InvokeCommand` |
 | `channel_server/commands/builtin/kill.py` | `esr cmd stop` CLI | |
 | `channel_server/commands/builtin/sessions.py` | `esr actors list` CLI | |
 | `sidecar/*` | **not migrated** | cc-openclaw-specific business logic (user provisioning, group reconciliation against a specific Feishu workspace, permission table). Runs alongside cc-openclaw if needed; ESR v0.1 does not replicate it. See §10.3. |
@@ -1137,21 +1198,33 @@ ESR v0.1 is not a replacement for cc-openclaw as a whole. It is the extraction o
 
 ---
 
-## 11. Open Questions (non-blocking)
+## 11. Resolved Questions & Deferred Concerns
 
-These do not block v0.1 but need resolution before they bite:
+After design review the nine original open questions have decisions recorded below. Questions that still need field measurement are marked **Revisit after E2E**; everything else is resolved for v0.1.
 
-- **Handler worker pool sizing.** One pool per handler module, default size 2 workers. Revisit under load. One-per-actor-affinity is explicitly rejected (§3.4).
-- **State size limits.** State is serialised per handler call. Soft limit 64 KB; hard fail 1 MB? Needs measurement.
-- **Explicit contract YAML.** v0.1 declares allowed actions inline via code (`allowed_io` for adapters, handler action set via decorator). When does the full ESR v0.3 §4 contract YAML + static verifier land? Target: v0.2 or the first version that leaves dogfooding.
-- **State schema evolution.** v0.1 policy: breaking state changes require `esr drain` + reset; no automatic migration. Migration tooling (state transformer functions, schema version tagging, rolling transforms) is a v0.2 concern.
-- **Telemetry storage.** v0.1 uses BEAM memory only. When to persist externally? Likely when `esr trace` retention must exceed a process lifetime.
-- **CLI auth.** No auth in v0.1 (single-user local). JWT / mTLS when multi-user or multi-machine.
-- **Handler hot-reload.** In-place code swap without losing state? Deferred; for v0.1, `esr handler upgrade <name>` triggers a drain + restart of the worker pool — state is in Elixir so it survives, but in-flight calls may see `{:error, :worker_crashed}` and retry.
-- **Webhook-receiving adapters.** v0.1 assumes adapters open outbound client connections (like Feishu's WS). HTTPS webhook adapters (inbound POST) need a different hosting model — an HTTP listener supervised by esrd. Deferred to v0.2.
-- **Dynamic topology / handler-emitted Spawn.** v0.1 excludes `Spawn` / `Stop` from the Action palette; v0.2 may reintroduce them for patterns that need conditionally-spawned children. Will require revisiting the "topology is first-class" invariant.
+### Decided for v0.1
 
-Each becomes a follow-up spec when it starts mattering.
+- **CLI auth.** Phoenix endpoint defaults to bind `127.0.0.1`. Exposing it on `0.0.0.0` requires an explicit config change with a warning banner. JWT / mTLS deferred to v0.2 (when multi-user or multi-machine use appears).
+
+- **Handler hot-reload.** `esr handler upgrade <name>` spawns a new worker pool, switches routing, drains the old pool. State is in Elixir so it survives the swap; any in-flight call that lands on a draining worker returns `{:error, :worker_crashed}` and is retried per §7.3.
+
+- **State size limits (§4.5).** Soft threshold `64 KB` → telemetry `[:esr, :state, :oversized_warning]` (non-blocking). Hard threshold `1 MB` → runtime rejects the handler return with `{:error, :state_oversized}`, the actor is stopped, and an alert fires. Numbers are a starting point; tune after E2E measurement.
+
+- **State schema evolution (§4.5).** Every persisted state carries `schema_version: int`. Handler declares `@handler_state(actor_type=..., schema_version=N)`. On load, a mismatch is rejected with an explicit error — no silent partial load. Breaking changes in v0.1 therefore require `esr drain` + reset. In-place migration via transformer functions is a v0.2 concern.
+
+- **Telemetry storage (§3.6).** In-memory rolling buffer in ETS, default 15 minutes, configurable per-instance. `esr trace --last 15m` queries the buffer. Events older than the window are dropped. External persistence (PostgreSQL / ClickHouse) is a v0.2 concern.
+
+- **Explicit contract YAML.** v0.1 uses code-level contracts only (`allowed_io` for adapters, handler-declared action set). Full ESR v0.3 §4 contract YAML + static verifier land in v0.2 — likely the first release after dogfooding stabilises.
+
+- **Webhook-receiving adapters.** Deferred to v0.2. v0.1 supports only outbound-client adapters (WS, TCP). HTTPS-webhook adapters need an inbound HTTP listener supervised by esrd and will have their own sub-spec.
+
+- **Raw `Spawn` / `Stop` actions.** v0.1 excludes them from the Action palette — handler code cannot create arbitrary actors. **The cc-openclaw `/new-thread` use case is resolved by `InvokeCommand` (§4.4)** triggering a registered sub-topology. A v0.2 raw-`Spawn` revisit is only warranted if out-of-topology actor creation is needed; InvokeCommand covers the dogfooding cases.
+
+### Revisit after E2E
+
+- **Handler worker pool sizing.** Default 2 workers per handler module; per-module override via `handlers/<name>/esr.toml`. Per-actor affinity is explicitly rejected (§3.4). Measure p95 latency and CPU during E2E; raise default only if evidence demands.
+
+Each follow-up concern receives its own spec at the version where it matters.
 
 ---
 

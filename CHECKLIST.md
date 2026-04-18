@@ -77,3 +77,7 @@ what we originally set out to do.
 | One esrd = one org, can host many adapter instances | Second Feishu app = second adapter instance, not second org |
 | Dogfooding: two esrd instances (prod + dev) | Prod stays up while dev is restarted freely |
 | Latency monitored, not optimised in v0.1 | Sanity thresholds only; instrument day one |
+| `/spawn` → `/new-thread`; self-explained naming | User-facing names describe intent, not internal mechanism |
+| `InvokeCommand` action replaces raw `Spawn` | Handler triggers registered sub-topologies, topology stays first-class |
+| Two-pattern structure for feishu-to-cc | `feishu-app-session` singleton + `feishu-thread-session` per-thread |
+| All Open Questions resolved (1 revisit-after-E2E) | Pool sizing waits on measurement; everything else is decided |
