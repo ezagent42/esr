@@ -807,28 +807,34 @@ Every addressable resource — actor, adapter, handler, command, interface — h
 **Grammar:**
 
 ```
-esr://[org@]host[:port]/<type>/<id>[?params]
+esr://[org@]<host>[:port]/<type>/<id>[?params]
 
-type ∈ {actor, adapter, handler, command, interface}
+host: REQUIRED. Either a network name (e.g. "host.example", "laptop-2.local")
+      or the literal "localhost". Empty host is NOT allowed — there is no
+      implicit default. This rule avoids ambiguity when logs or config files
+      cross machines.
+type: ∈ {actor, adapter, handler, command, interface}
 ```
 
 **Examples:**
 
 ```
-esr:///actor/cc:sess-A                     # local actor (implicit localhost)
-esr:///adapter/feishu-shared               # local adapter instance
-esr:///command/feishu-to-cc                # local command
-esr://laptop-2.local:4000/adapter/zellij-5 # remote adapter over Phoenix channel
+esr://localhost/actor/cc:sess-A                   # local actor, host explicit
+esr://localhost/adapter/feishu-shared             # local adapter instance
+esr://localhost:4001/command/feishu-to-cc         # local, non-default port
+esr://laptop-2.local:4000/adapter/zellij-5        # remote adapter over Phoenix channel
 esr://allens-lab@host.example/interface/customer_inquiry  # cross-org (v0.2+)
 ```
+
+Any URI with an empty host component is a syntax error and is rejected by the parser.
 
 **v0.1 requirements:**
 
 - URI parser + canonicaliser in `py/src/esr/uri.py`
 - Types supported: `actor`, `adapter`, `command`
-- `esr:///...` (empty host → localhost) for local ops
-- `esr://<host>[:port]/adapter/<id>` for remote adapters reachable via Phoenix channel
-- Two-way mapping: `uri_to_internal(uri) → {type, id}` and inverse
+- Host is always explicit; `localhost` is the accepted name for the current machine
+- `esr://<host>[:port]/adapter/<id>` addresses an adapter reachable via Phoenix channel on that host
+- Two-way mapping: `uri_to_internal(uri) → {type, id}` and inverse `internal_to_uri(type, id, host="localhost") → uri` (caller supplies host)
 - All public CLI output and telemetry fields that reference resources emit full URIs
 
 **Deferred (v0.2+):**
