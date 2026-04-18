@@ -70,3 +70,10 @@ what we originally set out to do.
 | YAML artifact as source-of-truth | Diff-able, audit-able, Elixir-consumed |
 | Optimization = dead-elim + CSE only | Semantics-preserving, correctness-adjacent |
 | E2E validates platform, not just business | Registration, scheduling, observability, ops, debug |
+| 3-layer management surfaces: `esrd` + `esr` + BEAM REPL | Sysadmin vs workflow vs emergency; from esrd spec §2.6 |
+| Adapters flat; nesting via topology `depends_on` | Stacking explodes complexity; topology already expresses intent |
+| Unified `esr://` URI for all addressable resources | Needed for cross-boundary; consistent with Reposition doc |
+| Pattern/adapter/handler install = `esr <type> install <source>` | Mirrors `pip install`; name-based resolution |
+| One esrd = one org, can host many adapter instances | Second Feishu app = second adapter instance, not second org |
+| Dogfooding: two esrd instances (prod + dev) | Prod stays up while dev is restarted freely |
+| Latency monitored, not optimised in v0.1 | Sanity thresholds only; instrument day one |

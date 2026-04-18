@@ -215,6 +215,100 @@ Standardised `:telemetry` events consumable by observers, verifier, `esr trace`:
 - `[:esr, :topology, :activated]`
 - `[:esr, :topology, :deactivated]`
 
+### 3.7 Management Surfaces
+
+Three layers, each with a distinct responsibility:
+
+**`esrd` — Elixir escript (operator-level, bundled with the release)**
+
+Manages the daemon itself: lifecycle, cluster, version.
+
+- `esrd init --org-name "..."` — initialise an org
+- `esrd start` / `esrd stop` / `esrd restart`
+- `esrd status` — node health, BEAM version, cluster members, uptime
+- `esrd console` — attach `iex --remsh esrd@host`
+- `esrd release info` — build / version info
+
+Transport: `:erl_call` or BEAM RPC (no Phoenix).
+
+**`esr` — Python CLI (user / developer level, primary)**
+
+Manages what runs *inside* esrd: adapters, handlers, commands, actors.
+
+- `esr use <host:port>` — set context
+- `esr adapter / handler / cmd install <source>` — install modules (see §5.6, §6.8)
+- `esr adapter add <name> <config>` — configure an adapter instance (see §5.4)
+- `esr cmd run / stop <name>`
+- `esr actors list / tree / inspect / logs`
+- `esr trace`, `esr telemetry subscribe`, `esr debug ...`
+- `esr status` — what's configured and running in the org
+
+Transport: Phoenix Channels over WebSocket.
+
+**BEAM REPL — `iex --remsh esrd@host`**
+
+Emergency diagnostic and deep inspection. Not for everyday use.
+
+- `:observer.start()` — visual process tree
+- `:sys.get_state(pid)` — raw GenServer state
+- `recon`, `Phoenix.LiveDashboard`
+- Hot code reload (rare)
+
+**Two `status` commands — different questions:**
+
+- `esrd status`: infrastructure view — daemon up/down, nodes, CPU/memory, uptime, version
+- `esr status`: organisation view — installed adapters/handlers/commands, live actor count, dead-letter count, active topologies
+
+They do not overlap.
+
+### 3.8 Multi-App Hosting & Dogfooding
+
+**One esrd instance can host many apps and projects.** An esrd instance maps one-to-one to an *organisation* (ESR spec §1.1). Within that organisation the instance can host:
+
+- Many adapter instances (multiple Feishu apps, multiple CC substrates, etc.) — each a configured instance of an installed adapter type
+- Many registered commands and handler modules
+- Many live topologies in parallel
+
+A second Feishu app is **not** a second organisation — it is a second adapter instance:
+
+```bash
+esr adapter add feishu-shared  --app-id cli_aaaa --app-secret ...
+esr adapter add feishu-dev     --app-id cli_bbbb --app-secret ...
+```
+
+Commands that need to disambiguate refer to instances by name (`feishu-shared` vs `feishu-dev`).
+
+**Dogfooding esrd: developing esrd while using esrd.**
+
+Restarting esrd to try a code change breaks any live connection owned by that instance. While esrd itself is churning (v0.1, v0.2), run **two instances**:
+
+| Instance | Feishu app | Port | Purpose |
+|---|---|---|---|
+| `esrd-prod` | shared (daily comms) | 4000 | stays up for the daily channel |
+| `esrd-dev`  | dev app              | 4001 | restarted freely during development |
+
+Developer workflow:
+
+1. `esr use localhost:4001` — target the dev instance
+2. Modify esrd code, `esrd restart` — only dev is affected; prod Feishu connection unbroken
+3. Test feishu-to-cc on the dev Feishu app
+4. When verified, release to prod on the next deploy window
+
+Once esrd is stable enough for in-place changes, graceful restart (state checkpoint + reconnect) replaces the two-instance split. v0.1 **does not** attempt graceful hot upgrade.
+
+**Per-instance configuration storage:**
+
+```
+~/.esrd/<instance-name>/
+├── config.yaml         # org name, port, logger, cluster settings, ...
+├── adapters.yaml       # registered adapter instances (names, configs, refs)
+├── commands.yaml       # registered command names → compiled artifact paths
+├── secrets/            # app secrets; filesystem-permission protected
+└── data/               # ETS snapshots, telemetry archive
+```
+
+Secrets are filesystem-permission protected in v0.1; OS keychain integration is v0.2+.
+
 ---
 
 ## 4. Layer 2 — Handler (Python)
@@ -387,6 +481,64 @@ class FeishuAdapter:
 
 `Esr.AdapterSupervisor` (Elixir) starts adapter processes. Each adapter instance serves one or more actors; the same Python module can run multiple instances with different configs (multiple Feishu apps, multiple tmux sessions).
 
+Configure an instance via CLI:
+
+```bash
+esr adapter add feishu --app-id ... --app-secret ...
+```
+
+This records a named instance bound to the installed adapter type; the runtime spawns the corresponding process.
+
+### 5.5 No Adapter Nesting — Use Topology
+
+Adapters are **flat**. No adapter wraps another. When a scenario requires layered transport (e.g. "CC running inside a zellij pane"), express it at the **topology** level: declare two peer actors with an explicit `depends_on` dependency.
+
+```python
+@command("cc-on-zellij")
+def cc_on_zellij():
+    z_port = port.input("zellij_session", type="zellij_session")
+    cc_port = port.output("cc_session", type="cc_session")
+
+    z = node(id=z_port, actor_type="zellij_session",
+             adapter="zellij", handler="zellij.on_msg")
+    cc = node(id=cc_port, actor_type="cc_session",
+              adapter="cc_in_zellij",       # a dedicated "CC inside zellij" adapter
+              handler="cc_session.on_msg",
+              depends_on=[z])                # explicit lifecycle dependency
+    z >> cc
+```
+
+The "CC in zellij" case uses a dedicated `cc_in_zellij` adapter — peer to `cc_tmux`, `cc_docker`, etc. All belong to the same family (CC integration) but target different substrates. Choosing which variant to use is a topology-level decision, not an adapter-level stacking.
+
+Rationale: transport stacking explodes complexity (infinite layering, hidden ordering, multiplied error handling). Topology composition already expresses the intent cleanly and matches ESR's graph-first model.
+
+### 5.6 Installation & Registration
+
+Install an adapter **module** (the type, not an instance) via:
+
+```bash
+esr adapter install <source>
+```
+
+`<source>` is one of:
+
+- Local path: `./my-adapter/`
+- Git URL: `https://github.com/org/esr-feishu-adapter.git`
+- Python package name: `esr-feishu-adapter` (resolved via `uv` / `pip`)
+
+Install flow:
+
+1. Fetch / copy source into `adapters/`
+2. Import module and validate `@adapter(...)` registration
+3. Verify capability declaration (`allowed_io`) passes the CI scan
+4. Register type in the project registry
+
+After install, configure instances with `esr adapter add <name> <config>` (§5.4).
+
+Symmetric ops: `esr adapter uninstall <name>`, `esr adapter upgrade <name>`, `esr adapter list --installed`.
+
+Handler modules follow the same pattern via `esr handler install <source>`; there is no per-instance `add` step for handlers because they are stateless modules.
+
 ---
 
 ## 6. Layer 4 — Command (Python)
@@ -401,6 +553,8 @@ A Command is a named typed open-graph pattern:
 - **Params** — variables substituted at instantiation
 
 Commands are the unit of business-level composition. Running a Command instantiates and reconciles an actor graph.
+
+**Command resolution by name.** The string passed to `@command(...)` is the canonical name used by all CLI operations (`esr cmd compile <name>`, `esr cmd run <name>`, etc.). The `.py` file location is implementation detail. Names are project-scoped and must be unique; duplicates fail registration with a clear error.
 
 ### 6.2 Authoring (Python EDSL — primary surface)
 
@@ -486,6 +640,10 @@ edges:
   - {from: "core:{{src.chat_id}}-proxy",    to: "cc:{{trg.session_name}}"}
 ```
 
+**Optional node fields:**
+
+- `depends_on: [<node_id>, ...]` — explicit lifecycle dependency. Listed nodes must be spawned before this one and must stay alive for its lifetime. Used for adapter substrate scenarios (§5.5). Dependencies form a DAG; cycles fail compilation.
+
 Two artifacts per command:
 
 - `patterns/<name>.py` — EDSL source, human-edited, diff-reviewed
@@ -545,6 +703,32 @@ Source and compiled differ only when optimisations introduce structural change (
 **CSE (common subexpression elimination)** — when composing, nodes declared in both sub-patterns with identical (id, actor_type, handler) are merged into one. Required for correctness when two sub-patterns name the same middle node.
 
 No other passes in v0.1.
+
+### 6.8 Pattern Installation & Registration
+
+Install a pattern module via:
+
+```bash
+esr cmd install <source>
+```
+
+`<source>` can be:
+
+- Local path: `./my-pattern.py` or `./my-patterns/`
+- Git URL: `https://github.com/org/my-patterns.git`
+- Python package name: `esr-patterns-feishu`
+
+Install flow:
+
+1. Fetch source into `patterns/`
+2. Import module; validate `@command(...)` registration exists
+3. Resolve dependencies — every referenced adapter and handler must already be installed, otherwise fail with an actionable message (e.g. "command X references adapter `feishu` which is not installed; run `esr adapter install esr-feishu-adapter` first")
+4. Compile: produce `patterns/.compiled/<name>.yaml`
+5. Register name in the project registry
+
+`esr cmd list` scans the registry and shows installed commands. `esr cmd run <name> <params>` resolves by name, loads the compiled artifact, instantiates.
+
+Symmetric operations: `esr cmd uninstall <name>`, `esr cmd upgrade <name>`, `esr cmd show <name>` (pretty-prints the compiled artifact).
 
 ---
 
@@ -615,6 +799,46 @@ All payloads are JSON. Common fields: `id` (uuid), `ts` (RFC 3339), `type`, `pay
 - Runtime guarantees per-actor in-order dispatch
 - Events may carry `idempotency_key`; runtime drops duplicates at ingestion
 - Handler actions apply transactionally: state update + action emission = one unit; if persistence fails, actions are not emitted
+
+### 7.5 Unified Naming (`esr://` URI)
+
+Every addressable resource — actor, adapter, handler, command, interface — has a canonical URI. Short strings (e.g. `cc:sess-A`) are used internally for handler pattern-matching and compact logging. All cross-boundary references (remote adapter bindings, cross-process logs, debug output, future cross-org exposure) use the full `esr://` form.
+
+**Grammar:**
+
+```
+esr://[org@]host[:port]/<type>/<id>[?params]
+
+type ∈ {actor, adapter, handler, command, interface}
+```
+
+**Examples:**
+
+```
+esr:///actor/cc:sess-A                     # local actor (implicit localhost)
+esr:///adapter/feishu-shared               # local adapter instance
+esr:///command/feishu-to-cc                # local command
+esr://laptop-2.local:4000/adapter/zellij-5 # remote adapter over Phoenix channel
+esr://allens-lab@host.example/interface/customer_inquiry  # cross-org (v0.2+)
+```
+
+**v0.1 requirements:**
+
+- URI parser + canonicaliser in `py/src/esr/uri.py`
+- Types supported: `actor`, `adapter`, `command`
+- `esr:///...` (empty host → localhost) for local ops
+- `esr://<host>[:port]/adapter/<id>` for remote adapters reachable via Phoenix channel
+- Two-way mapping: `uri_to_internal(uri) → {type, id}` and inverse
+- All public CLI output and telemetry fields that reference resources emit full URIs
+
+**Deferred (v0.2+):**
+
+- `@org` authentication semantics
+- Cross-org interface exposure (Reposition §4 mode B, §5 `esr expose`)
+- `?params` query-string semantics (e.g. `?ver=2` for versioning, `?node=N` for specific cluster node)
+- `interface` type addressing
+
+This section is normative: the canonical URI is what every cross-boundary component must speak. Short internal strings remain legal only inside a single process.
 
 ---
 
@@ -774,6 +998,19 @@ E2E passes when:
 - BEAM `kill -9` recovery to messageable ≤ 5 s
 - `esr trace` produces full causal chain for each session
 - Every handler emits only declared actions; `esr deadletter list` stays empty throughout
+
+**Latency posture.** The numeric targets above are sanity checks (breach implies a likely defect), not SLOs. v0.1 **monitors** latency via telemetry timestamps at every IPC boundary, but does not **optimise** for it. Instrument from day one, sample p50/p95/p99 during each E2E run, archive results for trend analysis. Only trigger profiling and optimisation when a sanity threshold is breached. No preemptive latency work (batching, co-location, cost model, adapter placement) in v0.1 — YAGNI per §1.2.
+
+Expected rough magnitudes (revise after measurement):
+
+| Path | Target |
+|---|---|
+| Handler RPC round-trip (pydantic ser/de + Phoenix channel) | 3–20 ms |
+| Adapter directive round-trip (excluding external I/O) | 2–10 ms |
+| BEAM-internal message | < 0.1 ms |
+| feishu-to-cc end-to-end (includes Feishu API) | 100–400 ms |
+
+Bottlenecks are expected on the Python side (JSON ser/de, pydantic validation), not BEAM. Do not optimise until measurement contradicts this.
 
 ### 9.4 Reference Scenario File
 
