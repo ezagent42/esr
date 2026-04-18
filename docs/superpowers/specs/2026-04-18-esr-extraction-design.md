@@ -53,7 +53,16 @@ Extracting the generic substrate gives:
 
 ### 1.3 Relation to ESR v0.3
 
-This spec is a practical subset of ESR v0.3, targeted at running feishu-to-cc. It does not yet implement contract declaration YAML, topology validation, or governance proposals. Those remain aligned with ESR v0.3 semantics and fold in as subsequent specs.
+This spec is an **ESR-pre-conforming runtime skeleton**, not a conforming implementation. ESR v0.3 §10.1 mandates both `contract_declaration` and `static_verification` as MUST capabilities; v0.1 supplies neither — those land in a later version once the runtime is proven.
+
+What v0.1 does build towards ESR v0.3 alignment:
+
+- Four-layer architecture mirroring ESR + Socialware + esrd separation
+- Topology artifacts that are a **subset** of ESR v0.3 §5.2 (fields `description`, `trigger`, `participants`, `flows`, `acceptance_criteria` are not required in v0.1 but will be added additively in v0.2; the artifact name remains `topology`)
+- IPC envelope shaped consistent with ESR v0.3 §8 (`source`, destination indicator, payload, metadata)
+- Python handler SDK that can later carry contract references (§4 of this spec treats purity as the v0.1 substitute for contract verification)
+
+Subsequent specs land: explicit contract YAML + static verifier; governance workflow; Socialware packaging; external interface exposure; multi-node BEAM cluster.
 
 ---
 
@@ -61,42 +70,38 @@ This spec is a practical subset of ESR v0.3, targeted at running feishu-to-cc. I
 
 ### 2.1 Four Layers
 
+The Actor Runtime (Layer 1) is central. Command (Layer 4) produces artifacts that the Runtime consumes; Adapter (Layer 3) and Handler (Layer 2) are Python processes the Runtime drives.
+
 ```
-┌───────────────────────────────────────────────────────────┐
-│  LAYER 4: Command (Python)                                 │
-│  Typed open-graph pattern compiler. Authored via Python    │
-│  EDSL; canonical output is YAML artifact.                  │
-└───────────────────────────────────────────────────────────┘
-                            │ compile
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│  LAYER 3: Adapter (Python)                                 │
-│  Pure factory → impure inner fn. Bridges one external      │
-│  system (Feishu, CC tmux, LLM, …). Driven by runtime       │
-│  directives; emits events on external input.               │
-└───────────────────────────────────────────────────────────┘
-                            │ directive / event over IPC
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│  LAYER 1: Actor Runtime (Elixir / OTP)                     │
-│  PeerServer per actor; Phoenix.PubSub messaging;           │
-│  AdapterHub for Python IPC; HandlerRouter for dispatch.    │
-│  Supervises Python worker processes.                       │
-└───────────────────────────────────────────────────────────┘
-                            │ handler_call / handler_reply over IPC
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│  LAYER 2: Handler (Python)                                 │
-│  Pure function (state, event) → (new_state, [actions]).    │
-│  Registered via `@esr.handler`. Purity CI-enforced.        │
-│  Called by runtime per event; actions dispatched by        │
-│  runtime.                                                  │
-└───────────────────────────────────────────────────────────┘
+                    ┌──────────────────────┐
+                    │ LAYER 4: Command     │
+                    │ (Python, compile-time)│
+                    │ EDSL → YAML artifact │
+                    └──────────┬───────────┘
+                               │ topology artifact
+                               ▼
+                    ┌──────────────────────┐
+                    │ LAYER 1: Actor       │
+                    │ Runtime (Elixir/OTP) │
+                    │ PeerServer per actor │
+                    │ Phoenix.PubSub       │
+                    └────┬────────────┬────┘
+              directive  │            │  handler_call
+              + event    │            │  + handler_reply
+                         ▼            ▼
+           ┌─────────────────┐  ┌──────────────────┐
+           │ LAYER 3: Adapter│  │ LAYER 2: Handler │
+           │ (Python, I/O)   │  │ (Python, pure)   │
+           │ factory → inner │  │ (state, event)   │
+           │ fn              │  │  → (state, acts) │
+           └─────────────────┘  └──────────────────┘
 ```
+
+Layer numbering reflects dependency: Layer 1 Runtime needs nothing else to exist; Layer 2 Handler and Layer 3 Adapter are driven by Runtime; Layer 4 Command is authored against the lower-layer primitives.
 
 ### 2.2 Elixir / Python Boundary
 
-| Concern | Layer |
+| Concern | Owner |
 |---|---|
 | Actor identity, lifecycle, restart | Elixir |
 | Message routing, PubSub | Elixir |
@@ -153,7 +158,9 @@ Esr.Application
 
 ### 3.2 PeerServer (per actor)
 
-State: `%{actor_id, actor_type, handler_ref, adapter_refs, state, metadata}`
+State: `%{actor_id, actor_type, handler_module, adapter_refs, state, metadata}`
+
+`handler_module` is the registered Python module name (e.g. `"cc_session.on_msg"`); PeerServer does not pin to a specific worker PID. HandlerRouter picks any ready worker from the module's pool per call (§3.4).
 
 Handles:
 
@@ -178,16 +185,23 @@ Inbound events from channels become `{:inbound_event, ...}` to owning PeerServer
 
 ### 3.4 HandlerRouter
 
-Each handler module is served by a Python worker pool. Elixir's call:
+Each handler module is served by a **stateless Python worker pool**. The runtime serialises (state, event) into the `handler_call` envelope, picks any ready worker from the pool, and deserialises the reply. State never lives on a worker between calls — it travels with every call.
 
 ```elixir
-HandlerRouter.call(handler_ref, %{state: state, event: event}, timeout: 5_000)
+HandlerRouter.call(handler_module, %{state: state, event: event}, timeout: 5_000)
 # → {:ok, new_state, actions}
 # | {:error, :handler_timeout}
 # | {:error, {:purity_violation, details}}
+# | {:error, {:worker_crashed, reason}}
 ```
 
 Transport: Phoenix Channels, separate topic namespace `handler:<module>/<worker_id>`.
+
+**Concurrency model.** Per-actor in-order dispatch (§7.4) is enforced at the PeerServer level, not at the worker pool level. PeerServer processes one event at a time; it picks any available worker per call. Workers are fungible.
+
+**State travels per call.** Pydantic ser/de + JSON transport is the expected hot path for handler invocation. Per §9.3's monitoring posture, this cost is measured, not optimised in v0.1. Workers do not accumulate state; worker affinity is an explicit non-goal because it would permit accidental state retention between calls and break the purity model.
+
+**Worker crash recovery.** If a worker dies mid-call, the runtime observes `:EXIT` on its Phoenix channel, emits `[:esr, :handler, :crashed]` telemetry, and returns `{:error, :worker_crashed}` to the PeerServer. In-flight state is not lost because it came from Elixir; the PeerServer can re-issue the call to another worker (at-least-once semantics for handler calls). PeerServer policy on retry: §7.3.
 
 ### 3.5 Topology.Registry
 
@@ -229,7 +243,7 @@ Manages the daemon itself: lifecycle, cluster, version.
 - `esrd console` — attach `iex --remsh esrd@host`
 - `esrd release info` — build / version info
 
-Transport: `:erl_call` or BEAM RPC (no Phoenix).
+Transport: `:erl_call` or BEAM RPC (no Phoenix). Cookie file for RPC auth lives at `~/.esrd/<instance-name>/cookie` (filesystem-permission protected; created by `esrd init`).
 
 **`esr` — Python CLI (user / developer level, primary)**
 
@@ -244,6 +258,8 @@ Manages what runs *inside* esrd: adapters, handlers, commands, actors.
 - `esr status` — what's configured and running in the org
 
 Transport: Phoenix Channels over WebSocket.
+
+**CLI context storage.** `esr use <host:port>` sets the active context, persisted to `~/.esr/context`. Environment variable `ESR_CONTEXT` overrides the file per-shell when set. A command with no context configured fails with an actionable error suggesting `esr use`. Running multiple shells against different esrd instances (e.g. one at `localhost:4000`, another at `localhost:4001`) is explicit via `ESR_CONTEXT=localhost:4001 esr status`.
 
 **BEAM REPL — `iex --remsh esrd@host`**
 
@@ -296,6 +312,17 @@ Developer workflow:
 
 Once esrd is stable enough for in-place changes, graceful restart (state checkpoint + reconnect) replaces the two-instance split. v0.1 **does not** attempt graceful hot upgrade.
 
+**Instances are isolated by default.** `esrd-prod` and `esrd-dev` do not discover each other. Each has its own ETS registry, its own AdapterHub, its own actor namespace. A prod actor is not addressable from a dev shell unless the dev shell explicitly `esr use`s the prod endpoint. Reference across instances uses full `esr://` URIs (e.g. `esr://localhost:4000/actor/cc:sess-A` seen from a dev shell); short local-form strings refer only to the currently-targeted instance.
+
+**Instance naming.** `esrd init --org-name <ORG> --instance-name <NAME>` names the instance on disk; `<NAME>` defaults to `<ORG>` when omitted. Examples:
+
+```bash
+esrd init --org-name "allens-lab"    --instance-name prod
+esrd init --org-name "allens-lab"    --instance-name dev
+```
+
+Config directories become `~/.esrd/prod/` and `~/.esrd/dev/` respectively; both belong to the same org but run independent BEAM nodes.
+
 **Per-instance configuration storage:**
 
 ```
@@ -329,20 +356,22 @@ from esr import handler, Event, Action, Emit, Route, Spawn, Stop
 
 @handler(actor_type="cc_session", name="on_msg")
 def on_msg(state: CCSessionState, event: Event) -> tuple[CCSessionState, list[Action]]:
-    if event.type == "feishu_msg_received":
-        if event.msg_id in state.dedup:
+    if event.event_type == "feishu_msg_received":
+        msg_id = event.args["msg_id"]
+        content = event.args["content"]
+        if msg_id in state.dedup:
             return state, []
         return (
-            state.with_dedup_added(event.msg_id),
+            state.with_dedup_added(msg_id),
             [
-                Emit(adapter="feishu", action="react",
-                     args={"msg_id": event.msg_id, "emoji": "ack"}),
+                Emit(adapter="feishu-shared", action="react",
+                     args={"msg_id": msg_id, "emoji": "ack"}),
                 Emit(adapter="cc_tmux", action="send_keys",
-                     args={"session": state.session, "content": event.content}),
+                     args={"session": state.session, "content": content}),
             ],
         )
-    if event.type == "cc_output":
-        return state, [Route(target=state.feishu_peer, msg=event.content)]
+    if event.event_type == "cc_output":
+        return state, [Route(target=state.feishu_peer, msg=event.args["text"])]
     return state, []
 ```
 
@@ -356,51 +385,40 @@ A handler must:
 
 ### 4.3 Purity Enforcement (CI)
 
-Three combined checks:
+Two combined checks, both run in CI:
 
-**Check 1 — Module import allow-list.** Static scan of handler-module top-level imports. Allowed: `esr`, typing, dataclasses, pydantic, declared helper modules. Disallowed: `requests`, `urllib`, `socket`, `subprocess`, `os.system`, `sys.exit`, any stdlib network / file-write module. Violations fail `esr-lint handlers/`.
+**Check 1 — Module import allow-list.** Static scan of handler-module top-level imports. Allowed: `esr`, `typing`, `dataclasses`, `pydantic`, `enum`, declared helper modules explicitly listed in the handler package's `esr.toml`. Disallowed: `requests`, `urllib`, `http`, `socket`, `subprocess`, `os.system`, `sys.exit`, `pathlib.Path.write_*`, any stdlib network or file-write capability. Violations fail `esr-lint handlers/`.
 
-**Check 2 — Frozen-state invocation.** Every handler is unit-tested with a frozen `State` (pydantic `frozen=True` or `dataclass(frozen=True)`). Any attempted mutation raises `FrozenInstanceError`, failing the test.
+**Check 2 — Frozen-state invocation.** Every handler has a unit test calling it with a frozen `State` (pydantic `frozen=True` or `dataclass(frozen=True)`). Any attempted mutation on the state raises `FrozenInstanceError`, failing the test.
 
-**Check 3 — Cleared-globals invocation.** In a dedicated purity test the handler is copied into a module where `globals()` is restricted to a whitelist. If the handler body references anything outside the whitelist, it fails at call time with `NameError`.
+Failing either blocks merge.
 
-Failing any of the three blocks merge.
+The earlier design proposed a third check (cleared-globals invocation) but was dropped: restricting `globals()` produces too many false positives (pydantic validators, `typing.get_type_hints`, module-level constants legitimately used by handlers). Check 1 (imports) combined with code review catches the same risk class without the noise.
 
 ### 4.4 Action Types
 
 ```python
-Action = Emit | Route | Update | Spawn | Stop
+Action = Emit | Route
 
 @dataclass(frozen=True)
 class Emit:
-    adapter: str       # adapter ref name, e.g. "feishu"
+    adapter: str       # adapter instance name, e.g. "feishu-shared"
     action: str        # adapter-level action name, e.g. "react"
     args: dict         # opaque to runtime, validated by adapter
 
 @dataclass(frozen=True)
 class Route:
-    target: str        # actor_id to receive
+    target: str        # actor_id within this esrd instance
     msg: Any           # payload (must be JSON-serialisable)
-
-@dataclass(frozen=True)
-class Update:
-    # Explicit state update marker (rare — returning new State is default)
-    patch: dict
-
-@dataclass(frozen=True)
-class Spawn:
-    actor_type: str
-    id: str
-    adapter: str
-    handler: str
-    params: dict = field(default_factory=dict)
-
-@dataclass(frozen=True)
-class Stop:
-    actor_id: str
 ```
 
-> Terminology: `Emit` (an Action class, handler-authored) instructs the runtime to issue a "directive" (the IPC-envelope type, §7). They are the same concept at different layers — the `Emit` action, once accepted, becomes a `directive` over IPC.
+The runtime validates each action against the actor's declared action set before executing.
+
+**Why only two action types in v0.1.** State mutation is the handler's tuple return — it is the single source of truth for state change; no separate `Update` action is needed. Handler-emitted `Spawn` / `Stop` are deliberately omitted: dynamic actor creation would break the "topology is first-class, runtime reconciles to match" principle (§3.5). Actors spawn and stop through `esr cmd run` / `esr cmd stop` (CLI-driven), not through handler logic. Dynamic topology is a v0.2 concern.
+
+**Cross-boundary naming carve-out.** `Route.target` and `Emit.adapter` are plain strings within a single esrd instance — they identify resources in the local PeerRegistry / AdapterRegistry and cross only the Python → Elixir IPC, not the Elixir → external-machine boundary. §7.5 allows this: short strings are legal when both sides share the same esrd instance. References to resources on *other* esrd instances (or to exposed interfaces) always use full `esr://` URIs.
+
+> Terminology: `Emit` (an Action class, handler-authored) instructs the runtime to issue a "directive" (the IPC-envelope type, §7). Same concept at different layers — the `Emit` action, once accepted, becomes a `directive` over IPC.
 
 ### 4.5 State Shape
 
@@ -510,6 +528,17 @@ def cc_on_zellij():
 
 The "CC in zellij" case uses a dedicated `cc_in_zellij` adapter — peer to `cc_tmux`, `cc_docker`, etc. All belong to the same family (CC integration) but target different substrates. Choosing which variant to use is a topology-level decision, not an adapter-level stacking.
 
+**`depends_on` semantics (normative):**
+
+| Condition | Behaviour |
+|---|---|
+| Spawn order | Every node listed in `depends_on` must be spawned (state `active`) before the dependent node starts spawning |
+| Parent crash | If any parent node enters state `stopped` or `crashed`, all dependent children are stopped with reason `:parent_gone`; they do **not** restart automatically |
+| Stop cascade | `esr cmd stop` cascades from roots to leaves; parent stops only after all its dependents have stopped |
+| Dependency cycle | Compilation fails — `depends_on` must form a DAG |
+| Cross-command dependency | Not supported in v0.1 (a node can only depend on nodes within the same topology artifact); cross-topology dependencies are a v0.2 concern |
+| Event-delivery | `depends_on` is purely a lifecycle relation; it does **not** imply a message edge. If the parent needs to send messages to the child, declare a normal edge (`>>`) in addition |
+
 Rationale: transport stacking explodes complexity (infinite layering, hidden ordering, multiplied error handling). Topology composition already expresses the intent cleanly and matches ESR's graph-first model.
 
 ### 5.6 Installation & Registration
@@ -530,14 +559,16 @@ Install flow:
 
 1. Fetch / copy source into `adapters/`
 2. Import module and validate `@adapter(...)` registration
-3. Verify capability declaration (`allowed_io`) passes the CI scan
+3. Verify capability declaration (`allowed_io`) passes the CI scan (import-prefix matching: `allowed_io` keys are matched against module import paths, e.g. `lark_oapi` matches `lark_oapi.api.im.v1`; `http` matches any stdlib HTTP client module and is paired with a host allow-list)
 4. Register type in the project registry
 
-After install, configure instances with `esr adapter add <name> <config>` (§5.4).
+After install, configure instances with `esr adapter add <instance_name> --type <module> <config>` (§5.4). Instance names are unique per installed-type — two `feishu` adapter instances named differently are fine; two instances with the same name under the same type is an error.
 
 Symmetric ops: `esr adapter uninstall <name>`, `esr adapter upgrade <name>`, `esr adapter list --installed`.
 
 Handler modules follow the same pattern via `esr handler install <source>`; there is no per-instance `add` step for handlers because they are stateless modules.
+
+**Trust boundary.** Importing an adapter module executes arbitrary Python — anyone who can `esr adapter install` can run code on the host. v0.1 treats adapter authors as trusted (same trust boundary as handlers and other local code). Sandboxed installation of untrusted adapters is **not a v0.1 goal**. Users should only install from trusted sources (pinned git refs, signed packages in a private index, vendored code).
 
 ---
 
@@ -609,9 +640,9 @@ def cc_to_feishu():
     ...
 ```
 
-### 6.3 Canonical YAML Artifact
+### 6.3 Canonical YAML Artifact (Topology)
 
-`esr cmd compile feishu-to-cc` produces:
+`esr cmd compile feishu-to-cc` produces a **topology artifact**. The name "topology" is kept deliberately — it is a subset of ESR v0.3 §5.2, not a separate concept. v0.2 will extend this same file format with `description`, `trigger`, `participants` (role metadata), `flows` (typed message-exchange descriptions), and `acceptance_criteria`; migration will be additive, no rename. Implementers should treat the v0.1 artifact as an early cut of the ESR v0.3 topology.
 
 ```yaml
 # patterns/.compiled/feishu-to-cc.yaml
@@ -728,6 +759,10 @@ Install flow:
 
 `esr cmd list` scans the registry and shows installed commands. `esr cmd run <name> <params>` resolves by name, loads the compiled artifact, instantiates.
 
+**Name conflict policy.** Installing a pattern whose `@command("...")` name is already registered fails with an error showing both sources; the caller must choose `esr cmd uninstall <old>` or pass `--force` to overwrite. No implicit namespacing by source URL.
+
+**Adapter-less nodes.** A node without an `adapter` field is legal — it is a pure routing actor that forwards messages via its handler alone, with no external I/O. The `core_actor` in §6.2's example is one such pure-routing actor.
+
 Symmetric operations: `esr cmd uninstall <name>`, `esr cmd upgrade <name>`, `esr cmd show <name>` (pretty-prints the compiled artifact).
 
 ---
@@ -746,35 +781,49 @@ Topic taxonomy:
 
 ### 7.2 Envelope
 
-All payloads are JSON. Common fields: `id` (uuid), `ts` (RFC 3339), `type`, `payload`.
+All payloads are JSON. Common fields (consistent with ESR v0.3 §8):
+
+- `id` — uuid
+- `ts` — RFC 3339
+- `type` — discriminator
+- `source` — fully-qualified `esr://` URI of the sender (adapter instance or handler module)
+- `payload` — type-specific
 
 **directive (runtime → adapter):**
 
 ```json
 {"id":"d-...","ts":"...","type":"directive",
- "payload":{"adapter":"feishu","action":"send_message",
+ "source":"esr://localhost/runtime",
+ "payload":{"adapter":"feishu-shared","action":"send_message",
             "args":{"chat_id":"oc_abc","content":"hi"}}}
 ```
 
 **directive_ack (adapter → runtime):**
 
 ```json
-{"id":"d-...","type":"directive_ack",
+{"id":"d-...","ts":"...","type":"directive_ack",
+ "source":"esr://localhost/adapter/feishu-shared",
  "payload":{"ok":true,"result":{...}}}
 ```
+
+Ack routing uses Phoenix channel topic membership plus the matching `id`; the `adapter` field is redundant on ack and omitted.
 
 **event (adapter → runtime):**
 
 ```json
-{"id":"e-...","type":"event",
- "payload":{"source":"feishu","event_type":"msg_received",
+{"id":"e-...","ts":"...","type":"event",
+ "source":"esr://localhost/adapter/feishu-shared",
+ "payload":{"event_type":"msg_received",
             "args":{"chat_id":"oc_abc","content":"hi","sender":"ou_xxx"}}}
 ```
+
+(The top-level `source` field supersedes the earlier nested `source` inside `payload`; only one is kept to avoid duplication.)
 
 **handler_call (runtime → handler):**
 
 ```json
-{"id":"h-...","type":"handler_call",
+{"id":"h-...","ts":"...","type":"handler_call",
+ "source":"esr://localhost/runtime",
  "payload":{"handler":"cc_session.on_msg",
             "state":{...}, "event":{...}}}
 ```
@@ -782,23 +831,28 @@ All payloads are JSON. Common fields: `id` (uuid), `ts` (RFC 3339), `type`, `pay
 **handler_reply (handler → runtime):**
 
 ```json
-{"id":"h-...","type":"handler_reply",
+{"id":"h-...","ts":"...","type":"handler_reply",
+ "source":"esr://localhost/handler/cc_session.on_msg",
  "payload":{"new_state":{...},
-            "actions":[{"type":"emit","adapter":"feishu",...}]}}
+            "actions":[{"type":"emit","adapter":"feishu-shared",...}]}}
 ```
 
 ### 7.3 Timeouts & Errors
 
 - Handler call: default 5s (configurable per handler)
 - Directive: default 30s (I/O heavy)
-- Timeout → runtime emits `[:esr, :handler/directive, :timeout]`, returns error path to parent actor
+- Timeout → runtime emits `[:esr, :handler, :timeout]` or `[:esr, :directive, :timeout]`, PeerServer receives an error action
 - Connection loss: worker reconnects with exponential backoff; runtime queues pending work up to a cap; overflow logs and drops with telemetry
+
+**Handler worker crash.** If a Python worker exits mid-call (segfault, OOM, unhandled exception), the runtime observes `:EXIT` on its Phoenix channel, emits `[:esr, :handler, :crashed]` with the worker id and reason, and returns `{:error, :worker_crashed}` to the calling PeerServer. The PeerServer's default policy is to retry once on a fresh worker (at-least-once); if retry also fails, the event is dropped to dead letter and telemetry `[:esr, :handler, :retry_exhausted]` fires. The handler contract is "pure" — retries are safe because the same (state, event) in produces the same `(new_state, actions)` out. If the handler author's code is non-deterministic, the CI purity check (§4.3) should have rejected it.
+
+**Adapter crash.** Symmetric: `[:esr, :adapter, :crashed]` telemetry; pending directives return `{:error, :adapter_crashed}`. Restart is by OTP supervision at the adapter supervisor level; the adapter reconnects its WS and re-registers its channel. In-flight events lost during the outage surface as `[:esr, :deadletter, :event]`.
 
 ### 7.4 Ordering, Delivery, Dedup
 
 - Runtime guarantees per-actor in-order dispatch
 - Events may carry `idempotency_key`; runtime drops duplicates at ingestion
-- Handler actions apply transactionally: state update + action emission = one unit; if persistence fails, actions are not emitted
+- State-then-emit ordering: the runtime persists `new_state` first, then emits the returned actions. On persistence failure, actions are **not** emitted (safer to repeat the handler call with the same state than to emit actions for a state the system has no record of). On emission failure (e.g. adapter channel down), the state update is retained; the emission is retried per §7.3 or dropped to dead letter. This is explicit "persist-then-emit, at-least-once on actions", not two-phase commit.
 
 ### 7.5 Unified Naming (`esr://` URI)
 
@@ -833,9 +887,10 @@ Any URI with an empty host component is a syntax error and is rejected by the pa
 - URI parser + canonicaliser in `py/src/esr/uri.py`
 - Types supported: `actor`, `adapter`, `command`
 - Host is always explicit; `localhost` is the accepted name for the current machine
-- `esr://<host>[:port]/adapter/<id>` addresses an adapter reachable via Phoenix channel on that host
+- `esr://<host>[:port]/adapter/<id>` addresses an adapter reachable via Phoenix channel on that host. The `<id>` is the adapter instance name (matches Phoenix topic `adapter:<name>/<instance_id>` — the URI `id` corresponds to `instance_id`).
 - Two-way mapping: `uri_to_internal(uri) → {type, id}` and inverse `internal_to_uri(type, id, host="localhost") → uri` (caller supplies host)
 - All public CLI output and telemetry fields that reference resources emit full URIs
+- Within a single esrd instance, Python handler code may use short form (`"cc:sess-A"`) in `Route.target` and `Emit.adapter`; the runtime resolves them relative to the current instance's registry. This is the carve-out in §4.4.
 
 **Deferred (v0.2+):**
 
@@ -1011,10 +1066,13 @@ Expected rough magnitudes (revise after measurement):
 
 | Path | Target |
 |---|---|
-| Handler RPC round-trip (pydantic ser/de + Phoenix channel) | 3–20 ms |
+| Handler RPC round-trip, warm pool (pydantic ser/de + Phoenix channel) | 3–20 ms |
+| Handler RPC cold start (first call after worker spawn) | 500–2000 ms |
 | Adapter directive round-trip (excluding external I/O) | 2–10 ms |
 | BEAM-internal message | < 0.1 ms |
 | feishu-to-cc end-to-end (includes Feishu API) | 100–400 ms |
+
+`esr cmd run` performs a Phase-0 pool warm-up (spawns the declared handlers' worker processes and imports their modules) before reporting success, so the first real event does not pay cold-start cost on the critical path.
 
 Bottlenecks are expected on the Python side (JSON ser/de, pydantic validation), not BEAM. Do not optimise until measurement contradicts this.
 
@@ -1044,21 +1102,38 @@ Bottlenecks are expected on the Python side (JSON ser/de, pydantic validation), 
 | `channel_server/commands/builtin/spawn.py` | `patterns/feishu-to-cc.py` (+ reverse) | Reimagined as patterns |
 | `channel_server/commands/builtin/kill.py` | `esr cmd stop` CLI | |
 | `channel_server/commands/builtin/sessions.py` | `esr actors list` CLI | |
-| `sidecar/*` | **unchanged in v0.1** | Runs alongside; migrate to ESR handlers in v0.2 |
-| `voice_gateway/*` | **unchanged in v0.1** | Same |
+| `sidecar/*` | **not migrated** | cc-openclaw-specific business logic (user provisioning, group reconciliation against a specific Feishu workspace, permission table). Runs alongside cc-openclaw if needed; ESR v0.1 does not replicate it. See §10.3. |
+| `voice_gateway/*` | **not migrated** | Same — openclaw-specific voice pipeline; revisit for voice Socialware in v0.2 |
 
 ### 10.2 Phasing
 
-1. Elixir runtime skeleton (peer server, supervisor, registry, telemetry)
-2. Python SDK (handler/adapter/command decorators) + CLI bones
-3. IPC (Phoenix channels endpoint + Python client) + smoke test round-trip
-4. Feishu adapter + CC-tmux adapter
-5. Handlers: feishu_inbound, core_router, cc_session
-6. Patterns: feishu-to-core, core-to-cc, feishu-to-cc, cc-to-feishu
-7. CLI surface for Tracks A–H
-8. E2E scenario file + run it; iterate until every Track passes
+Phases and their dependencies (bold = critical path):
+
+1. **Elixir runtime skeleton** — peer server, supervisor, registry, telemetry
+2. **Python SDK** — handler/adapter/command decorators + CLI bones *(can run in parallel with phase 1)*
+3. **IPC** — Phoenix channels endpoint + Python client + smoke-test round-trip *(depends on 1 + 2)*
+4. Feishu adapter + CC-tmux adapter *(depends on 3; these two can run in parallel)*
+5. Handlers: feishu_inbound, core_router, cc_session *(depends on 3; parallel with 4)*
+6. Patterns: feishu-to-core, core-to-cc, feishu-to-cc, cc-to-feishu *(depends on 4 + 5)*
+7. CLI surface for Tracks A–H *(depends on 1 + 2; mostly independent of 4–6)*
+8. E2E scenario file + run it; iterate until every Track passes *(depends on everything)*
+
+Items in §10.1 marked "Rewritten" (e.g. `channel_server/commands/builtin/spawn.py` → `patterns/feishu-to-cc.py`) are not line-by-line ports; they are redesigned from scratch within the new layering. Estimate accordingly in the implementation plan.
 
 Exact PRDs and unit-test decomposition are the next artifact (implementation plan).
+
+### 10.3 Relationship to cc-openclaw (runs alongside, does not replace)
+
+ESR v0.1 is not a replacement for cc-openclaw as a whole. It is the extraction of the generic actor-runtime substrate from it. cc-openclaw continues to run its domain-specific pieces:
+
+- `sidecar/` — user authorisation (`/api/v1/resolve-sender`), agent provisioning, group reconciliation against specific Feishu groups. These are openclaw's business logic; they are not generic actor infrastructure.
+- `voice_gateway/` — doubao TTS/STT pipeline; revisit for voice Socialware in v0.2.
+
+**Feishu inbound path — no dependency on sidecar.** In cc-openclaw today, `channel_server/adapters/feishu/adapter.py` opens its own Lark WS and receives `P2ImMessageReceiveV1` events directly, independent of sidecar. Sidecar's separate listener handles only group-membership events (`member_added`, etc.) for its provisioning loop, and forwards nothing to the actor runtime. ESR v0.1 inherits this arrangement: the migrated Feishu adapter opens its own WS, no sidecar hop on the message path.
+
+**Auth is out of scope in v0.1.** cc-openclaw today calls sidecar's `/api/v1/resolve-sender` to authorise each sender. ESR v0.1 does not replicate auth — it is a single-developer runtime. If a deployment requires auth, either (a) keep using cc-openclaw's stack (don't adopt ESR yet), or (b) write an auth adapter/handler pair that performs the check; this is a v0.2 concern in its own spec.
+
+**Webhook vs WebSocket adapters.** Feishu uses a long-lived WS connection for events (lark_oapi). ESR v0.1's adapter model (§5) accommodates this: the adapter opens a client WS, yields events via `emit_events()`. HTTPS-webhook adapters (POST from external system to a listening port) require a different hosting mode — an inbound HTTP listener supervised by esrd. This is **deferred to v0.2**; v0.1 adapters are all client-initiated outbound connections.
 
 ---
 
@@ -1066,12 +1141,15 @@ Exact PRDs and unit-test decomposition are the next artifact (implementation pla
 
 These do not block v0.1 but need resolution before they bite:
 
-- **Handler worker pool sizing.** One-per-handler-module vs shared pool? Default one-per-module for isolation; revisit under load.
+- **Handler worker pool sizing.** One pool per handler module, default size 2 workers. Revisit under load. One-per-actor-affinity is explicitly rejected (§3.4).
 - **State size limits.** State is serialised per handler call. Soft limit 64 KB; hard fail 1 MB? Needs measurement.
-- **Explicit contract YAML.** v0.1 declares allowed actions inline via code. When does YAML contract per ESR §4 land?
+- **Explicit contract YAML.** v0.1 declares allowed actions inline via code (`allowed_io` for adapters, handler action set via decorator). When does the full ESR v0.3 §4 contract YAML + static verifier land? Target: v0.2 or the first version that leaves dogfooding.
+- **State schema evolution.** v0.1 policy: breaking state changes require `esr drain` + reset; no automatic migration. Migration tooling (state transformer functions, schema version tagging, rolling transforms) is a v0.2 concern.
 - **Telemetry storage.** v0.1 uses BEAM memory only. When to persist externally? Likely when `esr trace` retention must exceed a process lifetime.
-- **CLI auth.** No auth in v0.1 (single-user local). JWT / mTLS when multi-user.
-- **Handler hot-reload.** In-place code swap without losing state? Deferred; restart is fine for v0.1.
+- **CLI auth.** No auth in v0.1 (single-user local). JWT / mTLS when multi-user or multi-machine.
+- **Handler hot-reload.** In-place code swap without losing state? Deferred; for v0.1, `esr handler upgrade <name>` triggers a drain + restart of the worker pool — state is in Elixir so it survives, but in-flight calls may see `{:error, :worker_crashed}` and retry.
+- **Webhook-receiving adapters.** v0.1 assumes adapters open outbound client connections (like Feishu's WS). HTTPS webhook adapters (inbound POST) need a different hosting model — an HTTP listener supervised by esrd. Deferred to v0.2.
+- **Dynamic topology / handler-emitted Spawn.** v0.1 excludes `Spawn` / `Stop` from the Action palette; v0.2 may reintroduce them for patterns that need conditionally-spawned children. Will require revisiting the "topology is first-class" invariant.
 
 Each becomes a follow-up spec when it starts mattering.
 
