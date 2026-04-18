@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESR playground v0.3 — switch matrix</title>
+<style>
+  :root {
+    --bg-primary: #ffffff; --bg-secondary: #f6f5f0; --bg-tertiary: #f1efe8;
+    --bg-dark: #2a2a28;
+    --bg-info: #e6f1fb; --bg-success: #eaf3de; --bg-warning: #faeeda;
+    --bg-danger: #fcebeb; --bg-purple: #eeedfe;
+    --text-primary: #2c2c2a; --text-secondary: #5f5e5a; --text-tertiary: #888780;
+    --text-info: #185fa5; --text-success: #3b6d11; --text-warning: #854f0b;
+    --text-danger: #a32d2d; --text-purple: #534ab7;
+    --border-tertiary: rgba(44,44,42,0.15); --border-secondary: rgba(44,44,42,0.3);
+    --radius-md: 8px; --radius-lg: 12px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+    --font-mono: "SF Mono", Monaco, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --cell-bg: #1a1a18;
+    --cell-border: rgba(255,255,255,0.05);
+    --cell-diagonal-bg: #141412;
+    --cell-denied-bg: #1f1f1d;
+    --dot-permitted: rgba(255,255,255,0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-primary: #1f1f1d; --bg-secondary: #2c2c2a; --bg-tertiary: #262624;
+      --bg-dark: #0e0e0d;
+      --bg-info: #0c447c; --bg-success: #27500a; --bg-warning: #633806;
+      --bg-danger: #791f1f; --bg-purple: #3c3489;
+      --text-primary: #e8e6dc; --text-secondary: #b4b2a9; --text-tertiary: #888780;
+      --text-info: #85b7eb; --text-success: #c0dd97; --text-warning: #fac775;
+      --text-danger: #f09595; --text-purple: #afa9ec;
+      --border-tertiary: rgba(232,230,220,0.15); --border-secondary: rgba(232,230,220,0.3);
+
+      --cell-bg: #0a0a09;
+      --cell-diagonal-bg: #050504;
+      --cell-denied-bg: #0e0e0d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--font-sans); background: var(--bg-tertiary); color: var(--text-primary);
+    margin: 0; padding: 20px; min-height: 100vh; font-size: 14px; line-height: 1.5;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+  .subtitle { font-size: 13px; color: var(--text-secondary); margin: 0 0 14px; }
+
+  .explainer {
+    background: var(--bg-purple); border-radius: var(--radius-lg);
+    padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: var(--text-purple); line-height: 1.55;
+  }
+  .explainer strong { font-weight: 500; }
+
+  .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+  button {
+    font-family: var(--font-sans); font-size: 12px; padding: 5px 12px;
+    background: transparent; border: 0.5px solid var(--border-secondary);
+    border-radius: var(--radius-md); color: var(--text-primary); cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover:not(:disabled) { background: var(--bg-secondary); }
+  button.primary { background: var(--bg-info); color: var(--text-info); border-color: rgba(24,95,165,0.3); }
+  button.purple  { background: var(--bg-purple); color: var(--text-purple); border-color: rgba(83,74,183,0.3); }
+  button.warning { background: var(--bg-warning); color: var(--text-warning); border-color: rgba(133,79,11,0.3); }
+  .tb-sep { width: 1px; height: 22px; background: var(--border-tertiary); margin: 0 4px; }
+  .hint { font-size: 11px; color: var(--text-tertiary); margin-bottom: 10px; font-style: italic; }
+
+  /*────────── stage layout ──────────*/
+  .stage {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .matrix-box, .detail-box {
+    background: var(--bg-primary); border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+
+  /*────────── matrix grid ──────────*/
+  .matrix {
+    display: grid;
+    grid-template-columns: 128px repeat(5, 70px);
+    grid-template-rows: auto repeat(5, 70px);
+    gap: 3px;
+    background: var(--bg-dark);
+    padding: 10px;
+    border-radius: var(--radius-md);
+  }
+
+  .matrix-corner {
+    display: flex; align-items: flex-end; justify-content: flex-start;
+    font-family: var(--font-mono); font-size: 9px; color: rgba(255,255,255,0.3);
+    padding: 4px 6px; letter-spacing: 0.06em;
+  }
+
+  .col-header {
+    display: flex; align-items: flex-end; justify-content: center;
+    font-family: var(--font-mono); font-size: 10px; color: #c0bfb6;
+    padding: 6px 2px 4px; text-align: center; line-height: 1.2;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    cursor: default; position: relative;
+  }
+  .col-header .col-role {
+    font-size: 8.5px; color: rgba(255,255,255,0.4); margin-top: 2px;
+    font-family: var(--font-sans);
+  }
+
+  .row-header {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 10px; color: #c0bfb6;
+    padding: 4px 8px; gap: 4px;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    cursor: pointer; position: relative;
+    transition: background 0.15s;
+  }
+  .row-header:hover { background: rgba(255,255,255,0.04); }
+  .row-header .row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .row-header .row-role { font-size: 9px; color: rgba(255,255,255,0.4); font-family: var(--font-sans); font-style: italic; margin-top: 1px; }
+  .row-header .row-send {
+    font-size: 10px; color: rgba(255,255,255,0.35); padding: 2px 4px;
+    border-radius: 3px; border: 0.5px solid rgba(255,255,255,0.12);
+    flex-shrink: 0;
+  }
+  .row-header:hover .row-send { color: #c0bfb6; border-color: rgba(255,255,255,0.3); }
+
+  /*────────── cells ──────────*/
+  .cell {
+    position: relative;
+    background: var(--cell-bg);
+    cursor: default;
+    transition: background 0.15s;
+  }
+  .cell.diagonal { background: var(--cell-diagonal-bg); }
+  .cell.denied { background: var(--cell-denied-bg); }
+  .cell.permitted { cursor: pointer; }
+  .cell.permitted:hover { background: rgba(255,255,255,0.06); }
+  .cell.selected { outline: 1px solid #f5b800; outline-offset: -1px; z-index: 2; }
+
+  /* diagonal marker */
+  .cell.diagonal::before {
+    content: ''; position: absolute; inset: 0;
+    background-image: linear-gradient(135deg, transparent 47%, rgba(255,255,255,0.06) 48%, rgba(255,255,255,0.06) 52%, transparent 53%);
+  }
+
+  /* dot for permitted cells */
+  .cell.permitted::after {
+    content: ''; position: absolute;
+    top: 50%; left: 50%;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dot-permitted);
+    transform: translate(-50%, -50%);
+    transition: none;
+  }
+
+  /* activity badge (top-right corner) */
+  .cell .count-badge {
+    position: absolute; top: 3px; right: 3px;
+    font-family: var(--font-mono); font-size: 8.5px;
+    color: rgba(255,255,255,0.5);
+    pointer-events: none;
+  }
+
+  /* LIT state: injected via inline style --c for the topic color */
+  .cell.lit::after {
+    animation: lit-pulse 0.9s ease-out;
+  }
+  @keyframes lit-pulse {
+    0%   { width: 8px;  height: 8px;  background: var(--dot-permitted); box-shadow: 0 0 0 0 transparent; }
+    30%  { width: 22px; height: 22px; background: var(--c, #8b7ff2); box-shadow: 0 0 18px 4px var(--c, #8b7ff2); }
+    100% { width: 12px; height: 12px; background: var(--c, #8b7ff2); box-shadow: 0 0 6px 1px var(--c, #8b7ff2); }
+  }
+  .cell.has-history::after {
+    width: 10px; height: 10px;
+    background: var(--last-c, var(--dot-permitted));
+    box-shadow: 0 0 4px 0 var(--last-c, transparent);
+  }
+
+  /* violation: red flash + X overlay */
+  .cell.violation::after {
+    animation: violation-pulse 0.9s ease-out;
+  }
+  @keyframes violation-pulse {
+    0%   { width: 8px;  height: 8px;  background: #dc2626; box-shadow: 0 0 0 0 transparent; }
+    30%  { width: 24px; height: 24px; background: #dc2626; box-shadow: 0 0 22px 6px #dc2626; }
+    100% { width: 8px; height: 8px; background: var(--dot-permitted); box-shadow: none; }
+  }
+  .cell .x-mark {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-sans); font-weight: 700; font-size: 22px;
+    color: #fff; pointer-events: none; opacity: 0;
+  }
+  .cell.violation .x-mark { animation: x-flash 0.9s ease-out; }
+  @keyframes x-flash {
+    0%   { opacity: 0; transform: scale(0.5); }
+    30%  { opacity: 1; transform: scale(1.1); }
+    100% { opacity: 0; transform: scale(1); }
+  }
+
+  /* when row header is hovered or a cell is selected, highlight the row/column */
+  .matrix.hl-row-feishu-adapter .row-header[data-src="feishu-adapter"],
+  .matrix.hl-col-feishu-adapter .col-header[data-tar="feishu-adapter"] { color: #fff; }
+  .row-hl, .col-hl { background: rgba(255,255,255,0.03); }
+
+  /*────────── detail panel ──────────*/
+  .detail-box { display: flex; flex-direction: column; min-width: 0; }
+  .detail-header {
+    padding-bottom: 8px; margin-bottom: 10px;
+    border-bottom: 0.5px solid var(--border-tertiary);
+  }
+  .detail-title {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  }
+  .detail-subtitle {
+    font-size: 11px; color: var(--text-tertiary); margin-top: 2px;
+  }
+  .detail-empty {
+    color: var(--text-tertiary); font-style: italic; font-size: 12px;
+    padding: 20px 0; text-align: center;
+  }
+  .topic-list {
+    font-family: var(--font-mono); font-size: 10.5px;
+    margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .topic-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--bg-secondary);
+  }
+  .topic-chip .tc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+  .msg-list { flex: 1; overflow-y: auto; max-height: 340px; font-size: 11.5px; }
+  .msg-entry {
+    padding: 6px 8px; margin-bottom: 4px;
+    background: var(--bg-secondary); border-radius: 6px;
+    font-family: var(--font-mono); line-height: 1.5;
+    animation: fi 0.25s ease-out;
+  }
+  @keyframes fi { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+  .msg-entry.violation { background: var(--bg-danger); color: var(--text-danger); }
+  .msg-meta { font-size: 9.5px; color: var(--text-tertiary); display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }
+  .msg-meta .tc-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .msg-content { word-break: break-all; }
+
+  /*────────── agent send popup ──────────*/
+  #agent-popup {
+    position: fixed; display: none;
+    background: var(--bg-primary); border: 0.5px solid var(--border-secondary);
+    border-radius: var(--radius-md); padding: 10px 12px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.2);
+    z-index: 100; min-width: 280px; max-width: 340px; font-size: 12px;
+  }
+  #agent-popup .pp-header {
+    padding-bottom: 6px; margin-bottom: 8px; border-bottom: 0.5px solid var(--border-tertiary);
+  }
+  #agent-popup .pp-title { font-weight: 600; font-family: var(--font-mono); }
+  #agent-popup .pp-role { font-size: 10px; color: var(--text-tertiary); font-style: italic; margin-top: 2px; }
+  #agent-popup .pp-section { font-size: 9.5px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin: 8px 0 4px; }
+  #agent-popup .pp-section.danger { color: var(--text-danger); }
+  #agent-popup button.pp-btn {
+    display: block; width: 100%; text-align: left; margin: 2px 0;
+    font-family: var(--font-mono); font-size: 11px; padding: 5px 8px;
+  }
+  #agent-popup button.pp-btn.allowed { color: var(--text-success); border-color: rgba(59,109,17,0.25); }
+  #agent-popup button.pp-btn.allowed:hover { background: var(--bg-success); }
+  #agent-popup button.pp-btn.violate { color: var(--text-danger); border-color: rgba(163,45,45,0.25); }
+  #agent-popup button.pp-btn.violate:hover { background: var(--bg-danger); }
+  #agent-popup .pp-empty { font-size: 11px; color: var(--text-tertiary); font-style: italic; padding: 2px 4px; }
+  #agent-popup .pp-close { float: right; font-size: 16px; line-height: 14px; padding: 0 4px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+
+  /*────────── legend & trace ──────────*/
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px;
+    background: var(--bg-secondary); border-radius: var(--radius-md);
+    font-size: 10px; color: var(--text-secondary); margin-bottom: 10px;
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  .trace-area {
+    background: var(--bg-primary); border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg); padding: 10px 14px;
+  }
+  .trace-header {
+    font-size: 11px; color: var(--text-tertiary); text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;
+  }
+  #trace-list {
+    max-height: 200px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.55;
+  }
+  .trace-entry { padding: 2px 0; animation: fi 0.25s ease-out; }
+  .trace-entry.info { color: var(--text-secondary); font-weight: 500; }
+  .trace-entry.ok { color: var(--text-success); }
+  .trace-entry.violation { color: var(--text-danger); font-weight: 500; }
+  .trace-entry.warn { color: var(--text-warning); }
+  .trace-entry.system { color: var(--text-tertiary); font-style: italic; font-size: 10.5px; }
+  .trace-empty { color: var(--text-tertiary); font-style: italic; padding: 8px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ESR playground · v0.3</h1>
+  <p class="subtitle">switch matrix · rows = sender, cols = receiver · each lit cell is one routed message · click to inspect</p>
+
+  <div class="explainer">
+    This is a <strong>crossbar switch matrix</strong>: each cell <code>(src, tar)</code> represents one possible message route. Cells with a dot are contract-permitted; cells without are denied. When a message fires, the corresponding cell <strong>lights up</strong> (color = topic); violations show <strong>red glow + ✗</strong>. Click any cell that has lit up to see every message that flowed through it; click a <strong>row header</strong> on the left to send manually.
+  </div>
+
+  <div class="toolbar">
+    <button class="primary" onclick="runScenario('basic')">▶ Basic customer flow</button>
+    <button class="purple" onclick="runScenario('takeover')">▶ Operator takeover</button>
+    <button class="warning" onclick="runScenario('mixed')">▶ Mixed (AI → takeover)</button>
+    <div class="tb-sep"></div>
+    <button onclick="clearAll()">Clear all</button>
+    <button onclick="stopAll()">Stop</button>
+  </div>
+
+  <div class="hint">💡 Click row header to send · click a cell for its message history · diagonal/dim cells = unreachable</div>
+
+  <div class="stage">
+    <div class="matrix-box">
+      <div class="matrix" id="matrix"></div>
+    </div>
+
+    <div class="detail-box" id="detail-box">
+      <div class="detail-header">
+        <div class="detail-title" id="detail-title" style="color:var(--text-tertiary);font-style:italic;font-weight:400;">Click a cell for route details</div>
+        <div class="detail-subtitle" id="detail-subtitle"></div>
+        <div class="topic-list" id="detail-topics"></div>
+      </div>
+      <div class="msg-list" id="detail-msgs">
+        <div class="detail-empty">No route selected yet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot" style="background:#1a7fdb"></span>feishu.*</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#7c3aed"></span>customer_messages</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>cc_replies</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#6b7280"></span>cc_thoughts</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>operator_control</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>violation</span>
+  </div>
+
+  <div class="trace-area">
+    <div class="trace-header">
+      <span>Global trace</span>
+      <span id="trace-count" style="font-family:var(--font-mono);font-size:10px;"></span>
+    </div>
+    <div id="trace-list"><div class="trace-empty">No activity yet. Click a scenario button, or click a row header to send manually.</div></div>
+  </div>
+</div>
+
+<div id="agent-popup"></div>
+
+<script>
+//────────────────────────────────────────────────────────────
+// Data
+//────────────────────────────────────────────────────────────
+
+const AGENTS = {
+  'customer': {
+    label: 'customer', displayName: 'external',
+    role: 'External (non-ESR agent)', external: true,
+    outgoing: ['feishu.incoming'],
+    incoming: ['feishu.outgoing'],
+    forbidden: [],
+  },
+  'feishu-adapter': {
+    label: 'feishu', displayName: 'bridge',
+    role: 'Feishu integration',
+    outgoing: ['autoservice.customer_messages', 'feishu.outgoing'],
+    incoming: ['autoservice.cc_replies', 'autoservice.operator_control', 'feishu.incoming'],
+    forbidden: ['autoservice.cc_replies'],
+  },
+  'cc-responder': {
+    label: 'cc-responder', displayName: 'AI reply',
+    role: 'AI reply generation',
+    outgoing: ['autoservice.cc_replies', 'autoservice.cc_thoughts'],
+    incoming: ['autoservice.customer_messages', 'autoservice.operator_control'],
+    forbidden: ['autoservice.customer_messages'],
+  },
+  'operator': {
+    label: 'operator', displayName: 'supervisor',
+    role: 'Human supervisor',
+    outgoing: ['autoservice.operator_control'],
+    incoming: ['autoservice.*'],
+    forbidden: ['autoservice.customer_messages'],
+  },
+  'journal': {
+    label: 'journal', displayName: 'archive',
+    role: 'Read-only archive',
+    outgoing: [],
+    incoming: ['autoservice.*'],
+    forbidden: ['autoservice.*'],
+  },
+};
+
+const AGENT_ORDER = ['customer', 'feishu-adapter', 'cc-responder', 'operator', 'journal'];
+
+const SUBSCRIPTIONS = {
+  'feishu.incoming': ['feishu-adapter'],
+  'feishu.outgoing': ['customer'],
+  'autoservice.customer_messages': ['cc-responder', 'journal'],
+  'autoservice.cc_replies': ['feishu-adapter', 'operator', 'journal'],
+  'autoservice.cc_thoughts': ['journal'],
+  'autoservice.operator_control': ['cc-responder', 'feishu-adapter', 'journal'],
+};
+
+const TOPIC_COLORS = {
+  'feishu.incoming': '#1a7fdb',
+  'feishu.outgoing': '#1a7fdb',
+  'autoservice.customer_messages': '#7c3aed',
+  'autoservice.cc_replies': '#16a34a',
+  'autoservice.cc_thoughts': '#6b7280',
+  'autoservice.operator_control': '#d97706',
+};
+
+const SCENARIOS = {
+  basic: {
+    name: 'Basic customer service flow',
+    description: 'customer → feishu → AI → back to customer (journal listens throughout)',
+    steps: [
+      { at: 0,    from: 'customer',       topic: 'feishu.incoming',               content: 'I want to return order #12345' },
+      { at: 1200, from: 'feishu-adapter', topic: 'autoservice.customer_messages', content: 'I want to return order #12345' },
+      { at: 2600, from: 'cc-responder',   topic: 'autoservice.cc_thoughts',       content: 'intent: return_order, order: #12345' },
+      { at: 3800, from: 'cc-responder',   topic: 'autoservice.cc_replies',        content: "Sure, I'll help you with the return" },
+      { at: 5400, from: 'feishu-adapter', topic: 'feishu.outgoing',               content: "Sure, I'll help you with the return" },
+    ],
+  },
+  takeover: {
+    name: 'Operator takeover flow',
+    description: 'operator bypasses AI and handles the conversation directly',
+    steps: [
+      { at: 0,    from: 'operator',       topic: 'autoservice.operator_control', content: '{cmd: takeover, session: s1}' },
+      { at: 1800, from: 'operator',       topic: 'autoservice.operator_control', content: 'Hi, this is Zhang from support' },
+      { at: 3400, from: 'feishu-adapter', topic: 'feishu.outgoing',              content: 'Hi, this is Zhang from support' },
+    ],
+  },
+  mixed: {
+    name: 'Mixed: AI interrupted by operator',
+    description: 'basic and takeover topologies coexisting in one conversation',
+    steps: [
+      { at: 0,    from: 'customer',       topic: 'feishu.incoming',               content: 'Your service is terrible!!!' },
+      { at: 1200, from: 'feishu-adapter', topic: 'autoservice.customer_messages', content: 'Your service is terrible!!!' },
+      { at: 2500, from: 'cc-responder',   topic: 'autoservice.cc_thoughts',       content: 'intent: complaint, sentiment: angry, suggest escalation' },
+      { at: 4200, from: 'operator',       topic: 'autoservice.operator_control',  content: '{cmd: takeover, reason: angry_customer}' },
+      { at: 5800, from: 'operator',       topic: 'autoservice.operator_control',  content: 'So sorry for the trouble, let me help you directly' },
+      { at: 7400, from: 'feishu-adapter', topic: 'feishu.outgoing',               content: 'So sorry for the trouble, let me help you directly' },
+    ],
+  },
+};
+
+const EXAMPLE_CONTENTS = {
+  'feishu.incoming': 'manual: test customer message',
+  'feishu.outgoing': 'manual: test outgoing',
+  'autoservice.customer_messages': 'manual: simulate customer message',
+  'autoservice.cc_replies': 'manual: simulate AI reply',
+  'autoservice.cc_thoughts': 'manual: test internal reasoning',
+  'autoservice.operator_control': 'manual: test control command',
+};
+
+//────────────────────────────────────────────────────────────
+// Pre-compute cell topics  cellTopics[src][tar] = [topics]
+//────────────────────────────────────────────────────────────
+
+const cellTopics = {};  // src|tar -> [topic1, ...]
+const cellHistory = {}; // src|tar -> [{topic, content, ts, violation?}, ...]
+
+AGENT_ORDER.forEach(src => {
+  AGENT_ORDER.forEach(tar => {
+    const key = `${src}|${tar}`;
+    if (src === tar) { cellTopics[key] = []; return; }
+    const topics = [];
+    AGENTS[src].outgoing.forEach(t => {
+      if ((SUBSCRIPTIONS[t] || []).includes(tar)) topics.push(t);
+    });
+    cellTopics[key] = topics;
+  });
+});
+
+//────────────────────────────────────────────────────────────
+// State
+//────────────────────────────────────────────────────────────
+
+let scenarioTimers = [];
+let selectedCell = null;  // "src|tar" or null
+let traceCount = 0;
+
+//────────────────────────────────────────────────────────────
+// Render matrix
+//────────────────────────────────────────────────────────────
+
+function renderMatrix() {
+  const matrix = document.getElementById('matrix');
+  matrix.innerHTML = '';
+
+  // corner
+  const corner = document.createElement('div');
+  corner.className = 'matrix-corner';
+  corner.textContent = 'src ↓ / tar →';
+  matrix.appendChild(corner);
+
+  // column headers
+  AGENT_ORDER.forEach(tarId => {
+    const tar = AGENTS[tarId];
+    const ch = document.createElement('div');
+    ch.className = 'col-header';
+    ch.setAttribute('data-tar', tarId);
+    ch.innerHTML = `<div>${tar.label}</div><div class="col-role">${tar.displayName}</div>`;
+    matrix.appendChild(ch);
+  });
+
+  // rows
+  AGENT_ORDER.forEach(srcId => {
+    const src = AGENTS[srcId];
+    // row header
+    const rh = document.createElement('div');
+    rh.className = 'row-header';
+    rh.setAttribute('data-src', srcId);
+    const canSend = src.outgoing.length > 0 || src.forbidden.length > 0;
+    rh.innerHTML = `
+      <div>
+        <div class="row-label">${src.label}</div>
+        <div class="row-role">${src.displayName}</div>
+      </div>
+      ${canSend ? '<span class="row-send">send</span>' : '<span class="row-send" style="opacity:0.4;">—</span>'}
+    `;
+    if (canSend) rh.addEventListener('click', (e) => openAgentPopup(srcId, e));
+    matrix.appendChild(rh);
+
+    // cells
+    AGENT_ORDER.forEach(tarId => {
+      const key = `${srcId}|${tarId}`;
+      const topics = cellTopics[key];
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.setAttribute('data-src', srcId);
+      cell.setAttribute('data-tar', tarId);
+      cell.setAttribute('data-key', key);
+
+      if (srcId === tarId) {
+        cell.classList.add('diagonal');
+      } else if (topics.length === 0) {
+        cell.classList.add('denied');
+      } else {
+        cell.classList.add('permitted');
+        cell.addEventListener('click', () => selectCell(key));
+        cell.addEventListener('mouseenter', () => hlRowCol(srcId, tarId));
+        cell.addEventListener('mouseleave', () => hlRowCol(null, null));
+      }
+
+      // x-mark overlay for violations
+      const xmark = document.createElement('div');
+      xmark.className = 'x-mark';
+      xmark.textContent = '✗';
+      cell.appendChild(xmark);
+
+      // count badge
+      const badge = document.createElement('div');
+      badge.className = 'count-badge';
+      cell.appendChild(badge);
+
+      matrix.appendChild(cell);
+    });
+  });
+}
+
+function hlRowCol(srcId, tarId) {
+  document.querySelectorAll('.row-hl, .col-hl').forEach(el => el.classList.remove('row-hl','col-hl'));
+  if (!srcId) return;
+  document.querySelector(`.row-header[data-src="${srcId}"]`)?.classList.add('row-hl');
+  document.querySelector(`.col-header[data-tar="${tarId}"]`)?.classList.add('col-hl');
+}
+
+//────────────────────────────────────────────────────────────
+// Publish (matrix-aware)
+//────────────────────────────────────────────────────────────
+
+function isForbidden(agentId, topic) {
+  const agent = AGENTS[agentId];
+  return agent.forbidden.some(f => {
+    if (f === topic) return true;
+    if (f.endsWith('.*')) return topic.startsWith(f.slice(0, -2) + '.');
+    return false;
+  });
+}
+
+function publishMessage(fromId, topic, content, opts = {}) {
+  const agent = AGENTS[fromId];
+  const forced = opts.forceViolation === true;
+  const violated = forced || isForbidden(fromId, topic);
+  const shortContent = content.length > 40 ? content.slice(0, 38) + '…' : content;
+  const now = new Date();
+
+  if (violated) {
+    logTrace('violation', `✗ ${fromId} → ${topic}  [contract violation, rejected by esrd]`);
+    logTrace('system', `   attempted: "${shortContent}"`);
+    const matchedRule = agent.forbidden.find(f => {
+      if (f === topic) return true;
+      if (f.endsWith('.*')) return topic.startsWith(f.slice(0, -2) + '.');
+      return false;
+    });
+    if (matchedRule) logTrace('system', `   violated clause: forbidden ${matchedRule}`);
+
+    // flash violation cells for *would-be* subscribers
+    const subs = (SUBSCRIPTIONS[topic] || []).filter(s => s !== fromId);
+    if (subs.length === 0) {
+      // no subscribers -- show violation on the agent's row (self-diagonal as fallback visual)
+      // use first permitted cell in this row as focal point, else nothing
+      const anyTar = AGENT_ORDER.find(t => t !== fromId && cellTopics[`${fromId}|${t}`].length > 0);
+      if (anyTar) flashCell(fromId, anyTar, topic, content, true);
+    } else {
+      subs.forEach(s => flashCell(fromId, s, topic, content, true));
+    }
+    return;
+  }
+
+  const subs = (SUBSCRIPTIONS[topic] || []).filter(s => s !== fromId);
+  if (subs.length === 0) {
+    logTrace('warn', `⚠ ${fromId} → ${topic}  [allowed, but no subscribers]`);
+    return;
+  }
+
+  logTrace('ok', `✓ ${fromId} → ${topic}  "${shortContent}"`);
+  logTrace('system', `   fan-out → ${subs.join(', ')}`);
+
+  subs.forEach((subId, i) => {
+    setTimeout(() => flashCell(fromId, subId, topic, content, false), i * 90);
+  });
+}
+
+function flashCell(srcId, tarId, topic, content, violation) {
+  const key = `${srcId}|${tarId}`;
+  const cell = document.querySelector(`.cell[data-key="${key}"]`);
+  if (!cell) return;
+
+  const now = new Date();
+  const color = violation ? '#dc2626' : (TOPIC_COLORS[topic] || '#888');
+
+  // record history
+  if (!cellHistory[key]) cellHistory[key] = [];
+  cellHistory[key].push({ topic, content, ts: now, violation });
+
+  // update badge count
+  const badge = cell.querySelector('.count-badge');
+  if (badge) badge.textContent = cellHistory[key].length;
+
+  // trigger animation: reset state first to allow re-trigger
+  cell.classList.remove('lit', 'violation', 'has-history');
+  void cell.offsetWidth;  // force reflow
+  cell.style.setProperty('--c', color);
+  cell.style.setProperty('--last-c', color);
+  cell.classList.add(violation ? 'violation' : 'lit');
+
+  // after pulse ends, settle into has-history state
+  setTimeout(() => {
+    cell.classList.remove('lit', 'violation');
+    if (cellHistory[key].length > 0) cell.classList.add('has-history');
+  }, 900);
+
+  // if this cell is the currently-selected one, refresh detail panel
+  if (selectedCell === key) renderDetail(key);
+}
+
+//────────────────────────────────────────────────────────────
+// Cell selection -> detail panel
+//────────────────────────────────────────────────────────────
+
+function selectCell(key) {
+  // de-highlight previous
+  document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+  const cell = document.querySelector(`.cell[data-key="${key}"]`);
+  if (cell) cell.classList.add('selected');
+  selectedCell = key;
+  renderDetail(key);
+}
+
+function renderDetail(key) {
+  const [srcId, tarId] = key.split('|');
+  const src = AGENTS[srcId], tar = AGENTS[tarId];
+  const topics = cellTopics[key];
+
+  document.getElementById('detail-title').style = '';
+  document.getElementById('detail-title').textContent = `${src.label}  →  ${tar.label}`;
+  document.getElementById('detail-subtitle').textContent = `${src.displayName} → ${tar.displayName}`;
+
+  const topicList = document.getElementById('detail-topics');
+  if (topics.length === 0) {
+    topicList.innerHTML = '<span style="color:var(--text-tertiary);font-style:italic;">No contract-permitted topic on this route</span>';
+  } else {
+    topicList.innerHTML = `<span style="color:var(--text-tertiary);">Permitted topics:</span>` + topics.map(t =>
+      `<span class="topic-chip"><span class="tc-dot" style="background:${TOPIC_COLORS[t]}"></span>${t}</span>`
+    ).join('');
+  }
+
+  const msgList = document.getElementById('detail-msgs');
+  const history = cellHistory[key] || [];
+  if (history.length === 0) {
+    msgList.innerHTML = '<div class="detail-empty">No messages have flowed through this route yet</div>';
+  } else {
+    msgList.innerHTML = history.slice().reverse().map(m => {
+      const time = m.ts.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(m.ts.getMilliseconds()).padStart(3, '0');
+      const dot = `<span class="tc-dot" style="background:${m.violation ? '#dc2626' : TOPIC_COLORS[m.topic]}"></span>`;
+      const vTag = m.violation ? ' <span style="color:var(--text-danger);font-weight:600;">[violation]</span>' : '';
+      return `<div class="msg-entry${m.violation ? ' violation' : ''}">
+        <div class="msg-meta">${dot}<span>${time}</span><span>${m.topic}</span>${vTag}</div>
+        <div class="msg-content">${escapeHtml(m.content)}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+//────────────────────────────────────────────────────────────
+// Agent send popup
+//────────────────────────────────────────────────────────────
+
+function openAgentPopup(agentId, evt) {
+  const agent = AGENTS[agentId];
+  const popup = document.getElementById('agent-popup');
+
+  let html = `
+    <div class="pp-header">
+      <button class="pp-close" onclick="closeAgentPopup()">×</button>
+      <div class="pp-title">${agent.label}</div>
+      <div class="pp-role">${agent.role}</div>
+    </div>`;
+
+  if (agent.outgoing.length === 0) {
+    html += `<div class="pp-empty">No outgoing in contract<br/>(pure consumer, e.g. journal)</div>`;
+  } else {
+    html += `<div class="pp-section">allowed by contract</div>`;
+    agent.outgoing.forEach(topic => {
+      const c = EXAMPLE_CONTENTS[topic] || 'manual trigger';
+      const safeC = c.replace(/"/g, '\\"');
+      html += `<button class="pp-btn allowed" onclick='sendFromPopup("${agentId}", "${topic}", "${safeC}", false)'>→ ${topic}</button>`;
+    });
+  }
+
+  if (agent.forbidden.length > 0) {
+    html += `<div class="pp-section danger">attempt to violate</div>`;
+    const seen = new Set();
+    agent.forbidden.forEach(rule => {
+      let concreteTopic;
+      if (rule.endsWith('.*')) {
+        const prefix = rule.slice(0, -2) + '.';
+        concreteTopic = Object.keys(SUBSCRIPTIONS).find(t => t.startsWith(prefix)) || (prefix + 'test');
+      } else {
+        concreteTopic = rule;
+      }
+      if (seen.has(concreteTopic)) return;
+      seen.add(concreteTopic);
+      html += `<button class="pp-btn violate" onclick='sendFromPopup("${agentId}", "${concreteTopic}", "[violation attempt]", true)'>✗ ${rule}</button>`;
+    });
+  }
+
+  popup.innerHTML = html;
+  popup.style.display = 'block';
+  requestAnimationFrame(() => {
+    const w = popup.offsetWidth, h = popup.offsetHeight;
+    let px = evt.clientX + 16;
+    let py = evt.clientY + 8;
+    if (px + w > window.innerWidth - 20) px = evt.clientX - w - 16;
+    if (py + h > window.innerHeight - 20) py = evt.clientY - h - 16;
+    popup.style.left = Math.max(10, px) + 'px';
+    popup.style.top  = Math.max(10, py) + 'px';
+  });
+}
+
+function closeAgentPopup() {
+  document.getElementById('agent-popup').style.display = 'none';
+}
+
+function sendFromPopup(agentId, topic, content, violate) {
+  publishMessage(agentId, topic, content, violate ? { forceViolation: true } : {});
+  closeAgentPopup();
+}
+
+document.addEventListener('click', (e) => {
+  const popup = document.getElementById('agent-popup');
+  if (popup.style.display === 'block' && !popup.contains(e.target) && !e.target.closest('.row-header')) {
+    closeAgentPopup();
+  }
+});
+
+//────────────────────────────────────────────────────────────
+// Scenarios
+//────────────────────────────────────────────────────────────
+
+function runScenario(name) {
+  const sc = SCENARIOS[name];
+  if (!sc) return;
+  stopAll();
+  logTrace('info', `━━━ ${sc.name} ━━━`);
+  logTrace('system', sc.description);
+  sc.steps.forEach(step => {
+    const t = setTimeout(() => publishMessage(step.from, step.topic, step.content), step.at);
+    scenarioTimers.push(t);
+  });
+  const endT = setTimeout(() => logTrace('info', `━━━ End of scenario ━━━`), sc.steps[sc.steps.length - 1].at + 1500);
+  scenarioTimers.push(endT);
+}
+
+function stopAll() {
+  scenarioTimers.forEach(clearTimeout);
+  scenarioTimers = [];
+}
+
+function clearAll() {
+  stopAll();
+  Object.keys(cellHistory).forEach(k => delete cellHistory[k]);
+  document.querySelectorAll('.cell').forEach(c => {
+    c.classList.remove('lit', 'violation', 'has-history');
+    const badge = c.querySelector('.count-badge');
+    if (badge) badge.textContent = '';
+  });
+  selectedCell = null;
+  document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+  const title = document.getElementById('detail-title');
+  title.style = 'color:var(--text-tertiary);font-style:italic;font-weight:400;';
+  title.textContent = 'Click a cell for route details';
+  document.getElementById('detail-subtitle').textContent = '';
+  document.getElementById('detail-topics').innerHTML = '';
+  document.getElementById('detail-msgs').innerHTML = '<div class="detail-empty">No route selected yet</div>';
+  document.getElementById('trace-list').innerHTML = '<div class="trace-empty">Cleared.</div>';
+  traceCount = 0;
+  document.getElementById('trace-count').textContent = '';
+}
+
+//────────────────────────────────────────────────────────────
+// Trace
+//────────────────────────────────────────────────────────────
+
+function logTrace(type, text) {
+  const list = document.getElementById('trace-list');
+  if (list.querySelector('.trace-empty')) list.innerHTML = '';
+  const entry = document.createElement('div');
+  entry.className = `trace-entry ${type}`;
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+  entry.textContent = `${time}  ${text}`;
+  list.insertBefore(entry, list.firstChild);
+  traceCount++;
+  while (list.children.length > 80) list.removeChild(list.lastChild);
+  document.getElementById('trace-count').textContent = `${traceCount} msgs`;
+}
+
+//────────────────────────────────────────────────────────────
+renderMatrix();
+</script>
+</body>
+</html>
