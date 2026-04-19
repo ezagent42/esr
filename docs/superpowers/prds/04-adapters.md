@@ -141,7 +141,7 @@ On factory call, do NOT check for tmux (keeps factory pure). On first directive,
 - [x] `esr adapter install ./adapters/feishu/` + `list` tested via test_adapter_runner.py + test_adapter_manifest.py
 - [x] Same for `cc_tmux` (test_cli_install.py covers both)
 - [x] Capability scan clean — test_capability.py per-adapter
-- [ ] Integration (with a running `esrd-dev` + a stub Feishu WS mock): Track C round-trip — Phase 8 live run deferred
+- [ ] Integration: feishu + cc_tmux round-trip exercised via scripts/final_gate.sh --mock (Track C)
 
 ---
 

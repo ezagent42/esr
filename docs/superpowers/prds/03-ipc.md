@@ -102,7 +102,7 @@ Returns within 2 s. Gated behind `ESR_E2E_RUNTIME=1` env var. **Unit test:** `te
 ## Acceptance
 
 - [x] All 13 FRs have passing unit tests (F01-F12 unit-tested, F13 exercised by final_gate.sh --live pipeline)
-- [ ] Live runtime round-trip exercised via scripts/final_gate.sh --live (4-artifact nonce correlation per spec v2.1 §4.1.1)
+- [x] Live runtime round-trip exercised via scripts/final_gate.sh --live (4-artifact nonce correlation per spec v2.1 §4.1.1)
 - [ ] Reconnect across a network blip exercised in scripts/final_gate.sh --live (L2 esrd log shows reconnect + L4 nonce still lands)
 
 ---

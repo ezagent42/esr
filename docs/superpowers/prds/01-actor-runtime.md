@@ -149,7 +149,7 @@ The release built via `mix release` starts the `Esr.Application`; a systemd / la
 - [x] `mix test` green; `mix credo --strict` clean; `mix dialyzer` clean
 - [x] Integration test: spawn → inject event → handler mock returns → actions dispatched → telemetry observed (peer_server_action_dispatch_test.exs + peer_server_event_handling_test.exs)
 - [x] PRD 01 unit-test count ≥ 50 — 105 achieved
-- [ ] E2E Track G-4 recovery ≤ 5 s verified via scripts/final_gate.sh --mock
+- [x] E2E Track G-4 recovery ≤ 5 s verified via scripts/final_gate.sh --mock
 
 ---
 

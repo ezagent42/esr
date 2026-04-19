@@ -134,7 +134,7 @@ If a pattern references `{{foo}}` but doesn't register `foo` as a param (via por
 - [x] Both patterns install via `esr cmd install` — test_cli_cmd_install.py covers the path
 - [x] `esr cmd list` shows both — test_cli_list.py
 - [x] `esr cmd show` renders the 3-node DAG — test_cli_cmd_show.py
-- [ ] Integration: E2E Track B spawns instances of both patterns — Phase 8 live run deferred
+- [ ] Integration: Track B spawns both patterns via scripts/final_gate.sh --mock
 
 ---
 

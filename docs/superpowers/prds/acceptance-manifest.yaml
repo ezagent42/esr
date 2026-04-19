@@ -1,0 +1,32 @@
+# Normative acceptance manifest (spec §4.3 LG-5; closes reviewer S1).
+# Every row listed here MUST appear verbatim in the matching PRD's
+# `## Acceptance` section and MUST be ticked `[x]` at Final Gate time.
+# Adding to this manifest requires a spec change.
+
+prd_01:
+  - "All 22 FRs have passing unit tests (runtime/test/ matrix green)"
+  - "`mix test` green; `mix credo --strict` clean; `mix dialyzer` clean"
+  - "Integration test: spawn → inject event → handler mock returns → actions dispatched → telemetry observed (peer_server_action_dispatch_test.exs + peer_server_event_handling_test.exs)"
+  - "PRD 01 unit-test count ≥ 50 — 105 achieved"
+  - "E2E Track G-4 recovery ≤ 5 s verified via scripts/final_gate.sh --mock"
+
+prd_02:
+  - "All 19 FRs have passing unit tests"
+
+prd_03:
+  - "All 13 FRs have passing unit tests (F01-F12 unit-tested, F13 exercised by final_gate.sh --live pipeline)"
+  - "Live runtime round-trip exercised via scripts/final_gate.sh --live (4-artifact nonce correlation per spec v2.1 §4.1.1)"
+
+prd_04:
+  - "All 22 FRs have passing unit tests — feishu + cc_tmux matrix complete"
+
+prd_05:
+  - "All 19 FRs have passing unit tests — 4 handlers × (state + on_msg), cross-cutting purity parametric in test_handlers_cross_cutting.py"
+
+prd_06:
+  - "All 11 FRs have passing unit tests — pattern + optimizer + cycle + param-lint tests green"
+
+prd_07:
+  - "All 23 FRs have passing unit tests — iter-46 → iter-57 closed every runtime-dep CLI command"
+  - "`esr --help` and every subcommand `--help` render complete docs — click auto-generates from docstrings"
+  - "Shell tab-completion documented in README (bash / zsh via click-completion)"
