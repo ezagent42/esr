@@ -113,31 +113,53 @@ def _dump_state(state: Any) -> dict[str, Any]:
     raise TypeError(f"handler returned non-state value: {type(state).__name__}")
 
 
-async def run(handler_module: str, worker_id: str, url: str) -> None:
-    """Full-orchestration entry point — joins ``handler:<module>/<worker_id>``
-    and executes ``process_handler_call`` per incoming envelope (PRD 03 F07).
-
-    Phase 8a fills in: ChannelClient setup, message-loop, graceful shutdown.
+async def run_with_client(client: Any, *, topic: str) -> None:
+    """TDD-friendly entry: given a ChannelClient, connect, join the handler
+    topic, and process handler_call envelopes by routing to
+    :func:`process_handler_call` and pushing handler_reply back on the same
+    topic.
     """
-    import asyncio
-    from esr.ipc.channel_client import ChannelClient
-    from esr.handler import HANDLER_REGISTRY as _reg  # noqa: F811 — local alias
-    _ = _reg
-    client = ChannelClient(url, source_uri=f"handler:{handler_module}/{worker_id}")
+    import asyncio as _asyncio
+
     await client.connect()
-    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-    client.on_call = queue.put_nowait
+    queue: _asyncio.Queue[dict[str, Any] | None] = _asyncio.Queue()
+
+    def _on_frame(frame: list[Any]) -> None:
+        if len(frame) < 5:
+            return
+        event, payload = frame[3], frame[4]
+        if event != "envelope" or not isinstance(payload, dict):
+            return
+        if payload.get("kind") != "handler_call":
+            return
+        queue.put_nowait(payload)
+
+    await client.join(topic, _on_frame)
     try:
         while True:
             envelope = await queue.get()
             if envelope is None:
                 return
             reply_payload = process_handler_call(envelope["payload"])
-            await client.push_envelope({
+            await client.push(topic, "envelope", {
                 "kind": "handler_reply",
                 "id": envelope["id"],
-                "source": client.source_uri,
+                "source": topic,
                 "payload": reply_payload,
             })
     finally:
         await client.close()
+
+
+async def run(handler_module: str, worker_id: str, url: str) -> None:
+    """Full-orchestration entry point — constructs a :class:`ChannelClient`
+    and delegates to :func:`run_with_client` (spec §3.4 F07). Phase 8b
+    passes handler_module/worker_id via the daemon spawning this worker.
+    """
+    from esr.handler import HANDLER_REGISTRY as _reg  # noqa: F811
+    from esr.ipc.channel_client import ChannelClient
+
+    _ = _reg  # ensure registry is imported (decorators fire)
+    topic = f"handler:{handler_module}/{worker_id}"
+    client = ChannelClient(url)
+    await run_with_client(client, topic=topic)
