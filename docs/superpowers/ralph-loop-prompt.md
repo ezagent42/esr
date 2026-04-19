@@ -50,16 +50,29 @@ Do not skip these reads. You will **not** reliably remember what you did last it
 
 ## 3.1 — Assess current state (max 2 minutes)
 
+0. **CWD guard (do this FIRST, every iteration):**
+   ```bash
+   cd /Users/h2oslabs/Workspace/esr && pwd
+   ```
+   Verify the output is exactly `/Users/h2oslabs/Workspace/esr`. If the `cd` fails, the repo is moved or missing — immediately emit `<promise>BLOCKED: esr working directory not accessible</promise>` and exit. Never operate on a different repo. This is the #1 cause of ralph-loop disasters: commits landing in the wrong git repo.
+
+   Also verify:
+   ```bash
+   git remote -v  # expected: origin pointing at the esr repo
+   git rev-parse --show-toplevel  # expected: /Users/h2oslabs/Workspace/esr
+   ```
 1. Read `.claude/.ralph-loop.local.md`. If it is missing or empty, initialise it (§7 schema) and commit it.
 2. `git log --oneline -n 20` — see what the last iterations accomplished.
 3. `git status` — anything uncommitted? If yes: resolve (commit or discard with explicit reason) before writing new code. Partial commits accumulate over iterations into unreviewable diffs.
 4. Run the full test suite to discover current green-status:
-   ```
+   ```bash
    cd /Users/h2oslabs/Workspace/esr
    make test 2>&1 | tail -50
    ```
    Record pass/fail counts in the state file §7.3.
 5. Run `make lint` to discover current lint status.
+
+**Rule for every subsequent `Bash` tool call in this iteration:** prefix every command with `cd /Users/h2oslabs/Workspace/esr && ` OR use absolute paths. Never trust the Bash tool's persistent cwd across calls — it can be reset by parent hooks.
 
 ## 3.2 — Pick one next task
 
@@ -316,17 +329,31 @@ Then in the same iteration, perform Task 1.1 Step 1.
 
 ## Notes for the user (not part of the prompt itself)
 
-### How to start
+### How to start — use a FRESH Claude Code session rooted at esr/
+
+**Do NOT start ralph-loop from a session whose primary working directory is a different repo** (e.g. cc-openclaw). Even with the CWD guard in the prompt, long-running loops across different primary workdirs accumulate drift.
+
+Recommended:
 
 ```bash
+# In a new terminal
 cd /Users/h2oslabs/Workspace/esr
-/ralph-loop "$(cat docs/superpowers/ralph-loop-prompt.md)" \
+./esr-cc.sh           # launches Claude Code rooted at this repo
+# Then inside the new session:
+./run-ralph.sh        # convenience wrapper (see below)
+```
+
+Or directly:
+
+```bash
+/ralph-loop "$(cat /Users/h2oslabs/Workspace/esr/docs/superpowers/ralph-loop-prompt.md)" \
   --completion-promise "ESR_V0_1_COMPLETE" \
   --max-iterations 200
 ```
 
 - `--max-iterations 200` is a safety valve; at ~5 minutes per iteration the loop caps at ~17 hours wall-clock if it can't converge. Adjust based on how much agent you want to spend.
 - You can interrupt anytime with `/cancel-ralph`; progress is preserved in the commit history + state file.
+- Keep your original (non-ralph) Claude Code session open in another terminal — use it to watch progress, answer blockers, and generally steer without interfering with the loop.
 
 ### How to monitor
 
