@@ -47,24 +47,40 @@ acceptance: []
 
 
 def test_scenario_run_counts_steps(scenarios_dir: Path) -> None:
-    """Reports the step count in the summary output."""
+    """Executes every step per spec v2.1 §4.2 and reports PASSED count."""
     (scenarios_dir / "three-steps.yaml").write_text(
         """\
 name: three-steps
 description: test
+mode: mock
 setup: []
 steps:
-  - {kind: shell, cmd: "true"}
-  - {kind: shell, cmd: "true"}
-  - {kind: shell, cmd: "true"}
-acceptance: []
+  - id: a
+    description: a
+    command: "printf 'actor_id=thread:x-1\\n'"
+    expect_stdout_match: 'actor_id=thread:[a-z]+-\\d+'
+    expect_exit: 0
+    timeout_sec: 5
+  - id: b
+    description: b
+    command: "printf 'actor_id=thread:y-2\\n'"
+    expect_stdout_match: 'actor_id=thread:[a-z]+-\\d+'
+    expect_exit: 0
+    timeout_sec: 5
+  - id: c
+    description: c
+    command: "printf 'actor_id=thread:z-3\\n'"
+    expect_stdout_match: 'actor_id=thread:[a-z]+-\\d+'
+    expect_exit: 0
+    timeout_sec: 5
+teardown: []
 """
     )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["scenario", "run", "three-steps"])
     assert result.exit_code == 0, result.output
-    assert "3 step" in result.output or "3 steps" in result.output
+    assert "3/3 steps PASSED" in result.output
 
 
 def test_scenario_run_malformed_yaml_errors(scenarios_dir: Path) -> None:

@@ -137,21 +137,19 @@ def scenario() -> None:
 @click.argument("name")
 @click.option("--verbose", "-v", is_flag=True, help="Per-step output.")
 def scenario_run(name: str, verbose: bool) -> None:
-    """Run an E2E scenario from ``scenarios/<name>.yaml``.
+    """Run an E2E scenario from ``scenarios/<name>.yaml`` (spec v2.1 §4.2).
 
-    The scenario YAML shape (see `docs/superpowers/tests/e2e-*.md`):
-
-        name: <str>
-        description: <str>
-        setup: [<step>, ...]
-        steps: [<step>, ...]
-        acceptance: [<assertion>, ...]
-
-    Live execution hooks up to the runtime during Phase 8; v0.1 this
-    command parses, counts, and prints a summary — enough for CI
-    orchestration to gate on exit code and surface malformed YAML
-    early.
+    Each step under ``steps:`` is executed:
+    1. Run ``command`` as a subprocess (shell=True) with
+       ``timeout_sec`` deadline.
+    2. Compare exit status to ``expect_exit`` (default 0).
+    3. Match stdout against ``expect_stdout_match`` regex.
+    On any miss, report the step failed and continue. Exit 0 iff every
+    step passed; exit 1 otherwise.
     """
+    import re
+    import subprocess as _sp
+
     path = Path.cwd() / "scenarios" / f"{name}.yaml"
     if not path.exists():
         click.echo(f"scenario {name!r} not found at {path}", err=True)
@@ -172,12 +170,63 @@ def scenario_run(name: str, verbose: bool) -> None:
         click.echo(f"invalid scenario {name!r}: steps must be a list", err=True)
         raise click.exceptions.Exit(code=1)
 
-    if verbose:
-        for i, step in enumerate(steps, 1):
-            click.echo(f"  step {i}: {step!r}")
+    passed = 0
+    failures: list[str] = []
+    for i, step in enumerate(steps, 1):
+        if not isinstance(step, dict):
+            failures.append(f"step {i}: not a mapping")
+            continue
+        cmd = step.get("command")
+        pattern = step.get("expect_stdout_match")
+        expect_exit = int(step.get("expect_exit", 0))
+        timeout_sec = int(step.get("timeout_sec", 30))
+        step_id = step.get("id", f"step-{i}")
 
-    step_word = "step" if len(steps) == 1 else "steps"
-    click.echo(f"scenario {name!r}: {len(steps)} {step_word} PASSED")
+        if not isinstance(cmd, str):
+            failures.append(f"{step_id}: missing 'command'")
+            continue
+        if not isinstance(pattern, str):
+            failures.append(f"{step_id}: missing 'expect_stdout_match'")
+            continue
+
+        try:
+            proc = _sp.run(cmd, shell=True, capture_output=True, text=True,
+                           timeout=timeout_sec, check=False)
+        except _sp.TimeoutExpired:
+            failures.append(f"{step_id}: timeout after {timeout_sec}s")
+            if verbose:
+                click.echo(f"  ✗ {step_id}  TIMEOUT")
+            continue
+
+        if proc.returncode != expect_exit:
+            failures.append(
+                f"{step_id}: exit={proc.returncode} (wanted {expect_exit})"
+            )
+            if verbose:
+                click.echo(f"  ✗ {step_id}  exit={proc.returncode}")
+            continue
+
+        if not re.search(pattern, proc.stdout):
+            failures.append(
+                f"{step_id}: stdout did not match {pattern!r}"
+            )
+            if verbose:
+                click.echo(f"  ✗ {step_id}  stdout did not match {pattern!r}")
+                click.echo(f"    stdout: {proc.stdout[:200]!r}")
+            continue
+
+        passed += 1
+        if verbose:
+            click.echo(f"  ✓ {step_id}")
+
+    total = len(steps)
+    if failures:
+        click.echo(f"scenario {name!r}: {passed}/{total} steps PASSED "
+                   f"— {len(failures)} FAILED")
+        for f in failures:
+            click.echo(f"  FAIL: {f}")
+        raise click.exceptions.Exit(code=1)
+    click.echo(f"scenario {name!r}: {passed}/{total} steps PASSED")
 
 
 # --- adapter / handler / cmd groups ------------------------------------
