@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import tomllib
@@ -10,6 +11,8 @@ from typing import Any
 
 import click
 import yaml
+
+from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
 
@@ -85,6 +88,42 @@ def use(host_port: str | None) -> None:
         )
         raise click.exceptions.Exit(code=1)
     click.echo(_host_port_from_endpoint(endpoint))
+
+
+@cli.command("status")
+def status() -> None:
+    """Probe runtime reachability (PRD 07 F02).
+
+    Connects a short-lived ChannelClient to the current context's
+    adapter_hub socket. Prints ``<endpoint> — OK`` on success, or
+    ``<endpoint> — UNREACHABLE (<reason>)`` with a non-zero exit
+    code so shells / scripts can detect it.
+    """
+    ctx = _load_context()
+    endpoint = ctx.get("endpoint")
+    if not endpoint:
+        click.echo(
+            "no context set — run `esr use <host:port>` to select an esrd endpoint",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    # Phoenix expects the ``/websocket`` suffix at the transport URL;
+    # context stores the socket path only.
+    ws_url = endpoint + "/websocket"
+    client = ChannelClient(ws_url)
+
+    async def _probe() -> None:
+        await asyncio.wait_for(client.connect(), timeout=5.0)
+        await client.close()
+
+    try:
+        asyncio.run(_probe())
+    except Exception as exc:  # noqa: BLE001 — any connect failure is UNREACHABLE
+        click.echo(f"{endpoint} — UNREACHABLE ({type(exc).__name__}: {exc})")
+        raise click.exceptions.Exit(code=1) from exc
+
+    click.echo(f"{endpoint} — OK")
 
 
 # --- adapter / handler / cmd groups ------------------------------------
