@@ -124,3 +124,24 @@ def test_process_handler_call_state_validation_error() -> None:
     reply = process_handler_call(payload)
     assert "error" in reply
     assert reply["error"]["type"] == "ValidationError"
+
+
+def test_process_handler_call_malformed_envelope_missing_handler_key() -> None:
+    """Reviewer S3: contract is 'never raises' — missing keys must surface as error."""
+    reply = process_handler_call({})
+    assert "error" in reply
+    assert reply["error"]["type"] == "MalformedEnvelope"
+
+
+def test_process_handler_call_malformed_envelope_missing_event_type() -> None:
+    """`event.event_type` is required; missing → MalformedEnvelope not KeyError."""
+    _register_noop()
+
+    payload = {
+        "handler": "noop.on_msg",
+        "state": {"counter": 0},
+        "event": {"args": {}},  # no event_type
+    }
+    reply = process_handler_call(payload)
+    assert "error" in reply
+    assert reply["error"]["type"] == "MalformedEnvelope"

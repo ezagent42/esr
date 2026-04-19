@@ -40,9 +40,15 @@ def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
     returned dict. Callers must treat ``"error" in reply`` as the
     exhaustive failure signal.
     """
-    handler_key = payload["handler"]
-    state_dict = payload.get("state", {})
-    event_dict = payload.get("event", {})
+    try:
+        handler_key = payload["handler"]
+        state_dict = payload.get("state", {})
+        event_dict = payload.get("event", {})
+        event_type = event_dict["event_type"]
+        event_source = event_dict.get("source", "")
+        event_args = dict(event_dict.get("args", {}))
+    except (KeyError, TypeError, AttributeError) as exc:
+        return _error("MalformedEnvelope", str(exc))
 
     handler_entry = HANDLER_REGISTRY.get(handler_key)
     if handler_entry is None:
@@ -60,11 +66,7 @@ def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — pydantic ValidationError + any ctor errors
         return _error(type(exc).__name__, str(exc))
 
-    event = Event(
-        source=event_dict.get("source", ""),
-        event_type=event_dict["event_type"],
-        args=dict(event_dict.get("args", {})),
-    )
+    event = Event(source=event_source, event_type=event_type, args=event_args)
 
     try:
         new_state, actions = handler_entry.fn(state, event)
