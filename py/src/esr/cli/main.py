@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -545,6 +547,19 @@ def _submit_trace(
     )
 
 
+def _stream_telemetry(
+    *, pattern: str, format: str  # noqa: A002
+) -> Iterator[dict[str, Any]]:
+    """Stream telemetry events matching ``pattern`` as they fire.
+
+    Stubbed for v0.1; Phase 8 wires to a ``cli:telemetry`` pubsub
+    subscription. Yields event dicts; the CLI formats per --format.
+    """
+    raise NotImplementedError(
+        "telemetry subscribe requires a live runtime; run `esr status` to verify."
+    )
+
+
 def _submit_actors(action: str, arg: str | None) -> Any:
     """Actor-registry queries via the runtime.
 
@@ -743,6 +758,36 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.group()
+def telemetry() -> None:
+    """Live telemetry subscriptions (PRD 07 F17)."""
+
+
+@telemetry.command("subscribe")
+@click.argument("pattern")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "table"]),
+    default="table",
+    help="Output format: table (one line per event) or json (ndjson).",
+)
+def telemetry_subscribe(pattern: str, fmt: str) -> None:
+    """Stream events matching ``<pattern>`` as they fire (PRD 07 F17).
+
+    Long-running — terminates on Ctrl-C. Pattern is the Elixir
+    dotted-event shape (e.g. ``esr.handler.*``).
+    """
+    for event in _stream_telemetry(pattern=pattern, format=fmt):
+        if fmt == "json":
+            click.echo(json.dumps(event))
+        else:
+            ts = event.get("ts", "-")
+            name = event.get("event", "?")
+            actor = event.get("actor_id", "-")
+            click.echo(f"{ts}  {name}  actor_id={actor}")
 
 
 @cli.command("trace")
