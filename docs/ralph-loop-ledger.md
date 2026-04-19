@@ -17,3 +17,4 @@
 | 8 | 2026-04-19 | 8c | cli-channel | 4293729 | unit_tests | sha256:0a8b2515259a1be3 |
 | 9 | 2026-04-19 | 8c | cli-actors-list | 44d5a43 | unit_tests | sha256:ee9172ef9e76b456 |
 | 10 | 2026-04-19 | 8c | cli-deadletter-list | 63e440a | unit_tests | sha256:9712b2a36495842c |
+| 11 | 2026-04-19 | 8c | cli-deadletter-flush | 32bfcd6 | unit_tests | sha256:81023d7774fe4c06 |

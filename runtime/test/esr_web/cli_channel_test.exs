@@ -97,4 +97,30 @@ defmodule EsrWeb.CliChannelTest do
       assert entry["target"] == "ghost:42"
     end
   end
+
+  describe "cli:deadletter/flush" do
+    setup do
+      Esr.DeadLetter.clear(Esr.DeadLetter)
+      # prime the queue with one entry
+      Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+        reason: :test_prime,
+        target: "ghost:flush"
+      })
+      Process.sleep(20)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-flush", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:deadletter/flush")
+
+      %{flush_socket: socket}
+    end
+
+    test "empties the queue and reports count", %{flush_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"]["flushed"] == 1
+      assert Esr.DeadLetter.list(Esr.DeadLetter) == []
+    end
+  end
 end

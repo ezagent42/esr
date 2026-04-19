@@ -51,6 +51,12 @@ defmodule EsrWeb.CliChannel do
     %{"data" => data}
   end
 
+  def dispatch("cli:deadletter/flush", _payload) do
+    flushed = length(Esr.DeadLetter.list(Esr.DeadLetter))
+    :ok = Esr.DeadLetter.clear(Esr.DeadLetter)
+    %{"data" => %{"flushed" => flushed}}
+  end
+
   def dispatch(topic, payload) do
     # Phase 8c iterates: add a case clause per real cli:<op>. Until then,
     # echo so the Python CLI can observe that its call reached the runtime
