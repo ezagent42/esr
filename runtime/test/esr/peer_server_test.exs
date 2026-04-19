@@ -75,6 +75,35 @@ defmodule Esr.PeerServerTest do
     end
   end
 
+  describe "trap_exit handling (S8)" do
+    test "{:EXIT, _, _} info messages from non-parent pids don't produce unhandled-info warnings" do
+      import ExUnit.CaptureLog
+
+      {:ok, pid} =
+        Esr.PeerServer.start_link(
+          actor_id: "trap-exit-test-#{System.unique_integer([:positive])}",
+          actor_type: "test_type",
+          handler_module: "noop.handler",
+          initial_state: %{}
+        )
+
+      # EXIT from the parent (the test process) is a stop signal to the
+      # GenServer — send from a disposable pid instead so we exercise
+      # the info-path clause.
+      fake_from = spawn(fn -> :ok end)
+
+      log =
+        capture_log(fn ->
+          send(pid, {:EXIT, fake_from, :normal})
+          send(pid, {:EXIT, fake_from, :shutdown})
+          Process.sleep(20)
+        end)
+
+      refute log =~ "unexpected"
+      assert Process.alive?(pid)
+    end
+  end
+
   describe "dedup_keys bound (F05)" do
     test "dedup_keys is capped at 1000 entries with FIFO eviction" do
       handler = "dedup-bound-#{System.unique_integer([:positive])}"

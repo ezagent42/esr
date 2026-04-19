@@ -210,6 +210,15 @@ defmodule Esr.PeerServer do
     end
   end
 
+  # init/1 sets trap_exit: true so terminate/2 fires on supervisor
+  # shutdown (F14 stop-cascade telemetry). PeerServer doesn't link any
+  # worker explicitly, so incoming {:EXIT, _, _} messages are stray —
+  # swallow them to avoid FunctionClauseError crashes in handle_info/2
+  # (reviewer S8).
+  def handle_info({:EXIT, _from, _reason}, %__MODULE__{} = state) do
+    {:noreply, state}
+  end
+
   # ------------------------------------------------------------------
   # Event invocation pipeline (F06)
   # ------------------------------------------------------------------
