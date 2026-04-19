@@ -70,7 +70,12 @@ async def test_emit_events_mock_yields_msg_received() -> None:
         args = envelope["args"]
         assert args["chat_id"] == "oc_unit_test"
         assert args["sender_id"] == "ou_sender_1"
-        assert "hello from mock" in args["content"]
+        # content is plain text, NOT the wrapping JSON the Lark API uses
+        # on the wire — handlers (feishu_app.on_msg) compare against
+        # literal prefixes like "/new-thread" so the adapter does the
+        # one-time JSON unwrap at the boundary.
+        assert args["content"] == "hello from mock"
+        assert "hello from mock" in args["raw_content"]
         assert args["msg_type"] == "text"
     finally:
         await mock.stop()

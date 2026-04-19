@@ -56,6 +56,28 @@ def _is_rate_limited(ack: dict[str, Any]) -> bool:
     return ack.get("code") == 429
 
 
+def _extract_text(raw_content: str, msg_type: str) -> str:
+    """Unwrap the Lark-encoded ``content`` field into a plain string.
+
+    Lark messages of type ``text`` encode the payload as
+    ``{"text": "..."}``. Other types (post, image, audio, etc.) use
+    distinct schemas we don't decode here — returning the raw content
+    preserves diagnostic value without losing information.
+    """
+    if not raw_content:
+        return ""
+    if msg_type == "text":
+        try:
+            parsed = json.loads(raw_content)
+        except (ValueError, TypeError):
+            return raw_content
+        if isinstance(parsed, dict):
+            text = parsed.get("text")
+            if isinstance(text, str):
+                return text
+    return raw_content
+
+
 @adapter(
     name="feishu",
     allowed_io={
@@ -332,13 +354,21 @@ class FeishuAdapter:
                 event = data.event
                 message = event.message
                 sender = event.sender
+                raw_content = getattr(message, "content", "") or ""
+                msg_type = getattr(message, "message_type", "") or ""
+                # Feishu text messages wrap the body as JSON {"text": "..."}.
+                # Handlers work with the plain text (e.g. "/new-thread foo"),
+                # so unwrap once at the adapter boundary and keep raw under
+                # a separate key for debugging.
+                extracted = _extract_text(raw_content, msg_type)
                 payload = {
                     "event_type": "msg_received",
                     "args": {
                         "chat_id": getattr(message, "chat_id", "") or "",
                         "message_id": getattr(message, "message_id", "") or "",
-                        "content": getattr(message, "content", "") or "",
-                        "msg_type": getattr(message, "message_type", "") or "",
+                        "content": extracted,
+                        "raw_content": raw_content,
+                        "msg_type": msg_type,
                         "sender_id": getattr(
                             getattr(sender, "sender_id", None), "open_id", ""
                         ) or "",
@@ -408,13 +438,16 @@ class FeishuAdapter:
                             message = event.get("message") or {}
                             sender = event.get("sender") or {}
                             sender_id = sender.get("sender_id") or {}
+                            raw_content = message.get("content", "")
+                            msg_type = message.get("message_type", "")
                             yield {
                                 "event_type": "msg_received",
                                 "args": {
                                     "chat_id": message.get("chat_id", ""),
                                     "message_id": message.get("message_id", ""),
-                                    "content": message.get("content", ""),
-                                    "msg_type": message.get("message_type", ""),
+                                    "content": _extract_text(raw_content, msg_type),
+                                    "raw_content": raw_content,
+                                    "msg_type": msg_type,
                                     "sender_id": sender_id.get("open_id", ""),
                                     "sender_type": sender.get("sender_type", ""),
                                     "thread_id": message.get("thread_id", ""),
