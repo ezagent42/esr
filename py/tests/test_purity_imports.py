@@ -90,3 +90,42 @@ def test_scan_imports_rejects_submodule_of_disallowed(tmp_path: Path) -> None:
     violations = scan_imports(path)
     assert len(violations) == 1
     assert violations[0].module == "lark_oapi"
+
+
+def test_scan_imports_skips_type_checking_guards(tmp_path: Path) -> None:
+    """Reviewer S6: `if TYPE_CHECKING: import X` is the idiomatic escape
+    hatch for forward references; static-only imports never run and
+    must not be flagged."""
+    path = _make_handler(
+        tmp_path,
+        """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas  # static-only; never executed
+    from aiohttp import ClientSession  # also typing-only
+
+
+def handler(state, event):
+    return state, []
+""",
+    )
+    violations = scan_imports(path)
+    assert violations == []
+
+
+def test_scan_imports_still_flags_function_body_imports(tmp_path: Path) -> None:
+    """Imports inside a function body are still runtime imports → flag."""
+    path = _make_handler(
+        tmp_path,
+        """
+def handler(state, event):
+    import requests  # runtime import, must be flagged
+    return state, []
+""",
+    )
+    violations = scan_imports(path)
+    assert len(violations) == 1
+    assert violations[0].module == "requests"

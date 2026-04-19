@@ -58,37 +58,54 @@ def scan_imports(path: Path, *, extra_allowed: set[str] | None = None) -> list[V
     tree = ast.parse(source, filename=str(path))
 
     violations: list[Violation] = []
-    for stmt in ast.walk(tree):
-        if isinstance(stmt, ast.Import):
-            for alias in stmt.names:
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, ast.If) and _is_type_checking_guard(node.test):
+            # Imports inside `if TYPE_CHECKING:` are static-only and
+            # never execute; skip the whole subtree (reviewer S6).
+            return
+        if isinstance(node, ast.Import):
+            for alias in node.names:
                 top = alias.name.split(".", 1)[0]
                 if top not in allowed:
                     violations.append(
                         Violation(
                             module=top,
-                            lineno=stmt.lineno,
+                            lineno=node.lineno,
                             message=(
                                 f"import {alias.name!r} not in allow-list "
                                 f"(top-level {top!r})"
                             ),
                         )
                     )
-        elif isinstance(stmt, ast.ImportFrom):
-            if stmt.module is None:
-                continue  # `from . import foo` — skip
-            top = stmt.module.split(".", 1)[0]
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            top = node.module.split(".", 1)[0]
             if top not in allowed:
                 violations.append(
                     Violation(
                         module=top,
-                        lineno=stmt.lineno,
+                        lineno=node.lineno,
                         message=(
-                            f"from {stmt.module!r} import ... not in allow-list "
+                            f"from {node.module!r} import ... not in allow-list "
                             f"(top-level {top!r})"
                         ),
                     )
                 )
+
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
     return violations
+
+
+def _is_type_checking_guard(test: ast.AST) -> bool:
+    """Return True for the idiomatic `if TYPE_CHECKING:` / `if typing.TYPE_CHECKING:` guard."""
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
 
 
 # --- F17: frozen-state harness ------------------------------------------
