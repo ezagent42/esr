@@ -1,0 +1,7 @@
+# ESR handler manifest (PRD 05 F02)
+name = "tmux_proxy"
+version = "0.1.0"
+module = "esr_handler_tmux_proxy.on_msg"
+entry = "on_msg"
+actor_type = "tmux_proxy"
+allowed_imports = []

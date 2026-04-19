@@ -1,0 +1,7 @@
+# ESR handler manifest (PRD 05 F02)
+name = "feishu_app"
+version = "0.1.0"
+module = "esr_handler_feishu_app.on_msg"
+entry = "on_msg"
+actor_type = "feishu_app_proxy"
+allowed_imports = []

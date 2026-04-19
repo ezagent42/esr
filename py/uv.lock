@@ -396,6 +396,10 @@ dependencies = [
 dev = [
     { name = "esr-adapter-cc-tmux" },
     { name = "esr-adapter-feishu" },
+    { name = "esr-handler-cc-session" },
+    { name = "esr-handler-feishu-app" },
+    { name = "esr-handler-feishu-thread" },
+    { name = "esr-handler-tmux-proxy" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -417,6 +421,10 @@ requires-dist = [
 dev = [
     { name = "esr-adapter-cc-tmux", editable = "../adapters/cc_tmux" },
     { name = "esr-adapter-feishu", editable = "../adapters/feishu" },
+    { name = "esr-handler-cc-session", editable = "../handlers/cc_session" },
+    { name = "esr-handler-feishu-app", editable = "../handlers/feishu_app" },
+    { name = "esr-handler-feishu-thread", editable = "../handlers/feishu_thread" },
+    { name = "esr-handler-tmux-proxy", editable = "../handlers/tmux_proxy" },
     { name = "mypy", specifier = ">=1.7" },
     { name = "pytest", specifier = ">=7.4" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
@@ -452,6 +460,50 @@ requires-dist = [
     { name = "esr", editable = "." },
     { name = "lark-oapi", specifier = ">=1.0" },
 ]
+
+[[package]]
+name = "esr-handler-cc-session"
+version = "0.1.0"
+source = { editable = "../handlers/cc_session" }
+dependencies = [
+    { name = "esr" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "esr", editable = "." }]
+
+[[package]]
+name = "esr-handler-feishu-app"
+version = "0.1.0"
+source = { editable = "../handlers/feishu_app" }
+dependencies = [
+    { name = "esr" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "esr", editable = "." }]
+
+[[package]]
+name = "esr-handler-feishu-thread"
+version = "0.1.0"
+source = { editable = "../handlers/feishu_thread" }
+dependencies = [
+    { name = "esr" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "esr", editable = "." }]
+
+[[package]]
+name = "esr-handler-tmux-proxy"
+version = "0.1.0"
+source = { editable = "../handlers/tmux_proxy" }
+dependencies = [
+    { name = "esr" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "esr", editable = "." }]
 
 [[package]]
 name = "frozenlist"
