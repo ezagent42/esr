@@ -59,4 +59,55 @@ defmodule Esr.AdapterHub.RegistryTest do
       assert {"adapter:cc_tmux/b", "bb"} in list
     end
   end
+
+  describe "process monitoring (S5)" do
+    test "bindings belonging to a dead actor are cleaned up" do
+      # Spawn a simple process and register it in PeerRegistry under
+      # an actor_id so AdapterHub.Registry can monitor it when we bind.
+      test_pid = self()
+
+      owner_pid =
+        spawn(fn ->
+          {:ok, _} = Registry.register(Esr.PeerRegistry, "owner:1", nil)
+          send(test_pid, :owner_registered)
+
+          receive do
+            :die -> :ok
+          end
+        end)
+
+      assert_receive :owner_registered, 500
+
+      :ok = Reg.bind("adapter:feishu/monitored", "owner:1")
+      assert {:ok, "owner:1"} = Reg.lookup("adapter:feishu/monitored")
+
+      # Kill the owner; its Registry entry clears async and AdapterHub
+      # must drop the binding via DOWN handling.
+      ref = Process.monitor(owner_pid)
+      send(owner_pid, :die)
+      assert_receive {:DOWN, ^ref, :process, ^owner_pid, _}, 500
+
+      # Poll briefly for the async DOWN message to reach the registry.
+      wait_until_unbound("adapter:feishu/monitored", 50)
+      assert Reg.lookup("adapter:feishu/monitored") == :error
+    end
+
+    test "bindings for unknown actor_id (never registered) stay without a monitor" do
+      # If the owner isn't in PeerRegistry at bind time there's no pid
+      # to monitor. The binding is still stored (idempotent upsert).
+      :ok = Reg.bind("adapter:feishu/ghost", "owner:ghost")
+      assert {:ok, "owner:ghost"} = Reg.lookup("adapter:feishu/ghost")
+    end
+  end
+
+  defp wait_until_unbound(_topic, 0), do: :ok
+
+  defp wait_until_unbound(topic, tries) do
+    case Reg.lookup(topic) do
+      :error -> :ok
+      {:ok, _} ->
+        Process.sleep(10)
+        wait_until_unbound(topic, tries - 1)
+    end
+  end
 end
