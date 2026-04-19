@@ -132,7 +132,7 @@ class ChannelClient:
         self._topic_join_refs[topic] = join_ref
         self._topic_handlers[topic] = on_msg
 
-        fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending_replies[ref] = fut
         await self._send_frame([join_ref, ref, topic, "phx_join", {}])
         reply = await fut
