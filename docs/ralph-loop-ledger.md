@@ -24,3 +24,4 @@
 | 15 | 2026-04-19 | 8c | cli-drain | fbc269b | unit_tests | sha256:92e8e24e7e57607f |
 | 16 | 2026-04-19 | 8c | cli-stop-name | c00aa29 | unit_tests | sha256:dfc30744dc472dcc |
 | 17 | 2026-04-19 | 8c | cli-run-name | 427ba9e | unit_tests | sha256:77f677782894a6d7 |
+| 18 | 2026-04-19 | 8c | cli-actors-tree | 5b57d5a | unit_tests | sha256:d54b9935f94020f1 |

@@ -47,6 +47,20 @@ defmodule EsrWeb.CliChannel do
     %{"data" => data}
   end
 
+  def dispatch("cli:actors/tree", _payload) do
+    topologies =
+      Esr.Topology.Registry.list_all()
+      |> Enum.map(fn h ->
+        %{
+          "name" => h.name,
+          "params" => stringify_keys(h.params),
+          "peer_ids" => h.peer_ids
+        }
+      end)
+
+    %{"data" => %{"topologies" => topologies}}
+  end
+
   def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
     case Esr.PeerRegistry.lookup(actor_id) do
       {:ok, _pid} ->

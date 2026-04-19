@@ -59,6 +59,51 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:actors/tree" do
+    setup do
+      {:ok, _handle1} =
+        Esr.Topology.Registry.register(
+          "feishu-thread-session",
+          %{"thread_id" => "tree-a"},
+          ["thread:tree-a", "tmux:tree-a", "cc:tree-a"]
+        )
+
+      {:ok, _handle2} =
+        Esr.Topology.Registry.register(
+          "feishu-app-session",
+          %{"app_id" => "tree-b"},
+          ["feishu-app:tree-b"]
+        )
+
+      on_exit(fn ->
+        Esr.Topology.Registry.list_all()
+        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
+      end)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-tree", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:actors/tree")
+
+      %{tree_socket: socket}
+    end
+
+    test "groups actors by their topology instantiation", %{tree_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      data = response["data"]
+      assert is_list(data["topologies"])
+
+      thread = Enum.find(data["topologies"], &(&1["name"] == "feishu-thread-session"))
+      app = Enum.find(data["topologies"], &(&1["name"] == "feishu-app-session"))
+
+      assert thread["params"] == %{"thread_id" => "tree-a"}
+      assert Enum.sort(thread["peer_ids"]) == ["cc:tree-a", "thread:tree-a", "tmux:tree-a"]
+      assert app["params"] == %{"app_id" => "tree-b"}
+      assert app["peer_ids"] == ["feishu-app:tree-b"]
+    end
+  end
+
   describe "cli:actors/inspect" do
     setup do
       actor_id = "thread:inspect-test-#{System.unique_integer([:positive])}"
