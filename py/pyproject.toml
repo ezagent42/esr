@@ -40,6 +40,10 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# importlib import mode supports duplicate test-file basenames across
+# different test directories (e.g. adapters/feishu/tests/test_registration.py
+# and adapters/cc_tmux/tests/test_registration.py).
+addopts = "--import-mode=importlib"
 testpaths = [
     "tests",
     "../adapters/feishu/tests",
