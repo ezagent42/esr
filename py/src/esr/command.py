@@ -324,7 +324,9 @@ def compile_topology(name: str) -> Topology:
 
     _check_cycles(ctx.nodes)
     live_nodes = _eliminate_dead_nodes(ctx.nodes, ctx.edges)
-    params = tuple(sorted(_extract_params(live_nodes)))
+    raw_params = _extract_params(live_nodes)
+    _lint_params(raw_params, ctx.ports_in)
+    params = tuple(sorted(raw_params))
 
     return Topology(
         name=name,
@@ -334,6 +336,31 @@ def compile_topology(name: str) -> Topology:
         ports_out=MappingProxyType(dict(ctx.ports_out)),
         params=params,
     )
+
+
+def _lint_params(used: set[str], ports_in: dict[str, str]) -> None:
+    """Reject template refs that don't match a declared port.input (PRD 06 F11).
+
+    Rule: when a pattern declares any ``port.input`` entries **and** uses
+    any ``{{foo}}`` templates, every template name must appear in the
+    declared port.input set. This catches typos and renames.
+
+    Patterns with no port.input are exempt — they declare their params
+    implicitly via template references (see feishu-app-session).
+
+    The reverse direction (port.input declared but never referenced as
+    a template) is **not** an error: port.input in the EDSL doubles as
+    a topology connection point and can legitimately exist without
+    being a parametric substitution.
+    """
+    if not ports_in or not used:
+        return
+    declared = set(ports_in.keys())
+    undeclared = used - declared
+    if undeclared:
+        raise ValueError(
+            f"undeclared template references: {sorted(undeclared)}"
+        )
 
 
 def _eliminate_dead_nodes(

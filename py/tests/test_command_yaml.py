@@ -27,8 +27,9 @@ def test_yaml_round_trip(tmp_path: Path) -> None:
 
     @command("cmd-y")
     def build() -> None:
-        port.input("from_feishu", "FeishuMsg")
-        port.output("to_cc", "CCCmd")
+        # No port.input here — templates become implicit params.
+        # (Patterns that use port.input MUST have every template name
+        #  appear in the declared port list — see PRD 06 F11.)
         a = node(
             id="proxy",
             actor_type="feishu_thread",
@@ -52,7 +53,7 @@ def test_yaml_round_trip(tmp_path: Path) -> None:
     assert data["schema_version"] == 1
     assert data["name"] == "cmd-y"
     assert data["params"] == ["app_id", "thread_id"]
-    assert data["ports"] == {"in": {"from_feishu": "FeishuMsg"}, "out": {"to_cc": "CCCmd"}}
+    assert data["ports"] == {"in": {}, "out": {}}
     assert data["edges"] == [["proxy", "cc"]]
 
     # init_directive round-trips intact
