@@ -126,12 +126,12 @@ The release built via `mix release` starts the `Esr.Application`; a systemd / la
 | F04 | `runtime/test/esr/peer_supervisor_test.exs` | start_peer / stop_peer / crash isolation |
 | F05 | `runtime/test/esr/peer_server_test.exs` | state init / dedup bound / pause queue |
 | F06 | `runtime/test/esr/peer_server_test.exs` | inbound_event happy / timeout / crash-retry |
-| F07 | `runtime/test/esr/peer_server_action_test.exs` | emit / route / invoke_command / rejection |
-| F08 | `runtime/test/esr/adapter_hub_registry_test.exs` | bind / unbind / lookup |
-| F09 | `runtime/test/esr_web/adapter_channel_test.exs` | subscribe / push / PeerServer mailbox |
-| F10 | `runtime/test/esr/handler_router/pool_test.exs` | spawn N / respawn on exit |
-| F11 | `runtime/test/esr/handler_router_test.exs` | call happy / timeout / crash / purity |
-| F12 | `runtime/test/esr_web/handler_channel_test.exs` | call round-trip |
+| F07 | `runtime/test/esr/peer_server_action_dispatch_test.exs` | emit / route / invoke_command / rejection |
+| F08 | `runtime/test/esr/adapter_hub/registry_test.exs` | bind / unbind / lookup |
+| F09 | `runtime/test/esr/adapter_hub/channel_test.exs` | subscribe / push / PeerServer mailbox |
+| F10 | `runtime/test/esr/handler_router/call_test.exs` | spawn N / respawn on exit |
+| F11 | `runtime/test/esr/handler_router/call_test.exs` | call happy / timeout / crash / purity |
+| F12 | `runtime/test/esr/handler_router/channel_test.exs` | call round-trip |
 | F13 | `runtime/test/esr/topology/instantiator_test.exs` | spawn / params-missing / dep-missing / DAG / cycle |
 | F13b | `runtime/test/esr/topology/init_directive_test.exs` | happy / ack-error rollback / timeout rollback / args substitution |
 | F14 | `runtime/test/esr/topology/instantiator_test.exs` | stop reverse order |

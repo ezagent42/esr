@@ -116,17 +116,17 @@ If a pattern references `{{foo}}` but doesn't register `foo` as a param (via por
 
 | FR | Test file | Test name |
 |---|---|---|
-| F01 | `patterns/tests/test_feishu_app_session.py` | one-node compile |
-| F02 | `patterns/tests/test_feishu_thread_session.py` | 3-node DAG compile |
-| F03 | `patterns/tests/test_compile_yaml.py` | round-trip |
+| F01 | `py/tests/test_pattern_feishu_app_session.py` | one-node compile |
+| F02 | `py/tests/test_pattern_feishu_thread_session.py` | 3-node DAG compile |
+| F03 | `py/tests/test_pattern_compile_yaml.py` | round-trip |
 | F04 | same | byte-deterministic |
-| F05 | `patterns/tests/test_optimizer_dead.py` | orphan removed |
-| F06 | `patterns/tests/test_optimizer_cse.py` | merged node |
-| F07 | `patterns/tests/test_cycle_rejected.py` | cycle → error |
-| F08 | `patterns/tests/test_install_resolution.py` | missing dep → error |
-| F09 | `patterns/tests/test_install_writes_compiled.py` | `.compiled/*.yaml` written |
-| F10 | `patterns/tests/test_show.py` | pretty print |
-| F11 | `patterns/tests/test_param_lint.py` | lint errors |
+| F05 | `py/tests/test_optimizer_dead_node.py` | orphan removed |
+| F06 | `py/tests/test_optimizer_cse.py` | merged node |
+| F07 | `py/tests/test_pattern_cycle_rejected.py` | cycle → error |
+| F08 | `py/tests/test_cli_cmd_install.py` | missing dep → error |
+| F09 | `py/tests/test_cli_cmd_install.py` | `.compiled/*.yaml` written |
+| F10 | `py/tests/test_cli_cmd_show.py` | pretty print |
+| F11 | `py/tests/test_pattern_param_lint.py` | lint errors |
 
 ## Acceptance
 

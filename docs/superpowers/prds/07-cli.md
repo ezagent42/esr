@@ -117,13 +117,13 @@ Every CLI command:
 |---|---|---|
 | F01 | `py/tests/test_cli_use.py` | set / read / env override |
 | F02 | `py/tests/test_cli_status.py` | status display |
-| F03 | `py/tests/test_cli_adapter_install.py` | local / git / fail |
+| F03 | `py/tests/test_cli_install.py` | local / git / fail |
 | F04 | `py/tests/test_cli_adapter_add.py` | instance config |
-| F05 | `py/tests/test_cli_adapter.py` | list / remove |
-| F06 | `py/tests/test_cli_handler_install.py` | handler install |
-| F07 | `py/tests/test_cli_handler.py` | list / remove |
+| F05 | `py/tests/test_cli_list.py` | list / remove |
+| F06 | `py/tests/test_cli_install.py` | handler install |
+| F07 | `py/tests/test_cli_list.py` | list / remove |
 | F08 | `py/tests/test_cli_cmd_install.py` | install / missing dep |
-| F09 | `py/tests/test_cli_cmd.py` | list / show / upgrade / uninstall |
+| F09 | `py/tests/test_cli_cmd_show.py` | list / show / upgrade / uninstall |
 | F10 | `py/tests/test_cli_cmd_compile.py` | compile |
 | F11 | `py/tests/test_cli_cmd_run.py` | run |
 | F12 | `py/tests/test_cli_cmd_stop.py` | stop |
