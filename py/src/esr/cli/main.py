@@ -496,23 +496,35 @@ def cmd_compile(name: str, output: Path | None) -> None:
     click.echo(f"compiled {name} → {out}")
 
 
+def _response(reply: dict[str, Any]) -> dict[str, Any]:
+    """Extract the ``response`` dict from a phx_reply envelope. Surfaces
+    ``status != "ok"`` as :class:`RuntimeError`."""
+    status = reply.get("status")
+    if status != "ok":
+        raise RuntimeError(f"runtime returned status={status!r}; reply={reply!r}")
+    resp = reply.get("response") or {}
+    return resp if isinstance(resp, dict) else {}
+
+
 def _submit_cmd_run(artifact: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
     """Send a compiled artifact + params to the runtime for instantiation."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
+    from esr.cli.runtime_bridge import call_runtime
     name = artifact.get("name", "unknown")
-    reply = call(client, topic=f"cli:run/{name}",
-                 payload={"artifact": artifact, "params": params})
-    return {"name": name, "params": params, "peer_ids": reply.get("peer_ids", [])}
+    resp = _response(call_runtime(
+        topic=f"cli:run/{name}",
+        payload={"artifact": artifact, "params": params},
+    ))
+    return {"name": name, "params": params, "peer_ids": resp.get("peer_ids", [])}
 
 
 def _submit_cmd_stop(name: str, params: dict[str, str]) -> dict[str, Any]:
     """Deactivate a running instantiation by (name, params) via the runtime."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    reply = call(client, topic=f"cli:stop/{name}",
-                 payload={"name": name, "params": params})
-    return {"name": name, "params": params, "stopped_peer_ids": reply.get("stopped_peer_ids", [])}
+    from esr.cli.runtime_bridge import call_runtime
+    resp = _response(call_runtime(
+        topic=f"cli:stop/{name}",
+        payload={"name": name, "params": params},
+    ))
+    return {"name": name, "params": params, "stopped_peer_ids": resp.get("stopped_peer_ids", [])}
 
 
 def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
@@ -530,54 +542,67 @@ def _submit_trace(
     *, session: str | None, last: str | None, filter: str | None  # noqa: A002
 ) -> list[dict[str, Any]]:
     """Query the runtime telemetry-buffer ring via ``cli:trace`` topic."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    reply = call(client, topic="cli:trace",
-                 payload={"session": session, "last": last, "filter": filter})
-    entries = reply.get("entries", [])
+    from esr.cli.runtime_bridge import call_runtime
+    resp = _response(call_runtime(
+        topic="cli:trace",
+        payload={"session": session, "last": last, "filter": filter},
+    ))
+    entries = resp.get("entries", [])
     return entries if isinstance(entries, list) else []
 
 
 def _submit_debug(action: str, args: dict[str, Any]) -> dict[str, Any]:
     """Debug control ops via ``cli:debug`` topic."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    return call(client, topic=f"cli:debug/{action}", payload=args)
+    from esr.cli.runtime_bridge import call_runtime
+    return _response(call_runtime(topic=f"cli:debug/{action}", payload=args))
 
 
 def _submit_drain(*, timeout: str | None) -> dict[str, Any]:
     """Graceful shutdown via ``cli:drain`` topic."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    return call(client, topic="cli:drain", payload={"timeout": timeout}, timeout_sec=120.0)
+    from esr.cli.runtime_bridge import call_runtime
+    return _response(call_runtime(
+        topic="cli:drain", payload={"timeout": timeout}, timeout_sec=120.0,
+    ))
 
 
 def _stream_telemetry(
     *, pattern: str, format: str  # noqa: A002
 ) -> Iterator[dict[str, Any]]:
-    """Stream matching telemetry events via ``cli:telemetry`` subscription."""
-    from esr.cli.runtime_bridge import connect
-    client = connect()
-    import asyncio
-    subscription = asyncio.run(client.subscribe(f"cli:telemetry/{pattern}"))
-    for event in subscription:
-        yield event
+    """Stream matching telemetry events via ``cli:telemetry`` subscription.
+
+    Phase 8c iterates: proper streaming needs a dedicated subscription API
+    on ChannelClient. For now, issues a single cli:telemetry call that
+    returns the currently-buffered batch and yields those events. Live
+    subscription tail is Phase 8d work.
+    """
+    from esr.cli.runtime_bridge import call_runtime
+    resp = _response(call_runtime(
+        topic=f"cli:telemetry/{pattern}",
+        payload={"format": format},
+    ))
+    events = resp.get("events", [])
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict):
+                yield event
 
 
 def _submit_actors(action: str, arg: str | None) -> Any:
     """Actor-registry queries via ``cli:actors`` topic."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    reply = call(client, topic=f"cli:actors/{action}", payload={"arg": arg})
-    return reply.get("data")
+    from esr.cli.runtime_bridge import call_runtime
+    resp = _response(call_runtime(
+        topic=f"cli:actors/{action}", payload={"arg": arg},
+    ))
+    return resp.get("data")
 
 
 def _submit_deadletter(action: str, arg: str | None) -> Any:
     """Deadletter control ops via ``cli:deadletter`` topic."""
-    from esr.cli.runtime_bridge import call, connect
-    client = connect()
-    reply = call(client, topic=f"cli:deadletter/{action}", payload={"arg": arg})
-    return reply.get("data")
+    from esr.cli.runtime_bridge import call_runtime
+    resp = _response(call_runtime(
+        topic=f"cli:deadletter/{action}", payload={"arg": arg},
+    ))
+    return resp.get("data")
 
 
 @cmd.command("run")
