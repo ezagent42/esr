@@ -1,0 +1,12 @@
+{
+  "enableAllProjectMcpServers": true,
+  "channelsEnabled": true,
+  "enabledPlugins": {
+    "agent-setup@agent-setup": true
+  },
+  "permissions": {
+    "allow": [
+      "Edit(/Users/h2oslabs/Workspace/esr/.claude/*)"
+    ]
+  }
+}
