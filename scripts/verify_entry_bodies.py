@@ -23,7 +23,7 @@ DEFAULT_MANIFEST: list[tuple[str, list[str]]] = [
         "_submit_trace", "_stream_telemetry", "_submit_debug",
         "_submit_deadletter", "_submit_drain",
     ]),
-    ("py/src/esr/cli/runtime_bridge.py", ["connect", "call", "push_event"]),
+    ("py/src/esr/cli/runtime_bridge.py", ["call_runtime"]),
 ]
 
 STUB_ERROR_SENTINELS = {"not yet wired", "not implemented", "stub", "deferred"}

@@ -1,48 +1,77 @@
-"""CLI → runtime Phoenix-channel bridge (Phase 8c base).
+"""CLI → runtime Phoenix-channel bridge (Phase 8c).
 
-The eight ``_submit_*`` helpers in ``esr.cli.main`` funnel through ``call``
-below. Phase 8c iterates to: real ChannelClient setup, per-op topic
-mapping, timeout + retry policy, structured error surfacing.
+The CLI is short-lived, so each ``cli:<op>`` RPC is one-shot: connect +
+join + :meth:`ChannelClient.call` + close. Presents a synchronous
+interface to the 8 ``_submit_*`` helpers in :mod:`esr.cli.main`.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from esr.ipc.url import discover_runtime_url
 
 
 class RuntimeUnreachable(RuntimeError):
-    """Raised when the CLI cannot reach a running esrd. The message always
-    includes the endpoint it tried so operators can diagnose.
+    """Raised when the CLI cannot reach a running esrd. Always carries
+    the endpoint URL that was tried.
     """
 
 
-def connect(*, override: str | None = None) -> Any:
-    """Open a ChannelClient joined to the ``cli:<op>`` control socket."""
-    url = discover_runtime_url(override=override, kind="handler")
+async def _call_runtime_async(
+    *,
+    topic: str,
+    event: str,
+    payload: dict[str, Any],
+    url: str,
+    timeout_sec: float,
+) -> dict[str, Any]:
     from esr.ipc.channel_client import ChannelClient
-    client = ChannelClient(url, source_uri="cli")
-    import asyncio
-    asyncio.run(client.connect())
-    return client
+
+    client = ChannelClient(url)
+    try:
+        await client.connect()
+    except Exception as exc:
+        raise RuntimeUnreachable(
+            f"could not connect to esrd at {url}: {exc}"
+        ) from exc
+    try:
+        await client.join(topic, lambda frame: None)
+        return await client.call(topic, event, payload, timeout=timeout_sec)
+    finally:
+        await client.close()
 
 
-def call(client: Any, *, topic: str, payload: dict[str, Any],
-         timeout_sec: float = 30.0) -> dict[str, Any]:
-    """Send a CLI control envelope and await the reply."""
-    import asyncio
-    envelope = {"kind": "cli_call", "topic": topic, "payload": payload}
-    future = asyncio.run(client.call(envelope, timeout=timeout_sec))
-    if isinstance(future, dict) and future.get("error"):
-        raise RuntimeUnreachable(str(future["error"]))
-    return future if isinstance(future, dict) else {}
+def call_runtime(
+    *,
+    topic: str,
+    event: str = "cli_call",
+    payload: dict[str, Any] | None = None,
+    override_url: str | None = None,
+    timeout_sec: float = 30.0,
+) -> dict[str, Any]:
+    """One-shot RPC to esrd. Synchronous wrapper around the async path.
 
+    ``topic`` — e.g. ``cli:run/feishu-thread-session``
+    ``event`` — defaults to ``cli_call`` (Phoenix "event" field)
+    ``payload`` — RPC body (arbitrary JSON-encodable dict)
 
-def push_event(client: Any, *, topic: str, event: dict[str, Any]) -> None:
-    """Fire-and-forget push on a CLI control topic."""
-    import asyncio
-    asyncio.run(client.push_envelope({
-        "kind": "cli_event",
-        "topic": topic,
-        "payload": event,
-    }))
+    Returns the phx_reply payload dict (``{"status": "ok", "response": {...}}``).
+    Raises :class:`RuntimeUnreachable` if the runtime is not responsive.
+    """
+    url = discover_runtime_url(override=override_url, kind="handler")
+    try:
+        return asyncio.run(_call_runtime_async(
+            topic=topic, event=event, payload=(payload or {}),
+            url=url, timeout_sec=timeout_sec,
+        ))
+    except RuntimeUnreachable:
+        raise
+    except TimeoutError as exc:
+        raise RuntimeUnreachable(
+            f"esrd at {url} did not reply within {timeout_sec}s: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeUnreachable(
+            f"could not reach esrd at {url}: {exc}"
+        ) from exc
