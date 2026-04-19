@@ -21,7 +21,7 @@ config :esr, EsrWeb.Endpoint,
     formats: [json: EsrWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Esr.PubSub,
+  pubsub_server: EsrWeb.PubSub,
   live_view: [signing_salt: "5RJhXWZR"]
 
 # Configures Elixir's Logger
