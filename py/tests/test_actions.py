@@ -40,3 +40,29 @@ def test_action_type_alias_union() -> None:
         InvokeCommand(name="p", params={}),
     ]
     assert len(items) == 3
+
+
+def test_emit_args_are_deep_frozen() -> None:
+    """Reviewer S1: Emit.args must be read-only even after construction.
+
+    A handler author who builds Emit(args={"x": 1}) should not be able
+    to mutate the inner dict and break equality + distributed idempotency.
+    """
+    e = Emit(adapter="feishu-shared", action="send", args={"x": 1})
+    with pytest.raises(TypeError):
+        e.args["hack"] = 2  # type: ignore[index]
+
+
+def test_invoke_command_params_are_deep_frozen() -> None:
+    """InvokeCommand.params dict must be read-only (spec §4.4)."""
+    ic = InvokeCommand(name="p", params={"thread_id": "foo"})
+    with pytest.raises(TypeError):
+        ic.params["bad"] = 1  # type: ignore[index]
+
+
+def test_emit_passes_by_value_callers_dont_see_subsequent_mutation() -> None:
+    """Mutating the dict the caller passed in must not alter the Emit."""
+    original_args = {"x": 1}
+    e = Emit(adapter="a", action="b", args=original_args)
+    original_args["x"] = 999
+    assert e.args["x"] == 1

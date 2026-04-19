@@ -12,13 +12,16 @@ action shapes:
   `esr cmd run <name>`; used e.g. by `feishu_app.on_msg` on
   `/new-thread <foo>`.
 
-Mutation of any Action instance raises — frozen dataclasses are the
-only shape of value type in the SDK.
+Frozen at every level: the dataclass wrapper blocks attribute
+assignment and ``__post_init__`` wraps the dict payloads in
+``MappingProxyType`` so callers can't mutate the inner dict and
+break equality / hashability invariants (reviewer S1).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 
@@ -28,7 +31,12 @@ class Emit:
 
     adapter: str
     action: str
-    args: dict[str, Any]
+    args: MappingProxyType[str, Any]
+
+    def __init__(self, *, adapter: str, action: str, args: dict[str, Any]) -> None:
+        object.__setattr__(self, "adapter", adapter)
+        object.__setattr__(self, "action", action)
+        object.__setattr__(self, "args", MappingProxyType(dict(args)))
 
 
 @dataclass(frozen=True)
@@ -44,7 +52,11 @@ class InvokeCommand:
     """Instantiate a registered command (§4.4, §6.5)."""
 
     name: str
-    params: dict[str, Any]
+    params: MappingProxyType[str, Any]
+
+    def __init__(self, *, name: str, params: dict[str, Any]) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "params", MappingProxyType(dict(params)))
 
 
 Action = Emit | Route | InvokeCommand
