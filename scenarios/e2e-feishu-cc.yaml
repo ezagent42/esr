@@ -1,0 +1,13 @@
+name: e2e-feishu-cc
+description: >-
+  ESR v0.1 end-to-end scenario. Phase 8e populates the 8-step list below
+  by iterating real runtime+mock-feishu stack. This seed is valid (empty
+  steps) so LG-1 passes pre-loop. Scenario will fail gate #4 of Final
+  Gate until populated.
+mode: mock
+
+setup: []
+
+steps: []
+
+teardown: []

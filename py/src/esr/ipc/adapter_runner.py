@@ -98,3 +98,33 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
             args=dict(event_dict.get("args", {})),
         )
         await pusher.push_envelope(env)
+
+
+async def run(
+    adapter_name: str,
+    instance_id: str,
+    config: dict[str, Any],
+    url: str,
+) -> None:
+    """Full-orchestration entry point — wires directive + event loops against
+    a live :class:`esr.ipc.channel_client.ChannelClient` (spec §5.3 F13).
+
+    Phase 8a fills in: adapter factory lookup, ChannelClient construction,
+    queue wiring, asyncio.TaskGroup that runs ``directive_loop`` and
+    ``event_loop`` concurrently until either completes or the client closes.
+    """
+    from esr.ipc.channel_client import ChannelClient
+    from esr.adapters import load_adapter_factory
+
+    factory = load_adapter_factory(adapter_name)
+    adapter = factory(instance_id, config)
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    client = ChannelClient(url, source_uri=f"adapter:{adapter_name}/{instance_id}")
+    await client.connect()
+    client.on_directive = queue.put_nowait
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(directive_loop(adapter, queue, client))
+            tg.create_task(event_loop(adapter, client))
+    finally:
+        await client.close()

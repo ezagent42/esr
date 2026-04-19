@@ -106,9 +106,38 @@ def _error(type_: str, message: str) -> dict[str, Any]:
 
 def _dump_state(state: Any) -> dict[str, Any]:
     """Serialise a pydantic state instance back to a plain dict."""
-    # Handlers MUST return a pydantic model (per §4.5); defensive branch.
     if hasattr(state, "model_dump"):
         return dict(state.model_dump())
     if isinstance(state, dict):
         return dict(state)
     raise TypeError(f"handler returned non-state value: {type(state).__name__}")
+
+
+async def run(handler_module: str, worker_id: str, url: str) -> None:
+    """Full-orchestration entry point — joins ``handler:<module>/<worker_id>``
+    and executes ``process_handler_call`` per incoming envelope (PRD 03 F07).
+
+    Phase 8a fills in: ChannelClient setup, message-loop, graceful shutdown.
+    """
+    import asyncio
+    from esr.ipc.channel_client import ChannelClient
+    from esr.handler import HANDLER_REGISTRY as _reg  # noqa: F811 — local alias
+    _ = _reg
+    client = ChannelClient(url, source_uri=f"handler:{handler_module}/{worker_id}")
+    await client.connect()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    client.on_call = queue.put_nowait
+    try:
+        while True:
+            envelope = await queue.get()
+            if envelope is None:
+                return
+            reply_payload = process_handler_call(envelope["payload"])
+            await client.push_envelope({
+                "kind": "handler_reply",
+                "id": envelope["id"],
+                "source": client.source_uri,
+                "payload": reply_payload,
+            })
+    finally:
+        await client.close()

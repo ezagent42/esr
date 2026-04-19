@@ -497,29 +497,22 @@ def cmd_compile(name: str, output: Path | None) -> None:
 
 
 def _submit_cmd_run(artifact: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
-    """Send a compiled artifact + params to the runtime for instantiation.
-
-    Live v0.1 implementation is a stub — the real hookup is a Phase 8
-    concern and uses a ``cli:run`` control channel. Unit tests mock
-    this function to decouple the CLI surface from the runtime.
-    Returns a handle dict: ``{"name", "params", "peer_ids"}``.
-    """
-    raise NotImplementedError(
-        "cmd run requires a live runtime; run `esr status` to verify "
-        "the runtime is reachable, then retry."
-    )
+    """Send a compiled artifact + params to the runtime for instantiation."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    name = artifact.get("name", "unknown")
+    reply = call(client, topic=f"cli:run/{name}",
+                 payload={"artifact": artifact, "params": params})
+    return {"name": name, "params": params, "peer_ids": reply.get("peer_ids", [])}
 
 
 def _submit_cmd_stop(name: str, params: dict[str, str]) -> dict[str, Any]:
-    """Deactivate a running instantiation by (name, params) via the runtime.
-
-    Mirrors ``_submit_cmd_run`` — stubbed for v0.1; live wiring in
-    Phase 8. Returns a handle: ``{"name", "params", "stopped_peer_ids"}``.
-    """
-    raise NotImplementedError(
-        "cmd stop requires a live runtime; run `esr status` to verify "
-        "the runtime is reachable, then retry."
-    )
+    """Deactivate a running instantiation by (name, params) via the runtime."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    reply = call(client, topic=f"cli:stop/{name}",
+                 payload={"name": name, "params": params})
+    return {"name": name, "params": params, "stopped_peer_ids": reply.get("stopped_peer_ids", [])}
 
 
 def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
@@ -536,79 +529,55 @@ def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
 def _submit_trace(
     *, session: str | None, last: str | None, filter: str | None  # noqa: A002
 ) -> list[dict[str, Any]]:
-    """Query the runtime telemetry-buffer ring.
-
-    Stubbed for v0.1; Phase 8 wires to a ``cli:trace`` topic and
-    returns the filtered entries as a list of event dicts with
-    timestamps and metadata.
-    """
-    raise NotImplementedError(
-        "trace requires a live runtime; run `esr status` to verify."
-    )
+    """Query the runtime telemetry-buffer ring via ``cli:trace`` topic."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    reply = call(client, topic="cli:trace",
+                 payload={"session": session, "last": last, "filter": filter})
+    entries = reply.get("entries", [])
+    return entries if isinstance(entries, list) else []
 
 
 def _submit_debug(action: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Debug control ops via the runtime.
-
-    Stubbed for v0.1; Phase 8 wires to a ``cli:debug`` topic.
-    Actions: replay / inject / pause / resume.
-    """
-    raise NotImplementedError(
-        "debug commands require a live runtime; run `esr status` to verify."
-    )
+    """Debug control ops via ``cli:debug`` topic."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    return call(client, topic=f"cli:debug/{action}", payload=args)
 
 
 def _submit_drain(*, timeout: str | None) -> dict[str, Any]:
-    """Graceful shutdown: stop every topology in dependency order.
-
-    Stubbed for v0.1; Phase 8 wires to a ``cli:drain`` control op.
-    Returns ``{"drained": [...], "timeouts": [...], "duration_ms": N}``.
-    """
-    raise NotImplementedError(
-        "drain requires a live runtime; run `esr status` to verify."
-    )
+    """Graceful shutdown via ``cli:drain`` topic."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    return call(client, topic="cli:drain", payload={"timeout": timeout}, timeout_sec=120.0)
 
 
 def _stream_telemetry(
     *, pattern: str, format: str  # noqa: A002
 ) -> Iterator[dict[str, Any]]:
-    """Stream telemetry events matching ``pattern`` as they fire.
-
-    Stubbed for v0.1; Phase 8 wires to a ``cli:telemetry`` pubsub
-    subscription. Yields event dicts; the CLI formats per --format.
-    """
-    raise NotImplementedError(
-        "telemetry subscribe requires a live runtime; run `esr status` to verify."
-    )
+    """Stream matching telemetry events via ``cli:telemetry`` subscription."""
+    from esr.cli.runtime_bridge import connect
+    client = connect()
+    import asyncio
+    subscription = asyncio.run(client.subscribe(f"cli:telemetry/{pattern}"))
+    for event in subscription:
+        yield event
 
 
 def _submit_actors(action: str, arg: str | None) -> Any:
-    """Actor-registry queries via the runtime.
-
-    Stubbed for v0.1; Phase 8 wires it to a ``cli:actors`` topic.
-    Returns:
-    - ``list`` → ``list[{"actor_id", "actor_type"}]``
-    - ``tree`` → ``{"roots": [...], "edges": [(from, to), ...]}``
-    - ``inspect`` → ``{"actor_id", "actor_type", "state", "paused"}``
-    - ``logs`` → ``list[{"ts", "event", ...}]``
-    """
-    raise NotImplementedError(
-        "actor queries require a live runtime; run `esr status` to verify."
-    )
+    """Actor-registry queries via ``cli:actors`` topic."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    reply = call(client, topic=f"cli:actors/{action}", payload={"arg": arg})
+    return reply.get("data")
 
 
 def _submit_deadletter(action: str, arg: str | None) -> Any:
-    """Deadletter control ops via the runtime.
-
-    Stubbed for v0.1; Phase 8 wires it to a ``cli:deadletter`` topic.
-    Returns whatever shape the action implies:
-    - ``list`` → list[dict]  (entries)
-    - ``retry`` → dict with ``retried`` id
-    - ``flush`` → dict with ``flushed`` count
-    """
-    raise NotImplementedError(
-        "deadletter control requires a live runtime; run `esr status` to verify."
-    )
+    """Deadletter control ops via ``cli:deadletter`` topic."""
+    from esr.cli.runtime_bridge import call, connect
+    client = connect()
+    reply = call(client, topic=f"cli:deadletter/{action}", payload={"arg": arg})
+    return reply.get("data")
 
 
 @cmd.command("run")

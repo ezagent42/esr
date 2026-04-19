@@ -20,7 +20,7 @@ DEFAULT_MANIFEST: list[tuple[str, list[str]]] = [
     ("py/src/esr/ipc/handler_worker.py", ["run"]),
     ("py/src/esr/cli/main.py", [
         "_submit_cmd_run", "_submit_cmd_stop", "_submit_actors",
-        "_submit_trace", "_submit_telemetry", "_submit_debug",
+        "_submit_trace", "_stream_telemetry", "_submit_debug",
         "_submit_deadletter", "_submit_drain",
     ]),
     ("py/src/esr/cli/runtime_bridge.py", ["connect", "call", "push_event"]),
