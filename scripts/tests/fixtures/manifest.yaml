@@ -1,0 +1,3 @@
+prd_01:
+  - "Integration (with a running esrd-dev + a stub Feishu WS mock): Track C round-trip"
+  - "Capability scan clean"
