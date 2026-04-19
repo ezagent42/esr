@@ -41,3 +41,4 @@
 | 32 | 2026-04-19 | 8e | scenario-compile-pattern | 98882c6 | unit_tests | sha256:d56fc8bd25f75d87 |
 | 33 | 2026-04-19 | 8d | adapter-runner-main | f9293dc | unit_tests | sha256:201064c2302a9986 |
 | 34 | 2026-04-19 | 8d | F07-main | c71abbb | unit_tests | sha256:41f299a5afd5a751 |
+| 35 | 2026-04-19 | 8e | scenario-live-green | 6dd1aa3 | scenario_mock | sha256:8986a3a39d6d087e |

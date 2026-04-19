@@ -401,6 +401,7 @@ defmodule Esr.PeerServer do
     Process.send_after(self(), {:directive_deadline, id}, state.directive_timeout)
 
     envelope = %{
+      "kind" => "directive",
       "id" => id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "type" => "directive",
@@ -412,7 +413,9 @@ defmodule Esr.PeerServer do
       }
     }
 
-    EsrWeb.Endpoint.broadcast(topic, "directive", envelope)
+    # "envelope" event + kind-in-payload is the unified wire shape the
+    # Python adapter_runner filters on (see comment on Instantiator).
+    EsrWeb.Endpoint.broadcast(topic, "envelope", envelope)
 
     :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
       actor_id: state.actor_id,

@@ -140,11 +140,19 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:drain", _payload) do
     handles = Esr.Topology.Registry.list_all()
+
+    peer_ids =
+      handles
+      |> Enum.flat_map(& &1.peer_ids)
+
     Enum.each(handles, &Esr.Topology.Registry.deactivate/1)
 
     %{
       "data" => %{
-        "drained" => length(handles),
+        "drained" => Enum.map(handles, fn h ->
+          %{"name" => h.name, "params" => stringify_keys(h.params), "peer_ids" => h.peer_ids}
+        end),
+        "stopped_peer_ids" => peer_ids,
         "timeouts" => []
       }
     }

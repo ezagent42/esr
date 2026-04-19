@@ -150,7 +150,7 @@ defmodule Esr.PeerServerPersistTest do
     # When the directive arrives on the adapter topic, the persisted
     # state must already be observable. Spec §7.4 guarantees
     # persist-then-emit.
-    assert_receive %Phoenix.Socket.Broadcast{event: "directive"}, 2_000
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 2_000
     assert {:ok, %{"stored" => true}} = PersistStore.get(@table, actor_id)
   end
 end

@@ -65,6 +65,7 @@ def make_event(
     """Build an ``event`` envelope (adapter → runtime)."""
     _check_source(source)
     return {
+        "kind": TYPE_EVENT,
         "id": _new_id("e"),
         "ts": _now_iso(),
         "type": TYPE_EVENT,
@@ -94,6 +95,7 @@ def make_directive_ack(
     if not ok and error is not None:
         payload["error"] = dict(error)
     return {
+        "kind": TYPE_DIRECTIVE_ACK,
         "id": id_,
         "ts": _now_iso(),
         "type": TYPE_DIRECTIVE_ACK,
@@ -118,6 +120,7 @@ def make_handler_reply(
     """
     _check_source(source)
     return {
+        "kind": TYPE_HANDLER_REPLY,
         "id": id_,
         "ts": _now_iso(),
         "type": TYPE_HANDLER_REPLY,

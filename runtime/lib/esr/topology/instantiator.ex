@@ -217,6 +217,7 @@ defmodule Esr.Topology.Instantiator do
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, reply_topic)
 
     envelope = %{
+      "kind" => "directive",
       "id" => id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "type" => "directive",
@@ -228,7 +229,10 @@ defmodule Esr.Topology.Instantiator do
       }
     }
 
-    EsrWeb.Endpoint.broadcast(topic, "directive", envelope)
+    # Broadcast under the unified "envelope" event shape the Python
+    # adapter_runner filters on (event == "envelope", payload.kind
+    # == "directive"). The envelope carries its own kind for dispatch.
+    EsrWeb.Endpoint.broadcast(topic, "envelope", envelope)
 
     try do
       receive do

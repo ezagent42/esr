@@ -90,8 +90,16 @@ async def directive_loop(
 
 
 async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
-    """Consume ``adapter.emit_events()`` and push each as an event envelope."""
-    async for event_dict in adapter.emit_events():
+    """Consume ``adapter.emit_events()`` and push each as an event envelope.
+
+    Not every adapter emits events proactively (e.g. cc_tmux drives itself
+    via directives; feishu's WS listener is optional in mock mode). If the
+    adapter does not implement ``emit_events``, the loop exits immediately.
+    """
+    emit = getattr(adapter, "emit_events", None)
+    if emit is None:
+        return
+    async for event_dict in emit():
         env = make_event(
             source=pusher.source_uri,
             event_type=event_dict["event_type"],
@@ -130,7 +138,12 @@ async def run_with_client(
         queue.put_nowait(payload)
 
     await client.join(topic, _on_frame)
-    pusher = ChannelPusher(client=client, topic=topic, source_uri=topic)
+    # The envelope builders require an ``esr://`` source (spec §7.5). The
+    # channel topic (``adapter:<name>/<id>``) is not a valid URI; derive
+    # the source by mapping topic → ``esr://localhost/<topic>`` so acks
+    # carry a provenance string that parses.
+    source_uri = "esr://localhost/" + topic
+    pusher = ChannelPusher(client=client, topic=topic, source_uri=source_uri)
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(directive_loop(adapter, queue, pusher))
@@ -192,9 +205,11 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(run(ns.adapter, ns.instance_id, ns.config, ns.url))
     except KeyboardInterrupt:
         return 0
-    except Exception as exc:  # noqa: BLE001
+    except BaseException as exc:  # noqa: BLE001 — ExceptionGroup is BaseException
         import sys
+        import traceback
         print(f"esr.ipc.adapter_runner FAIL: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1
     return 0
 

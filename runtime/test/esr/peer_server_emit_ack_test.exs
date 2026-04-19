@@ -103,7 +103,7 @@ defmodule Esr.PeerServerEmitAckTest do
     peer_pid = start_peer(actor_id)
     send_event(peer_pid)
 
-    assert_receive %Phoenix.Socket.Broadcast{event: "directive", payload: env}, 2_000
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 2_000
     id = env["id"]
 
     Phoenix.PubSub.broadcast(
@@ -141,7 +141,7 @@ defmodule Esr.PeerServerEmitAckTest do
     peer_pid = start_peer(actor_id)
     send_event(peer_pid)
 
-    assert_receive %Phoenix.Socket.Broadcast{event: "directive", payload: env}, 2_000
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 2_000
     id = env["id"]
 
     Phoenix.PubSub.broadcast(

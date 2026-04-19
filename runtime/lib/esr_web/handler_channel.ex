@@ -29,7 +29,17 @@ defmodule EsrWeb.HandlerChannel do
     {:error, %{reason: "invalid topic"}}
   end
 
+  # Envelope dispatch — Python handler_worker pushes everything as a
+  # single "envelope" event; route by kind.
   @impl Phoenix.Channel
+  def handle_in("envelope", %{"kind" => "handler_reply"} = envelope, socket) do
+    handle_in("handler_reply", envelope, socket)
+  end
+
+  def handle_in("envelope", _envelope, socket) do
+    {:reply, {:error, %{reason: "envelope missing/unknown kind"}}, socket}
+  end
+
   def handle_in("handler_reply", %{"id" => id} = envelope, socket) do
     Phoenix.PubSub.broadcast(
       EsrWeb.PubSub,

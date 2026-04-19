@@ -73,12 +73,58 @@ defmodule EsrWeb.AdapterChannelTest do
     assert received["id"] == "d-abc"
   end
 
-  test "join is rejected when no actor is bound for the topic" do
+  test "'envelope' with kind=event routes like a bare 'event' push",
+       %{topic: topic} do
+    {:ok, _reply, socket} =
+      EsrWeb.AdapterSocket
+      |> socket("adapter-conn", %{})
+      |> subscribe_and_join(EsrWeb.AdapterChannel, topic)
+
+    envelope = %{
+      "kind" => "event",
+      "id" => "e-env",
+      "payload" => %{"event_type" => "msg_received", "args" => %{}}
+    }
+
+    push(socket, "envelope", envelope)
+    assert_receive {:inbound_event, received}, 500
+    assert received["id"] == "e-env"
+  end
+
+  test "'envelope' with kind=directive_ack routes like a bare 'directive_ack' push",
+       %{topic: topic} do
+    {:ok, _reply, socket} =
+      EsrWeb.AdapterSocket
+      |> socket("adapter-conn", %{})
+      |> subscribe_and_join(EsrWeb.AdapterChannel, topic)
+
+    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:d-env")
+
+    ack = %{
+      "kind" => "directive_ack",
+      "id" => "d-env",
+      "payload" => %{"ok" => true, "result" => %{"session_name" => "alpha"}}
+    }
+
+    push(socket, "envelope", ack)
+    assert_receive {:directive_ack, received}, 500
+    assert received["id"] == "d-env"
+  end
+
+  test "join succeeds even without a binding (late binding race resolved at forward/2)" do
+    # Python adapter workers join before Topology.Instantiator creates
+    # the HubRegistry binding; otherwise the broadcast race is lost. Join
+    # must succeed; routing errors surface on the first push.
     topic = "adapter:nothing/bound-here"
-    assert {:error, %{reason: "no binding"}} =
+    assert {:ok, _reply, socket} =
              EsrWeb.AdapterSocket
              |> socket("adapter-conn", %{})
              |> subscribe_and_join(EsrWeb.AdapterChannel, topic)
+
+    # A push against an unbound topic replies :error — no PeerServer to
+    # route to, so the forward/2 helper yields the "no binding" reason.
+    ref = push(socket, "event", %{"id" => "e-no-bind", "payload" => %{}})
+    assert_reply ref, :error, %{reason: "no binding"}
   end
 
   test "event push when PeerServer has died replies with error",

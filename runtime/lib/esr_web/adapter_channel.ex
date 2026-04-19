@@ -21,15 +21,32 @@ defmodule EsrWeb.AdapterChannel do
 
   @impl Phoenix.Channel
   def join("adapter:" <> _rest = topic, _payload, socket) do
-    case HubRegistry.lookup(topic) do
-      {:ok, _actor_id} -> {:ok, assign(socket, :topic, topic)}
-      :error -> {:error, %{reason: "no binding"}}
-    end
+    # Join succeeds regardless of whether a PeerServer is bound yet —
+    # Python adapter workers are spawned *before* topology instantiation
+    # so they can be on the topic when init_directive broadcasts. Routing
+    # (forward/2) looks up the binding fresh at send time; an unbound
+    # topic replies with an error but does not crash the channel.
+    {:ok, assign(socket, :topic, topic)}
   end
 
   @impl Phoenix.Channel
   def handle_in("event", envelope, socket) do
     forward(socket, {:inbound_event, envelope})
+  end
+
+  # Envelope dispatch — the Python adapter_runner pushes everything as a
+  # single "envelope" event with the kind inside the payload; dispatch to
+  # the event-name-specific handlers so call sites stay unchanged.
+  def handle_in("envelope", %{"kind" => "event"} = envelope, socket) do
+    handle_in("event", envelope, socket)
+  end
+
+  def handle_in("envelope", %{"kind" => "directive_ack"} = envelope, socket) do
+    handle_in("directive_ack", envelope, socket)
+  end
+
+  def handle_in("envelope", _envelope, socket) do
+    {:reply, {:error, %{reason: "envelope missing/unknown kind"}}, socket}
   end
 
   def handle_in("directive_ack", %{"id" => id} = envelope, socket) do

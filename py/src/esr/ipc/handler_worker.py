@@ -157,6 +157,7 @@ async def run(handler_module: str, worker_id: str, url: str) -> None:
     passes handler_module/worker_id via the daemon spawning this worker.
     """
     import importlib
+
     from esr.ipc.channel_client import ChannelClient
 
     # Import the handler module so its @handler decorators register into

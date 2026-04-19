@@ -32,7 +32,7 @@ defmodule Esr.Topology.InitDirectiveTest do
       send(test_pid, :fake_adapter_ready)
 
       receive do
-        %Phoenix.Socket.Broadcast{event: "directive", payload: env} ->
+        %Phoenix.Socket.Broadcast{event: "envelope", payload: env} ->
           ack = ack_shaper.(env)
 
           Phoenix.PubSub.broadcast(

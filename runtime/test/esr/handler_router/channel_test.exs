@@ -44,6 +44,26 @@ defmodule EsrWeb.HandlerChannelTest do
     assert_receive {:handler_reply, ^envelope}, 500
   end
 
+  test "'envelope' with kind=handler_reply broadcasts on handler_reply:<id>" do
+    call_id = "hc-env-#{System.unique_integer([:positive])}"
+    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "handler_reply:" <> call_id)
+
+    topic = "handler:noop/worker-envelope"
+    {:ok, _reply, socket} =
+      EsrWeb.HandlerSocket
+      |> socket("handler-conn", %{})
+      |> subscribe_and_join(EsrWeb.HandlerChannel, topic)
+
+    envelope = %{
+      "kind" => "handler_reply",
+      "id" => call_id,
+      "payload" => %{"new_state" => %{}, "actions" => []}
+    }
+
+    push(socket, "envelope", envelope)
+    assert_receive {:handler_reply, ^envelope}, 500
+  end
+
   test "handler_reply without id is rejected" do
     topic = "handler:noop/worker-2"
     {:ok, _reply, socket} =

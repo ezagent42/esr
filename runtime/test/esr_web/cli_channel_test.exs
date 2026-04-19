@@ -303,8 +303,12 @@ defmodule EsrWeb.CliChannelTest do
       assert_reply ref, :ok, response
 
       data = response["data"]
-      assert data["drained"] == initial
+      assert length(data["drained"]) == initial
       assert data["timeouts"] == []
+      # stopped_peer_ids covers every peer_id from every drained handle,
+      # so scenario sig-B can observe per-peer stop via ``actor_id=``.
+      assert is_list(data["stopped_peer_ids"])
+      assert length(data["stopped_peer_ids"]) >= initial
       assert Esr.Topology.Registry.list_all() == []
     end
   end

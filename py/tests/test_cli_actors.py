@@ -20,19 +20,23 @@ def ctx_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_actors_list_prints_each_actor(ctx_home: Path) -> None:
-    """`esr actors list` enumerates every live actor_id + its actor_type."""
+    """``esr actors list`` emits ``<actor_id>  pid=<0.N.M>`` per live peer.
+
+    Scenario sig-A asserts on ``pid=<0\\.\\d+\\.\\d+>`` — the runtime
+    encodes BEAM pids as ``#PID<0.661.0>`` and the CLI strips ``#PID`` so
+    the visible token is a bare ``<0.661.0>`` that regex-matches.
+    """
     with patch("esr.cli.main._submit_actors") as submit:
         submit.return_value = [
-            {"actor_id": "thread:foo", "actor_type": "feishu_thread_proxy"},
-            {"actor_id": "cc:foo", "actor_type": "cc_proxy"},
+            {"actor_id": "thread:foo", "pid": "#PID<0.661.0>"},
+            {"actor_id": "cc:foo", "pid": "#PID<0.662.0>"},
         ]
         runner = CliRunner()
         result = runner.invoke(cli, ["actors", "list"])
     assert result.exit_code == 0, result.output
     submit.assert_called_once_with("list", None)
-    assert "thread:foo" in result.output
-    assert "cc:foo" in result.output
-    assert "feishu_thread_proxy" in result.output
+    assert "thread:foo  pid=<0.661.0>" in result.output
+    assert "cc:foo  pid=<0.662.0>" in result.output
 
 
 def test_actors_tree_renders_depends_on_hierarchy(ctx_home: Path) -> None:

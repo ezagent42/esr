@@ -92,7 +92,7 @@ defmodule Esr.PeerServerActionDispatchTest do
     peer_pid = start_peer(actor_id)
     send_event(peer_pid)
 
-    assert_receive %Phoenix.Socket.Broadcast{event: "directive", payload: env}, 2_000
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 2_000
     assert env["payload"]["adapter"] == "feishu-shared"
     assert env["payload"]["action"] == "send_message"
     assert env["payload"]["args"]["chat_id"] == "oc_abc"

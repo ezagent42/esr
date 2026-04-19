@@ -902,8 +902,9 @@ def drain(timeout: str | None) -> None:
     if any topology failed to stop in time.
     """
     result = _submit_drain(timeout=timeout)
-    drained = result.get("drained", [])
-    timeouts = result.get("timeouts", [])
+    drained = result.get("drained") or []
+    stopped_peer_ids = result.get("stopped_peer_ids") or []
+    timeouts = result.get("timeouts") or []
     duration_ms = result.get("duration_ms", 0)
 
     if not drained and not timeouts:
@@ -914,6 +915,10 @@ def drain(timeout: str | None) -> None:
         f"drained {len(drained)} topolog{'y' if len(drained) == 1 else 'ies'} "
         f"in {duration_ms}ms"
     )
+    # Per-peer sig-B lines — scenario F-drain-remaining asserts on
+    # ``actor_id=<type>:<id>`` so the stop-cascade is observable end-to-end.
+    for actor_id in stopped_peer_ids:
+        click.echo(f"  actor_id={actor_id}")
     if timeouts:
         suffix = "y" if len(timeouts) == 1 else "ies"
         click.echo(f"timeout: {len(timeouts)} topolog{suffix} did not stop:")
@@ -1018,7 +1023,11 @@ def trace(session: str | None, last: str | None, filter_pattern: str | None) -> 
     for entry in entries:
         ts = entry.get("ts", "-")
         event = entry.get("event", "?")
-        actor = entry.get("actor_id", "-")
+        # Telemetry.Buffer flattens [:esr, :actor, :spawned] envelopes but the
+        # actor_id lives inside metadata; prefer that over the top-level key
+        # so trace output carries the sig-B identifier consistently.
+        metadata = entry.get("metadata") or {}
+        actor = entry.get("actor_id") or metadata.get("actor_id") or "-"
         extras = {
             k: v for k, v in entry.items()
             if k not in {"ts", "event", "actor_id"}
@@ -1034,13 +1043,24 @@ def actors() -> None:
 
 @actors.command("list")
 def actors_list() -> None:
-    """Enumerate every live actor as ``<actor_id>  <actor_type>``."""
+    """Enumerate every live actor as ``<actor_id>  pid=<0.N.M>``.
+
+    The BEAM pid encodes the live supervisor slot (sig-A) — printing it
+    verbatim lets operators correlate ``esr actors list`` rows with
+    ``observer_cli`` / ``:observer`` / runtime telemetry without a second
+    tool call. ``#PID<0.N.M>`` is stripped to ``<0.N.M>`` for regex
+    friendliness (scenario sig-A expects ``pid=<0\\.\\d+\\.\\d+>``).
+    """
     entries = _submit_actors("list", None)
     if not entries:
         click.echo("no actors live")
         return
     for entry in entries:
-        click.echo(f"{entry['actor_id']}  {entry.get('actor_type', '?')}")
+        pid_raw = entry.get("pid") or ""
+        # Elixir's inspect/1 emits "#PID<0.x.y>"; strip "#PID" so the
+        # token is a bare <0.x.y>.
+        pid = pid_raw.removeprefix("#PID")
+        click.echo(f"{entry['actor_id']}  pid={pid}")
 
 
 @actors.command("tree")
