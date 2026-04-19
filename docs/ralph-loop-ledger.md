@@ -33,3 +33,4 @@
 | 24 | 2026-04-19 | 8d | mock-cc | 47fcab9 | unit_tests | sha256:1d29175d850a19f0 |
 | 25 | 2026-04-19 | 8e | scenario-runner-exec | 14a0b55 | unit_tests | sha256:b74b29b8b13e7e9d |
 | 26 | 2026-04-19 | 8e | cmd-run-actor-id-lines | 7fc5e90 | unit_tests | sha256:243df18185d67c3d |
+| 27 | 2026-04-19 | 8e | scenario-8-steps | 776c3e3 | unit_tests | sha256:37743e30db403b14 |

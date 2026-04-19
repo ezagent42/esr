@@ -27,7 +27,7 @@ def compiled_dir(tmp_path: Path) -> Path:
 
 
 def test_cmd_run_emits_actor_id_lines_per_peer(
-    compiled_dir: Path, monkeypatch: Any
+    esrd_fixture: Any, compiled_dir: Path, monkeypatch: Any
 ) -> None:
     """After the summary line, one `actor_id=<pid>` line per peer."""
     monkeypatch.setenv("HOME", str(compiled_dir.parent))
