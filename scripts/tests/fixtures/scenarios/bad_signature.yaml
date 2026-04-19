@@ -1,0 +1,12 @@
+name: test-bad2
+description: fixture
+mode: mock
+setup: []
+steps:
+  - id: weak-step
+    description: weak regex
+    command: echo ok
+    expect_stdout_match: '^ok$'
+    expect_exit: 0
+    timeout_sec: 5
+teardown: []

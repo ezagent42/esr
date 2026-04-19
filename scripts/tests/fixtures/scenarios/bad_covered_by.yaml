@@ -1,0 +1,10 @@
+name: test-bad
+description: fixture
+mode: mock
+setup: []
+steps:
+  - id: bad-step
+    description: uses banned key
+    covered_by:
+      - py/tests/test_x.py
+teardown: []

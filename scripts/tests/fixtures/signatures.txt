@@ -1,0 +1,4 @@
+# test signatures for loopguard_scenario tests
+pid=<0\.\d+\.\d+>
+actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+
+ack_ms=\d{1,4}

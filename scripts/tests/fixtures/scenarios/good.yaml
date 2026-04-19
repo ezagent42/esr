@@ -1,0 +1,15 @@
+name: test-good
+description: fixture
+mode: mock
+setup:
+  - command: echo setup
+    expect_exit: 0
+    timeout_sec: 5
+steps:
+  - id: spawn-peer
+    description: spawn a peer actor
+    command: esr actors list
+    expect_stdout_match: 'actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+'
+    expect_exit: 0
+    timeout_sec: 10
+teardown: []
