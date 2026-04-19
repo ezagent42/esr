@@ -124,11 +124,13 @@ defmodule Esr.PeerServer do
     event_id = Map.get(envelope, "id", "")
 
     case HandlerRouter.call(state.handler_module, payload, state.handler_timeout) do
-      {:ok, new_state, _actions} when is_map(new_state) ->
+      {:ok, new_state, actions} when is_map(new_state) and is_list(actions) ->
         :telemetry.execute([:esr, :handler, :invoked], %{}, %{
           actor_id: state.actor_id,
           event_id: event_id
         })
+
+        Enum.each(actions, &dispatch_action(&1, state.actor_id))
 
         state
         |> Map.put(:state, new_state)
@@ -157,5 +159,64 @@ defmodule Esr.PeerServer do
       key when is_binary(key) -> key
       _ -> nil
     end
+  end
+
+  # ------------------------------------------------------------------
+  # Action dispatch (F07)
+  # ------------------------------------------------------------------
+
+  defp dispatch_action(%{"type" => "emit"} = action, actor_id) do
+    adapter = action["adapter"]
+    topic = "adapter:" <> adapter
+
+    envelope = %{
+      "id" => "d-" <> Integer.to_string(System.unique_integer([:positive])),
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "directive",
+      "source" => "esr://localhost/actor/" <> actor_id,
+      "payload" => %{
+        "adapter" => adapter,
+        "action" => action["action"],
+        "args" => Map.get(action, "args", %{})
+      }
+    }
+
+    EsrWeb.Endpoint.broadcast(topic, "directive", envelope)
+
+    :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
+      actor_id: actor_id,
+      adapter: adapter,
+      action: action["action"]
+    })
+  end
+
+  defp dispatch_action(%{"type" => "route", "target" => target, "msg" => msg}, actor_id) do
+    case Registry.lookup(Esr.PeerRegistry, target) do
+      [{pid, _}] ->
+        send(pid, {:inbound_event, %{"payload" => msg}})
+
+      [] ->
+        :telemetry.execute([:esr, :route, :target_missing], %{}, %{
+          actor_id: actor_id,
+          target: target
+        })
+    end
+  end
+
+  defp dispatch_action(%{"type" => "invoke_command"} = action, actor_id) do
+    # F13 Topology.Instantiator wires this for real; for now just
+    # emit telemetry so the plumbing is observable.
+    :telemetry.execute([:esr, :invoke_command, :received], %{}, %{
+      actor_id: actor_id,
+      name: action["name"],
+      params: Map.get(action, "params", %{})
+    })
+  end
+
+  defp dispatch_action(unknown, actor_id) do
+    :telemetry.execute([:esr, :action, :unknown], %{}, %{
+      actor_id: actor_id,
+      action: unknown
+    })
   end
 end
