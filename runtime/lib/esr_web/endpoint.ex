@@ -21,6 +21,12 @@ defmodule EsrWeb.Endpoint do
     websocket: true,
     longpoll: false
 
+  # Handler WebSocket — Python handler workers join
+  # handler:<module>/<worker_id> topics here (PRD 01 F12, spec §7.1).
+  socket "/handler_hub/socket", EsrWeb.HandlerSocket,
+    websocket: true,
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
