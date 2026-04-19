@@ -50,29 +50,43 @@ Do not skip these reads. You will **not** reliably remember what you did last it
 
 ## 3.1 — Assess current state (max 2 minutes)
 
-0. **CWD guard (do this FIRST, every iteration):**
-   ```bash
-   cd /Users/h2oslabs/Workspace/esr && pwd
-   ```
-   Verify the output is exactly `/Users/h2oslabs/Workspace/esr`. If the `cd` fails, the repo is moved or missing — immediately emit `<promise>BLOCKED: esr working directory not accessible</promise>` and exit. Never operate on a different repo. This is the #1 cause of ralph-loop disasters: commits landing in the wrong git repo.
+### CWD discipline (highest priority — do not skip)
 
-   Also verify:
+This loop may be running in a Claude Code session whose **primary workdir is a different repo** (e.g. cc-openclaw). The Bash tool's persistent cwd can silently reset back to the primary at any time. Treat every Bash call as having an unknown cwd.
+
+**HARD RULE: every single `Bash` tool call in this loop MUST begin with `cd /Users/h2oslabs/Workspace/esr && `.** No exceptions. Not even `git log`. Not even `pwd`. The cost of one extra `cd` per command is microseconds; the cost of one `git commit` in the wrong repo is hours.
+
+Example good:
+```bash
+cd /Users/h2oslabs/Workspace/esr && git status
+cd /Users/h2oslabs/Workspace/esr && make test 2>&1 | tail -50
+cd /Users/h2oslabs/Workspace/esr/runtime && mix test test/esr/peer_registry_test.exs
+```
+
+Example bad (will drift):
+```bash
+git status                                 # cwd is whatever the tool last left it at
+make test                                  # same
+cd runtime && mix test                     # what if you start in the wrong root?
+```
+
+### Pre-flight (first thing, every iteration)
+
+0. Verify the working tree is accessible and is the expected repo:
    ```bash
-   git remote -v  # expected: origin pointing at the esr repo
-   git rev-parse --show-toplevel  # expected: /Users/h2oslabs/Workspace/esr
+   cd /Users/h2oslabs/Workspace/esr && pwd && git rev-parse --show-toplevel
    ```
+   Both outputs must equal `/Users/h2oslabs/Workspace/esr`. Anything else → immediately emit `<promise>BLOCKED: wrong cwd or repo</promise>` and also send a Feishu note per §3.8 and exit.
+
 1. Read `.claude/.ralph-loop.local.md`. If it is missing or empty, initialise it (§7 schema) and commit it.
-2. `git log --oneline -n 20` — see what the last iterations accomplished.
-3. `git status` — anything uncommitted? If yes: resolve (commit or discard with explicit reason) before writing new code. Partial commits accumulate over iterations into unreviewable diffs.
+2. `cd /Users/h2oslabs/Workspace/esr && git log --oneline -n 20` — see what the last iterations accomplished.
+3. `cd /Users/h2oslabs/Workspace/esr && git status` — anything uncommitted? If yes: resolve (commit or discard with explicit reason) before writing new code. Partial commits accumulate over iterations into unreviewable diffs.
 4. Run the full test suite to discover current green-status:
    ```bash
-   cd /Users/h2oslabs/Workspace/esr
-   make test 2>&1 | tail -50
+   cd /Users/h2oslabs/Workspace/esr && make test 2>&1 | tail -50
    ```
    Record pass/fail counts in the state file §7.3.
-5. Run `make lint` to discover current lint status.
-
-**Rule for every subsequent `Bash` tool call in this iteration:** prefix every command with `cd /Users/h2oslabs/Workspace/esr && ` OR use absolute paths. Never trust the Bash tool's persistent cwd across calls — it can be reset by parent hooks.
+5. Run `cd /Users/h2oslabs/Workspace/esr && make lint` to discover current lint status.
 
 ## 3.2 — Pick one next task
 
@@ -144,6 +158,33 @@ Then commit the state file along with the code change (same commit).
 Do **not** issue an explicit exit. Simply finish your response. The stop hook sees no `<promise>` tag and re-feeds this prompt.
 
 Unless §8 gate is met — see below.
+
+## 3.8 — Feishu progress reporting
+
+The user is watching progress from Feishu (chat_id `oc_d9b47511b085e9d5b66c4595b3ef9bb9`). **Report only on meaningful state changes**, not every iteration — spamming Feishu is worse than silence. Emit a reply via `mcp__openclaw-channel__reply` when any of the following holds:
+
+- **Phase boundary**: starting or finishing a Phase (1 → 2 → 3 → …). One line each: `▶ starting Phase N` or `✓ Phase N done (X FRs, Y tests green)`.
+- **Blocker**: emitted the `<promise>BLOCKED: …</promise>` tag. Include: phase, FR, symptom, evidence link (commit SHA + test name), and the specific question for the user.
+- **Unexpected regression**: a previously-green test now fails. Include: test name, what this iteration changed, whether you're investigating.
+- **Big milestone**: first live IPC round-trip (Phase 3), first adapter instance registered (Phase 4), first handler round-trip (Phase 5), first pattern instantiation (Phase 6), first E2E track passing (Phase 8), all E2E tracks passing (Phase 8 complete), loop completion.
+- **Every 20 iterations**: a brief heartbeat with current phase + FR count.
+
+Each Feishu message is ≤ 4 short sentences. Longer analysis goes in the state file or a dedicated log commit.
+
+Example messages:
+
+```
+✓ Phase 1 done: 22 FRs, 78 tests green; moving to Phase 2.
+▶ Phase 3 IPC: first handler_call round-trip succeeded — commit 4e2a1f.
+⚠ heartbeat: iter 40/200, Phase 4 (adapters/feishu), 4/22 FRs green. No blockers.
+🛑 BLOCKED at Phase 5 F12: dedup test fails intermittently. Investigated 6 times. Hypothesis: frozenset iteration order.
+```
+
+If the MCP tool call itself fails (channel down, timeout), log the attempt in the state file §7.7 "Feishu reporting log" and continue the iteration — do not let a notification failure block work.
+
+### If MCP channel is unavailable
+
+If `mcp__openclaw-channel__reply` is not listed among available tools this iteration (meaning: this loop is running in a session without the channel MCP loaded), skip Feishu reporting silently and note "feishu unavailable" in state file §7.7. The loop continues in pure commit-history-only mode; the user can track progress via `git log`.
 
 # 4. Ordering (high-level phase sequence)
 
@@ -255,6 +296,12 @@ Copy-paste from each PRD's unit-test matrix; tick when test passes.
 - [ ] PRD 01 full-phase review
 - [ ] PRD 02 full-phase review
 - …
+
+## 7.7 Feishu reporting log
+
+- <iso ts>  <phase>  <what-was-reported>
+- <iso ts>  feishu unavailable — skipped
+- …
 ```
 
 # 8. Final Gate — emit `<promise>ESR_V0_1_COMPLETE</promise>` **only** when all these hold
@@ -329,31 +376,45 @@ Then in the same iteration, perform Task 1.1 Step 1.
 
 ## Notes for the user (not part of the prompt itself)
 
-### How to start — use a FRESH Claude Code session rooted at esr/
+### How to start — two supported modes
 
-**Do NOT start ralph-loop from a session whose primary working directory is a different repo** (e.g. cc-openclaw). Even with the CWD guard in the prompt, long-running loops across different primary workdirs accumulate drift.
+**Mode A — current session (recommended when you want Feishu progress reports)**
 
-Recommended:
+Run the loop in the Claude Code session that has the `openclaw-channel` MCP loaded (your daily cc-openclaw session, for example). Pros: §3.8 Feishu progress messages reach you in real time. Cons: the session's primary workdir is a different repo, so every Bash command in the loop MUST begin with `cd /Users/h2oslabs/Workspace/esr && …` — this discipline is already hard-coded into §3.1 of the prompt.
 
-```bash
-# In a new terminal
-cd /Users/h2oslabs/Workspace/esr
-./esr-cc.sh           # launches Claude Code rooted at this repo
-# Then inside the new session:
-./run-ralph.sh        # convenience wrapper (see below)
+Invocation:
+
 ```
-
-Or directly:
-
-```bash
 /ralph-loop "$(cat /Users/h2oslabs/Workspace/esr/docs/superpowers/ralph-loop-prompt.md)" \
   --completion-promise "ESR_V0_1_COMPLETE" \
   --max-iterations 200
 ```
 
-- `--max-iterations 200` is a safety valve; at ~5 minutes per iteration the loop caps at ~17 hours wall-clock if it can't converge. Adjust based on how much agent you want to spend.
-- You can interrupt anytime with `/cancel-ralph`; progress is preserved in the commit history + state file.
-- Keep your original (non-ralph) Claude Code session open in another terminal — use it to watch progress, answer blockers, and generally steer without interfering with the loop.
+**Mode B — dedicated esr-rooted session (recommended for strict isolation)**
+
+Run the loop in a fresh Claude Code session whose primary workdir is `/Users/h2oslabs/Workspace/esr/`. Pros: impossible to drift into the wrong repo. Cons: no Feishu channel → §3.8 reports are silently skipped; you monitor via `git log`.
+
+Invocation:
+
+```bash
+# Separate terminal
+cd /Users/h2oslabs/Workspace/esr
+./esr-cc.sh
+# Inside the new session:
+/ralph-loop "$(cat docs/superpowers/ralph-loop-prompt.md)" \
+  --completion-promise "ESR_V0_1_COMPLETE" \
+  --max-iterations 200
+```
+
+**Which mode should I use?**
+
+Prefer Mode A. The CWD discipline is explicit in the prompt and the guards in §3.1 catch any drift before it touches git; the Feishu visibility is genuinely useful across 17-hour runs. Use Mode B only if you're stress-testing the architecture isolation or running on a box where the Feishu MCP is unreliable.
+
+**Common to both modes:**
+
+- `--max-iterations 200` is a safety valve; at ~5 minutes per iteration the loop caps at ~17 hours wall-clock if it can't converge.
+- Interrupt anytime with `/cancel-ralph`; progress is preserved in commit history + state file.
+- In Mode A you can still chat with me (this session's Claude) in between loop iterations — the loop fires one prompt per stop-hook cycle, so your interjections land between iterations, not during.
 
 ### How to monitor
 
