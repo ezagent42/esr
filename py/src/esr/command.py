@@ -24,11 +24,13 @@ F11 (port), F12 (compose.serial), F13 (compile_topology) and F14
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, cast
 
 CommandFn = Callable[..., Any]
 
@@ -270,3 +272,104 @@ def _merge_into(outer: _CommandCtx, sub: _CommandCtx) -> None:
                 f"port {name} type mismatch on compose: {outer.ports_out[name]!r} vs {type_!r}"
             )
         outer.ports_out[name] = type_
+
+
+# --- Compile (F13) -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Topology:
+    """A compiled command — the immutable output of ``compile_topology``."""
+
+    name: str
+    nodes: tuple[_Node, ...]
+    edges: tuple[tuple[str, str], ...]
+    ports_in: MappingProxyType[str, str]
+    ports_out: MappingProxyType[str, str]
+    params: tuple[str, ...]
+
+
+_PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
+
+
+def compile_topology(name: str) -> Topology:
+    """Compile a registered command into a frozen ``Topology``.
+
+    Steps:
+    1. Execute the command's fn in a fresh context (collect nodes / edges / ports).
+    2. Validate the ``depends_on`` graph is acyclic (Kahn's algorithm).
+    3. Extract ``{{param}}`` references from node params and init_directive args.
+    4. Return a frozen Topology dataclass.
+
+    Dead-node elimination and CSE are covered by PRD 06 F05 / F06 and
+    the ``Topology`` schema is stable across those optimizations.
+    """
+    entry = COMMAND_REGISTRY.get(name)
+    if entry is None:
+        raise KeyError(f"command {name} not registered")
+
+    ctx = _CommandCtx(name=name)
+    token = _CURRENT.set(ctx)
+    try:
+        entry.fn()
+    finally:
+        _CURRENT.reset(token)
+
+    _check_cycles(ctx.nodes)
+    params = tuple(sorted(_extract_params(ctx.nodes)))
+
+    return Topology(
+        name=name,
+        nodes=tuple(ctx.nodes),
+        edges=tuple(ctx.edges),
+        ports_in=MappingProxyType(dict(ctx.ports_in)),
+        ports_out=MappingProxyType(dict(ctx.ports_out)),
+        params=params,
+    )
+
+
+def _check_cycles(nodes: list[_Node]) -> None:
+    """Raise ``ValueError`` if the ``depends_on`` relation has a cycle."""
+    indeg: dict[str, int] = {n.id: 0 for n in nodes}
+    edges: dict[str, list[str]] = {n.id: [] for n in nodes}
+    for n in nodes:
+        for dep in n.depends_on:
+            if dep not in indeg:
+                continue  # dep points outside this pattern — treat as external
+            edges[dep].append(n.id)
+            indeg[n.id] += 1
+
+    ready = [nid for nid, d in indeg.items() if d == 0]
+    seen = 0
+    while ready:
+        nid = ready.pop()
+        seen += 1
+        for nxt in edges[nid]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0:
+                ready.append(nxt)
+
+    if seen != len(nodes):
+        raise ValueError("cycle in depends_on")
+
+
+def _extract_params(nodes: list[_Node]) -> set[str]:
+    """Scan node params + init_directive args for ``{{name}}`` templates."""
+    found: set[str] = set()
+    for n in nodes:
+        if n.params:
+            _collect_params_from(n.params, found)
+        if n.init_directive:
+            args = n.init_directive.get("args")
+            if isinstance(args, dict):
+                _collect_params_from(cast(dict[str, Any], args), found)
+    return found
+
+
+def _collect_params_from(d: dict[str, Any], out: set[str]) -> None:
+    """Walk a dict (values only) and collect ``{{name}}`` template names."""
+    for v in d.values():
+        if isinstance(v, str):
+            out.update(_PARAM_RE.findall(v))
+        elif isinstance(v, dict):
+            _collect_params_from(cast(dict[str, Any], v), out)

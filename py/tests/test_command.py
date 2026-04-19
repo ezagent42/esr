@@ -179,3 +179,87 @@ def test_port_duplicate_input_name_raises() -> None:
     ):
         port.input("dup", "T")
         port.input("dup", "T")
+
+
+# --- PRD 02 F13: compile_topology ---------------------------------------
+
+
+def test_compile_topology_basic() -> None:
+    """compile_topology runs the registered command in a fresh context."""
+    from esr.command import Topology, compile_topology
+
+    @command("cmd-basic")
+    def build() -> None:
+        port.input("in", "T")
+        port.output("out", "T")
+        a = node(id="a", actor_type="t", handler="on_msg")
+        b = node(id="b", actor_type="t", handler="on_msg")
+        a >> b
+
+    topo = compile_topology("cmd-basic")
+    assert isinstance(topo, Topology)
+    assert topo.name == "cmd-basic"
+    assert [n.id for n in topo.nodes] == ["a", "b"]
+    assert topo.edges == (("a", "b"),)
+    assert topo.ports_in == {"in": "T"}
+    assert topo.ports_out == {"out": "T"}
+
+
+def test_compile_topology_unknown_name_raises() -> None:
+    """compile_topology raises KeyError for unregistered command."""
+    from esr.command import compile_topology
+
+    with pytest.raises(KeyError, match=r"command missing not registered"):
+        compile_topology("missing")
+
+
+def test_compile_topology_depends_on_cycle_raises() -> None:
+    """Kahn's cycle detection on depends_on raises ValueError."""
+    from esr.command import compile_topology
+
+    @command("cmd-cycle")
+    def build() -> None:
+        node(id="a", actor_type="t", handler="on_msg", depends_on=["b"])
+        node(id="b", actor_type="t", handler="on_msg", depends_on=["a"])
+
+    with pytest.raises(ValueError, match=r"cycle in depends_on"):
+        compile_topology("cmd-cycle")
+
+
+def test_compile_topology_extracts_params() -> None:
+    """Templates like {{thread_id}} in params / init_directive args are extracted."""
+    from esr.command import compile_topology
+
+    @command("cmd-params")
+    def build() -> None:
+        node(
+            id="x",
+            actor_type="t",
+            handler="on_msg",
+            params={"label": "{{thread_id}}-{{user}}"},
+        )
+        node(
+            id="y",
+            actor_type="t",
+            handler="on_msg",
+            adapter="cc_tmux",
+            init_directive={"action": "new_session", "args": {"name": "{{thread_id}}"}},
+        )
+
+    topo = compile_topology("cmd-params")
+    assert topo.params == ("thread_id", "user")
+
+
+def test_compile_topology_result_is_frozen() -> None:
+    """Topology dataclass is frozen — mutation raises."""
+    from esr.command import compile_topology
+
+    @command("cmd-frozen")
+    def build() -> None:
+        port.input("in", "T")
+        port.output("out", "T")
+        node(id="x", actor_type="t", handler="on_msg")
+
+    topo = compile_topology("cmd-frozen")
+    with pytest.raises(Exception):  # noqa: B017
+        topo.name = "other"  # type: ignore[misc]
