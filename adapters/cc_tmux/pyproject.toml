@@ -16,3 +16,7 @@ where = ["src"]
 
 [tool.uv.sources]
 esr = { path = "../../py", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"

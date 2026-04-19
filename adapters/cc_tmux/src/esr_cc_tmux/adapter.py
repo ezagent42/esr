@@ -4,14 +4,26 @@ Launches Claude Code TUI sessions inside tmux and mediates I/O.
 Factory is pure (PRD 04 F02) — the tmux availability probe happens
 lazily on first directive (F22).
 
-Directive + event implementations land in F17-F21:
- - new_session / send_keys / kill_session / capture_pane directives
- - sentinel-line output monitoring as events
+Directives currently implemented:
+ - ``new_session`` (F17): ``tmux new-session -d -s <name> <cmd>``
+
+Directive shape (per spec §5.3):
+ - Caller invokes ``await adapter.on_directive(action, args)``
+ - Returns ``{"ok": bool, "result"?: dict, "error"?: str}``
+
+F18 (send_keys), F19 (kill_session), F20 (capture_pane), F21 (event
+monitoring) follow in subsequent commits.
 """
 
 from __future__ import annotations
 
+import logging
+import subprocess
+from typing import Any
+
 from esr.adapter import AdapterConfig, adapter
+
+logger = logging.getLogger(__name__)
 
 
 @adapter(
@@ -32,3 +44,43 @@ class CcTmuxAdapter:
     def factory(actor_id: str, config: AdapterConfig) -> CcTmuxAdapter:
         """Construct a CcTmuxAdapter — pure, no I/O (PRD 04 F02)."""
         return CcTmuxAdapter(actor_id=actor_id, config=config)
+
+    # --- directive dispatch (F17-F20, F22) ----------------------------
+
+    async def on_directive(
+        self, action: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Dispatch a directive. Returns {"ok": bool, result?/error?}."""
+        if not self._ensure_tmux():
+            return {"ok": False, "error": "tmux not installed"}
+
+        if action == "new_session":
+            return self._new_session(args)
+        return {"ok": False, "error": f"unknown action: {action}"}
+
+    def _ensure_tmux(self) -> bool:
+        """Probe ``tmux --version`` once; cache the result (F22)."""
+        if self._tmux_available is not None:
+            return self._tmux_available
+        try:
+            subprocess.run(
+                ["tmux", "--version"], capture_output=True, text=True
+            )
+            self._tmux_available = True
+        except FileNotFoundError:
+            logger.warning("tmux not installed; subsequent directives will error")
+            self._tmux_available = False
+        return self._tmux_available
+
+    def _new_session(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Run ``tmux new-session -d -s <session_name> <start_cmd>`` (F17)."""
+        session_name = args["session_name"]
+        start_cmd = args["start_cmd"]
+        result = subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session_name, start_cmd],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return {"ok": True}
+        return {"ok": False, "error": result.stderr.strip()}
