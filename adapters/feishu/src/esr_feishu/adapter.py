@@ -15,6 +15,7 @@ F02 purity guarantee.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
@@ -68,11 +69,31 @@ class FeishuAdapter:
     async def on_directive(
         self, action: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Dispatch a directive. Returns {"ok": bool, result?/error?}.
-
-        Currently dispatches no concrete actions — every call lands in
-        the unknown-action branch (PRD 04 F11). F07-F10 implementations
-        (send_message / react / send_card / pin / unpin) add proper
-        dispatch arms.
-        """
+        """Dispatch a directive. Returns {"ok": bool, result?/error?}."""
+        if action == "send_message":
+            return self._send_message(args)
         return {"ok": False, "error": f"unknown action: {action}"}
+
+    def _send_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Send a text message via lark_oapi im.v1.message.create (PRD 04 F07)."""
+        import lark_oapi.api.im.v1 as im_v1
+
+        chat_id = args["chat_id"]
+        content = args["content"]
+        request = (
+            im_v1.CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                im_v1.CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("text")
+                .content(json.dumps({"text": content}))
+                .build()
+            )
+            .build()
+        )
+        response = self.client().im.v1.message.create(request)
+        if response.success():
+            return {"ok": True, "result": {"message_id": response.data.message_id}}
+        error = getattr(response, "msg", "") or getattr(response, "error", "") or "send failed"
+        return {"ok": False, "error": str(error)}
