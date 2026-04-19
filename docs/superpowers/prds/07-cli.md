@@ -143,8 +143,8 @@ Every CLI command:
 
 - [x] All 23 FRs have passing unit tests — iter-46 → iter-57 closed every runtime-dep CLI command
 - [x] `esr --help` and every subcommand `--help` render complete docs — click auto-generates from docstrings
-- [ ] Shell tab-completion installed for bash / zsh via click-completion — post-install README step deferred
-- [x] Integration: `esr scenario run e2e-platform-validation` → "8 steps PASSED" exercises every track referenced to CLI paths
+- [x] Shell tab-completion documented in README (bash / zsh via click-completion)
+- [ ] Integration: `esr scenario run e2e-feishu-cc` → "8/8 steps PASSED" exercises every track via scripts/final_gate.sh --mock
 
 ---
 
