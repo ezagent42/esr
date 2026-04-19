@@ -99,6 +99,51 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:debug/pause and /resume" do
+    setup do
+      actor_id = "thread:debug-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = start_supervised({Esr.PeerServer,
+        actor_id: actor_id,
+        actor_type: "feishu_thread_proxy",
+        handler_module: "noop"
+      })
+
+      {:ok, _, pause_socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-pause", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:debug/pause")
+
+      {:ok, _, resume_socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-resume", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:debug/resume")
+
+      %{pause_socket: pause_socket, resume_socket: resume_socket, actor_id: actor_id}
+    end
+
+    test "pause flips paused=true on the target", ctx do
+      ref = push(ctx.pause_socket, "cli_call", %{"actor_id" => ctx.actor_id})
+      assert_reply ref, :ok, response
+      assert response["data"]["paused"] == true
+      assert response["data"]["actor_id"] == ctx.actor_id
+      assert Esr.PeerServer.describe(ctx.actor_id).paused == true
+    end
+
+    test "resume flips paused=false", ctx do
+      :ok = Esr.PeerServer.pause(ctx.actor_id)
+      ref = push(ctx.resume_socket, "cli_call", %{"actor_id" => ctx.actor_id})
+      assert_reply ref, :ok, response
+      assert response["data"]["paused"] == false
+      assert Esr.PeerServer.describe(ctx.actor_id).paused == false
+    end
+
+    test "pause on missing actor returns structured error", ctx do
+      ref = push(ctx.pause_socket, "cli_call", %{"actor_id" => "ghost:missing"})
+      assert_reply ref, :ok, response
+      assert response["data"]["error"] == "actor not found"
+    end
+  end
+
   describe "cli:deadletter/list" do
     setup do
       Esr.DeadLetter.clear(Esr.DeadLetter)

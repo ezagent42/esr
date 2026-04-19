@@ -70,6 +70,18 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
   end
 
+  def dispatch("cli:debug/pause", %{"actor_id" => actor_id}) when is_binary(actor_id) do
+    debug_toggle(actor_id, :pause)
+  end
+
+  def dispatch("cli:debug/resume", %{"actor_id" => actor_id}) when is_binary(actor_id) do
+    debug_toggle(actor_id, :resume)
+  end
+
+  def dispatch("cli:debug/" <> _op, _payload) do
+    %{"data" => %{"error" => "missing 'actor_id' in payload"}}
+  end
+
   def dispatch("cli:deadletter/list", _payload) do
     data =
       Esr.DeadLetter
@@ -105,6 +117,24 @@ defmodule EsrWeb.CliChannel do
     # echo so the Python CLI can observe that its call reached the runtime
     # and came back with a shaped response.
     %{"echoed" => payload, "topic" => topic}
+  end
+
+  @spec debug_toggle(String.t(), :pause | :resume) :: map()
+  defp debug_toggle(actor_id, op) do
+    case Esr.PeerRegistry.lookup(actor_id) do
+      {:ok, _pid} ->
+        :ok =
+          case op do
+            :pause -> Esr.PeerServer.pause(actor_id)
+            :resume -> Esr.PeerServer.resume(actor_id)
+          end
+
+        snap = Esr.PeerServer.describe(actor_id)
+        %{"data" => %{"actor_id" => actor_id, "paused" => snap.paused}}
+
+      :error ->
+        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
+    end
   end
 
   @spec serialise_telemetry_event(TelemetryEvent.t()) :: map()

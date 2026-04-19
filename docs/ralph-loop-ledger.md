@@ -20,3 +20,4 @@
 | 11 | 2026-04-19 | 8c | cli-deadletter-flush | 32bfcd6 | unit_tests | sha256:81023d7774fe4c06 |
 | 12 | 2026-04-19 | 8c | cli-trace | 0e7aa1e | unit_tests | sha256:20406a7ab398c554 |
 | 13 | 2026-04-19 | 8c | cli-actors-inspect | 66cd979 | unit_tests | sha256:c282a718d28fd6b3 |
+| 14 | 2026-04-19 | 8c | cli-debug-pause-resume | 80e8a70 | unit_tests | sha256:29b5e62ad8635e0a |
