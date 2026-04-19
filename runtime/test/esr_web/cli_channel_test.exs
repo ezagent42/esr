@@ -98,6 +98,37 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:trace" do
+    setup do
+      Esr.Telemetry.Buffer.record(:default,
+        [:esr, :handler, :called],
+        %{duration_us: 42},
+        %{actor_id: "thread:test", session: "s1"}
+      )
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-trace", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:trace")
+
+      %{trace_socket: socket}
+    end
+
+    test "returns recent telemetry events", %{trace_socket: socket} do
+      ref = push(socket, "cli_call", %{"duration_seconds" => 900})
+      assert_reply ref, :ok, response
+      entries = response["entries"]
+      assert is_list(entries)
+      assert length(entries) >= 1
+
+      matching = Enum.find(entries, fn e ->
+        e["event"] == ["esr", "handler", "called"]
+      end)
+      assert matching != nil
+      assert matching["measurements"]["duration_us"] == 42
+    end
+  end
+
   describe "cli:deadletter/flush" do
     setup do
       Esr.DeadLetter.clear(Esr.DeadLetter)

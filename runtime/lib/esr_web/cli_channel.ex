@@ -57,11 +57,41 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"flushed" => flushed}}
   end
 
+  def dispatch("cli:trace", payload) do
+    duration_s =
+      case Map.get(payload, "duration_seconds") do
+        n when is_integer(n) -> n
+        _ -> 900
+      end
+
+    entries =
+      :default
+      |> Esr.Telemetry.Buffer.query(duration_seconds: duration_s)
+      |> Enum.map(&serialise_telemetry_event/1)
+
+    %{"entries" => entries}
+  end
+
   def dispatch(topic, payload) do
     # Phase 8c iterates: add a case clause per real cli:<op>. Until then,
     # echo so the Python CLI can observe that its call reached the runtime
     # and came back with a shaped response.
     %{"echoed" => payload, "topic" => topic}
+  end
+
+  @spec serialise_telemetry_event(Esr.Telemetry.Buffer.Event.t()) :: map()
+  defp serialise_telemetry_event(%Esr.Telemetry.Buffer.Event{} = event) do
+    %{
+      "ts_unix_ms" => event.ts_unix_ms,
+      "event" => Enum.map(event.event, &to_string/1),
+      "measurements" => stringify_keys(event.measurements),
+      "metadata" => stringify_keys(event.metadata)
+    }
+  end
+
+  @spec stringify_keys(map()) :: map()
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
   @spec serialise_dl_entry(Esr.DeadLetter.Entry.t()) :: map()

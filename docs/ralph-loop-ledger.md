@@ -18,3 +18,4 @@
 | 9 | 2026-04-19 | 8c | cli-actors-list | 44d5a43 | unit_tests | sha256:ee9172ef9e76b456 |
 | 10 | 2026-04-19 | 8c | cli-deadletter-list | 63e440a | unit_tests | sha256:9712b2a36495842c |
 | 11 | 2026-04-19 | 8c | cli-deadletter-flush | 32bfcd6 | unit_tests | sha256:81023d7774fe4c06 |
+| 12 | 2026-04-19 | 8c | cli-trace | 0e7aa1e | unit_tests | sha256:20406a7ab398c554 |
