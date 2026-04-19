@@ -6,6 +6,7 @@ import importlib.util
 import os
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import click
 import yaml
@@ -92,6 +93,70 @@ def use(host_port: str | None) -> None:
 @cli.group()
 def adapter() -> None:
     """Adapter install / instance / list operations."""
+
+
+@adapter.command("add", context_settings={"ignore_unknown_options": True})
+@click.argument("instance_name")
+@click.option("--type", "adapter_type", required=True, help="Adapter type name.")
+@click.argument("config_args", nargs=-1, type=click.UNPROCESSED)
+def adapter_add(
+    instance_name: str, adapter_type: str, config_args: tuple[str, ...]
+) -> None:
+    """Register a new adapter instance (PRD 07 F04).
+
+    Flag pairs (``--key value`` or ``--key=value``) are collected into
+    the instance's AdapterConfig. Writes to
+    ``~/.esrd/<instance>/adapters.yaml`` — the "esrd instance"
+    here is hardcoded to ``default`` in v0.1 (separated-instance
+    support lives with Phase 1 F18 esrd multi-instance config).
+    """
+    # Parse the trailing pass-through args into a config dict.
+    cfg_dict = _parse_config_flags(config_args)
+
+    cfg_path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "adapters.yaml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc: dict[str, Any] = {"instances": {}}
+    if cfg_path.exists():
+        loaded = yaml.safe_load(cfg_path.read_text()) or {}
+        doc = loaded if isinstance(loaded, dict) else {"instances": {}}
+        if "instances" not in doc:
+            doc["instances"] = {}
+
+    if instance_name in doc["instances"]:
+        click.echo(
+            f"adapter instance {instance_name!r} already exists — use remove first",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    doc["instances"][instance_name] = {"type": adapter_type, "config": cfg_dict}
+    cfg_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+    click.echo(f"added {instance_name} ({adapter_type})")
+
+
+def _parse_config_flags(args: tuple[str, ...]) -> dict[str, str]:
+    """Turn ``--key value`` / ``--key=value`` pairs into a dict.
+
+    Underscore conversion: ``--app-id`` → ``app_id`` so flag names can
+    be kebab-case (click convention) while pydantic/config names stay
+    snake_case.
+    """
+    out: dict[str, str] = {}
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok.startswith("--"):
+            if "=" in tok:
+                key, val = tok[2:].split("=", 1)
+            elif i + 1 < len(args):
+                key, val = tok[2:], args[i + 1]
+                i += 1
+            else:
+                key, val = tok[2:], ""
+            out[key.replace("-", "_")] = val
+        i += 1
+    return out
 
 
 @adapter.command("install")
