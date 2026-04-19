@@ -373,3 +373,51 @@ def _collect_params_from(d: dict[str, Any], out: set[str]) -> None:
             out.update(_PARAM_RE.findall(v))
         elif isinstance(v, dict):
             _collect_params_from(cast(dict[str, Any], v), out)
+
+
+# --- YAML (F14) ----------------------------------------------------------
+
+
+def compile_to_yaml(topo: Topology, path: Any) -> None:
+    """Serialise ``topo`` to YAML at ``path`` per spec §6.3.
+
+    Deterministic key order: schema_version, name, params, ports, nodes,
+    edges. Optional node fields (adapter, params, depends_on, init_directive)
+    are omitted when empty to keep diffs minimal.
+    """
+    import yaml
+
+    doc: dict[str, Any] = {
+        "schema_version": 1,
+        "name": topo.name,
+        "params": list(topo.params),
+        "ports": {
+            "in": dict(topo.ports_in),
+            "out": dict(topo.ports_out),
+        },
+        "nodes": [_node_to_dict(n) for n in topo.nodes],
+        "edges": [list(e) for e in topo.edges],
+    }
+    text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    # Accept both str and PathLike
+    from pathlib import Path as _Path
+
+    _Path(path).write_text(text, encoding="utf-8")
+
+
+def _node_to_dict(n: _Node) -> dict[str, Any]:
+    """Serialise a ``_Node`` to a YAML-friendly dict with stable key order."""
+    out: dict[str, Any] = {
+        "id": n.id,
+        "actor_type": n.actor_type,
+        "handler": n.handler,
+    }
+    if n.adapter is not None:
+        out["adapter"] = n.adapter
+    if n.params:
+        out["params"] = dict(n.params)
+    if n.depends_on:
+        out["depends_on"] = list(n.depends_on)
+    if n.init_directive:
+        out["init_directive"] = dict(n.init_directive)
+    return out
