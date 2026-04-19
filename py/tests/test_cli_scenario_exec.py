@@ -74,6 +74,68 @@ teardown: []
            "expect_stdout_match" in result.output.lower()
 
 
+def test_scenario_run_executes_setup_before_steps(tmp_path: Path) -> None:
+    """Setup commands run before steps — their failure short-circuits."""
+    _write(tmp_path, """\
+name: e2e
+description: setup-test
+mode: mock
+setup:
+  - command: "printf 'setup-ok\\n'"
+    expect_exit: 0
+    timeout_sec: 5
+steps:
+  - id: always-pass
+    description: confirms steps reached
+    command: "printf 'actor_id=thread:x-1\\n'"
+    expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
+    expect_exit: 0
+    timeout_sec: 5
+teardown: []
+""")
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as cwd:
+        (Path(cwd) / "scenarios").mkdir()
+        (Path(cwd) / "scenarios" / "e2e.yaml").write_text(
+            (tmp_path / "scenarios" / "e2e.yaml").read_text()
+        )
+        result = runner.invoke(scenario_run, ["e2e", "--verbose"])
+    assert result.exit_code == 0, result.output
+    assert "setup-ok" in result.output or "✓ setup" in result.output
+    assert "1/1 steps PASSED" in result.output
+
+
+def test_scenario_run_setup_failure_aborts_scenario(tmp_path: Path) -> None:
+    """A failing setup step prevents any step from running."""
+    _write(tmp_path, """\
+name: e2e
+description: setup-failure
+mode: mock
+setup:
+  - command: "false"
+    expect_exit: 0
+    timeout_sec: 5
+steps:
+  - id: must-not-run
+    description: should never execute
+    command: "echo should-not-run"
+    expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
+    expect_exit: 0
+    timeout_sec: 5
+teardown: []
+""")
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)) as cwd:
+        (Path(cwd) / "scenarios").mkdir()
+        (Path(cwd) / "scenarios" / "e2e.yaml").write_text(
+            (tmp_path / "scenarios" / "e2e.yaml").read_text()
+        )
+        result = runner.invoke(scenario_run, ["e2e"])
+    assert result.exit_code != 0
+    assert "setup" in result.output.lower()
+    assert "should-not-run" not in result.output
+
+
 def test_scenario_run_fails_on_wrong_exit_code(tmp_path: Path) -> None:
     _write(tmp_path, """\
 name: e2e

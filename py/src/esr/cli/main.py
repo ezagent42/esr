@@ -170,6 +170,35 @@ def scenario_run(name: str, verbose: bool) -> None:
         click.echo(f"invalid scenario {name!r}: steps must be a list", err=True)
         raise click.exceptions.Exit(code=1)
 
+    setup_steps = data.get("setup") or []
+    teardown_steps = data.get("teardown") or []
+
+    # Run setup first; a failing setup aborts without running any step.
+    for i, sstep in enumerate(setup_steps, 1):
+        if not isinstance(sstep, dict) or not isinstance(sstep.get("command"), str):
+            click.echo(f"scenario {name!r}: setup[{i}] missing command", err=True)
+            raise click.exceptions.Exit(code=1)
+        s_timeout = int(sstep.get("timeout_sec", 30))
+        s_expect_exit = int(sstep.get("expect_exit", 0))
+        try:
+            sp = _sp.run(sstep["command"], shell=True, capture_output=True,
+                         text=True, timeout=s_timeout, check=False)
+        except _sp.TimeoutExpired:
+            click.echo(f"scenario {name!r}: setup step {i} timed out", err=True)
+            raise click.exceptions.Exit(code=1) from None
+        if sp.returncode != s_expect_exit:
+            click.echo(
+                f"scenario {name!r}: setup step {i} failed "
+                f"(exit={sp.returncode}, wanted {s_expect_exit})",
+                err=True,
+            )
+            click.echo(sp.stdout, err=True)
+            click.echo(sp.stderr, err=True)
+            raise click.exceptions.Exit(code=1)
+        if verbose:
+            click.echo(f"  ✓ setup[{i}]  {sstep['command'][:60]!r}")
+            click.echo(sp.stdout, nl=False)
+
     passed = 0
     failures: list[str] = []
     for i, step in enumerate(steps, 1):
@@ -218,6 +247,18 @@ def scenario_run(name: str, verbose: bool) -> None:
         passed += 1
         if verbose:
             click.echo(f"  ✓ {step_id}")
+
+    # Teardown always runs (even after step failures) — best-effort cleanup.
+    for i, tstep in enumerate(teardown_steps, 1):
+        if not isinstance(tstep, dict) or not isinstance(tstep.get("command"), str):
+            continue
+        t_timeout = int(tstep.get("timeout_sec", 30))
+        try:
+            _sp.run(tstep["command"], shell=True, capture_output=True,
+                    text=True, timeout=t_timeout, check=False)
+        except _sp.TimeoutExpired:
+            if verbose:
+                click.echo(f"  ! teardown[{i}] timed out")
 
     total = len(steps)
     if failures:
