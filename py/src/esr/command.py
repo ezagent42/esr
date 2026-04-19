@@ -185,3 +185,88 @@ class _Port:
 
 port = _Port()
 """Namespace object — call ``port.input(name, type)`` / ``port.output(...)``."""
+
+
+# --- Composition (F12) ---------------------------------------------------
+
+
+PatternFn = Callable[[], None]
+
+
+class _Compose:
+    """Namespace for ``compose.serial(a, b)`` and future compose variants."""
+
+    @staticmethod
+    def serial(a: PatternFn, b: PatternFn) -> None:
+        """Compose two pattern-builder functions in series.
+
+        Runs each in its own sub-context, matches shared port names
+        across A's outputs and B's inputs (type-equality required),
+        and merges remaining nodes/edges/ports into the outer
+        command context. Raises ``ValueError`` when there is no
+        shared port to wire through (serial requires at least one
+        hand-off point).
+        """
+        outer = _CURRENT.get(None)
+        if outer is None:
+            raise RuntimeError("compose.serial called outside a command context")
+
+        ctx_a = _run_subpattern(a, f"{outer.name}/A")
+        ctx_b = _run_subpattern(b, f"{outer.name}/B")
+
+        shared = set(ctx_a.ports_out) & set(ctx_b.ports_in)
+        if not shared:
+            raise ValueError(
+                "no shared port between serial patterns — compose.serial requires "
+                "at least one A-output name matching a B-input name"
+            )
+
+        for name in shared:
+            if ctx_a.ports_out[name] != ctx_b.ports_in[name]:
+                raise TypeError(
+                    f"port {name} type mismatch: "
+                    f"A outputs {ctx_a.ports_out[name]!r}, "
+                    f"B inputs {ctx_b.ports_in[name]!r}"
+                )
+            del ctx_a.ports_out[name]
+            del ctx_b.ports_in[name]
+
+        _merge_into(outer, ctx_a)
+        _merge_into(outer, ctx_b)
+
+
+compose = _Compose()
+"""Namespace object — call ``compose.serial(a_fn, b_fn)``."""
+
+
+def _run_subpattern(fn: PatternFn, name: str) -> _CommandCtx:
+    """Run ``fn`` in a fresh sub-context; return the accumulator."""
+    sub = _CommandCtx(name=name)
+    token = _CURRENT.set(sub)
+    try:
+        fn()
+    finally:
+        _CURRENT.reset(token)
+    return sub
+
+
+def _merge_into(outer: _CommandCtx, sub: _CommandCtx) -> None:
+    """Copy a sub-context's nodes/edges/ports into ``outer``.
+
+    Port type collisions across patterns raise ``TypeError`` — the
+    v0.1 type system has no subtyping.
+    """
+    outer.nodes.extend(sub.nodes)
+    outer.edges.extend(sub.edges)
+    for name, type_ in sub.ports_in.items():
+        if name in outer.ports_in and outer.ports_in[name] != type_:
+            raise TypeError(
+                f"port {name} type mismatch on compose: {outer.ports_in[name]!r} vs {type_!r}"
+            )
+        outer.ports_in[name] = type_
+    for name, type_ in sub.ports_out.items():
+        if name in outer.ports_out and outer.ports_out[name] != type_:
+            raise TypeError(
+                f"port {name} type mismatch on compose: {outer.ports_out[name]!r} vs {type_!r}"
+            )
+        outer.ports_out[name] = type_
