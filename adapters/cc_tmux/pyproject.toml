@@ -1,0 +1,18 @@
+[project]
+name = "esr-adapter-cc-tmux"
+version = "0.1.0"
+description = "ESR v0.1 adapter for launching Claude Code inside tmux sessions"
+requires-python = ">=3.11"
+dependencies = [
+    "esr",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+esr = { path = "../../py", editable = true }

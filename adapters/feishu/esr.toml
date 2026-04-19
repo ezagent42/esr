@@ -1,0 +1,10 @@
+# ESR adapter manifest (PRD 04 F04)
+name = "feishu"
+version = "0.1.0"
+module = "esr_feishu.adapter"
+entry = "FeishuAdapter"
+
+[allowed_io]
+lark_oapi = "*"
+aiohttp = "*"
+http = ["open.feishu.cn"]
