@@ -152,7 +152,12 @@ def cmd_compile(name: str, output: Path | None) -> None:
         click.echo(f"pattern {name!r} not found at {pattern_path}", err=True)
         raise click.exceptions.Exit(code=1)
 
-    # Import the pattern module so @command registers it
+    from esr.command import COMMAND_REGISTRY, compile_to_yaml, compile_topology
+
+    # Drop any stale registration so re-compile is idempotent across
+    # CLI invocations in the same process (tests, programmatic callers).
+    COMMAND_REGISTRY.pop(name, None)
+
     spec = importlib.util.spec_from_file_location(f"_pattern_{name}", pattern_path)
     if spec is None or spec.loader is None:
         click.echo(f"could not load {pattern_path}", err=True)
@@ -160,13 +165,40 @@ def cmd_compile(name: str, output: Path | None) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    from esr.command import compile_to_yaml, compile_topology
-
     topo = compile_topology(name)
     out = output or (Path("patterns") / ".compiled" / f"{name}.yaml")
     out.parent.mkdir(parents=True, exist_ok=True)
     compile_to_yaml(topo, out)
     click.echo(f"compiled {name} → {out}")
+
+
+# --- lint (F14) --------------------------------------------------------
+
+
+@cli.command("lint")
+@click.argument(
+    "path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+def lint(path: Path) -> None:
+    """Run the import allow-list purity scan over a directory tree (PRD 07 F14).
+
+    Walks every ``.py`` file under ``path`` and applies
+    ``esr.verify.purity.scan_imports``. Prints each violation as
+    ``<file>:<lineno>: <message>`` and exits nonzero if any
+    violation surfaced.
+    """
+    from esr.verify.purity import scan_imports
+
+    any_violation = False
+    for py in sorted(path.rglob("*.py")):
+        violations = scan_imports(py)
+        for v in violations:
+            click.echo(f"{py}:{v.lineno}: {v.message}")
+            any_violation = True
+
+    if any_violation:
+        raise click.exceptions.Exit(code=1)
 
 
 # --- Shared helpers for list commands ---------------------------------
