@@ -9,3 +9,4 @@
 | 0    | 2026-04-20 | A17   | seed   | 200f8db | ledger_check   | sha256:00000000 |
 | 1 | 2026-04-19 | 8a | F13-pusher | ee9af33 | unit_tests | sha256:7d44395e240f3ab3 |
 | 2 | 2026-04-19 | 8a | F13-run-with-client | 99550df | unit_tests | sha256:92f760cecfd8b96d |
+| 3 | 2026-04-19 | 8a | F13-adapter-loader | 6b55d14 | unit_tests | sha256:6b4505ef2ae3e602 |
