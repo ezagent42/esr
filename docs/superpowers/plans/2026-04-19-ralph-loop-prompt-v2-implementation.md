@@ -2352,17 +2352,120 @@ EOF
 
 ---
 
-## Task 14: Capture real Lark WS fixtures (user-operated)
+## Task 14: Capture real Lark WS fixtures
 
-Three captured sessions for `mock_feishu.py` conformance tests (spec §8 8d, closes reviewer S5). **The user runs this task using a real Feishu app.** Reviewer C-P6: the capture script is authored inline here rather than assumed to already exist.
+Three captured sessions for `mock_feishu.py` conformance tests (spec §8 8d, closes reviewer S5). Two acceptable paths — pick whichever matches the runtime environment.
+
+**Path A — via cc-openclaw hook (recommended when cc-openclaw is co-resident).** Adds a 14-line capture hook to `cc-openclaw/channel_server/adapters/feishu/adapter.py::on_message`. The hook writes every received `P2ImMessageReceiveV1` to `~/.openclaw/logs/esr-fixture-capture/<ts>_<msg_id>.json` while the capture dir exists; the user deletes the dir to disable. No parallel WS client, no Lark session contention. Restart `ai.openclaw.channel-server` via launchctl once to load, once again after revert to remove.
+
+**Path B — standalone capture_ws.py** (when no cc-openclaw exists). Runs a second WS client against the same app. Will compete with any concurrent subscription. Use only in a fresh esrd-only environment.
+
+Task 14's Steps 1–3 implement Path A (used in the v2.1 live-integration); Step 4 authors `capture_ws.py` for Path B (kept for standalone use and shipped with the ESR repo).
 
 **Files:**
-- Create: `adapters/feishu/tests/capture_ws.py` (the capture helper)
+- Modify: `~/cc-openclaw/channel_server/adapters/feishu/adapter.py` (Path A hook; reverted after capture)
+- Create: `adapters/feishu/tests/capture_ws.py` (Path B standalone; stays)
 - Create: `adapters/feishu/tests/fixtures/live-capture/text_message.json`
 - Create: `adapters/feishu/tests/fixtures/live-capture/thread_reply.json`
 - Create: `adapters/feishu/tests/fixtures/live-capture/card_interaction.json`
 
-- [ ] **Step 1: Author the capture helper**
+### Path A — hook-in-channel_server capture
+
+- [ ] **Step A1: Add the hook to cc-openclaw on_message**
+
+Edit `~/cc-openclaw/channel_server/adapters/feishu/adapter.py` at the top of the `on_message` callback (around line 167):
+
+```python
+# ---- ESR fixture capture hook (temporary, remove when done) ----
+try:
+    import os
+    import lark_oapi
+    _cap_dir = os.path.expanduser("~/.openclaw/logs/esr-fixture-capture")
+    if os.path.isdir(_cap_dir):
+        _raw = lark_oapi.JSON.marshal(data)
+        _ts = __import__("datetime").datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+        _mid = getattr(getattr(data.event, "message", None), "message_id", "none") or "none"
+        with open(f"{_cap_dir}/{_ts}_{_mid[:16]}.json", "w") as _f:
+            _f.write(_raw)
+except Exception:
+    pass
+# ---- end capture hook ----
+```
+
+- [ ] **Step A2: Create capture dir + restart channel_server**
+
+```bash
+mkdir -p ~/.openclaw/logs/esr-fixture-capture
+launchctl kickstart -k "gui/$(id -u)/ai.openclaw.channel-server"
+```
+
+- [ ] **Step A3: Trigger 3 message types in the test chat** (by the user; from Feishu)
+
+1. Plain text message
+2. Threaded reply (long-press first message → reply)
+3. Interactive card (send a link Feishu auto-previews, or any card message)
+
+Wait 2-3 seconds between each. Verify 3 JSON files appeared:
+
+```bash
+ls ~/.openclaw/logs/esr-fixture-capture/
+```
+
+- [ ] **Step A4: Sort the three fixtures into ESR**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr
+mkdir -p adapters/feishu/tests/fixtures/live-capture/
+# Pick the 3 JSONs by inspecting msg_type and parent_id fields.
+uv run python <<'PY'
+import json, shutil
+from pathlib import Path
+src = Path.home() / ".openclaw/logs/esr-fixture-capture"
+dst = Path("adapters/feishu/tests/fixtures/live-capture")
+for f in sorted(src.glob("*.json")):
+    d = json.loads(f.read_text())
+    msg = d.get("event", {}).get("message", {})
+    mt = msg.get("message_type", "")
+    parent = msg.get("parent_id")
+    if mt == "text" and not parent and not (dst / "text_message.json").exists():
+        shutil.copy(f, dst / "text_message.json")
+    elif parent and not (dst / "thread_reply.json").exists():
+        shutil.copy(f, dst / "thread_reply.json")
+    elif mt in ("interactive", "post", "share_chat") and not (dst / "card_interaction.json").exists():
+        shutil.copy(f, dst / "card_interaction.json")
+print("sorted:", [p.name for p in dst.iterdir()])
+PY
+```
+
+- [ ] **Step A5: Revert the hook + restart again**
+
+```bash
+# Remove the 14-line hook from cc-openclaw adapter.py (commit removing it).
+# Then:
+rm -rf ~/.openclaw/logs/esr-fixture-capture
+launchctl kickstart -k "gui/$(id -u)/ai.openclaw.channel-server"
+```
+
+- [ ] **Step A6: Commit fixtures**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr
+git add adapters/feishu/tests/fixtures/live-capture/*.json
+git commit -m "$(cat <<'EOF'
+test(feishu): add 3 real Lark WS capture fixtures (text, thread, card)
+
+Captured via cc-openclaw channel_server hook (Path A of plan Task 14).
+Closes reviewer S5 — mock_feishu.py now has real-wire-format fixtures
+to conform against.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+### Path B — standalone capture_ws.py
+
+- [ ] **Step B1: Author the capture helper**
 
 `adapters/feishu/tests/capture_ws.py`:
 
@@ -2447,7 +2550,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 2: Run the capture against a real Feishu app**
+- [ ] **Step B2: Run the capture against a real Feishu app (fresh environment only)**
 
 ```bash
 cd /Users/h2oslabs/Workspace/esr
@@ -2463,7 +2566,7 @@ Then in the target Feishu chat:
 
 The script exits on its own once all three have arrived.
 
-- [ ] **Step 2: Sanity-check each file**
+- [ ] **Step B3: Sanity-check each file**
 
 ```bash
 cd /Users/h2oslabs/Workspace/esr && for f in adapters/feishu/tests/fixtures/live-capture/*.json; do
@@ -2471,21 +2574,11 @@ cd /Users/h2oslabs/Workspace/esr && for f in adapters/feishu/tests/fixtures/live
   uv run python -c "import json, sys; d = json.load(open('$f')); print(d.get('header', {}).get('event_type'))"
 done
 ```
-Expected: three lines reading `im.message.receive_v1` (or the type corresponding to each capture).
+Expected: three lines reading `im.message.receive_v1`.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step B4: Commit**
 
-```bash
-cd /Users/h2oslabs/Workspace/esr && git add adapters/feishu/tests/fixtures/live-capture/
-git commit -m "test(feishu): capture 3 real Lark WS sessions for mock-conformance
-
-Spec §8 8d (closes reviewer S5). Used by mock_feishu.py conformance
-test in Task 23 (loop-authored).
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
-**Note:** If the user does not have a real Feishu app at this point, this task can be **deferred to just before Task 19 (red-team)**. Everything else in Phase A can proceed. Mark it as an open blocker in the ledger seed row (Task 17).
+Same commit as Path A Step A6; only run one of the two paths.
 
 ---
 
