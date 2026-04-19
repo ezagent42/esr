@@ -59,9 +59,31 @@ deduplicated; (e) `esr deadletter list` is empty on the happy path.
 |---|---|---|
 | Highest promise loop can emit | `<promise>ESR_V0_1_COMPLETE</promise>` | `<promise>ESR_V0_1_LIVE_READY</promise>` |
 | Who decides "truly complete"? | The loop, by reading its own gates | The user, by running `scripts/final_gate.sh --live` and seeing exit 0 |
-| What protects the judge? | Nothing | `final_gate.sh` is pinned by SHA-256 in the prompt; loopguard §4.3 fails the gate if the checksum drifts |
+| What protects the judge? | Nothing | `final_gate.sh` is authored by the USER before the loop starts (see §11) and its SHA-256 is pinned in the prompt; loopguard §4.3 fails if the checksum drifts |
 
 The loop's job ends at `LIVE_READY`. The final call belongs to the user.
+
+**Anti-circular-trust rule (closes reviewer C2):** `final_gate.sh`, its `.sha256` pin,
+and the normative acceptance manifest (§4.3 LG-5) are all **authored by the user
+manually** and committed **before** the loop's first iteration. The loop may read
+these files but is forbidden to modify them — any modification trips LG-4 (gate
+script tamper) or LG-11 (loopguard self-pin tamper) and produces
+`BLOCKED: tamper:LG-<N>`. Without this rule, an adversarial loop can write both
+the script and its own checksum on iteration 1, making the pin meaningless.
+
+**What `final_gate.sh --live` must do (user-authored contract):** the script's
+`--live` path cannot be a trivial `exit 0`. The user-authored script must
+collect three independent forensic artifacts and print them for review:
+
+1. A tail line from `~/.esrd/default/logs/<ts>.log` mentioning the test
+   `FEISHU_TEST_CHAT_ID`.
+2. A Lark webhook-delivery log (the HTTP response body from the real Lark API
+   after the bot posts the smoke-test message).
+3. A `tmux capture-pane -t <session>` excerpt showing the CC tty received the
+   forwarded message.
+
+All three must match named regex shapes before `--live` exits 0. See the
+reference skeleton in §8.
 
 ### 4.2 Scenario file — structure is contractually fixed
 
@@ -92,20 +114,31 @@ teardown:
     timeout_sec: <int>
 ```
 
-**Banned keys** (loopguard fails if present anywhere): `covered_by`, `unit_tests`,
-`deferred`, `skip`, `todo`.
+**Banned keys** (loopguard fails if present anywhere in the scenarios tree):
+`covered_by`, `unit_tests`, `deferred`, `skip`, `todo`.
 
-**Output-signature requirement.** Each step's `expect_stdout_match` must be a regex
-that can **only be satisfied by a live runtime**. The prompt provides concrete
-examples:
+**Output-signature requirement (BLOCKING — closes reviewer S4).** Each step's
+`expect_stdout_match` regex must match at least one of the following
+**approved live-runtime signatures**:
 
-- A BEAM pid pattern: `pid=<0\.\d+\.\d+>`
-- A real timestamp delta: `ack_ms=\d{1,4}`
-- An actor-ID synthesized at spawn time: `actor_id=thread:[a-z0-9-]+`
+| # | Pattern | Why it's live-only |
+|---|---|---|
+| sig-A | `pid=<0\.\d+\.\d+>` | BEAM pid format — only emitted by a running OTP runtime |
+| sig-B | `actor_id=(thread\|tmux\|cc\|feishu-app):[a-z0-9-]+` | Actor IDs are synthesized at spawn; static text can't produce them |
+| sig-C | `ack_ms=\d{1,4}` | Directive-ack latency; only measurable when a real channel is active |
+| sig-D | `message_id=om_[a-zA-Z0-9]{10,}` | Lark `message_id` shape; only present after a successful `im.v1.message.create` round-trip (mock_feishu emits the same shape) |
+| sig-E | `peer_count=\d+ registered_count=\d+` | PeerRegistry state at runtime |
+| sig-F | `msg_id=[a-f0-9-]{8,} dedup=hit` | Dedup pathway — requires PeerServer to have seen the id once |
 
-Unit-test output and `echo` cannot mimic these. If loopguard detects a step whose
-match pattern does not reference any live-runtime-only signal (heuristic: regex
-contains no digits, no pid shape, no hex) it warns (non-blocking).
+LG-1 parses every step's regex and fails (blocking) if none of sig-A…sig-F is
+present verbatim. Adding a new signature requires editing this spec + the
+prompt's pinned list; loopguard helpers read the list from a pinned file
+`scripts/live_signatures.txt` (covered by LG-11 self-pin).
+
+If a genuinely signature-free step exists (rare — maybe a `setup:` precondition
+like "config file present"), the step uses explicit annotation
+`live_signature: exempt  # reason: <human-written justification>`; LG-1 logs the
+exemption into the ledger. Un-justified exemptions (no `reason:`) fail LG-1.
 
 ### 4.3 Loopguard — per-iteration anti-tamper scan
 
@@ -113,36 +146,104 @@ contains no digits, no pid shape, no hex) it warns (non-blocking).
 Any non-zero return → emit `<promise>BLOCKED: loopguard:<check-id></promise>` and
 stop.
 
-| # | Check | Command |
-|---|---|---|
-| LG-1 | scenario YAML has only allowed top-level keys + every step has 4 required fields | `uv run python scripts/loopguard_scenario.py` |
-| LG-2 | No `NotImplementedError` in production CLI / IPC / adapter source | `rg 'raise NotImplementedError' py/src/esr/{cli,ipc,adapters}/ \|\| true` (grep pattern — 0 hits required) |
-| LG-3 | No "deferred" escape hatches in PRDs | `rg -iE 'phase 8 (live.*)?defer\|v0\.2\+ concern\|deferred to f\d+' docs/superpowers/prds/` (0 hits) |
-| LG-4 | `final_gate.sh` SHA-256 matches the value pinned in the prompt | `sha256sum -c scripts/final_gate.sh.sha256` |
-| LG-5 | All PRD Acceptance boxes ticked | `uv run python scripts/verify_prd_acceptance.py` — exit 0 and print `all N Acceptance items ticked` |
-| LG-6 | No `covered_by:` in any scenario file | `rg 'covered_by:' scenarios/` (0 hits) |
-| LG-7 | Ledger append-only | `uv run python scripts/verify_ledger_append_only.py` — diff every commit touching the ledger; reject any line deletion or in-place edit |
-| LG-8 | No `@pytest.mark.skip` / `xfail` added in this iteration | `git diff HEAD~1 -- 'py/tests/**/*.py' \| rg '^\+.*@pytest\.mark\.(skip\|xfail)'` (0 hits) |
+| # | Check | Command | Closes reviewer finding |
+|---|---|---|---|
+| LG-1 | scenario YAML well-formed + every step signature-matches sig-A…sig-F (§4.2) | `uv run python scripts/loopguard_scenario.py` | S4 |
+| LG-2 | No soft stubs in ANY production source tree | `uv run python scripts/verify_entry_bodies.py` (see below) | C1 |
+| LG-3 | No "deferred / manual / gated" escape hatches in PRD Acceptance sections | `uv run python scripts/verify_prd_acceptance.py --regex-scan` | C3 |
+| LG-4 | `final_gate.sh` SHA-256 matches pin | `sha256sum -c scripts/final_gate.sh.sha256` | — |
+| LG-5 | All Acceptance items required by the manifest are present verbatim AND ticked | `uv run python scripts/verify_prd_acceptance.py --manifest docs/superpowers/prds/acceptance-manifest.yaml` | S1 |
+| LG-6 | `scenarios/` is an **allowlist** of known files with approved shapes | `uv run python scripts/loopguard_scenarios_allowlist.py` (see below) | S3 |
+| LG-7 | Ledger append-only AND each row cites an approved evidence type | `uv run python scripts/verify_ledger_append_only.py` | S2 |
+| LG-8 | No `@pytest.mark.skip` / `xfail` added **since the loop launched** | `git diff $(cat .ralph-loop-baseline) -- 'py/tests/**/*.py' 'runtime/test/**/*.exs' \| rg '^\+.*(@pytest\.mark\.(skip\|xfail)\|@tag.*:skip)'` | M1 |
+| LG-9 | Every `py/tests/test_cli_cmd_*.py` uses the `esrd_fixture` — no pure-mock path | `uv run python scripts/verify_cli_tests_live.py` | M2 |
+| LG-10 | No `_submit_*` helper is monkeypatched/mocked in tests | `uv run python scripts/verify_cli_tests_live.py --no-monkeypatch` | M2 |
+| LG-11 | All loopguard helper scripts + `live_signatures.txt` + acceptance manifest SHA-pinned and unchanged | `sha256sum -c scripts/loopguard-bundle.sha256` | M3 |
 
-LG-1 through LG-8 are the direct reverse of the eight v1 loopholes (scenario widening,
-prod stubs, PRD deferrals, judge tampering, unchecked acceptance, banned keys sneaking
-back, ledger rewriting, silent test muting).
+**LG-2 implementation — AST non-empty body check.** `scripts/verify_entry_bodies.py`
+parses these files and asserts each listed function body is non-trivial (not
+just `pass`, `...`, a single return/raise, or body length ≤ 2 AST nodes):
+
+| Module | Required non-empty functions |
+|---|---|
+| `py/src/esr/ipc/adapter_runner.py` | `run` |
+| `py/src/esr/ipc/handler_worker.py` | `run` |
+| `py/src/esr/cli/main.py` | all 8 `_submit_*` helpers |
+| `py/src/esr/cli/runtime_bridge.py` | `connect`, `call`, `push_event` |
+| `adapters/feishu/src/esr_feishu/adapter.py` | `factory`, `on_directive`, `emit_events`; every `send_*` / `react` directive handler |
+| `adapters/cc_tmux/src/esr_cc_tmux/adapter.py` | `factory`, `on_directive`, `emit_events` |
+| `handlers/*/src/esr_handler_*/on_msg.py` | `on_msg` |
+| `runtime/lib/esr/peer_server.ex` | `init`, `handle_info` for directive paths |
+
+Plus: reject any function in these files whose body raises a `NotImplementedError`,
+`NotImplemented`-tagged tuple, or returns a hard-coded `{"ok": False,
+"error": "not yet wired" \| "not implemented" \| "stub" \| "deferred"}`.
+
+**LG-3 implementation — regex scoped to Acceptance sections only.**
+`verify_prd_acceptance.py --regex-scan` parses each PRD and scans only the
+lines under the `## Acceptance` heading (until the next `##`). Ban words
+(any case): `\bdefer(red|s|ral)?\b`, `\bmanual step\b`, `\bpost-install\b`,
+`\bgated by\b`, `\blive.*(hookup|integration|wiring|run)\b`, `\bv0\.2\b`,
+`\btodo\b`, `\bpending\b`. Any ban-word match → LG-3 failure regardless of
+whether the box is ticked.
+
+**LG-5 implementation — normative acceptance manifest.** The user authors
+`docs/superpowers/prds/acceptance-manifest.yaml` **before the loop starts**
+(LG-11 pins it); it lists the exact verbatim Acceptance lines every PRD must
+contain. The loop cannot delete an Acceptance row because `verify_prd_acceptance.py
+--manifest` reports missing items as LG-5 failures. Ticked-box check is performed
+only for items also listed in the manifest, so the loop cannot add sham ticked
+lines for credit.
+
+**LG-6 implementation — allowlist.** `loopguard_scenarios_allowlist.py` requires
+`scenarios/` to contain exactly one file `e2e-feishu-cc.yaml` with the shape
+in §4.2. Anything else (extra files, renamed files, unexpected subdirectories)
+is LG-6 failure. The old `scenarios/e2e-platform-validation.yaml` is moved to
+`docs/archive/2026-04-18-e2e-platform-validation.yaml` as part of the pre-loop
+setup (see §11).
+
+**LG-9 / LG-10 implementation — CLI tests must use live esrd fixture.**
+`verify_cli_tests_live.py` AST-parses every `py/tests/test_cli_cmd_*.py`
+(and the other runtime-dep CLI tests) and requires each test function to (a)
+reference a fixture named `esrd_fixture` (or a pin-listed alternative) in its
+signature, and (b) contain no `monkeypatch.setattr(..., "_submit_*", ...)` or
+`mocker.patch.object(..., "_submit_*", ...)` calls. Violations fail.
+
+LG-1 through LG-11 collectively are the direct reverse of v1's actual
+failure modes plus the reviewer's three Critical escape routes.
 
 ### 4.4 Evidence ledger — append-only audit trail
 
 `docs/ralph-loop-ledger.md`, one row per iteration:
 
 ```
-| iter | date       | phase | FR   | commit  | evidence-sha       |
-|------|------------|-------|------|---------|--------------------|
-| 62   | 2026-04-20 | 8a    | F13  | 3a4f8b2 | sha256:9f3e…       |
+| iter | date       | phase | FR   | commit  | evidence-type      | evidence-sha |
+|------|------------|-------|------|---------|--------------------|--------------|
+| 62   | 2026-04-20 | 8a    | F13  | 3a4f8b2 | scenario_mock      | sha256:9f3e… |
 ```
 
 - `commit` is the short SHA of the iteration's commit.
-- `evidence-sha` is `sha256sum` of the key test output or log excerpt that justifies
-  the claim. The loop computes it via a helper `scripts/ledger_append.py <phase> <fr>
-  <command>` that captures command output, hashes it, and appends the row.
-- Loopguard LG-7 rejects any commit that modifies or deletes existing rows.
+- `evidence-type` is one of a **fixed enum** (closes reviewer S2) — the loop does
+  not supply an arbitrary command. Each type maps internally inside
+  `scripts/ledger_append.py` to a hard-coded command and runner path:
+
+  | Enum value | Internal command (not caller-supplied) |
+  |---|---|
+  | `unit_tests` | `make test` |
+  | `prd_matrix` | `uv run python scripts/verify_prd_matrix.py` |
+  | `loopguard` | `bash scripts/loopguard.sh` |
+  | `scenario_mock` | `esr scenario run e2e-feishu-cc` |
+  | `final_gate_mock` | `bash scripts/final_gate.sh --mock` |
+  | `prd_acceptance` | `uv run python scripts/verify_prd_acceptance.py --manifest ...` |
+  | `ledger_check` | `uv run python scripts/verify_ledger_append_only.py` |
+
+  Invocation: `uv run python scripts/ledger_append.py --phase 8a --fr F13
+  --evidence-type scenario_mock`. The script runs the mapped command, captures
+  stdout+stderr, hashes it, and appends the row. The loop cannot pass in a
+  `printf` substitute.
+- Loopguard LG-7 rejects any commit that modifies or deletes existing rows AND
+  verifies every `evidence-type` value is one of the enum.
+- `scripts/ledger_append.py` itself is SHA-pinned via LG-11.
 - User audit command: `tail -20 docs/ralph-loop-ledger.md`.
 
 ### 4.5 Promise vocabulary — two-tier
@@ -173,11 +274,17 @@ list (filled in by `writing-plans`, not here).
   call over the `cli:<op>` control topics. Each CLI command's unit test updates
   to exercise a live-ChannelClient path against an in-test esrd (`test_helper`
   brings one up).
-- **8d — Mock Feishu + Mock CC.** `scripts/mock_feishu.py` — a real WebSocket server
-  + HTTP endpoint that speaks the same shapes as Lark (`P2ImMessageReceiveV1`
-  payloads, `im.v1.message.create` REST). `scripts/mock_cc.py` — a process that
-  reads from stdin (tmux send-keys target) and emits `[esr-cc] <line>` on stdout
-  (sentinel lines become `cc_output` events). Both bind real ports.
+- **8d — Mock Feishu + Mock CC.** `scripts/mock_feishu.py` — a real WebSocket
+  server + HTTP endpoint that speaks the same shapes as Lark
+  (`P2ImMessageReceiveV1` payloads, `im.v1.message.create` REST).
+  `scripts/mock_cc.py` — a process that reads from stdin (tmux send-keys
+  target) and emits `[esr-cc] <line>` on stdout (sentinel lines become
+  `cc_output` events). Both bind real ports. **Protocol-faithfulness
+  requirement (closes reviewer S5):** `mock_feishu.py` must pass a
+  conformance test suite that replays the captured real-Lark WS sessions
+  committed in §11.1 item 6. If the mock drifts from Lark's wire format,
+  8e can pass while 8f (live smoke) still fails — this conformance test
+  catches drift early.
 - **8e — Scenario live-green.** Write the 8 steps of `scenarios/e2e-feishu-cc.yaml`
   per §4.2, run `esr scenario run e2e-feishu-cc` against esrd in mock mode, iterate
   until every step passes its `expect_stdout_match`.
@@ -192,18 +299,39 @@ list (filled in by `writing-plans`, not here).
 
 ### 6.1 New files
 
+**User-authored BEFORE the loop starts (loop is forbidden to modify — LG-4 / LG-11):**
+
 - `docs/superpowers/ralph-loop-prompt-v2.md` — the v2 prompt itself (output of
-  `writing-plans` step)
+  `writing-plans` step; committed by user before loop launch)
 - `scripts/final_gate.sh` + `scripts/final_gate.sh.sha256` — the external judge
-- `scripts/loopguard.sh` (orchestrator) + `scripts/loopguard_scenario.py` +
-  `scripts/verify_prd_acceptance.py` + `scripts/verify_ledger_append_only.py` +
+  (skeleton shown in §8; user fills in the live-mode body)
+- `docs/superpowers/prds/acceptance-manifest.yaml` — normative list of every
+  required PRD Acceptance row
+- `scripts/live_signatures.txt` — enumeration of approved sig-A…sig-F patterns
+- `scripts/loopguard-bundle.sha256` — SHA-pins for every loopguard helper
+  script (final_gate.sh is in its own `.sha256` for LG-4 isolation)
+- `.ralph-loop-baseline` — git SHA captured at loop launch, used by LG-8 to
+  detect skip/xfail additions since the start of the loop
+
+**Loop-authored during iterations (subject to every loopguard check):**
+
+- `scripts/loopguard.sh` (orchestrator) + helpers:
+  `scripts/loopguard_scenario.py`,
+  `scripts/loopguard_scenarios_allowlist.py`,
+  `scripts/verify_prd_acceptance.py`,
+  `scripts/verify_entry_bodies.py`,
+  `scripts/verify_cli_tests_live.py`,
+  `scripts/verify_ledger_append_only.py`,
   `scripts/ledger_append.py`
+  — **note:** once LG-11 pins these, later edits require the user to update the
+  `.sha256` bundle. Loop cannot self-repair a loopguard helper.
 - `scripts/esrd.sh` — daemon startup
 - `scripts/mock_feishu.py` + `scripts/mock_cc.py`
 - `scenarios/e2e-feishu-cc.yaml` — the new scenario
-- `docs/ralph-loop-ledger.md` — append-only evidence trail
-- `py/src/esr/ipc/adapter_runner.py::run` (function, not file) — the F13 entry
-- `py/src/esr/ipc/handler_worker.py::run` — the symmetric entry
+- `docs/ralph-loop-ledger.md` — append-only evidence trail (seeded header row
+  by the user)
+- `py/src/esr/ipc/adapter_runner.py::run` (function in an existing file) — F13 entry
+- `py/src/esr/ipc/handler_worker.py::run` — symmetric entry
 - `py/src/esr/cli/runtime_bridge.py` — shared Phoenix-channel client used by the
   eight formerly-stubbed CLI subcommands
 
@@ -216,11 +344,12 @@ list (filled in by `writing-plans`, not here).
 - `scripts/verify_prd_matrix.py` — unchanged; still gates unit tests. Complements
   the new live gates, doesn't replace them.
 
-### 6.3 Deprecated / forbidden files
+### 6.3 Archived / moved files
 
-- `scenarios/e2e-platform-validation.yaml` — the v1 `covered_by:` scenario. Kept as
-  a historical artifact but not part of v2's gate. The v2 prompt says: use
-  `e2e-feishu-cc` for the active gate; `e2e-platform-validation` is frozen.
+- `scenarios/e2e-platform-validation.yaml` → `docs/archive/2026-04-18-e2e-platform-validation.yaml`
+  (moved during pre-loop setup §11; LG-6 requires `scenarios/` to contain
+  exactly `e2e-feishu-cc.yaml`). The v1 file's `covered_by:` entries would
+  otherwise trip LG-6 immediately.
 
 ## 7. Prompt structure (the doc `writing-plans` will produce)
 
@@ -260,7 +389,7 @@ named command producing output matching the named signature:
 |---|---|---|---|
 | 1 | Unit tests green | `make test` | `N passed, 0 failed` for both py and ex |
 | 2 | PRD unit matrix | `uv run python scripts/verify_prd_matrix.py` | `all N FR tests located` |
-| 3 | Loopguard clean | `bash scripts/loopguard.sh` | `all 8 loopguard checks passed` |
+| 3 | Loopguard clean | `bash scripts/loopguard.sh` | `all 11 loopguard checks passed` |
 | 4 | Scenario mock-green | `esr scenario run e2e-feishu-cc` (defaults to mock) | `8/8 steps PASSED against live esrd (mock Feishu)` |
 | 5 | final_gate.sh --mock | `bash scripts/final_gate.sh --mock` | `FINAL GATE MOCK PASSED — ready for user --live verification` |
 | 6 | Ledger coherent | `uv run python scripts/verify_ledger_append_only.py` | `ledger integrity OK — N iterations, 0 in-place edits` |
@@ -320,33 +449,86 @@ Exit 2 is distinct from exit 1 (gate failure) and exit 0 (pass).
 
 ## 10. Testing the prompt itself
 
-Two mechanisms guarantee the v2 prompt does what this spec describes before
+Three mechanisms guarantee the v2 prompt does what this spec describes before
 we trust it with a long-running loop:
 
 1. **Dry-run**: after the plan (from `writing-plans`) lists the FRs, a single
    iteration is run manually with a trivially-completable task (e.g. add one
    comment line to a script). Observe: does loopguard run? Does ledger
-   append? Does the state-file → ledger migration hold? Fix before real start.
-2. **Red-team**: take the v1 loophole list (§1 items 1, 2, 3) and **deliberately
-   reintroduce each one** in a throwaway branch; confirm loopguard catches each
-   and emits the correct `BLOCKED` promise. Only after all three are caught
-   do we trust the prompt.
+   append? Fix before real start.
+
+2. **Red-team v1 loopholes**: reintroduce each v1 escape route on a throwaway
+   branch; confirm loopguard catches each and emits the correct `BLOCKED`
+   promise:
+   - (a) Replace a scenario step's `command:` with `covered_by: [unit_test]` → LG-1
+   - (b) Replace a CLI `_submit_*` body with `raise NotImplementedError` → LG-2
+   - (c) Add "Phase 8 live run deferred" to a PRD Acceptance row → LG-3
+   - (d) Delete a required Acceptance row → LG-5
+   - (e) Rename `scenarios/e2e-feishu-cc.yaml` to `e2e-smoke.yaml` → LG-6
+   - (f) Add a ledger row with `evidence-type: custom` → LG-7
+   - (g) Mock `_submit_cmd_run` in `test_cli_cmd_run.py` → LG-10
+
+3. **Red-team reviewer exploits** (closes C1 / C2 / C3 from the code review
+   of this spec):
+   - (h) Write `async def run(): pass` in `adapter_runner.py::run` → LG-2 AST check
+   - (i) Write `#!/bin/bash\necho FINAL GATE LIVE PASSED; exit 0` into a
+     freshly-authored `final_gate.sh` + regenerated `.sha256` → should fail
+     because the loop is forbidden to author either file; LG-4 fires if SHA
+     drifts from the user-committed value
+   - (j) Change an acceptance row's deferral phrasing to "Phase 8 manual step"
+     → LG-3 expanded regex
+
+   All ten (a–j) must be caught before the loop launches. Capture the
+   `BLOCKED` output in each case and paste it into the ledger seed row as
+   provenance that the guards work.
 
 ## 11. Acceptance
 
-- [ ] v2 prompt file `docs/superpowers/ralph-loop-prompt-v2.md` exists and references
-      this spec + the plan
-- [ ] `scripts/final_gate.sh` + its SHA file + the 5 loopguard helper scripts exist
-      and are individually unit-testable
-- [ ] `scripts/mock_feishu.py` + `scripts/mock_cc.py` run as standalone processes
-- [ ] `scenarios/e2e-feishu-cc.yaml` exists with 8 steps per §4.2
-- [ ] `docs/ralph-loop-ledger.md` exists, seeded with a header row
-- [ ] Red-team test (§10.2) passes: all three v1 loopholes reintroduced are caught
-- [ ] Dry-run test (§10.1) passes: one trivial iteration completes cleanly
-- [ ] User runs `scripts/final_gate.sh --live` end-to-end against a real Feishu
-      app and it exits 0
+### 11.1 Pre-loop user-authored artifacts (blocking; loop cannot start without these)
 
-Acceptance item 8 is outside the loop's power — it is the ground truth that
+- [ ] **User authors** `scripts/final_gate.sh` with working `--mock` and `--live`
+      bodies per §4.1 (three forensic artifacts); commits it + its
+      `.sha256` pin
+- [ ] **User authors** `docs/superpowers/prds/acceptance-manifest.yaml`
+      enumerating every required Acceptance row across PRDs 01–07, including
+      the integration rows v1 left deferred
+- [ ] **User authors** `scripts/live_signatures.txt` listing sig-A…sig-F
+- [ ] **User authors** `scripts/loopguard-bundle.sha256` pinning every
+      loopguard helper script (filled out after 11.2 below completes so that
+      the initial pin matches the authored scripts)
+- [ ] **User moves** `scenarios/e2e-platform-validation.yaml` →
+      `docs/archive/2026-04-18-e2e-platform-validation.yaml`
+- [ ] **User captures** ≥ 3 real Lark WebSocket sessions covering (a) text
+      message, (b) reply / thread, (c) card interaction; commits them as
+      fixtures at `adapters/feishu/tests/fixtures/live-capture/*.json` for
+      mock_feishu.py conformance tests
+- [ ] **User commits** `.ralph-loop-baseline` containing the git SHA at
+      which the loop will start (consulted by LG-8)
+- [ ] **User commits** `docs/ralph-loop-ledger.md` with a header row and the
+      red-team BLOCKED outputs from §10 item 3 as evidence the guards fire
+
+### 11.2 Loop-produced artifacts (written across Phase 8a–8e iterations)
+
+- [ ] v2 prompt file `docs/superpowers/ralph-loop-prompt-v2.md` exists and
+      references this spec + the plan
+- [ ] All loopguard helper scripts implemented and individually unit-testable
+- [ ] `scripts/mock_feishu.py` passes the captured-session conformance tests
+      (11.1 item 6); `scripts/mock_cc.py` runs standalone
+- [ ] `scenarios/e2e-feishu-cc.yaml` exists with 8 steps per §4.2
+- [ ] `esr scenario run e2e-feishu-cc` (mock mode, against live esrd via
+      `scripts/esrd.sh`) reports `8/8 steps PASSED`
+- [ ] `bash scripts/final_gate.sh --mock` exits 0
+- [ ] Loop emits `<promise>ESR_V0_1_LIVE_READY</promise>` and a Feishu
+      notification with the exact `scripts/final_gate.sh --live` command for
+      the user to run
+
+### 11.3 Final (user-operated; outside loop authority)
+
+- [ ] User populates `~/.esr/live.env`
+- [ ] User runs `bash scripts/final_gate.sh --live` and sees the three
+      forensic artifacts plus exit 0
+
+Acceptance 11.3 is outside the loop's power — it is the ground truth that
 "ESR v0.1 really works".
 
 ---
