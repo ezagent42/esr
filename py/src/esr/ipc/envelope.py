@@ -23,6 +23,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from esr.actions import Action, Emit, InvokeCommand, Route
+
 # --- F01: envelope-type constants --------------------------------------
 
 TYPE_EVENT = "event"
@@ -122,3 +124,43 @@ def make_handler_reply(
         "source": source,
         "payload": {"new_state": dict(new_state), "actions": list(actions)},
     }
+
+
+# --- F03: action serialisation -----------------------------------------
+
+
+def serialise_action(action: Action) -> dict[str, Any]:
+    """Serialise an ``Action`` ADT value to a JSON-ready dict.
+
+    The dict carries a ``type`` discriminator that both sides agree on:
+    ``emit`` / ``route`` / ``invoke_command``. Handler replies include
+    a list of these.
+    """
+    if isinstance(action, Emit):
+        return {
+            "type": "emit",
+            "adapter": action.adapter,
+            "action": action.action,
+            "args": dict(action.args),
+        }
+    if isinstance(action, Route):
+        return {"type": "route", "target": action.target, "msg": action.msg}
+    if isinstance(action, InvokeCommand):
+        return {
+            "type": "invoke_command",
+            "name": action.name,
+            "params": dict(action.params),
+        }
+    raise TypeError(f"not an Action: {type(action).__name__}")
+
+
+def deserialise_action(d: dict[str, Any]) -> Action:
+    """Inverse of ``serialise_action`` — reconstruct the ``Action`` instance."""
+    t = d.get("type")
+    if t == "emit":
+        return Emit(adapter=d["adapter"], action=d["action"], args=dict(d.get("args", {})))
+    if t == "route":
+        return Route(target=d["target"], msg=d["msg"])
+    if t == "invoke_command":
+        return InvokeCommand(name=d["name"], params=dict(d.get("params", {})))
+    raise ValueError(f"unknown action type {t!r}")

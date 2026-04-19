@@ -123,3 +123,68 @@ def test_source_field_must_be_esr_uri() -> None:
         env.make_event(
             source="http://example.com/adapter/x", event_type="e", args={}
         )
+
+
+# --- F03: action serialisation -----------------------------------------
+
+
+def test_serialise_emit() -> None:
+    """Emit → dict with 'emit' discriminator."""
+    from esr.actions import Emit
+
+    d = env.serialise_action(Emit(adapter="feishu", action="send", args={"x": 1}))
+    assert d == {"type": "emit", "adapter": "feishu", "action": "send", "args": {"x": 1}}
+
+
+def test_serialise_route() -> None:
+    """Route → dict with 'route' discriminator."""
+    from esr.actions import Route
+
+    d = env.serialise_action(Route(target="cc:sess-A", msg="hello"))
+    assert d == {"type": "route", "target": "cc:sess-A", "msg": "hello"}
+
+
+def test_serialise_invoke_command() -> None:
+    """InvokeCommand → dict with 'invoke_command' discriminator."""
+    from esr.actions import InvokeCommand
+
+    d = env.serialise_action(InvokeCommand(name="feishu-thread-session", params={"t": "x"}))
+    assert d == {
+        "type": "invoke_command",
+        "name": "feishu-thread-session",
+        "params": {"t": "x"},
+    }
+
+
+def test_action_round_trip_emit() -> None:
+    """Serialise + deserialise Emit reproduces the original."""
+    from esr.actions import Emit
+
+    a = Emit(adapter="feishu", action="send", args={"x": 1})
+    assert env.deserialise_action(env.serialise_action(a)) == a
+
+
+def test_action_round_trip_route() -> None:
+    from esr.actions import Route
+
+    a = Route(target="cc:sess-A", msg={"nested": True})
+    assert env.deserialise_action(env.serialise_action(a)) == a
+
+
+def test_action_round_trip_invoke_command() -> None:
+    from esr.actions import InvokeCommand
+
+    a = InvokeCommand(name="foo", params={"p": 1})
+    assert env.deserialise_action(env.serialise_action(a)) == a
+
+
+def test_deserialise_action_unknown_type_raises() -> None:
+    """Unknown discriminator raises ValueError."""
+    with pytest.raises(ValueError, match=r"unknown action type"):
+        env.deserialise_action({"type": "bogus"})
+
+
+def test_serialise_action_rejects_unknown_object() -> None:
+    """Non-Action inputs raise TypeError (preserves ADT closure)."""
+    with pytest.raises(TypeError, match=r"not an Action"):
+        env.serialise_action("not-an-action")  # type: ignore[arg-type]
