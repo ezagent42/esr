@@ -36,3 +36,4 @@
 | 27 | 2026-04-19 | 8e | scenario-8-steps | 776c3e3 | unit_tests | sha256:37743e30db403b14 |
 | 28 | 2026-04-19 | 8e | scenario-setup-teardown | 0188081 | unit_tests | sha256:ec428bb6d5df30d1 |
 | 29 | 2026-04-19 | 8d | mock-feishu-conformance | bb20c5b | unit_tests | sha256:071842a0a2ef220e |
+| 30 | 2026-04-19 | 8e | scenario-setup-orchestration | 3355db1 | unit_tests | sha256:92d4e112c07db8de |

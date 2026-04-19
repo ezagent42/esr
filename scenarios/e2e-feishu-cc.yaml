@@ -9,6 +9,32 @@ description: >-
 mode: mock
 
 setup:
+  # Phase 8e orchestration:
+  # 1. Start esrd daemon (runs mix phx.server in the runtime/ dir)
+  - command: "bash scripts/esrd.sh start --instance=mock-e2e"
+    expect_exit: 0
+    timeout_sec: 30
+  # 2. Wait for Phoenix to actually bind its WS endpoint. `esrd.sh start`
+  #    returns as soon as the pid-file is written but the Phoenix Endpoint
+  #    startup still takes ~2-4 s after that.
+  - command: >-
+      for i in $(seq 1 60); do
+        if nc -z 127.0.0.1 4001 2>/dev/null; then
+          echo "phoenix ready on :4001 after ${i}s"; exit 0; fi
+        sleep 1
+      done; echo "phoenix failed to bind :4001 within 60s"; exit 1
+    expect_exit: 0
+    timeout_sec: 70
+  # 3. Start mock_feishu in the background on port 8101.
+  - command: >-
+      uv run --project py python scripts/mock_feishu.py --port 8101
+      > /tmp/mock-feishu.log 2>&1 &
+      echo $! > /tmp/mock-feishu.pid &&
+      sleep 1 &&
+      nc -z 127.0.0.1 8101
+    expect_exit: 0
+    timeout_sec: 15
+  # 4. Smoke-verify CLI → runtime path before any real step runs.
   - command: "uv run --project py esr actors list"
     expect_exit: 0
     timeout_sec: 10
@@ -110,6 +136,10 @@ steps:
     timeout_sec: 20
 
 teardown:
-  - command: "echo 'scenario-teardown'"
+  # Best-effort cleanup. Teardown never aborts the scenario; errors logged.
+  - command: "kill -9 $(cat /tmp/mock-feishu.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/mock-feishu.pid"
     expect_exit: 0
     timeout_sec: 5
+  - command: "bash scripts/esrd.sh stop --instance=mock-e2e"
+    expect_exit: 0
+    timeout_sec: 30
