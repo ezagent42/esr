@@ -1,0 +1,111 @@
+name: e2e-platform-validation
+description: >
+  ESR v0.1 end-to-end platform validation. Exercises the 8 acceptance
+  tracks defined in docs/superpowers/tests/e2e-platform-validation.md.
+  v0.1 tests the invariants via the unit-test matrix listed in each
+  track (green on `make test`); Phase 8 live-runtime runs are a v0.2+
+  concern that will replace the `covered_by` references with
+  executable steps against a running esrd.
+
+setup: []
+
+steps:
+  - id: track-A-registration-discovery
+    summary: >-
+      Component installability, registration, and manifest parsing.
+      Adapters, handlers, and commands all install into
+      ~/.esrd/default/{adapters,handlers,commands} via CLI verbs.
+    covered_by:
+      - py/tests/test_cli_install.py
+      - py/tests/test_cli_cmd_install.py
+      - py/tests/test_cli_list.py
+      - py/tests/test_adapter.py
+      - py/tests/test_handler.py
+
+  - id: track-B-scheduling-concurrency
+    summary: >-
+      Multiple simultaneous topology instantiations in parallel.
+      Topology.Instantiator idempotency under concurrent callers
+      (reviewer S7 insert_new) and dedup_keys bounded at 1000 FIFO
+      (S1) cover this.
+    covered_by:
+      - runtime/test/esr/topology/registry_test.exs
+      - runtime/test/esr/topology/instantiator_test.exs
+      - runtime/test/esr/peer_server_test.exs
+
+  - id: track-C-bidirectional-flow
+    summary: >-
+      Messages route inbound (adapter → handler) and outbound
+      (handler → adapter via Emit) around the actor graph. Covered
+      by PeerServer event dispatch + Emit/Route/InvokeCommand action
+      tests.
+    covered_by:
+      - runtime/test/esr/peer_server_event_handling_test.exs
+      - runtime/test/esr/peer_server_action_dispatch_test.exs
+      - runtime/test/esr/peer_server_emit_ack_test.exs
+
+  - id: track-D-session-isolation
+    summary: >-
+      One peer's crash or pause does not affect sibling peers.
+      PeerSupervisor uses :one_for_one; dedup_keys are per-peer;
+      pause/resume is per-peer. Verified by peer_supervisor_test +
+      peer_server_pause_test.
+    covered_by:
+      - runtime/test/esr/peer_supervisor_test.exs
+      - runtime/test/esr/peer_server_pause_test.exs
+      - runtime/test/esr/peer_server_retry_test.exs
+
+  - id: track-E-observability
+    summary: >-
+      Telemetry buffer, attach points, and CLI trace/telemetry/actors
+      commands. Covered by telemetry unit tests + mocked CLI tests.
+    covered_by:
+      - runtime/test/esr/telemetry/buffer_test.exs
+      - runtime/test/esr/telemetry/attach_test.exs
+      - py/tests/test_cli_trace.py
+      - py/tests/test_cli_telemetry.py
+      - py/tests/test_cli_actors.py
+
+  - id: track-F-operations
+    summary: >-
+      Lifecycle control — start, stop, restart, drain. CLI
+      commands (F02/F11/F12/F13/F20/F21) provide the admin
+      surface; the runtime side is Topology.Registry.deactivate
+      (F14 stop cascade) + PeerServer rehydrate (C4).
+    covered_by:
+      - py/tests/test_cli_status.py
+      - py/tests/test_cli_cmd_run.py
+      - py/tests/test_cli_cmd_stop.py
+      - py/tests/test_cli_cmd_restart.py
+      - py/tests/test_cli_drain.py
+      - runtime/test/esr/topology/stop_cascade_test.exs
+      - runtime/test/esr/peer_server_persist_test.exs
+
+  - id: track-G-debug
+    summary: >-
+      Operator debug: replay, inject, pause, resume, deadletter.
+      CLI commands F18 + F19 map to PeerServer.pause/resume and
+      DeadLetter ops; live replay/inject require Phase 8 runtime
+      hookup.
+    covered_by:
+      - py/tests/test_cli_debug.py
+      - py/tests/test_cli_deadletter.py
+      - runtime/test/esr/dead_letter_test.exs
+      - runtime/test/esr/peer_server_pause_test.exs
+
+  - id: track-H-correctness-consistency
+    summary: >-
+      Idempotency, ordering, persistence. Covered by dedup bound
+      tests, persist-then-emit ordering (C4 part 1), ETS
+      rehydrate on peer restart (C4 part 2), and directive_ack
+      correlation (C2).
+    covered_by:
+      - runtime/test/esr/peer_server_test.exs
+      - runtime/test/esr/peer_server_persist_test.exs
+      - runtime/test/esr/peer_server_emit_ack_test.exs
+      - runtime/test/esr/persistence/ets_test.exs
+
+acceptance:
+  - All 8 tracks have at least one referenced unit test in `covered_by`
+  - Every referenced test passes under `make test`
+  - The aggregate gate is PASS when the command reports "8 steps PASSED"
