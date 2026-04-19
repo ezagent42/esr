@@ -161,3 +161,45 @@ class CcTmuxAdapter:
         if result.returncode == 0:
             return {"ok": True, "result": {"content": result.stdout}}
         return {"ok": False, "error": result.stderr.strip()}
+
+    # --- event emission (PRD 04 F21) ----------------------------------
+
+    async def emit_events(self):  # type: ignore[no-untyped-def]
+        """Poll the bound tmux session's pane for sentinel-prefixed lines.
+
+        The adapter's ``actor_id`` is ``tmux:<thread_id>``; the tmux
+        session name is the ``<thread_id>`` part. We poll
+        ``tmux capture-pane`` at 500 ms cadence, track which sentinel
+        lines we've already emitted (by full-line string), and yield
+        each fresh one as a ``cc_output`` event. The async generator
+        exits when the tmux session disappears (pane capture returns
+        non-zero).
+        """
+        import asyncio as _asyncio
+
+        session_name = self.actor_id.split(":", 1)[-1] if ":" in self.actor_id else self.actor_id
+        seen: set[str] = set()
+
+        while True:
+            if not self._ensure_tmux():
+                return
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                # Session gone — stop emitting; directive dispatch will
+                # surface the failure separately.
+                return
+            for line in result.stdout.splitlines():
+                if not line.startswith(SENTINEL_PREFIX):
+                    continue
+                if line in seen:
+                    continue
+                seen.add(line)
+                parsed = parse_sentinel_line(session_name, line + "\n")
+                if parsed is not None:
+                    yield parsed
+
+            await _asyncio.sleep(0.5)
