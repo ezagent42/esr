@@ -46,3 +46,19 @@ class FeishuAdapter:
     def factory(actor_id: str, config: AdapterConfig) -> FeishuAdapter:
         """Construct a FeishuAdapter — pure, no I/O (PRD 04 F02)."""
         return FeishuAdapter(actor_id=actor_id, config=config)
+
+    def client(self) -> Any:
+        """Return the (cached) ``lark_oapi.Client`` for this adapter.
+
+        Lazy-initialised on first call (PRD 04 F06) so ``factory`` stays pure.
+        """
+        if self._lark_client is None:
+            import lark_oapi
+
+            self._lark_client = (
+                lark_oapi.Client.builder()
+                .app_id(self._config.app_id)
+                .app_secret(self._config.app_secret)
+                .build()
+            )
+        return self._lark_client
