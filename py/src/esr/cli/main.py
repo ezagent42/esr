@@ -558,6 +558,17 @@ def _submit_debug(action: str, args: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _submit_drain(*, timeout: str | None) -> dict[str, Any]:
+    """Graceful shutdown: stop every topology in dependency order.
+
+    Stubbed for v0.1; Phase 8 wires to a ``cli:drain`` control op.
+    Returns ``{"drained": [...], "timeouts": [...], "duration_ms": N}``.
+    """
+    raise NotImplementedError(
+        "drain requires a live runtime; run `esr status` to verify."
+    )
+
+
 def _stream_telemetry(
     *, pattern: str, format: str  # noqa: A002
 ) -> Iterator[dict[str, Any]]:
@@ -769,6 +780,41 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.command("drain")
+@click.option(
+    "--timeout",
+    default=None,
+    help="Max wait per topology (e.g. ``30s``, ``2m``). Default: server-side config.",
+)
+def drain(timeout: str | None) -> None:
+    """Gracefully stop every live topology (PRD 07 F21).
+
+    Traverses topologies in reverse depends_on order, deactivating
+    each. Blocks until either every topology has stopped or the
+    timeout expires. Reports a summary on stdout and exits non-zero
+    if any topology failed to stop in time.
+    """
+    result = _submit_drain(timeout=timeout)
+    drained = result.get("drained", [])
+    timeouts = result.get("timeouts", [])
+    duration_ms = result.get("duration_ms", 0)
+
+    if not drained and not timeouts:
+        click.echo(f"nothing to drain (0 topologies live); took {duration_ms}ms")
+        return
+
+    click.echo(
+        f"drained {len(drained)} topolog{'y' if len(drained) == 1 else 'ies'} "
+        f"in {duration_ms}ms"
+    )
+    if timeouts:
+        suffix = "y" if len(timeouts) == 1 else "ies"
+        click.echo(f"timeout: {len(timeouts)} topolog{suffix} did not stop:")
+        for t in timeouts:
+            click.echo(f"  {t.get('name', '?')} params={t.get('params', {})}")
+        raise click.exceptions.Exit(code=1)
 
 
 @cli.group()
