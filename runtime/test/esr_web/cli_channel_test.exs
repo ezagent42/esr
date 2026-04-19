@@ -58,4 +58,43 @@ defmodule EsrWeb.CliChannelTest do
       end
     end
   end
+
+  describe "cli:deadletter/list" do
+    setup do
+      Esr.DeadLetter.clear(Esr.DeadLetter)
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-dl", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:deadletter/list")
+
+      %{dl_socket: socket}
+    end
+
+    test "returns empty list when queue is empty", %{dl_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"] == []
+    end
+
+    test "returns serialised entries after enqueue", %{dl_socket: socket} do
+      Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+        reason: :unknown_target,
+        target: "ghost:42",
+        msg: %{hello: "world"},
+        source: "adapter:feishu/inst1",
+        metadata: %{}
+      })
+      # DeadLetter is a cast; let it settle.
+      Process.sleep(20)
+
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      data = response["data"]
+      assert is_list(data)
+      assert length(data) == 1
+      [entry] = data
+      assert entry["reason"] == "unknown_target"
+      assert entry["target"] == "ghost:42"
+    end
+  end
 end

@@ -42,10 +42,32 @@ defmodule EsrWeb.CliChannel do
     %{"data" => data}
   end
 
+  def dispatch("cli:deadletter/list", _payload) do
+    data =
+      Esr.DeadLetter
+      |> Esr.DeadLetter.list()
+      |> Enum.map(&serialise_dl_entry/1)
+
+    %{"data" => data}
+  end
+
   def dispatch(topic, payload) do
     # Phase 8c iterates: add a case clause per real cli:<op>. Until then,
     # echo so the Python CLI can observe that its call reached the runtime
     # and came back with a shaped response.
     %{"echoed" => payload, "topic" => topic}
+  end
+
+  @spec serialise_dl_entry(Esr.DeadLetter.Entry.t()) :: map()
+  defp serialise_dl_entry(%Esr.DeadLetter.Entry{} = entry) do
+    %{
+      "id" => entry.id,
+      "ts_unix_ms" => entry.ts_unix_ms,
+      "reason" => to_string(entry.reason),
+      "target" => entry.target,
+      "source" => entry.source,
+      "msg" => inspect(entry.msg),
+      "metadata" => entry.metadata
+    }
   end
 end
