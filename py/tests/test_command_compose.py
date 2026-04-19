@@ -67,3 +67,24 @@ def test_serial_outside_context_raises() -> None:
     """compose.serial outside a command context raises."""
     with pytest.raises(RuntimeError, match=r"compose\.serial.*outside"):
         compose.serial(_pattern_a, _pattern_b)
+
+
+def test_serial_does_not_auto_wire_differently_named_nodes() -> None:
+    """Reviewer S4: compose.serial removes matched ports from the
+    top-level interface but does NOT create synthetic edges between
+    the producer (A side) and consumer (B side) nodes when they
+    have different ids. This is the documented v0.1 behaviour —
+    the author must use CSE (same node id) or explicit ``>>`` edges.
+    """
+    with _command_context("cmd") as ctx:
+        compose.serial(_pattern_a, _pattern_b)
+
+    # Ports matched correctly
+    assert "to_core" not in ctx.ports_in
+    assert "to_core" not in ctx.ports_out
+
+    # BUT no edge was added between a_mid (producer) and b_mid (consumer).
+    # If this changes in v0.2 (port-ownership tracking), update this
+    # test to assert the richer behaviour.
+    assert ("a_mid", "b_mid") not in ctx.edges
+    assert ctx.edges == []

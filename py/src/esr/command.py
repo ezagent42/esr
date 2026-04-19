@@ -214,6 +214,20 @@ class _Compose:
         command context. Raises ``ValueError`` when there is no
         shared port to wire through (serial requires at least one
         hand-off point).
+
+        **v0.1 behaviour (reviewer S4):** matched ports are dropped
+        from the top-level interface but **no synthetic edge is
+        created** between A's producer node and B's consumer node.
+        The pattern author connects them either by:
+
+        - **CSE (same node ID in both patterns):** A and B declare a
+          node with the *same id* — composition dedupes to one node
+          (see `test_optimizer_cse.py`).
+        - **Explicit edge:** the author writes ``a_node >> b_node``
+          on nodes they've captured into local variables.
+
+        A port-ownership tracking mode (auto-edge on matched ports
+        across differently-named nodes) is a v0.2 concern.
         """
         outer = _CURRENT.get(None)
         if outer is None:
