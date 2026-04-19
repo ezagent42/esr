@@ -263,3 +263,23 @@ def test_compile_topology_result_is_frozen() -> None:
     topo = compile_topology("cmd-frozen")
     with pytest.raises(Exception):  # noqa: B017
         topo.name = "other"  # type: ignore[misc]
+
+
+def test_compile_topology_nodes_are_also_frozen() -> None:
+    """Reviewer C3: _Node must be immutable, not just Topology (spec §6.3)."""
+    from esr.command import compile_topology
+
+    @command("cmd-deep-frozen")
+    def build() -> None:
+        port.input("in", "T")
+        port.output("out", "T")
+        node(id="x", actor_type="t", handler="on_msg")
+
+    topo = compile_topology("cmd-deep-frozen")
+
+    # Node fields rejected.
+    with pytest.raises(Exception):  # noqa: B017
+        topo.nodes[0].actor_type = "HACKED"  # type: ignore[misc]
+
+    # And a frozen Topology + frozen nodes make it hashable.
+    assert isinstance(hash(topo), int)

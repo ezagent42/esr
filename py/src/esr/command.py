@@ -25,7 +25,7 @@ F11 (port), F12 (compose.serial), F13 (compile_topology) and F14
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -62,17 +62,23 @@ def command(name: str) -> Callable[[CommandFn], CommandFn]:
 # --- EDSL -----------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class _Node:
-    """A node in a command's topology graph (PRD 02 F10)."""
+    """A node in a command's topology graph (PRD 02 F10).
+
+    Frozen per spec §6.3 "deterministic, diff-able" — a Topology and
+    every node it holds is compile-time immutable. ``params`` and
+    ``init_directive`` dicts are wrapped in ``MappingProxyType`` in
+    ``node()`` so their contents are read-only too.
+    """
 
     id: str
     actor_type: str
     handler: str
     adapter: str | None = None
-    params: dict[str, Any] | None = None
+    params: MappingProxyType[str, Any] | None = None
     depends_on: tuple[str, ...] = ()
-    init_directive: dict[str, Any] | None = None
+    init_directive: MappingProxyType[str, Any] | None = None
 
     def __rshift__(self, other: _Node) -> _Node:
         """``a >> b`` records an edge a.id -> b.id in the current context."""
@@ -135,9 +141,9 @@ def node(
         actor_type=actor_type,
         handler=handler,
         adapter=adapter,
-        params=dict(params) if params else None,
+        params=MappingProxyType(dict(params)) if params else None,
         depends_on=tuple(depends_on) if depends_on else (),
-        init_directive=dict(init_directive) if init_directive else None,
+        init_directive=MappingProxyType(dict(init_directive)) if init_directive else None,
     )
     ctx.nodes.append(n)
     return n
@@ -295,6 +301,19 @@ class Topology:
     ports_out: MappingProxyType[str, str]
     params: tuple[str, ...]
 
+    def __hash__(self) -> int:
+        # MappingProxyType itself isn't hashable; hash the sorted items
+        # tuple so hash(topo) is stable and matches __eq__ semantics
+        # (reviewer C3).
+        return hash((
+            self.name,
+            self.nodes,
+            self.edges,
+            tuple(sorted(self.ports_in.items())),
+            tuple(sorted(self.ports_out.items())),
+            self.params,
+        ))
+
 
 _PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
 
@@ -443,7 +462,7 @@ def _extract_params(nodes: list[_Node]) -> set[str]:
     return found
 
 
-def _collect_params_from(d: dict[str, Any], out: set[str]) -> None:
+def _collect_params_from(d: Mapping[str, Any], out: set[str]) -> None:
     """Walk a dict (values only) and collect ``{{name}}`` template names."""
     for v in d.values():
         if isinstance(v, str):
