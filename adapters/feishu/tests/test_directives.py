@@ -107,3 +107,50 @@ async def test_send_message_surfaces_lark_error() -> None:
         "send_message", {"chat_id": "oc_abc", "content": "hi"}
     )
     assert ack["ok"] is False
+
+
+# --- F08: react (create reaction) --------------------------------------
+
+
+class _StubReactionApi:
+    def __init__(self) -> None:
+        self.last_request: object | None = None
+        self.canned_response: _StubResponse = _StubResponse(True, "reaction_id_1")
+
+    def create(self, request: object) -> _StubResponse:
+        self.last_request = request
+        return self.canned_response
+
+
+def _make_stub_with_reaction_api() -> _StubClient:
+    stub = _StubClient()
+    stub.im.v1.message.reaction = _StubReactionApi()
+    return stub
+
+
+async def test_react_calls_lark_reaction_create() -> None:
+    instance = _make_adapter()
+    stub = _make_stub_with_reaction_api()
+    instance._lark_client = stub
+
+    ack = await instance.on_directive(
+        "react", {"msg_id": "om_abc", "emoji_type": "THUMBSUP"}
+    )
+    assert ack == {"ok": True, "result": {"reaction_id": "reaction_id_1"}}
+
+    req = stub.im.v1.message.reaction.last_request
+    assert req is not None
+    assert req.message_id == "om_abc"
+    assert req.request_body.reaction_type.emoji_type == "THUMBSUP"
+
+
+async def test_react_surfaces_lark_error() -> None:
+    instance = _make_adapter()
+    stub = _make_stub_with_reaction_api()
+    stub.im.v1.message.reaction.canned_response = _StubResponse(False, error="nope")
+    instance._lark_client = stub
+
+    ack = await instance.on_directive(
+        "react", {"msg_id": "om_x", "emoji_type": "HEART"}
+    )
+    assert ack["ok"] is False

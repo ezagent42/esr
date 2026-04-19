@@ -21,6 +21,15 @@ from typing import Any
 from esr.adapter import AdapterConfig, adapter
 
 
+def _lark_error(response: Any) -> str:
+    """Extract a human-readable error from a failing lark_oapi response."""
+    return (
+        getattr(response, "msg", "")
+        or getattr(response, "error", "")
+        or ""
+    )
+
+
 @adapter(
     name="feishu",
     allowed_io={
@@ -72,6 +81,8 @@ class FeishuAdapter:
         """Dispatch a directive. Returns {"ok": bool, result?/error?}."""
         if action == "send_message":
             return self._send_message(args)
+        if action == "react":
+            return self._react(args)
         return {"ok": False, "error": f"unknown action: {action}"}
 
     def _send_message(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -95,5 +106,30 @@ class FeishuAdapter:
         response = self.client().im.v1.message.create(request)
         if response.success():
             return {"ok": True, "result": {"message_id": response.data.message_id}}
-        error = getattr(response, "msg", "") or getattr(response, "error", "") or "send failed"
-        return {"ok": False, "error": str(error)}
+        return {"ok": False, "error": _lark_error(response) or "send failed"}
+
+    def _react(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Create a reaction on a message via lark_oapi (PRD 04 F08)."""
+        import lark_oapi.api.im.v1 as im_v1
+
+        msg_id = args["msg_id"]
+        emoji_type = args["emoji_type"]
+        request = (
+            im_v1.CreateMessageReactionRequest.builder()
+            .message_id(msg_id)
+            .request_body(
+                im_v1.CreateMessageReactionRequestBody.builder()
+                .reaction_type(
+                    im_v1.Emoji.builder().emoji_type(emoji_type).build()
+                )
+                .build()
+            )
+            .build()
+        )
+        response = self.client().im.v1.message.reaction.create(request)
+        if response.success():
+            reaction_id = getattr(response.data, "reaction_id", None) or getattr(
+                response.data, "message_id", ""
+            )
+            return {"ok": True, "result": {"reaction_id": reaction_id}}
+        return {"ok": False, "error": _lark_error(response) or "react failed"}
