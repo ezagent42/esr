@@ -730,9 +730,14 @@ def cmd_run(name: str, params: tuple[str, ...], compiled_dir: Path | None) -> No
         click.echo(f"cmd run: {exc}", err=True)
         raise click.exceptions.Exit(code=1) from exc
 
+    peer_ids = handle.get("peer_ids", [])
     click.echo(
-        f"instantiated {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
+        f"instantiated {handle['name']!r} → peers={','.join(peer_ids)}"
     )
+    # Per-peer actor_id= lines — give live-signature sig-B for scenario
+    # steps so 'esr cmd run' output regex-matches without shell plumbing.
+    for pid in peer_ids:
+        click.echo(f"  actor_id={pid}")
 
 
 @cmd.command("stop")
@@ -773,6 +778,8 @@ def cmd_stop(name: str, params: tuple[str, ...]) -> None:
     click.echo(
         f"stopped {handle['name']!r} → peers={','.join(stopped)}"
     )
+    for pid in stopped:
+        click.echo(f"  actor_id={pid}")
 
 
 @cmd.command("restart")
