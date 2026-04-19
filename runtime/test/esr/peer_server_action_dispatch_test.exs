@@ -64,7 +64,7 @@ defmodule Esr.PeerServerActionDispatchTest do
     }})
   end
 
-  test "Emit action broadcasts a directive on adapter:<name>" do
+  test "Emit action broadcasts a directive on adapter:<name>/<actor_id>" do
     actor_id = "emit-test-#{System.unique_integer([:positive])}"
 
     worker =
@@ -83,7 +83,11 @@ defmodule Esr.PeerServerActionDispatchTest do
       end)
 
     assert_receive :worker_ready, 500
-    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu-shared")
+
+    # AdapterChannels join on "adapter:<name>/<instance_id>" where
+    # instance_id is the bound actor_id. A bare "adapter:<name>"
+    # broadcast would never reach them.
+    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu-shared/" <> actor_id)
 
     peer_pid = start_peer(actor_id)
     send_event(peer_pid)

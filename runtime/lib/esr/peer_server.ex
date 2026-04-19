@@ -228,7 +228,11 @@ defmodule Esr.PeerServer do
 
   defp dispatch_action(%{"type" => "emit"} = action, actor_id) do
     adapter = action["adapter"]
-    topic = "adapter:" <> adapter
+    # AdapterChannel joins on "adapter:<name>/<instance_id>" where
+    # instance_id is the bound peer's actor_id (see Instantiator.
+    # spawn_node → HubRegistry.bind). A bare "adapter:<name>"
+    # broadcast would never reach the channel.
+    topic = "adapter:" <> adapter <> "/" <> actor_id
 
     envelope = %{
       "id" => "d-" <> Integer.to_string(System.unique_integer([:positive])),
