@@ -20,6 +20,8 @@ defmodule Esr.PeerServer do
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
+  alias Esr.Topology.Instantiator, as: TopoInstantiator
+  alias Esr.Topology.Registry, as: TopoRegistry
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
@@ -376,13 +378,24 @@ defmodule Esr.PeerServer do
   end
 
   defp dispatch_action(%{"type" => "invoke_command"} = action, %__MODULE__{} = state) do
-    # F13 Topology.Instantiator wires this for real; for now just
-    # emit telemetry so the plumbing is observable.
-    :telemetry.execute([:esr, :invoke_command, :received], %{}, %{
-      actor_id: state.actor_id,
-      name: action["name"],
-      params: Map.get(action, "params", %{})
-    })
+    name = action["name"]
+    params = Map.get(action, "params", %{})
+
+    case TopoRegistry.get_artifact(name) do
+      {:ok, artifact} ->
+        # Instantiator.instantiate blocks up to directive_timeout per
+        # init_directive node; run it in a fire-and-forget Task so the
+        # PeerServer's mailbox stays responsive (reviewer S2/C5).
+        actor_id = state.actor_id
+
+        _ = Task.start(fn -> run_instantiation(artifact, params, actor_id) end)
+
+      :error ->
+        :telemetry.execute([:esr, :invoke_command, :unknown], %{}, %{
+          actor_id: state.actor_id,
+          name: name
+        })
+    end
 
     state
   end
@@ -394,6 +407,25 @@ defmodule Esr.PeerServer do
     })
 
     state
+  end
+
+  defp run_instantiation(artifact, params, source_actor) do
+    case TopoInstantiator.instantiate(artifact, params) do
+      {:ok, _handle} ->
+        :telemetry.execute([:esr, :topology, :activated], %{}, %{
+          name: artifact["name"],
+          params: params,
+          invoked_by: source_actor
+        })
+
+      {:error, reason} ->
+        :telemetry.execute([:esr, :topology, :failed], %{}, %{
+          name: artifact["name"],
+          params: params,
+          invoked_by: source_actor,
+          reason: reason
+        })
+    end
   end
 
   defp emit_directive_outcome(actor_id, id, %{"ok" => true}) do

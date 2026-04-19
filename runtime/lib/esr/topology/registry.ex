@@ -14,6 +14,7 @@ defmodule Esr.Topology.Registry do
   alias Esr.Topology.Registry.Handle
 
   @table :esr_topology_handles
+  @artifact_table :esr_topology_artifacts
 
   defmodule Handle do
     @moduledoc "Canonical (name, params) pair identifying a live topology."
@@ -66,6 +67,25 @@ defmodule Esr.Topology.Registry do
     :ets.tab2list(@table) |> Enum.map(fn {_k, handle} -> handle end)
   end
 
+  @doc """
+  Store a compiled topology artifact by name. PeerServer's
+  `invoke_command` action looks these up before handing off to
+  `Esr.Topology.Instantiator.instantiate/2`.
+  """
+  @spec put_artifact(String.t(), map()) :: :ok
+  def put_artifact(name, artifact) when is_binary(name) and is_map(artifact) do
+    :ets.insert(@artifact_table, {name, artifact})
+    :ok
+  end
+
+  @spec get_artifact(String.t()) :: {:ok, map()} | :error
+  def get_artifact(name) when is_binary(name) do
+    case :ets.lookup(@artifact_table, name) do
+      [{^name, artifact}] -> {:ok, artifact}
+      [] -> :error
+    end
+  end
+
   @spec deactivate(Handle.t()) :: :ok
   def deactivate(%Handle{name: name, params: params, peer_ids: peer_ids}) do
     # Reverse topo order: dependents first, then their parents (PRD 01 F14).
@@ -91,6 +111,7 @@ defmodule Esr.Topology.Registry do
   @impl GenServer
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@artifact_table, [:named_table, :public, :set, read_concurrency: true])
     {:ok, %{}}
   end
 
