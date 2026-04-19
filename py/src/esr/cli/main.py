@@ -531,6 +531,20 @@ def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
+def _submit_deadletter(action: str, arg: str | None) -> Any:
+    """Deadletter control ops via the runtime.
+
+    Stubbed for v0.1; Phase 8 wires it to a ``cli:deadletter`` topic.
+    Returns whatever shape the action implies:
+    - ``list`` → list[dict]  (entries)
+    - ``retry`` → dict with ``retried`` id
+    - ``flush`` → dict with ``flushed`` count
+    """
+    raise NotImplementedError(
+        "deadletter control requires a live runtime; run `esr status` to verify."
+    )
+
+
 @cmd.command("run")
 @click.argument("name")
 @click.option(
@@ -700,6 +714,40 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.group()
+def deadletter() -> None:
+    """DeadLetter queue inspection + recovery (PRD 07 F19)."""
+
+
+@deadletter.command("list")
+def deadletter_list() -> None:
+    """List every entry currently in the runtime's dead-letter queue."""
+    entries = _submit_deadletter("list", None)
+    if not entries:
+        click.echo("deadletter queue is empty")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry['id']}  {entry.get('reason', '?')}  "
+            f"source={entry.get('source', '-')}  ts={entry.get('ts_unix_ms', '-')}"
+        )
+
+
+@deadletter.command("retry")
+@click.argument("entry_id")
+def deadletter_retry(entry_id: str) -> None:
+    """Re-enqueue a dead-letter entry for another delivery attempt."""
+    result = _submit_deadletter("retry", entry_id)
+    click.echo(f"retried {result.get('retried', entry_id)!r}")
+
+
+@deadletter.command("flush")
+def deadletter_flush() -> None:
+    """Empty the dead-letter queue (admin op — logs a warning)."""
+    result = _submit_deadletter("flush", None)
+    click.echo(f"flushed {result.get('flushed', 0)} entries")
 
 
 # --- lint (F14) --------------------------------------------------------
