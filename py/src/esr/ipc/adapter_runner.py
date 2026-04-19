@@ -147,7 +147,7 @@ async def run(
 ) -> None:
     """Full-orchestration entry point — loads an adapter factory, constructs
     a :class:`ChannelClient`, and delegates to :func:`run_with_client`
-    (spec §5.3 F13). Phase 8b will supply the factory-loading logic.
+    (spec §5.3 F13). Phase 8b supplies the factory-loading logic.
     """
     from esr.adapters import load_adapter_factory  # type: ignore[import-not-found]
     from esr.ipc.channel_client import ChannelClient
@@ -157,3 +157,48 @@ async def run(
     topic = f"adapter:{adapter_name}/{instance_id}"
     client = ChannelClient(url)
     await run_with_client(adapter, client, topic=topic)
+
+
+def _parse_main_args(argv: list[str]) -> Any:
+    """Parse `python -m esr.ipc.adapter_runner ...` CLI args."""
+    import argparse
+    import json as _json
+
+    p = argparse.ArgumentParser(
+        prog="esr.ipc.adapter_runner",
+        description="Run an ESR adapter worker against a live esrd.",
+    )
+    p.add_argument("--adapter", required=True, help="Adapter name, e.g. 'feishu'.")
+    p.add_argument("--instance-id", required=True, help="Instance id in actor namespace.")
+    p.add_argument("--url", required=True, help="esrd adapter_hub WebSocket URL.")
+    p.add_argument(
+        "--config-json", required=True,
+        help="JSON blob passed to the adapter factory as config.",
+    )
+    ns = p.parse_args(argv)
+    ns.config = _json.loads(ns.config_json)
+    return ns
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Python -m entry: parse args, run the adapter worker until cancelled.
+
+    Phase 8d's scenario setup spawns this as a subprocess per adapter
+    instance, so it runs indefinitely (event loop never returns under
+    normal operation). KeyboardInterrupt / cancellation → clean exit.
+    """
+    ns = _parse_main_args(argv if argv is not None else [])
+    try:
+        asyncio.run(run(ns.adapter, ns.instance_id, ns.config, ns.url))
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        import sys
+        print(f"esr.ipc.adapter_runner FAIL: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))
