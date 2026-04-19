@@ -156,10 +156,54 @@ async def run(handler_module: str, worker_id: str, url: str) -> None:
     and delegates to :func:`run_with_client` (spec §3.4 F07). Phase 8b
     passes handler_module/worker_id via the daemon spawning this worker.
     """
-    from esr.handler import HANDLER_REGISTRY as _reg  # noqa: F811
+    import importlib
     from esr.ipc.channel_client import ChannelClient
 
-    _ = _reg  # ensure registry is imported (decorators fire)
+    # Import the handler module so its @handler decorators register into
+    # HANDLER_REGISTRY. handler_module looks like "feishu_thread.on_msg";
+    # for a package layout (esr_handler_feishu_thread.on_msg), the loader
+    # uses the dotted name directly.
+    pkg = "esr_handler_" + handler_module.split(".")[0]
+    try:
+        importlib.import_module(f"{pkg}.on_msg")
+    except ImportError:
+        # Fall back to the raw module path (useful for tests with shim packages).
+        importlib.import_module(handler_module)
     topic = f"handler:{handler_module}/{worker_id}"
     client = ChannelClient(url)
     await run_with_client(client, topic=topic)
+
+
+def _parse_main_args(argv: list[str]) -> Any:
+    """Parse `python -m esr.ipc.handler_worker ...` CLI args."""
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="esr.ipc.handler_worker",
+        description="Run an ESR handler worker against a live esrd.",
+    )
+    p.add_argument("--module", required=True, help="Handler module, e.g. 'feishu_thread.on_msg'.")
+    p.add_argument("--worker-id", required=True, help="Worker id in actor namespace.")
+    p.add_argument("--url", required=True, help="esrd handler_hub WebSocket URL.")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Python -m entry: parse args, run the handler worker until cancelled."""
+    import asyncio
+
+    ns = _parse_main_args(argv if argv is not None else [])
+    try:
+        asyncio.run(run(ns.module, ns.worker_id, ns.url))
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        import sys
+        print(f"esr.ipc.handler_worker FAIL: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))
