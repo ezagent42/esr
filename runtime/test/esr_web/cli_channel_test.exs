@@ -99,8 +99,10 @@ defmodule EsrWeb.CliChannelTest do
   end
 
   describe "cli:trace" do
+    alias Esr.Telemetry.Buffer
+
     setup do
-      Esr.Telemetry.Buffer.record(:default,
+      Buffer.record(:default,
         [:esr, :handler, :called],
         %{duration_us: 42},
         %{actor_id: "thread:test", session: "s1"}
@@ -119,7 +121,7 @@ defmodule EsrWeb.CliChannelTest do
       assert_reply ref, :ok, response
       entries = response["entries"]
       assert is_list(entries)
-      assert length(entries) >= 1
+      refute entries == []
 
       matching = Enum.find(entries, fn e ->
         e["event"] == ["esr", "handler", "called"]

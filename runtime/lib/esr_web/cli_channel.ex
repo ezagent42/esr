@@ -12,6 +12,10 @@ defmodule EsrWeb.CliChannel do
 
   use Phoenix.Channel
 
+  alias Esr.DeadLetter.Entry, as: DeadLetterEntry
+  alias Esr.Telemetry.Buffer
+  alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
+
   @impl Phoenix.Channel
   def join("cli:" <> _op = topic, _payload, socket) do
     {:ok, assign(socket, :topic, topic)}
@@ -66,7 +70,7 @@ defmodule EsrWeb.CliChannel do
 
     entries =
       :default
-      |> Esr.Telemetry.Buffer.query(duration_seconds: duration_s)
+      |> Buffer.query(duration_seconds: duration_s)
       |> Enum.map(&serialise_telemetry_event/1)
 
     %{"entries" => entries}
@@ -79,8 +83,8 @@ defmodule EsrWeb.CliChannel do
     %{"echoed" => payload, "topic" => topic}
   end
 
-  @spec serialise_telemetry_event(Esr.Telemetry.Buffer.Event.t()) :: map()
-  defp serialise_telemetry_event(%Esr.Telemetry.Buffer.Event{} = event) do
+  @spec serialise_telemetry_event(TelemetryEvent.t()) :: map()
+  defp serialise_telemetry_event(%TelemetryEvent{} = event) do
     %{
       "ts_unix_ms" => event.ts_unix_ms,
       "event" => Enum.map(event.event, &to_string/1),
@@ -94,8 +98,8 @@ defmodule EsrWeb.CliChannel do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
-  @spec serialise_dl_entry(Esr.DeadLetter.Entry.t()) :: map()
-  defp serialise_dl_entry(%Esr.DeadLetter.Entry{} = entry) do
+  @spec serialise_dl_entry(DeadLetterEntry.t()) :: map()
+  defp serialise_dl_entry(%DeadLetterEntry{} = entry) do
     %{
       "id" => entry.id,
       "ts_unix_ms" => entry.ts_unix_ms,
