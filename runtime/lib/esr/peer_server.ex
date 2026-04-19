@@ -19,10 +19,12 @@ defmodule Esr.PeerServer do
   use GenServer
 
   alias Esr.HandlerRouter
+  alias Esr.Persistence.Ets, as: PersistStore
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
   @pause_queue_limit 1_000
+  @persist_table :esr_actor_states
 
   defstruct [
     :actor_id,
@@ -222,9 +224,13 @@ defmodule Esr.PeerServer do
           event_id: event_id
         })
 
+        # Spec §7.4: persist new_state BEFORE dispatching actions, so a
+        # crash between the two never emits directives for a state the
+        # system has no record of.
         state
         |> Map.put(:state, new_state)
         |> record_dedup(idempotency_key)
+        |> persist_state()
         |> dispatch_actions(actions)
 
       {:error, {:retry_exhausted, reason}} ->
@@ -295,6 +301,11 @@ defmodule Esr.PeerServer do
   defp record_dedup(%__MODULE__{dedup_keys: keys} = state, key)
        when is_binary(key) do
     %__MODULE__{state | dedup_keys: MapSet.put(keys, key)}
+  end
+
+  defp persist_state(%__MODULE__{actor_id: actor_id, state: inner} = s) do
+    PersistStore.put(@persist_table, actor_id, inner)
+    s
   end
 
   defp extract_idempotency_key(envelope) do

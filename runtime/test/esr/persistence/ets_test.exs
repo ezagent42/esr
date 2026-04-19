@@ -11,11 +11,19 @@ defmodule Esr.Persistence.EtsTest do
   alias Esr.Persistence.Ets, as: Store
 
   setup do
-    # Each test gets a unique ETS table name so cases don't collide.
-    table = :"persist_test_#{System.unique_integer([:positive])}"
+    # Each test gets a unique ETS table name AND a unique registered
+    # name (the application supervision tree already hosts the default
+    # Esr.Persistence.Ets process + :esr_actor_states table).
+    uniq = System.unique_integer([:positive])
+    table = :"persist_test_#{uniq}"
+    name = :"persist_test_store_#{uniq}"
     tmp_path = Path.join(System.tmp_dir!(), "esr-persist-test-#{:erlang.unique_integer([:positive])}.bin")
 
-    start_supervised!({Store, table: table})
+    start_supervised!(%{
+      id: name,
+      start: {Store, :start_link, [[table: table, name: name]]}
+    })
+
     on_exit(fn -> File.rm(tmp_path) end)
 
     %{table: table, path: tmp_path}
