@@ -30,3 +30,4 @@
 | 21 | 2026-04-19 | 8b | esrd-sh | d175c42 | unit_tests | sha256:a911e3d9de713eec |
 | 22 | 2026-04-19 | 8d | mock-feishu-http | 3700cdf | unit_tests | sha256:ad91848f3219c3e2 |
 | 23 | 2026-04-19 | 8d | mock-feishu-ws | 592fde3 | unit_tests | sha256:93a9390f9b3a0fa5 |
+| 24 | 2026-04-19 | 8d | mock-cc | 47fcab9 | unit_tests | sha256:1d29175d850a19f0 |
