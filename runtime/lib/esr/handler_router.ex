@@ -36,6 +36,7 @@ defmodule Esr.HandlerRouter do
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, reply_topic)
 
     envelope = %{
+      "kind" => "handler_call",
       "id" => id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "type" => "handler_call",
@@ -43,7 +44,11 @@ defmodule Esr.HandlerRouter do
       "payload" => payload
     }
 
-    EsrWeb.Endpoint.broadcast(channel_topic, "handler_call", envelope)
+    # Broadcast under the unified "envelope" event shape Python's
+    # handler_worker._on_frame filters on (event="envelope",
+    # payload.kind="handler_call"). The envelope carries its own kind
+    # for dispatch — matching the Instantiator / PeerServer convention.
+    EsrWeb.Endpoint.broadcast(channel_topic, "envelope", envelope)
 
     try do
       receive do

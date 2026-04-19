@@ -162,11 +162,19 @@ async def run(
     a :class:`ChannelClient`, and delegates to :func:`run_with_client`
     (spec §5.3 F13). Phase 8b supplies the factory-loading logic.
     """
+    from esr.adapter import AdapterConfig
     from esr.adapters import load_adapter_factory  # type: ignore[import-not-found]
     from esr.ipc.channel_client import ChannelClient
 
     factory = load_adapter_factory(adapter_name)
-    adapter = factory(instance_id, config)
+    # Factories declare ``config: AdapterConfig`` — wrap the raw JSON dict
+    # so read-only attribute access (``cfg.app_id``) works in adapters like
+    # feishu. Tests that pass an AdapterConfig directly stay compatible
+    # because AdapterConfig's constructor copies the dict defensively.
+    adapter_config = (
+        config if isinstance(config, AdapterConfig) else AdapterConfig(config)
+    )
+    adapter = factory(instance_id, adapter_config)
     topic = f"adapter:{adapter_name}/{instance_id}"
     client = ChannelClient(url)
     await run_with_client(adapter, client, topic=topic)

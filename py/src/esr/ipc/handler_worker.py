@@ -141,10 +141,12 @@ async def run_with_client(client: Any, *, topic: str) -> None:
             if envelope is None:
                 return
             reply_payload = process_handler_call(envelope["payload"])
+            # source is an esr:// URI (wire invariant §7.5) — mirror the
+            # adapter_runner convention of "esr://localhost/" + topic.
             await client.push(topic, "envelope", {
                 "kind": "handler_reply",
                 "id": envelope["id"],
-                "source": topic,
+                "source": "esr://localhost/" + topic,
                 "payload": reply_payload,
             })
     finally:

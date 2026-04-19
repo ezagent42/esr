@@ -34,8 +34,13 @@ defmodule Esr.HandlerRouter.CallTest do
         HandlerRouter.call(@module, %{"state" => %{}, "event" => %{}}, 2_000)
       end)
 
-    # Capture the outbound call and reply with a synthetic handler_reply
-    assert_receive %Phoenix.Socket.Broadcast{event: "handler_call", payload: env}, 500
+    # Capture the outbound call and reply with a synthetic handler_reply.
+    # The broadcast uses event="envelope" with kind="handler_call" inside
+    # the payload — the unified wire shape Python's handler_worker filter
+    # expects. Previously HandlerRouter broadcast as event="handler_call"
+    # (legacy), and Python would silently drop every real handler_call.
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 500
+    assert env["kind"] == "handler_call"
     assert env["type"] == "handler_call"
     assert env["payload"]["state"] == %{}
 
@@ -55,7 +60,7 @@ defmodule Esr.HandlerRouter.CallTest do
         HandlerRouter.call(@module, %{"state" => %{}, "event" => %{}}, 2_000)
       end)
 
-    assert_receive %Phoenix.Socket.Broadcast{event: "handler_call", payload: env}, 500
+    assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 500
     simulate_reply(env["id"], %{"error" => %{"type" => "Boom", "message" => "bad"}})
 
     assert {:error, {:handler_error, %{"type" => "Boom"}}} = Task.await(task)

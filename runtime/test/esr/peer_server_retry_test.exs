@@ -54,7 +54,7 @@ defmodule Esr.PeerServerRetryTest do
 
   defp flaky_loop(skip_remaining) do
     receive do
-      %Phoenix.Socket.Broadcast{event: "handler_call", payload: env} ->
+      %Phoenix.Socket.Broadcast{event: "envelope", payload: env} ->
         if skip_remaining > 0 do
           flaky_loop(skip_remaining - 1)
         else

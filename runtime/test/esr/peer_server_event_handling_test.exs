@@ -25,7 +25,7 @@ defmodule Esr.PeerServerEventHandlingTest do
 
   defp fake_worker_loop(reply_shaper) do
     receive do
-      %Phoenix.Socket.Broadcast{event: "handler_call", payload: env} ->
+      %Phoenix.Socket.Broadcast{event: "envelope", payload: env} ->
         payload = reply_shaper.(env["payload"])
 
         Phoenix.PubSub.broadcast(

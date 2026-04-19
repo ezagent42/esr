@@ -282,3 +282,145 @@ class FeishuAdapter:
         if configured:
             return Path(configured)
         return Path.home() / ".esrd" / "default" / "uploads"
+
+    # --- event emission (PRD 04 F12) ----------------------------------
+
+    async def emit_events(self):  # type: ignore[no-untyped-def]
+        """Subscribe to inbound Lark events and yield them as envelope dicts.
+
+        Uses ``lark_oapi.ws.Client`` with a ``p2_im_message_receive_v1``
+        handler that pushes onto an asyncio.Queue; the WSClient's
+        synchronous ``start()`` runs in a thread executor. The async
+        generator yields ``{"event_type": "msg_received", "args": {...}}``
+        tuples that adapter_runner.event_loop wraps into envelopes.
+
+        Config fields honoured:
+          - ``app_id`` / ``app_secret``: for the WS identity (reused
+             from the REST client).
+          - ``base_url``: if set to ``http://127.0.0.1:<port>`` or
+             ``http://localhost:<port>``, the adapter assumes a
+             mock_feishu harness and subscribes to its HTTP SSE / WS
+             endpoint instead of the real Lark WS — scenario-friendly.
+        """
+        base_url = getattr(self._config, "base_url", None) if (
+            hasattr(self._config, "base_url")
+        ) else None
+        if isinstance(base_url, str) and (
+            base_url.startswith("http://127.0.0.1")
+            or base_url.startswith("http://localhost")
+        ):
+            async for env in self._emit_events_mock(base_url):
+                yield env
+            return
+
+        async for env in self._emit_events_lark():
+            yield env
+
+    async def _emit_events_lark(self):  # type: ignore[no-untyped-def]
+        """Live path — drive lark_oapi.ws.Client and yield received messages."""
+        import lark_oapi
+        from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        def _handle_receive(data: Any) -> None:
+            # data is a P2ImMessageReceiveV1 pydantic-like object. Lark
+            # nests the message under data.event.message; we flatten to
+            # the minimum the feishu_app handler needs.
+            try:
+                event = data.event
+                message = event.message
+                sender = event.sender
+                payload = {
+                    "event_type": "msg_received",
+                    "args": {
+                        "chat_id": getattr(message, "chat_id", "") or "",
+                        "message_id": getattr(message, "message_id", "") or "",
+                        "content": getattr(message, "content", "") or "",
+                        "msg_type": getattr(message, "message_type", "") or "",
+                        "sender_id": getattr(
+                            getattr(sender, "sender_id", None), "open_id", ""
+                        ) or "",
+                        "sender_type": getattr(sender, "sender_type", "") or "",
+                        "thread_id": getattr(message, "thread_id", "") or "",
+                        "root_id": getattr(message, "root_id", "") or "",
+                    },
+                }
+                # Schedule enqueue on the loop — callback fires from the
+                # WSClient thread so we cross-thread via call_soon_threadsafe.
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
+            except Exception as exc:  # noqa: BLE001 — callback boundary
+                logger.warning("feishu ws callback error: %s", exc)
+
+        handler = (
+            EventDispatcherHandler.builder("", "")
+            .register_p2_im_message_receive_v1(_handle_receive)
+            .build()
+        )
+
+        ws_client = lark_oapi.ws.Client(
+            self._config.app_id,
+            self._config.app_secret,
+            event_handler=handler,
+        )
+
+        # WSClient.start() blocks; run in a thread so the coroutine can
+        # keep yielding from the queue.
+        ws_task = loop.run_in_executor(None, ws_client.start)
+        try:
+            while True:
+                event = await queue.get()
+                yield event
+        finally:
+            # start() has no clean shutdown API in lark_oapi; cancelling
+            # the executor future severs the wait, the daemon thread will
+            # exit on process teardown.
+            ws_task.cancel()
+
+    async def _emit_events_mock(
+        self, base_url: str
+    ):  # type: ignore[no-untyped-def]
+        """Mock path — connect to mock_feishu's ``/ws`` and relay messages.
+
+        mock_feishu.push_inbound emits full P2ImMessageReceiveV1 JSON
+        envelopes over its WS. The adapter flattens them to the same
+        ``msg_received`` shape the live path yields so downstream
+        handlers are adapter-symmetric.
+        """
+        import aiohttp
+
+        ws_url = base_url.rstrip("/").replace("http://", "ws://") + "/ws"
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    async with session.ws_connect(
+                        ws_url, timeout=aiohttp.ClientWSTimeout(ws_close=30.0)
+                    ) as ws:
+                        async for msg in ws:
+                            if msg.type != aiohttp.WSMsgType.TEXT:
+                                continue
+                            try:
+                                envelope = json.loads(msg.data)
+                            except (ValueError, TypeError):
+                                continue
+                            event = envelope.get("event") or {}
+                            message = event.get("message") or {}
+                            sender = event.get("sender") or {}
+                            sender_id = sender.get("sender_id") or {}
+                            yield {
+                                "event_type": "msg_received",
+                                "args": {
+                                    "chat_id": message.get("chat_id", ""),
+                                    "message_id": message.get("message_id", ""),
+                                    "content": message.get("content", ""),
+                                    "msg_type": message.get("message_type", ""),
+                                    "sender_id": sender_id.get("open_id", ""),
+                                    "sender_type": sender.get("sender_type", ""),
+                                    "thread_id": message.get("thread_id", ""),
+                                    "root_id": message.get("root_id", ""),
+                                },
+                            }
+                except (aiohttp.ClientError, TimeoutError):
+                    # mock_feishu restart-tolerance: back off and retry.
+                    await asyncio.sleep(1)

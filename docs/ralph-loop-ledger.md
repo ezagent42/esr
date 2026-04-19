@@ -43,3 +43,4 @@
 | 34 | 2026-04-19 | 8d | F07-main | c71abbb | unit_tests | sha256:41f299a5afd5a751 |
 | 35 | 2026-04-19 | 8e | scenario-live-green | 6dd1aa3 | scenario_mock | sha256:8986a3a39d6d087e |
 | 36 | 2026-04-19 | 8f | gate8-live-creds | d3fa5d2 | final_gate_mock | sha256:fcdf74008563fd5e |
+| 37 | 2026-04-19 | 8e | C1-C2-fixes | 0380c52 | unit_tests | sha256:26e42a378e7c4815 |

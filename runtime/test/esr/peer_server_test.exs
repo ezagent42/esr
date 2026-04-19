@@ -156,7 +156,7 @@ defmodule Esr.PeerServerTest do
 
   defp dedup_test_worker_loop do
     receive do
-      %Phoenix.Socket.Broadcast{event: "handler_call", payload: env} ->
+      %Phoenix.Socket.Broadcast{event: "envelope", payload: env} ->
         Phoenix.PubSub.broadcast(
           EsrWeb.PubSub,
           "handler_reply:" <> env["id"],
