@@ -17,10 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
+
+logger = logging.getLogger(__name__)
 
 _BACKOFF_SCHEDULE: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
 """Exponential backoff between 429 retries (PRD 04 F15). Total budget 30s."""
@@ -111,6 +115,8 @@ class FeishuAdapter:
             return await self._with_ratelimit_retry(lambda: self._pin(args))
         if action == "unpin":
             return await self._with_ratelimit_retry(lambda: self._unpin(args))
+        if action == "download_file":
+            return self._download_file(args)
         return {"ok": False, "error": f"unknown action: {action}"}
 
     async def _with_ratelimit_retry(
@@ -235,3 +241,44 @@ class FeishuAdapter:
         if response.success():
             return {"ok": True}
         return _lark_failure(response, "unpin failed")
+
+    def _download_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Download a message's file/image/audio to the uploads dir (PRD 04 F14).
+
+        Layout: <uploads_dir>/<chat_id>/<file_name>. The uploads_dir is
+        taken from AdapterConfig.uploads_dir (falling back to
+        ~/.esrd/<instance>/uploads).
+        """
+        import lark_oapi.api.im.v1 as im_v1
+
+        msg_id = args["msg_id"]
+        file_key = args["file_key"]
+        file_name = args["file_name"]
+        msg_type = args["msg_type"]
+        chat_id = args["chat_id"]
+
+        request = (
+            im_v1.GetMessageResourceRequest.builder()
+            .message_id(msg_id)
+            .file_key(file_key)
+            .type(msg_type)
+            .build()
+        )
+        response = self.client().im.v1.message_resource.get(request)
+        if not response.success():
+            return _lark_failure(response, "download failed")
+
+        uploads_dir = self._uploads_dir()
+        target = uploads_dir / chat_id / file_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(response.file.read())
+        return {"ok": True, "result": {"path": str(target)}}
+
+    def _uploads_dir(self) -> Path:
+        """Resolve the uploads directory — config override or the default."""
+        configured = getattr(self._config, "uploads_dir", None) if (
+            hasattr(self._config, "uploads_dir")
+        ) else None
+        if configured:
+            return Path(configured)
+        return Path.home() / ".esrd" / "default" / "uploads"
