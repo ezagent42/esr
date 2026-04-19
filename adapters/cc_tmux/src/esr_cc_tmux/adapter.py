@@ -25,6 +25,30 @@ from esr.adapter import AdapterConfig, adapter
 
 logger = logging.getLogger(__name__)
 
+SENTINEL_PREFIX = "[esr-cc] "
+"""Marker lines produced by the launched CC process (PRD 04 F21)."""
+
+
+def parse_sentinel_line(session: str, line: str) -> dict[str, Any] | None:
+    """Parse a single tmux output line into a ``cc_output`` event dict.
+
+    Returns ``None`` for non-sentinel lines so the caller can skip
+    them cheaply without flooding the event stream with terminal noise.
+    """
+    # Strip only trailing newline — internal whitespace is significant
+    # (handlers may parse structured payloads after the sentinel).
+    if line.endswith("\n"):
+        line = line[:-1]
+    if not line.startswith(SENTINEL_PREFIX):
+        return None
+    text = line[len(SENTINEL_PREFIX):]
+    if not text:
+        return None  # bare sentinel with no payload is noise
+    return {
+        "event_type": "cc_output",
+        "args": {"session": session, "text": text},
+    }
+
 
 @adapter(
     name="cc_tmux",
@@ -44,6 +68,11 @@ class CcTmuxAdapter:
     def factory(actor_id: str, config: AdapterConfig) -> CcTmuxAdapter:
         """Construct a CcTmuxAdapter — pure, no I/O (PRD 04 F02)."""
         return CcTmuxAdapter(actor_id=actor_id, config=config)
+
+    # Expose the parser as a classmethod alias — handy for callers
+    # that want to drive line-at-a-time parsing without importing the
+    # module-level function.
+    parse_line = staticmethod(parse_sentinel_line)
 
     # --- directive dispatch (F17-F20, F22) ----------------------------
 
