@@ -7,3 +7,4 @@
 | iter | date       | phase | FR     | commit  | evidence-type  | evidence-sha    |
 |------|------------|-------|--------|---------|----------------|-----------------|
 | 0    | 2026-04-20 | A17   | seed   | 200f8db | ledger_check   | sha256:00000000 |
+| 1 | 2026-04-19 | 8a | F13-pusher | ee9af33 | unit_tests | sha256:7d44395e240f3ab3 |
