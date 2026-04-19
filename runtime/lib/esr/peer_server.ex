@@ -76,6 +76,16 @@ defmodule Esr.PeerServer do
     GenServer.call(via(actor_id), :get_state)
   end
 
+  @doc """
+  Returns a snapshot of the peer's public introspection fields
+  (`actor_id`, `actor_type`, `handler_module`, `paused`, `state`).
+  Used by `EsrWeb.CliChannel` for `cli:actors/inspect`.
+  """
+  @spec describe(String.t()) :: map()
+  def describe(actor_id) do
+    GenServer.call(via(actor_id), :describe)
+  end
+
   @spec pause(String.t()) :: :ok
   def pause(actor_id) do
     GenServer.call(via(actor_id), :pause)
@@ -145,6 +155,18 @@ defmodule Esr.PeerServer do
   @impl GenServer
   def handle_call(:get_state, _from, %__MODULE__{state: s} = acc) do
     {:reply, s, acc}
+  end
+
+  def handle_call(:describe, _from, %__MODULE__{} = acc) do
+    snapshot = %{
+      actor_id: acc.actor_id,
+      actor_type: acc.actor_type,
+      handler_module: acc.handler_module,
+      paused: acc.paused,
+      state: acc.state
+    }
+
+    {:reply, snapshot, acc}
   end
 
   def handle_call(:pause, _from, %__MODULE__{} = state) do

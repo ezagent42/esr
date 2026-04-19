@@ -59,6 +59,46 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:actors/inspect" do
+    setup do
+      actor_id = "thread:inspect-test-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = start_supervised({Esr.PeerServer,
+        actor_id: actor_id,
+        actor_type: "feishu_thread_proxy",
+        handler_module: "noop",
+        initial_state: %{"hello" => "world"}
+      })
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-inspect", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:actors/inspect")
+
+      %{inspect_socket: socket, actor_id: actor_id}
+    end
+
+    test "returns state of the named actor", %{inspect_socket: socket, actor_id: actor_id} do
+      ref = push(socket, "cli_call", %{"arg" => actor_id})
+      assert_reply ref, :ok, response
+      info = response["data"]
+      assert is_map(info)
+      assert info["actor_id"] == actor_id
+      assert info["actor_type"] == "feishu_thread_proxy"
+      assert info["paused"] == false
+      assert is_map(info["state"])
+    end
+
+    test "missing actor returns error response", %{inspect_socket: socket} do
+      ref = push(socket, "cli_call", %{"arg" => "nonexistent:actor"})
+      assert_reply ref, :ok, response
+      # We reply :ok with a structured error so the CLI surfaces
+      # "actor not found" as a user-friendly message rather than a
+      # transport error.
+      assert response["data"]["error"] == "actor not found"
+      assert response["data"]["actor_id"] == "nonexistent:actor"
+    end
+  end
+
   describe "cli:deadletter/list" do
     setup do
       Esr.DeadLetter.clear(Esr.DeadLetter)

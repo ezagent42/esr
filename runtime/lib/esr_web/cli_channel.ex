@@ -46,6 +46,30 @@ defmodule EsrWeb.CliChannel do
     %{"data" => data}
   end
 
+  def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
+    case Esr.PeerRegistry.lookup(actor_id) do
+      {:ok, _pid} ->
+        snap = Esr.PeerServer.describe(actor_id)
+
+        data = %{
+          "actor_id" => snap.actor_id,
+          "actor_type" => snap.actor_type,
+          "handler_module" => snap.handler_module,
+          "paused" => snap.paused,
+          "state" => stringify_keys(snap.state)
+        }
+
+        %{"data" => data}
+
+      :error ->
+        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
+    end
+  end
+
+  def dispatch("cli:actors/inspect", _payload) do
+    %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
+  end
+
   def dispatch("cli:deadletter/list", _payload) do
     data =
       Esr.DeadLetter
@@ -95,8 +119,12 @@ defmodule EsrWeb.CliChannel do
 
   @spec stringify_keys(map()) :: map()
   defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} -> {to_string(k), v} end)
+    Map.new(map, fn {k, v} -> {stringify_key(k), v} end)
   end
+
+  @spec stringify_key(term()) :: String.t()
+  defp stringify_key(k) when is_binary(k), do: k
+  defp stringify_key(k), do: to_string(k)
 
   @spec serialise_dl_entry(DeadLetterEntry.t()) :: map()
   defp serialise_dl_entry(%DeadLetterEntry{} = entry) do
