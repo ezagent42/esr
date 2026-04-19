@@ -531,6 +531,20 @@ def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
+def _submit_trace(
+    *, session: str | None, last: str | None, filter: str | None  # noqa: A002
+) -> list[dict[str, Any]]:
+    """Query the runtime telemetry-buffer ring.
+
+    Stubbed for v0.1; Phase 8 wires to a ``cli:trace`` topic and
+    returns the filtered entries as a list of event dicts with
+    timestamps and metadata.
+    """
+    raise NotImplementedError(
+        "trace requires a live runtime; run `esr status` to verify."
+    )
+
+
 def _submit_actors(action: str, arg: str | None) -> Any:
     """Actor-registry queries via the runtime.
 
@@ -729,6 +743,36 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.command("trace")
+@click.option("--session", default=None, help="Scope to one actor_id / session.")
+@click.option("--last", default=None, help="Time window (e.g. ``5m``, ``1h``).")
+@click.option(
+    "--filter", "filter_pattern", default=None,
+    help="Event-name regex filter.",
+)
+def trace(session: str | None, last: str | None, filter_pattern: str | None) -> None:
+    """Read the runtime telemetry-buffer ring (PRD 07 F16).
+
+    All options narrow the server-side query; the CLI prints the
+    returned events one-per-line as ``<ts> <event>  actor_id=<id>``
+    with remaining kwargs echoed.
+    """
+    entries = _submit_trace(session=session, last=last, filter=filter_pattern)
+    if not entries:
+        click.echo("no events matched")
+        return
+    for entry in entries:
+        ts = entry.get("ts", "-")
+        event = entry.get("event", "?")
+        actor = entry.get("actor_id", "-")
+        extras = {
+            k: v for k, v in entry.items()
+            if k not in {"ts", "event", "actor_id"}
+        }
+        suffix = "  " + " ".join(f"{k}={v}" for k, v in extras.items()) if extras else ""
+        click.echo(f"{ts}  {event}  actor_id={actor}{suffix}")
 
 
 @cli.group()
