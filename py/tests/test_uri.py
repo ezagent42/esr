@@ -65,6 +65,15 @@ def test_parse_wrong_scheme_raises() -> None:
         parse("https://localhost/adapter/feishu")
 
 
+def test_parse_id_with_slash_raises() -> None:
+    """Reviewer S5: Elixir-side Esr.Uri.parse rejects ``esr://host/type/a/b``
+    (its path split requires exactly ``[type, id]``). Python must match
+    to avoid silent cross-boundary mismatches.
+    """
+    with pytest.raises(ValueError, match=r"(slash|bad path|multiple segments)"):
+        parse("esr://localhost/actor/path/with/slashes")
+
+
 def test_parse_missing_id_raises() -> None:
     with pytest.raises(ValueError, match=r"missing id"):
         parse("esr://localhost/adapter/")

@@ -94,11 +94,13 @@ def parse(s: str) -> EsrURI:
         except ValueError as exc:
             raise ValueError(f"invalid port {port_str!r} in {s!r}") from exc
 
+    # Spec §7.5 grammar: ``/<type>/<id>`` — exactly two segments.
+    # Elixir's Esr.Uri.parse rejects extra slashes (bad_path); Python
+    # matches to avoid silent cross-boundary drift (reviewer S5).
     path_parts = raw_path.split("/")
-    if len(path_parts) < 2:
-        raise ValueError(f"missing id in {s!r}")
-    type_ = path_parts[0]
-    id_ = "/".join(path_parts[1:])
+    if len(path_parts) != 2:
+        raise ValueError(f"bad path in {s!r}: id may not contain slashes")
+    type_, id_ = path_parts
     if type_ not in _VALID_TYPES:
         raise ValueError(f"unknown type {type_!r}; expected one of {sorted(_VALID_TYPES)}")
     if id_ == "":
