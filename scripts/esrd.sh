@@ -43,16 +43,21 @@ cmd_start() {
     return 0
   fi
 
-  # Command override for tests; otherwise run the real Phoenix server.
-  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && exec mix phx.server}"
+  # Command override for tests; otherwise run the real Phoenix server on
+  # port 4001 (spec §7.1 default; url.py's DEFAULT_*_HUB_URL assumes it).
+  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && PORT=4001 exec mix phx.server}"
 
-  # Launch detached, redirect output, capture child pid.
+  # Launch detached, redirect output, capture child pid. The subshell's
+  # stdout/stderr must be redirected so the parent's captured streams
+  # (subprocess.run(capture_output=True) in the scenario runner) can hit
+  # EOF as soon as cmd_start's own echo finishes — otherwise the wait
+  # on the grandchild keeps fds alive indefinitely.
   (
     cd "$(git rev-parse --show-toplevel)" || exit 1
     eval "$cmd" >"$dir/logs/stdout.log" 2>&1 &
     echo $! > "$pidfile"
     wait "$(cat "$pidfile")" 2>/dev/null || true
-  ) &
+  ) >/dev/null 2>&1 &
   disown $! 2>/dev/null || true
 
   # Wait briefly for pidfile to appear; Phoenix often needs a few hundred
