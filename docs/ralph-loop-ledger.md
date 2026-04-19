@@ -38,3 +38,4 @@
 | 29 | 2026-04-19 | 8d | mock-feishu-conformance | bb20c5b | unit_tests | sha256:071842a0a2ef220e |
 | 30 | 2026-04-19 | 8e | scenario-setup-orchestration | 3355db1 | unit_tests | sha256:92d4e112c07db8de |
 | 31 | 2026-04-19 | 8e | esrd-daemonize-port | 5b380ce | unit_tests | sha256:673b55d7ca2f34a0 |
+| 32 | 2026-04-19 | 8e | scenario-compile-pattern | 98882c6 | unit_tests | sha256:d56fc8bd25f75d87 |

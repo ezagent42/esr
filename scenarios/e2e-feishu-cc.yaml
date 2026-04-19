@@ -38,6 +38,14 @@ setup:
   - command: "uv run --project py esr actors list"
     expect_exit: 0
     timeout_sec: 10
+  # 5. Compile the pattern so `esr cmd run feishu-thread-session` can find
+  #    its artifact at ~/.esrd/default/commands/.compiled/.
+  - command: >-
+      mkdir -p ~/.esrd/default/commands/.compiled &&
+      uv run --project py esr cmd compile feishu-thread-session
+      -o ~/.esrd/default/commands/.compiled/feishu-thread-session.yaml
+    expect_exit: 0
+    timeout_sec: 15
 
 steps:
 
