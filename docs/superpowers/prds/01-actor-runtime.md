@@ -1,6 +1,7 @@
 # PRD 01 — Actor Runtime (Elixir)
 
 **Spec reference:** `docs/superpowers/specs/2026-04-18-esr-extraction-design.md` §3 + §7
+**Glossary:** `docs/superpowers/glossary.md` — definitive definitions for every term used here
 **E2E tracks:** A (registration), B (scheduling), C (bidirectional), D (isolation), E (observability), F (operations), G (debug), H (correctness)
 **Plan phase:** Phase 1
 
@@ -61,7 +62,21 @@ Any action type outside `Emit | Route | InvokeCommand` is rejected with `[:esr, 
 `EsrWeb.HandlerChannel` joins on `handler:<module>/<worker_id>`. Receives `handler_reply` from Python workers, correlates by id to pending `HandlerRouter.call` responses. **Unit test:** round-trip `handler_call → handler_reply` with mocked Python worker.
 
 ### F13 — Topology.Registry + Topology.Instantiator
-`Esr.Topology.Registry` stores loaded artifact structs keyed by `(name, params)` for idempotency. `Esr.Topology.Instantiator.instantiate(artifact, params)` validates, substitutes params, spawns actors in `depends_on` topological order (Kahn's algorithm), binds adapters, opens routes. Returns `{:ok, handle}` where `handle` is the canonical `(name, params)`. Rejects if params are missing or if any referenced adapter/handler module is not installed. **Unit test:** happy spawn, params-missing, dep-missing, DAG ordering correct, cycle detection.
+`Esr.Topology.Registry` stores loaded artifact structs keyed by `(name, params)` for idempotency. `Esr.Topology.Instantiator.instantiate(artifact, params)` validates, substitutes params, spawns actors in `depends_on` topological order (Kahn's algorithm), binds adapters, **issues each node's `init_directive` if declared** (see F13b), opens routes. Returns `{:ok, handle}` where `handle` is the canonical `(name, params)`. Rejects if params are missing or if any referenced adapter/handler module is not installed. **Unit test:** happy spawn, params-missing, dep-missing, DAG ordering correct, cycle detection.
+
+### F13b — `init_directive` handling (adapter initialisation)
+A node declaration may include an optional `init_directive: {action: <str>, args: <dict>}` field. When that node is spawned, the Topology Instantiator — after binding the adapter — sends a `Directive(adapter=<bound_adapter>, action=..., args=<substituted_args>)` and awaits the ack. Semantics:
+
+- A node is **not considered "active"** (and no dependent in `depends_on` starts spawning) until its init_directive has acked ok.
+- If the init_directive times out (default 30 s, override via node metadata) or acks with `{"ok": false, ...}`, the whole instantiation rolls back: already-spawned predecessor nodes stop in reverse `depends_on` order; the overall `instantiate/2` returns `{:error, {:init_directive_failed, node_id, reason}}`.
+- Node `args` can reference topology params with `{{param_name}}` substitution (same substitution as node `id` and `params`).
+- A node without `init_directive` needs no adapter-side initialisation; it is "active" as soon as the PeerServer is running.
+
+**Unit test:** `Esr.Topology.InstantiatorTest`
+- Happy: node with init_directive acks ok, dependent spawns
+- Fail: init_directive acks error → rollback predecessors
+- Fail: init_directive times out → rollback
+- Substitution: `{{thread_id}}` in args resolved correctly
 
 ### F14 — Topology stop cascade
 `Esr.Topology.Registry.deactivate(handle)` stops actors in **reverse** `depends_on` order. A parent's stop waits for all dependents to be in `:stopped` before stopping itself. Emits `[:esr, :topology, :deactivated]`. **Unit test:** spawn a 3-node depends_on chain, stop, assert reverse order via telemetry timestamps.
@@ -118,6 +133,7 @@ The release built via `mix release` starts the `Esr.Application`; a systemd / la
 | F11 | `runtime/test/esr/handler_router_test.exs` | call happy / timeout / crash / purity |
 | F12 | `runtime/test/esr_web/handler_channel_test.exs` | call round-trip |
 | F13 | `runtime/test/esr/topology/instantiator_test.exs` | spawn / params-missing / dep-missing / DAG / cycle |
+| F13b | `runtime/test/esr/topology/init_directive_test.exs` | happy / ack-error rollback / timeout rollback / args substitution |
 | F14 | `runtime/test/esr/topology/instantiator_test.exs` | stop reverse order |
 | F15 | `runtime/test/esr/telemetry/buffer_test.exs` | record / query / prune |
 | F16 | `runtime/test/esr/telemetry/attach_test.exs` | synthetic event roundtrip |
@@ -129,7 +145,7 @@ The release built via `mix release` starts the `Esr.Application`; a systemd / la
 
 ## Acceptance
 
-- [ ] All 21 FRs have passing unit tests
+- [ ] All 21 FRs (+ F13b) have passing unit tests
 - [ ] `mix test` green; `mix credo --strict` clean; `mix dialyzer` clean
 - [ ] Integration test: spawn → inject event → handler mock returns → actions dispatched → telemetry observed
 - [ ] PRD 01 unit-test count ≥ 50 (one baseline + one edge case per FR minimum)

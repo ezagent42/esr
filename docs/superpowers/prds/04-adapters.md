@@ -1,6 +1,7 @@
 # PRD 04 — Adapters (feishu + cc_tmux)
 
 **Spec reference:** §5 Adapter, §10.3 sidecar relationship
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** A (install), C (bidirectional Feishu↔CC), D (isolation)
 **Plan phase:** Phase 4
 

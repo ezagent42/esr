@@ -700,6 +700,11 @@ nodes:
     adapter: cc_tmux
     handler: tmux_proxy.on_msg
     depends_on: ["thread:{{thread_id}}"]
+    init_directive:
+      action: new_session
+      args:
+        session_name: "{{thread_id}}"
+        start_cmd: "./e2e-cc.sh"
   - id: "cc:{{thread_id}}"
     actor_type: cc_proxy
     handler: cc_session.on_msg
@@ -712,6 +717,7 @@ edges:
 **Optional node fields:**
 
 - `depends_on: [<node_id>, ...]` — explicit lifecycle dependency (§5.5). Listed nodes must be spawned before this one and must stay alive for its lifetime. Dependencies form a DAG; cycles fail compilation.
+- `init_directive: {action: <str>, args: <dict>}` — a directive issued to the node's bound adapter immediately after the PeerServer is spawned. The node is **not considered "active"** until the directive acks ok; dependents in `depends_on` do not start spawning until then. If the directive fails (ack error, timeout), the whole instantiation rolls back (predecessor nodes stop in reverse `depends_on` order). Used for adapter resource initialisation (e.g. creating a tmux session) that must happen exactly once at actor birth. `args` values may reference topology params via `{{param_name}}`. See `docs/superpowers/prds/01-actor-runtime.md` F13b for the runtime contract.
 
 Two artifacts per command:
 

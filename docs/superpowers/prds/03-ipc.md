@@ -1,6 +1,7 @@
 # PRD 03 — IPC (Phoenix Channels + Python Client + Handler Worker)
 
 **Spec reference:** §7 IPC Protocol
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** A, B, C, E, G (all depend on IPC working)
 **Plan phase:** Phase 3
 

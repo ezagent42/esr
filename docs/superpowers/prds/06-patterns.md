@@ -1,6 +1,7 @@
 # PRD 06 — Patterns (feishu-app-session + feishu-thread-session)
 
 **Spec reference:** §6 Command (EDSL, compilation, YAML artifact), §6.2 worked example
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** A (install), B (spawn + InvokeCommand), H (correctness)
 **Plan phase:** Phase 6
 
@@ -32,7 +33,8 @@ node(
 Parameters: `app_id` (required), `instance_name` (required). **Unit test:** `patterns/tests/test_feishu_app_session.py` — compile_topology returns a Topology with 1 node, 0 edges, 2 params.
 
 ### F02 — `feishu-thread-session` pattern
-`patterns/feishu-thread-session.py` registers a `@command("feishu-thread-session")` that declares three nodes with `depends_on`:
+`patterns/feishu-thread-session.py` registers a `@command("feishu-thread-session")` that declares three nodes with `depends_on`. The `tmux` node carries an `init_directive` that creates the tmux session before any dependent (cc) spawns, per spec §6.3 / PRD 01 F13b:
+
 ```python
 thread = node(
     id="thread:{{thread_id}}",
@@ -46,6 +48,13 @@ tmux = node(
     adapter="cc_tmux",
     handler="tmux_proxy.on_msg",
     depends_on=[thread],
+    init_directive={
+        "action": "new_session",
+        "args": {
+            "session_name": "{{thread_id}}",
+            "start_cmd": "./e2e-cc.sh",
+        },
+    },
 )
 cc = node(
     id="cc:{{thread_id}}",
@@ -55,7 +64,14 @@ cc = node(
 )
 thread >> tmux >> cc
 ```
-Parameters: `thread_id` (required). **Unit test:** `patterns/tests/test_feishu_thread_session.py` — 3 nodes, 2 edges, 1 param, `depends_on` DAG correct.
+Parameters: `thread_id` (required).
+
+**Why init_directive on the tmux node:** the tmux adapter needs to actually launch a tmux session before it can send keys or capture output. Placing `new_session` on node spawn (via init_directive) means: (a) the tmux session exists exactly once per thread, (b) if it fails to start, the thread's cc actor never spawns and the instantiation rolls back cleanly, and (c) no handler code sees an uninitialised tmux.
+
+**Unit test:** `patterns/tests/test_feishu_thread_session.py`
+- 3 nodes, 2 edges, 1 param, `depends_on` DAG correct
+- Compiled YAML for tmux node contains `init_directive` block verbatim
+- Instantiating with `thread_id="foo"` substitutes `{{thread_id}}` → `foo` in `init_directive.args.session_name`
 
 ### F03 — Compiled YAML exists
 `esr cmd compile feishu-app-session` produces `patterns/.compiled/feishu-app-session.yaml` with schema matching spec §6.3. Same for `feishu-thread-session`. **Unit test:** `patterns/tests/test_compile_yaml.py` — round-trip (compile → YAML → parse → compare to compile_topology result).

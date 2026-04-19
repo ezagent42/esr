@@ -1,6 +1,7 @@
 # PRD 02 — Python SDK
 
 **Spec reference:** §4 Handler, §5 Adapter, §6 Command, §7.5 URI
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** A (install flow), B (InvokeCommand), C (handler/adapter behaviour), H (correctness)
 **Plan phase:** Phase 2
 
@@ -47,7 +48,11 @@ Provide the Python-side authoring surface: `@handler`, `@adapter`, `@command` de
 `esr.command.command(name)` registers the decorated function under `name` in `COMMAND_REGISTRY`. Duplicate registration raises `ValueError`. The function body uses the EDSL (`node`, `port`, `compose.serial`) to build a pattern in a context-local accumulator. **Unit test:** `tests/test_command.py`.
 
 ### F10 — EDSL: `node()`
-`esr.command.node(*, id, actor_type, handler, adapter=None, params=None, depends_on=None)` creates a `_Node` instance and appends it to the current command's node list (via `contextvars`). The returned `_Node` supports `>>` operator overload: `a >> b` records an edge from `a` to `b` in the current command context. **Unit test:** `tests/test_command.py` — node counted, edge recorded.
+`esr.command.node(*, id, actor_type, handler, adapter=None, params=None, depends_on=None, init_directive=None)` creates a `_Node` instance and appends it to the current command's node list (via `contextvars`). The returned `_Node` supports `>>` operator overload: `a >> b` records an edge from `a` to `b` in the current command context.
+
+The `init_directive` argument, when provided, is a dict `{"action": <str>, "args": <dict>}`; both the `args` dict values and the `id` may reference topology params via `{{param_name}}`. The compiler validates that `init_directive.action` is defined by the node's bound `adapter`'s declared action set (or emits a warning if the adapter is not yet installed — soft check, hard check happens at install-time dependency resolution).
+
+**Unit test:** `tests/test_command.py` — node counted, edge recorded; init_directive stored verbatim; invalid init_directive shape raises.
 
 ### F11 — EDSL: `port`
 `esr.command.port.input(name, type)` / `.output(name, type)` record a typed port on the current pattern and return the port name (so it can be used as a node `id`). Calling outside a `@command` function raises `RuntimeError`. **Unit test:** `tests/test_command.py`.
@@ -59,7 +64,7 @@ Provide the Python-side authoring surface: `@handler`, `@adapter`, `@command` de
 `esr.command.compile_topology(name)` executes the registered command function in a fresh context, validates no depends_on cycles (Kahn's algorithm), extracts `{{param}}` templates into a deduplicated sorted tuple, applies dead-node elimination and CSE, and returns a frozen `Topology` dataclass: `(name, nodes, edges, ports_in, ports_out, params)`. **Unit test:** `tests/test_command.py` — single pattern / composed / cycle rejection / param extraction.
 
 ### F14 — `compile_to_yaml(topology, path)`
-`esr.command.compile_to_yaml(topo, path)` serialises a compiled `Topology` to a YAML file matching the schema in spec §6.3 (schema_version, name, params, ports, nodes, edges). Deterministic key ordering (explicit sort) so diffs are stable. **Unit test:** `tests/test_command_yaml.py` — round-trip (compile → YAML → reload → equal).
+`esr.command.compile_to_yaml(topo, path)` serialises a compiled `Topology` to a YAML file matching the schema in spec §6.3 (schema_version, name, params, ports, nodes, edges). For each node that has an `init_directive` the compiled YAML includes an `init_directive: {action, args}` sub-block. Deterministic key ordering (explicit sort) so diffs are stable. **Unit test:** `tests/test_command_yaml.py` — round-trip (compile → YAML → reload → equal); init_directive round-trips intact.
 
 ### F15 — URI parser
 `esr.uri.parse(s)` accepts `esr://[org@]host[:port]/<type>/<id>[?params]`. Empty host raises `ValueError("empty host")`. Unknown type raises `ValueError("unknown type")`. Returns `EsrURI` frozen dataclass. `esr.uri.build(type_, id_, *, host, port=None, org=None)` builds a canonical URI. **Unit test:** `tests/test_uri.py` — parse all examples from spec §7.5; build; empty host rejection.

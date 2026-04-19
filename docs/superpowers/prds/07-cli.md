@@ -1,6 +1,7 @@
 # PRD 07 — CLI (`esr`)
 
 **Spec reference:** §3.7 Management Surfaces, §8.2 Packaging
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** every track exercises the CLI; A / B / E / F / G use it most heavily
 **Plan phase:** Phase 7
 

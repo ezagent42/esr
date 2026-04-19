@@ -1,6 +1,7 @@
 # PRD 05 — Handlers (feishu_app, feishu_thread, tmux_proxy, cc_session)
 
 **Spec reference:** §4 Handler, §6.2 feishu-thread-session topology, §9 E2E Tracks B/C
+**Glossary:** `docs/superpowers/glossary.md`
 **E2E tracks:** B (`/new-thread` InvokeCommand), C (bidirectional flow), H (correctness)
 **Plan phase:** Phase 5
 
