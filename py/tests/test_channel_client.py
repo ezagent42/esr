@@ -177,3 +177,140 @@ async def test_channel_client_join_blocks_until_reply() -> None:
 
     # Within a small tolerance, the full delay must have elapsed
     assert elapsed >= delay * 0.9
+
+
+# --- PRD 03 F05: reconnect + pending-push queue ------------------------
+
+
+async def test_push_queued_during_disconnect() -> None:
+    """While disconnected, push() queues rather than raising."""
+    client = ChannelClient("ws://127.0.0.1:1/does-not-exist")
+    # Simulate post-join state + mid-disconnect without a live server
+    client._topic_join_refs["handler:noop"] = "1"
+    client._topic_handlers["handler:noop"] = lambda _: None
+    client._is_disconnected = True
+
+    await client.push("handler:noop", "hello", {"x": 1})
+    await client.push("handler:noop", "hello", {"x": 2})
+
+    pending = list(client._pending_pushes)
+    assert len(pending) == 2
+    assert pending[0][0] == "handler:noop"
+    assert pending[0][1] == "hello"
+    assert pending[1][2] == {"x": 2}
+
+
+async def test_pending_queue_drops_oldest_on_overflow() -> None:
+    """1001st pending push drops the oldest to stay bounded at 1000."""
+    client = ChannelClient("ws://127.0.0.1:1/does-not-exist")
+    client._topic_join_refs["t"] = "1"
+    client._topic_handlers["t"] = lambda _: None
+    client._is_disconnected = True
+
+    for i in range(1001):
+        await client.push("t", "e", {"i": i})
+
+    pending = list(client._pending_pushes)
+    assert len(pending) == 1000
+    # The oldest (i=0) was dropped; the newest (i=1000) is kept
+    assert pending[0][2] == {"i": 1}
+    assert pending[-1][2] == {"i": 1000}
+
+
+@contextlib.asynccontextmanager
+async def _killswitch_server() -> AsyncIterator[tuple[str, list, asyncio.Event]]:
+    """Phoenix mock whose WS is closed when the external event fires.
+
+    The server accepts subsequent reconnections normally; ``received`` is
+    shared across connections so tests can assert the flow end-to-end.
+    """
+    received: list[list[Any]] = []
+    kill = asyncio.Event()
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        # Serve frames until kill fires; then close the WS.
+        reader_task = asyncio.create_task(_serve_frames(ws, received))
+        kill_task = asyncio.create_task(kill.wait())
+        done, pending = await asyncio.wait(
+            [reader_task, kill_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        if kill_task in done:
+            await ws.close()
+            kill.clear()  # reset for subsequent connections
+        return ws
+
+    async def _serve_frames(
+        ws: web.WebSocketResponse, acc: list[list[Any]]
+    ) -> None:
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                continue
+            frame = json.loads(msg.data)
+            acc.append(frame)
+            join_ref, ref, topic, event, _payload = frame
+            if event == "phx_join":
+                reply = [
+                    join_ref,
+                    ref,
+                    topic,
+                    "phx_reply",
+                    {"status": "ok", "response": {}},
+                ]
+                await ws.send_str(json.dumps(reply))
+
+    app = web.Application()
+    app.router.add_get("/socket/websocket", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    url = f"ws://127.0.0.1:{port}/socket/websocket"
+    try:
+        yield url, received, kill
+    finally:
+        await runner.cleanup()
+
+
+async def test_reconnect_rejoins_and_flushes_pending() -> None:
+    """Server close → client reconnects, re-joins topics, flushes pending pushes."""
+    async with _killswitch_server() as (url, received, kill):
+        client = ChannelClient(
+            url, auto_reconnect=True, backoff_schedule=[0.05, 0.1]
+        )
+        await client.connect()
+        await client.join("handler:noop", on_msg=lambda _: None)
+
+        # Kill the first WS; the client should detect and start reconnecting.
+        kill.set()
+        # Give the client a moment to notice the close
+        await asyncio.sleep(0.05)
+        assert client._is_disconnected is True
+
+        # Push while disconnected → queued, not raised
+        await client.push("handler:noop", "late", {"x": 42})
+
+        # Wait for reconnect to complete (with a generous cap)
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while (
+            client._is_disconnected
+            and asyncio.get_event_loop().time() < deadline
+        ):
+            await asyncio.sleep(0.02)
+        assert client._is_disconnected is False, "client never reconnected"
+
+        # Let the queued push flush
+        await asyncio.sleep(0.1)
+        await client.close()
+
+    # Second connection must have seen a phx_join + the queued push
+    second_conn_frames = [f for f in received if f[3] in ("phx_join", "late")]
+    events = [f[3] for f in second_conn_frames]
+    # The original connection's phx_join is the first; the reconnect's is later.
+    assert events.count("phx_join") >= 2
+    assert "late" in events
