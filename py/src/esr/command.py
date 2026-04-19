@@ -316,16 +316,52 @@ def compile_topology(name: str) -> Topology:
         _CURRENT.reset(token)
 
     _check_cycles(ctx.nodes)
-    params = tuple(sorted(_extract_params(ctx.nodes)))
+    live_nodes = _eliminate_dead_nodes(ctx.nodes, ctx.edges)
+    params = tuple(sorted(_extract_params(live_nodes)))
 
     return Topology(
         name=name,
-        nodes=tuple(ctx.nodes),
+        nodes=tuple(live_nodes),
         edges=tuple(ctx.edges),
         ports_in=MappingProxyType(dict(ctx.ports_in)),
         ports_out=MappingProxyType(dict(ctx.ports_out)),
         params=params,
     )
+
+
+def _eliminate_dead_nodes(
+    nodes: list[_Node], edges: list[tuple[str, str]]
+) -> list[_Node]:
+    """Drop nodes that aren't reachable in a multi-edge topology (PRD 06 F05).
+
+    A node is dead iff **both** conditions hold:
+      1. At least one edge or depends_on reference exists in the pattern
+         (so there is a "connected component" the orphan is falling
+         outside of).
+      2. The node itself appears in no edge and no depends_on reference.
+
+    Patterns with zero edges (every node is top-level) keep all their
+    nodes — that shape is legitimate (multiple independent actors).
+    Single-node patterns likewise keep their lone node.
+    """
+    if len(nodes) <= 1:
+        return nodes
+
+    any_depends_on = any(n.depends_on for n in nodes)
+    if not edges and not any_depends_on:
+        return nodes
+
+    referenced: set[str] = set()
+    for src, dst in edges:
+        referenced.add(src)
+        referenced.add(dst)
+    for n in nodes:
+        if n.depends_on:
+            referenced.add(n.id)
+            for dep in n.depends_on:
+                referenced.add(dep)
+
+    return [n for n in nodes if n.id in referenced]
 
 
 def _check_cycles(nodes: list[_Node]) -> None:
