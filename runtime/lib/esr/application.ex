@@ -29,6 +29,9 @@ defmodule Esr.Application do
       # 4. Dynamic supervisor that hosts live PeerServers.
       Esr.PeerSupervisor,
 
+      # 4b. Dead-letter queue — started before peers so enqueue never misses.
+      {Esr.DeadLetter, name: Esr.DeadLetter},
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,

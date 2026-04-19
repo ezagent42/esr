@@ -215,7 +215,7 @@ defmodule Esr.PeerServer do
 
     event_id = Map.get(envelope, "id", "")
 
-    case HandlerRouter.call(state.handler_module, payload, state.handler_timeout) do
+    case call_with_retry(state, payload) do
       {:ok, new_state, actions} when is_map(new_state) and is_list(actions) ->
         :telemetry.execute([:esr, :handler, :invoked], %{}, %{
           actor_id: state.actor_id,
@@ -227,7 +227,24 @@ defmodule Esr.PeerServer do
         |> record_dedup(idempotency_key)
         |> dispatch_actions(actions)
 
+      {:error, {:retry_exhausted, reason}} ->
+        :telemetry.execute([:esr, :handler, :retry_exhausted], %{}, %{
+          actor_id: state.actor_id,
+          event_id: event_id,
+          reason: reason
+        })
+
+        Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+          reason: :handler_retry_exhausted,
+          source: state.actor_id,
+          msg: envelope,
+          metadata: %{handler_module: state.handler_module, last_error: reason}
+        })
+
+        state
+
       {:error, reason} ->
+        # Non-retryable (deterministic handler error, e.g. invalid reply).
         :telemetry.execute([:esr, :handler, :error], %{}, %{
           actor_id: state.actor_id,
           event_id: event_id,
@@ -237,6 +254,41 @@ defmodule Esr.PeerServer do
         state
     end
   end
+
+  # PRD 01 F06 — at-least-once handler retry. Retry once on transient
+  # errors (:handler_timeout, {:worker_crashed, _}); on second failure
+  # signal {:retry_exhausted, reason} upstream so the caller can
+  # dead-letter it.
+  defp call_with_retry(%__MODULE__{} = state, payload) do
+    handle_first_attempt(state, payload, call_handler(state, payload))
+  end
+
+  defp handle_first_attempt(_state, _payload, {:ok, _, _} = ok), do: ok
+
+  defp handle_first_attempt(state, payload, {:error, reason}) do
+    if retryable?(reason) do
+      retry_once(state, payload)
+    else
+      {:error, reason}
+    end
+  end
+
+  defp retry_once(state, payload) do
+    case call_handler(state, payload) do
+      {:ok, _, _} = ok -> ok
+      {:error, reason} -> {:error, {:retry_exhausted, reason}}
+    end
+  end
+
+  defp call_handler(state, payload) do
+    HandlerRouter.call(state.handler_module, payload, state.handler_timeout)
+  end
+
+  # PRD F06 also lists {:worker_crashed, _} as retryable; that signal
+  # arrives once F10 (HandlerRouter.Pool) lands and monitors worker
+  # ports. Add the clause when the router starts emitting it.
+  defp retryable?(:handler_timeout), do: true
+  defp retryable?(_), do: false
 
   defp record_dedup(%__MODULE__{} = state, nil), do: state
 

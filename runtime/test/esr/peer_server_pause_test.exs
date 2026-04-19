@@ -73,7 +73,7 @@ defmodule Esr.PeerServerPauseTest do
 
     :telemetry.attach(
       "pause-drain-#{:erlang.unique_integer()}",
-      [:esr, :handler, :error],
+      [:esr, :handler, :retry_exhausted],
       fn _e, _m, metadata, _cfg ->
         send(test_pid, {ref, :handler_error, metadata.event_id})
       end,
