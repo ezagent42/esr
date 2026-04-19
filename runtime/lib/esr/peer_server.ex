@@ -21,6 +21,7 @@ defmodule Esr.PeerServer do
   alias Esr.HandlerRouter
 
   @default_handler_timeout 5_000
+  @default_directive_timeout 30_000
   @pause_queue_limit 1_000
 
   defstruct [
@@ -29,11 +30,13 @@ defmodule Esr.PeerServer do
     :handler_module,
     :state,
     handler_timeout: @default_handler_timeout,
+    directive_timeout: @default_directive_timeout,
     adapter_refs: %{},
     metadata: %{},
     dedup_keys: MapSet.new(),
     paused: false,
-    pending_events: []
+    pending_events: [],
+    pending_directives: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -42,11 +45,13 @@ defmodule Esr.PeerServer do
           handler_module: String.t(),
           state: map(),
           handler_timeout: pos_integer(),
+          directive_timeout: pos_integer(),
           adapter_refs: map(),
           metadata: map(),
           dedup_keys: MapSet.t(String.t()),
           paused: boolean(),
-          pending_events: [map()]
+          pending_events: [map()],
+          pending_directives: %{String.t() => map()}
         }
 
   # ------------------------------------------------------------------
@@ -95,6 +100,7 @@ defmodule Esr.PeerServer do
       handler_module: Keyword.fetch!(opts, :handler_module),
       state: Keyword.get(opts, :initial_state, %{}),
       handler_timeout: Keyword.get(opts, :handler_timeout, @default_handler_timeout),
+      directive_timeout: Keyword.get(opts, :directive_timeout, @default_directive_timeout),
       metadata: Keyword.get(opts, :metadata, %{})
     }
 
@@ -167,9 +173,34 @@ defmodule Esr.PeerServer do
     end
   end
 
-  def handle_info({:directive_ack, _envelope}, %__MODULE__{} = state) do
-    # directive_ack correlation lives in the emitter (v0.1 minimal).
-    {:noreply, state}
+  def handle_info({:directive_ack, %{"id" => id, "payload" => payload}}, %__MODULE__{} = state) do
+    case Map.pop(state.pending_directives, id) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {_entry, remaining} ->
+        Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+        emit_directive_outcome(state.actor_id, id, payload)
+        {:noreply, %__MODULE__{state | pending_directives: remaining}}
+    end
+  end
+
+  def handle_info({:directive_deadline, id}, %__MODULE__{} = state) do
+    case Map.pop(state.pending_directives, id) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {_entry, remaining} ->
+        Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+
+        :telemetry.execute([:esr, :emit, :failed], %{}, %{
+          actor_id: state.actor_id,
+          directive_id: id,
+          reason: :timeout
+        })
+
+        {:noreply, %__MODULE__{state | pending_directives: remaining}}
+    end
   end
 
   # ------------------------------------------------------------------
@@ -191,11 +222,10 @@ defmodule Esr.PeerServer do
           event_id: event_id
         })
 
-        Enum.each(actions, &dispatch_action(&1, state.actor_id))
-
         state
         |> Map.put(:state, new_state)
         |> record_dedup(idempotency_key)
+        |> dispatch_actions(actions)
 
       {:error, reason} ->
         :telemetry.execute([:esr, :handler, :error], %{}, %{
@@ -226,19 +256,28 @@ defmodule Esr.PeerServer do
   # Action dispatch (F07)
   # ------------------------------------------------------------------
 
-  defp dispatch_action(%{"type" => "emit"} = action, actor_id) do
+  defp dispatch_actions(%__MODULE__{} = state, actions) do
+    Enum.reduce(actions, state, &dispatch_action/2)
+  end
+
+  defp dispatch_action(%{"type" => "emit"} = action, %__MODULE__{} = state) do
     adapter = action["adapter"]
     # AdapterChannel joins on "adapter:<name>/<instance_id>" where
     # instance_id is the bound peer's actor_id (see Instantiator.
     # spawn_node → HubRegistry.bind). A bare "adapter:<name>"
     # broadcast would never reach the channel.
-    topic = "adapter:" <> adapter <> "/" <> actor_id
+    topic = "adapter:" <> adapter <> "/" <> state.actor_id
+    id = "d-" <> Integer.to_string(System.unique_integer([:positive]))
+
+    # Subscribe BEFORE broadcast so a fast ack lands in our mailbox.
+    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+    Process.send_after(self(), {:directive_deadline, id}, state.directive_timeout)
 
     envelope = %{
-      "id" => "d-" <> Integer.to_string(System.unique_integer([:positive])),
+      "id" => id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "type" => "directive",
-      "source" => "esr://localhost/actor/" <> actor_id,
+      "source" => "esr://localhost/actor/" <> state.actor_id,
       "payload" => %{
         "adapter" => adapter,
         "action" => action["action"],
@@ -249,39 +288,63 @@ defmodule Esr.PeerServer do
     EsrWeb.Endpoint.broadcast(topic, "directive", envelope)
 
     :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
-      actor_id: actor_id,
+      actor_id: state.actor_id,
       adapter: adapter,
-      action: action["action"]
+      action: action["action"],
+      directive_id: id
     })
+
+    %__MODULE__{state | pending_directives: Map.put(state.pending_directives, id, %{action: action})}
   end
 
-  defp dispatch_action(%{"type" => "route", "target" => target, "msg" => msg}, actor_id) do
+  defp dispatch_action(%{"type" => "route", "target" => target, "msg" => msg}, %__MODULE__{} = state) do
     case Registry.lookup(Esr.PeerRegistry, target) do
       [{pid, _}] ->
         send(pid, {:inbound_event, %{"payload" => msg}})
 
       [] ->
         :telemetry.execute([:esr, :route, :target_missing], %{}, %{
-          actor_id: actor_id,
+          actor_id: state.actor_id,
           target: target
         })
     end
+
+    state
   end
 
-  defp dispatch_action(%{"type" => "invoke_command"} = action, actor_id) do
+  defp dispatch_action(%{"type" => "invoke_command"} = action, %__MODULE__{} = state) do
     # F13 Topology.Instantiator wires this for real; for now just
     # emit telemetry so the plumbing is observable.
     :telemetry.execute([:esr, :invoke_command, :received], %{}, %{
-      actor_id: actor_id,
+      actor_id: state.actor_id,
       name: action["name"],
       params: Map.get(action, "params", %{})
     })
+
+    state
   end
 
-  defp dispatch_action(unknown, actor_id) do
+  defp dispatch_action(unknown, %__MODULE__{} = state) do
     :telemetry.execute([:esr, :action, :unknown], %{}, %{
-      actor_id: actor_id,
+      actor_id: state.actor_id,
       action: unknown
+    })
+
+    state
+  end
+
+  defp emit_directive_outcome(actor_id, id, %{"ok" => true}) do
+    :telemetry.execute([:esr, :emit, :completed], %{}, %{
+      actor_id: actor_id,
+      directive_id: id
+    })
+  end
+
+  defp emit_directive_outcome(actor_id, id, payload) do
+    :telemetry.execute([:esr, :emit, :failed], %{}, %{
+      actor_id: actor_id,
+      directive_id: id,
+      reason: payload
     })
   end
 end
