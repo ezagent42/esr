@@ -100,6 +100,27 @@ defmodule Esr.PeerServerPersistTest do
     assert {:ok, %{"counter" => 42}} = PersistStore.get(@table, actor_id)
   end
 
+  test "init/1 rehydrates from Persistence.Ets when the actor_id has a prior state" do
+    actor_id = "rehydrate-peer-#{System.unique_integer([:positive])}"
+
+    # Pre-seed ETS as if a prior peer had stored this state.
+    :ok = PersistStore.put(@table, actor_id, %{"counter" => 17, "name" => "kept"})
+
+    {:ok, _pid} =
+      PeerServer.start_link(
+        actor_id: actor_id,
+        actor_type: "rehydrate_test",
+        handler_module: "noop.handler",
+        # initial_state would normally win on a fresh spawn; prior
+        # persisted state must override since it represents the
+        # last committed transition (spec §7.4).
+        initial_state: %{"counter" => 0},
+        handler_timeout: 500
+      )
+
+    assert PeerServer.get_state(actor_id) == %{"counter" => 17, "name" => "kept"}
+  end
+
   test "persist-then-emit ordering: when the handler returns an action, the ETS row is in place BEFORE the directive lands" do
     handler = "persist-order-#{System.unique_integer([:positive])}"
     actor_id = "persist-ord-peer-#{System.unique_integer([:positive])}"

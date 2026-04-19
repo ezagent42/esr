@@ -101,11 +101,24 @@ defmodule Esr.PeerServer do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
+    actor_id = Keyword.fetch!(opts, :actor_id)
+    initial_state = Keyword.get(opts, :initial_state, %{})
+
+    # Spec §7.4 / F18: if the ETS store has a prior state for this
+    # actor_id, rehydrate it (prior state wins — it represents the
+    # last committed handler transition). Falls through to
+    # initial_state on a fresh spawn.
+    rehydrated =
+      case PersistStore.get(@persist_table, actor_id) do
+        {:ok, prior} -> prior
+        :error -> initial_state
+      end
+
     state = %__MODULE__{
-      actor_id: Keyword.fetch!(opts, :actor_id),
+      actor_id: actor_id,
       actor_type: Keyword.fetch!(opts, :actor_type),
       handler_module: Keyword.fetch!(opts, :handler_module),
-      state: Keyword.get(opts, :initial_state, %{}),
+      state: rehydrated,
       handler_timeout: Keyword.get(opts, :handler_timeout, @default_handler_timeout),
       directive_timeout: Keyword.get(opts, :directive_timeout, @default_directive_timeout),
       metadata: Keyword.get(opts, :metadata, %{})
