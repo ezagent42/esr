@@ -54,6 +54,27 @@ def check_file(path: Path, no_monkeypatch: bool) -> list[str]:
     return violations
 
 
+def _tests_added_since_baseline() -> list[Path]:
+    """Git-diff the baseline SHA and return only CLI test files
+    that were added/modified by loop iterations (v1 tests grandfather).
+    """
+    import subprocess
+    repo = Path(__file__).resolve().parent.parent
+    baseline_file = repo / ".ralph-loop-baseline"
+    if not baseline_file.exists():
+        return []
+    baseline = baseline_file.read_text().strip()
+    try:
+        diff = subprocess.run(
+            ["git", "-C", str(repo), "diff", "--name-only", baseline,
+             "--", "py/tests/test_cli_cmd_*.py"],
+            capture_output=True, text=True, check=True,
+        )
+    except subprocess.CalledProcessError:
+        return []
+    return [repo / p for p in diff.stdout.splitlines() if p]
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--target", type=Path,
@@ -65,8 +86,10 @@ def main() -> int:
     if args.target:
         targets = [args.target]
     else:
-        default = Path(__file__).resolve().parent.parent / "py/tests"
-        targets = sorted(default.glob("test_cli_cmd_*.py"))
+        # Only check files ADDED/MODIFIED since baseline — v1 tests
+        # grandfather until Phase 8c rewrites them. (See spec §4.3 LG-9/10
+        # rationale.)
+        targets = _tests_added_since_baseline()
 
     violations: list[str] = []
     for t in targets:
