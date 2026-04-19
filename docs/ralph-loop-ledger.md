@@ -22,3 +22,4 @@
 | 13 | 2026-04-19 | 8c | cli-actors-inspect | 66cd979 | unit_tests | sha256:c282a718d28fd6b3 |
 | 14 | 2026-04-19 | 8c | cli-debug-pause-resume | 80e8a70 | unit_tests | sha256:29b5e62ad8635e0a |
 | 15 | 2026-04-19 | 8c | cli-drain | fbc269b | unit_tests | sha256:92e8e24e7e57607f |
+| 16 | 2026-04-19 | 8c | cli-stop-name | c00aa29 | unit_tests | sha256:dfc30744dc472dcc |

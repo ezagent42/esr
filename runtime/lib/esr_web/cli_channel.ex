@@ -70,6 +70,33 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
   end
 
+  def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
+    params = Map.get(payload, "params") || %{}
+
+    case Esr.Topology.Registry.lookup(name, params) do
+      {:ok, handle} ->
+        :ok = Esr.Topology.Registry.deactivate(handle)
+
+        %{
+          "data" => %{
+            "name" => name,
+            "params" => params,
+            "stopped_peer_ids" => handle.peer_ids
+          }
+        }
+
+      :error ->
+        %{
+          "data" => %{
+            "error" => "instantiation not found",
+            "name" => name,
+            "params" => params,
+            "stopped_peer_ids" => []
+          }
+        }
+    end
+  end
+
   def dispatch("cli:drain", _payload) do
     handles = Esr.Topology.Registry.list_all()
     Enum.each(handles, &Esr.Topology.Registry.deactivate/1)

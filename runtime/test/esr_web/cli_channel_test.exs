@@ -99,6 +99,63 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:stop/<name>" do
+    setup do
+      peer_ids = ["thread:stop-a", "tmux:stop-a", "cc:stop-a"]
+
+      {:ok, _handle} =
+        Esr.Topology.Registry.register(
+          "feishu-thread-session",
+          %{"thread_id" => "a"},
+          peer_ids
+        )
+
+      on_exit(fn ->
+        Esr.Topology.Registry.list_all()
+        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
+      end)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-stop", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:stop/feishu-thread-session")
+
+      %{stop_socket: socket, peer_ids: peer_ids}
+    end
+
+    test "deactivates the named topology and returns its stopped peer ids",
+         %{stop_socket: socket, peer_ids: expected_ids} do
+      ref =
+        push(socket, "cli_call", %{
+          "name" => "feishu-thread-session",
+          "params" => %{"thread_id" => "a"}
+        })
+
+      assert_reply ref, :ok, response
+
+      assert response["data"]["name"] == "feishu-thread-session"
+      assert Enum.sort(response["data"]["stopped_peer_ids"]) == Enum.sort(expected_ids)
+
+      refute Enum.any?(
+               Esr.Topology.Registry.list_all(),
+               fn h -> h.name == "feishu-thread-session" end
+             )
+    end
+
+    test "stopping a non-existent instantiation returns structured error",
+         %{stop_socket: socket} do
+      ref =
+        push(socket, "cli_call", %{
+          "name" => "feishu-thread-session",
+          "params" => %{"thread_id" => "does-not-exist"}
+        })
+
+      assert_reply ref, :ok, response
+      assert response["data"]["error"] == "instantiation not found"
+      assert response["data"]["stopped_peer_ids"] == []
+    end
+  end
+
   describe "cli:drain" do
     setup do
       # register two topology instantiations so drain has work to do
