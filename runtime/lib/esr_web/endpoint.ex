@@ -15,6 +15,12 @@ defmodule EsrWeb.Endpoint do
   #   websocket: [connect_info: [session: @session_options]],
   #   longpoll: [connect_info: [session: @session_options]]
 
+  # Adapter WebSocket — Python adapter processes join
+  # adapter:<name>/<instance_id> topics here (PRD 01 F09, spec §7.1).
+  socket "/adapter_hub/socket", EsrWeb.AdapterSocket,
+    websocket: true,
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
