@@ -93,6 +93,30 @@ defmodule Esr.Topology.InstantiatorTest do
     assert "thread_id" in missing
   end
 
+  test "undeclared placeholder in a template raises instead of silently substituting empty (S6)" do
+    # Artifact declares params: ["thread_id"] but a node template uses
+    # {{other}} which is not in the declared params. Previously the
+    # substitute_string fallback yielded an empty string via an
+    # untrusted String.to_atom lookup; the hardened version must raise
+    # instead.
+    artifact = %{
+      "name" => "bad-placeholder",
+      "params" => ["thread_id"],
+      "nodes" => [
+        %{
+          "id" => "x:{{other}}",
+          "actor_type" => "t",
+          "handler" => "h"
+        }
+      ],
+      "edges" => []
+    }
+
+    assert_raise ArgumentError, ~r/other/, fn ->
+      Instantiator.instantiate(artifact, %{"thread_id" => "t1"})
+    end
+  end
+
   test "cycle in depends_on returns {:error, :cycle_in_depends_on}" do
     cyclic = %{
       "name" => "cyclic",

@@ -111,9 +111,15 @@ defmodule Esr.Topology.Instantiator do
 
   defp substitute_string(str, params) when is_binary(str) do
     Regex.replace(~r/\{\{(\w+)\}\}/, str, fn _whole, name ->
-      case Map.get(params, name) do
-        nil -> Map.get(params, String.to_atom(name), "") |> to_string()
-        v -> to_string(v)
+      case Map.fetch(params, name) do
+        {:ok, v} ->
+          to_string(v)
+
+        :error ->
+          # AGENTS.md forbids String.to_atom on user-sourced data
+          # (atom-table DoS); refuse silently-substituting nothing.
+          raise ArgumentError,
+                "missing template param: #{inspect(name)} (got: #{inspect(Map.keys(params))})"
       end
     end)
   end
