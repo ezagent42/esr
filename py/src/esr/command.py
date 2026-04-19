@@ -354,15 +354,22 @@ def _check_cycles(nodes: list[_Node]) -> None:
 
 
 def _extract_params(nodes: list[_Node]) -> set[str]:
-    """Scan node params + init_directive args for ``{{name}}`` templates."""
+    """Scan node fields + init_directive args for ``{{name}}`` templates.
+
+    String-valued node fields (``id``, ``actor_type``, ``handler``,
+    ``adapter``) are scanned alongside the ``params`` dict and
+    ``init_directive`` args — the spec's worked example uses templates
+    in the adapter and id fields (PRD 06 F01 / F02).
+    """
     found: set[str] = set()
     for n in nodes:
+        for field_value in (n.id, n.actor_type, n.handler, n.adapter):
+            if isinstance(field_value, str):
+                found.update(_PARAM_RE.findall(field_value))
         if n.params:
             _collect_params_from(n.params, found)
         if n.init_directive:
-            args = n.init_directive.get("args")
-            if isinstance(args, dict):
-                _collect_params_from(cast(dict[str, Any], args), found)
+            _collect_params_from(n.init_directive, found)
     return found
 
 
