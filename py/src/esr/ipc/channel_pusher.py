@@ -23,9 +23,13 @@ class ChannelPusher:
     """Adapter layer: implements the pusher-protocol by delegating to
     :class:`ChannelClient.push` on a fixed topic.
 
-    ``source_uri`` is reused as the topic name — by v0.1 convention they
-    are identical (``adapter:<name>/<instance>`` or
-    ``handler:<module>/<worker>``).
+    ``source_uri`` is the provenance URI stamped on outgoing envelopes
+    (envelope["source"]). By convention it is derived from the topic as
+    ``"esr://localhost/" + topic`` — a valid ``esr://`` URI the wire
+    invariant (§7.5) requires. The ``topic`` is the underlying Phoenix
+    channel name (``adapter:<name>/<instance>`` or
+    ``handler:<module>/<worker>``); pushes use ``topic``, envelopes use
+    ``source_uri``.
     """
 
     def __init__(self, *, client: _ChannelLike, topic: str, source_uri: str) -> None:

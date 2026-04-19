@@ -201,7 +201,7 @@ defmodule Esr.Topology.Instantiator do
         spawn_loop(rest, by_id, timeout, [id | acc])
 
       {:error, reason} ->
-        rollback_spawned([id | acc])
+        rollback_spawned([id | acc], by_id)
         {:error, {:init_directive_failed, id, reason}}
     end
   end
@@ -251,8 +251,22 @@ defmodule Esr.Topology.Instantiator do
 
   defp issue_init_directive(_node, _timeout), do: :ok
 
-  defp rollback_spawned(ids) do
-    Enum.each(ids, &Esr.PeerSupervisor.stop_peer/1)
+  # Terminate the spawned PeerServers AND synchronously unbind their
+  # adapters. The DOWN handler in HubRegistry cleans up bindings async
+  # on pid exit, but an immediate instantiate retry could observe stale
+  # bindings in the tiny window between termination and DOWN delivery.
+  defp rollback_spawned(ids, by_id) do
+    Enum.each(ids, fn id ->
+      Esr.PeerSupervisor.stop_peer(id)
+
+      case Map.get(by_id, id) do
+        %{"adapter" => adapter, "id" => node_id} when is_binary(adapter) ->
+          HubRegistry.unbind("adapter:#{adapter}/#{node_id}")
+
+        _ ->
+          :ok
+      end
+    end)
   end
 
   defp start_peer(node) do
