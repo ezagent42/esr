@@ -255,10 +255,17 @@ def _run_subpattern(fn: PatternFn, name: str) -> _CommandCtx:
 def _merge_into(outer: _CommandCtx, sub: _CommandCtx) -> None:
     """Copy a sub-context's nodes/edges/ports into ``outer``.
 
-    Port type collisions across patterns raise ``TypeError`` — the
-    v0.1 type system has no subtyping.
+    Node-level CSE (PRD 06 F06): if ``sub`` contributes a node whose
+    id is already present in ``outer``, the duplicate is dropped —
+    the first-seen node wins. Port type collisions across patterns
+    raise ``TypeError`` since v0.1 has no subtyping.
     """
-    outer.nodes.extend(sub.nodes)
+    existing_ids = {n.id for n in outer.nodes}
+    for n in sub.nodes:
+        if n.id in existing_ids:
+            continue
+        outer.nodes.append(n)
+        existing_ids.add(n.id)
     outer.edges.extend(sub.edges)
     for name, type_ in sub.ports_in.items():
         if name in outer.ports_in and outer.ports_in[name] != type_:
