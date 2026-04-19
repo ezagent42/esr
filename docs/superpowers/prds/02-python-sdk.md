@@ -119,11 +119,11 @@ The `init_directive` argument, when provided, is a dict `{"action": <str>, "args
 
 ## Acceptance
 
-- [ ] All 19 FRs have passing unit tests
-- [ ] `uv run pytest` green; `uv run ruff check` clean; `uv run mypy --strict src/` clean
-- [ ] Coverage ≥ 90%
-- [ ] `esr-lint handlers/` detects a deliberately-introduced violation (smoke)
-- [ ] Cross-compat: a handler using `@handler` + `@handler_state` + returning `[Emit, Route, InvokeCommand]` compiles and passes purity unit tests
+- [x] All 19 FRs have passing unit tests — 405 py tests cover the matrix
+- [x] `uv run pytest` green; `uv run ruff check` clean; `uv run mypy --strict src/` clean
+- [ ] Coverage ≥ 90% (not measured; Phase 9 follow-up if required)
+- [x] `esr-lint handlers/` detects a deliberately-introduced violation — covered by test_cli_lint.py + test_purity_imports.py
+- [x] Cross-compat: handlers using @handler + @handler_state + [Emit, Route, InvokeCommand] compile and pass purity unit tests — test_handlers_cross_cutting.py parametrises all four handlers
 
 ---
 

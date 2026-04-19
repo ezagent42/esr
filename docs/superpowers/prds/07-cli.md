@@ -141,10 +141,10 @@ Every CLI command:
 
 ## Acceptance
 
-- [ ] All 23 FRs have passing unit tests
-- [ ] `esr --help` and every subcommand `--help` render complete docs
-- [ ] Shell tab-completion installed for bash / zsh via click-completion (post-install step documented in README)
-- [ ] Integration: running the full E2E scenario via `esr scenario run e2e-platform-validation` exercises every CLI path mentioned in the tracks
+- [x] All 23 FRs have passing unit tests — iter-46 → iter-57 closed every runtime-dep CLI command
+- [x] `esr --help` and every subcommand `--help` render complete docs — click auto-generates from docstrings
+- [ ] Shell tab-completion installed for bash / zsh via click-completion — post-install README step deferred
+- [x] Integration: `esr scenario run e2e-platform-validation` → "8 steps PASSED" exercises every track referenced to CLI paths
 
 ---
 

@@ -101,9 +101,9 @@ Returns within 2 s. Gated behind `ESR_E2E_RUNTIME=1` env var. **Unit test:** `te
 
 ## Acceptance
 
-- [ ] All 12 FRs have passing unit tests (or integration tests for live ones)
-- [ ] `ESR_E2E_RUNTIME=1 uv run pytest` green against a running `esrd-dev`
-- [ ] Reconnect demonstrably survives a `tc qdisc add / del` network blip (manual)
+- [x] All 12 FRs have passing unit tests (or integration tests for live ones) — F01-F12 unit-tested, F13 live-gated via ESR_E2E_RUNTIME
+- [ ] `ESR_E2E_RUNTIME=1 uv run pytest` green against a running `esrd-dev` — live gate pending user invocation
+- [ ] Reconnect demonstrably survives a `tc qdisc add / del` network blip (manual) — Phase 8 manual step
 
 ---
 

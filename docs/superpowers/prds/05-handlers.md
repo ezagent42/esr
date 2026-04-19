@@ -165,10 +165,10 @@ Any other event type → `(state, [])`. **Unit test:** arbitrary event ignored.
 
 ## Acceptance
 
-- [ ] All 19 FRs have passing unit tests
-- [ ] Each handler installs via `esr handler install ./handlers/<name>/` and appears in `esr handler list`
-- [ ] Purity: zero violations per `esr-lint handlers/`
-- [ ] Integration with PRDs 04 + 06: `feishu-thread-session` invoked via feishu_app's `/new-thread` produces expected actor graph
+- [x] All 19 FRs have passing unit tests — 4 handlers × (state + on_msg), cross-cutting purity parametric in test_handlers_cross_cutting.py
+- [x] Each handler installs via `esr handler install ./handlers/<name>/` + appears in `esr handler list` — covered by test_cli_install.py + test_handler_layout.py
+- [x] Purity: zero violations per `esr-lint handlers/` — test_handlers_cross_cutting.py::test_handler_module_import_scan_clean
+- [ ] Integration with PRDs 04 + 06: feishu-thread-session spawn chain — Phase 8 live run deferred
 
 ---
 
