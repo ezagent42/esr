@@ -53,37 +53,62 @@ deduplicated; (e) `esr deadletter list` is empty on the happy path.
 
 ## 4. Architecture — five mechanisms that close the v1 loopholes
 
-### 4.1 External verdict — the loop cannot declare completion
+### 4.1 External verdict — loop runs the judge, but cannot corrupt the judge
 
-| | v1 | v2 |
+**v2.1 revision (2026-04-19).** The v2.0 design required the user to run
+`scripts/final_gate.sh --live` manually after the loop emitted `LIVE_READY`.
+This defeated the point of an autonomous loop. v2.1 puts the live gate back
+in-loop while keeping the anti-tamper guarantees by separating two concerns:
+
+- **Can the loop modify the gate?** No — SHA pin + user-authored-before-launch
+  (anti-circular-trust rule, unchanged).
+- **Can the loop fake the gate's output?** No — the gate produces four
+  independent forensic artifacts keyed by a random nonce; one of them is
+  retrieved server-side from Lark and cannot be fabricated without actually
+  pushing a message through the whole pipeline.
+
+| | v1 | v2.0 | v2.1 |
+|---|---|---|---|
+| Highest promise loop emits | `ESR_V0_1_COMPLETE` | `ESR_V0_1_LIVE_READY` | `ESR_V0_1_COMPLETE` |
+| Who runs `final_gate.sh --live`? | N/A | User, manually | **Loop, autonomously** |
+| Script author | n/a | User pre-launch | **User pre-launch (unchanged)** |
+| SHA pin | n/a | Loop can't modify | **Loop can't modify (unchanged)** |
+| Anti-forgery for live evidence | n/a | Human eyeballs 3 artifacts | **4-artifact nonce correlation (§4.1.1)** |
+
+**Anti-circular-trust rule (closes reviewer C2, unchanged from v2.0):**
+`final_gate.sh`, its `.sha256` pin, and the normative acceptance manifest
+(§4.3 LG-5) are all authored by the user manually and committed before the
+loop's first iteration. The loop may read them but is forbidden to modify
+them — any change trips LG-4 or LG-11 and produces `BLOCKED: tamper:LG-<N>`.
+
+### 4.1.1 Four-artifact nonce verification — what `--live` actually checks
+
+`scripts/final_gate.sh --live` generates a random nonce
+(`SMOKE-<8 upper-hex chars>`) and posts `/new-thread smoke-$nonce` to
+`$FEISHU_TEST_CHAT_ID` using credentials from `~/.esr/live.env`. The nonce then
+must appear in **four independent artifacts**, three local and **one retrieved
+from Lark's servers**:
+
+| # | Artifact | How it proves the pipeline ran |
 |---|---|---|
-| Highest promise loop can emit | `<promise>ESR_V0_1_COMPLETE</promise>` | `<promise>ESR_V0_1_LIVE_READY</promise>` |
-| Who decides "truly complete"? | The loop, by reading its own gates | The user, by running `scripts/final_gate.sh --live` and seeing exit 0 |
-| What protects the judge? | Nothing | `final_gate.sh` is authored by the USER before the loop starts (see §11) and its SHA-256 is pinned in the prompt; loopguard §4.3 fails if the checksum drifts |
+| L1 | Lark HTTP response `message_id` from the POST | Server-signed; only reachable if the app creds actually reached Lark |
+| L2 | Line in `~/.esrd/default/logs/<instance>/<ts>.log` containing nonce | Proves the Elixir runtime received the event |
+| L3 | `tmux capture-pane -t <session>` output contains nonce | Proves the cc_tmux adapter forwarded to the tmux session |
+| **L4** | **Lark-server-side**: `im.v1.chat.messages.list` query on `$FEISHU_TEST_CHAT_ID` finds a message (posted AFTER L1's message_id) whose content contains nonce **and whose sender is the app itself (not the user)** | **The only way this appears is if the `cc_output` handler successfully routed an outbound `send_message` back to Feishu — i.e. the whole bidirectional loop closed** |
 
-The loop's job ends at `LIVE_READY`. The final call belongs to the user.
+**Why L4 is the anti-forgery lynchpin.** L1/L2/L3 can all be fabricated locally
+by a sufficiently adversarial loop (local file writes, local tmux session).
+L4 cannot: it is a server-authoritative query. For L4 to carry the nonce, the
+pipeline must actually have fired: feishu adapter → handler → tmux → cc →
+cc_output → reverse route → feishu adapter → `im.v1.message.create` → Lark
+server records the outbound.
 
-**Anti-circular-trust rule (closes reviewer C2):** `final_gate.sh`, its `.sha256` pin,
-and the normative acceptance manifest (§4.3 LG-5) are all **authored by the user
-manually** and committed **before** the loop's first iteration. The loop may read
-these files but is forbidden to modify them — any modification trips LG-4 (gate
-script tamper) or LG-11 (loopguard self-pin tamper) and produces
-`BLOCKED: tamper:LG-<N>`. Without this rule, an adversarial loop can write both
-the script and its own checksum on iteration 1, making the pin meaningless.
+If L4 is absent after the timeout window, `final_gate.sh --live` exits 1 with
+`FINAL GATE LIVE FAILED — L4 nonce not observed in Feishu chat history`.
 
-**What `final_gate.sh --live` must do (user-authored contract):** the script's
-`--live` path cannot be a trivial `exit 0`. The user-authored script must
-collect three independent forensic artifacts and print them for review:
-
-1. A tail line from `~/.esrd/default/logs/<ts>.log` mentioning the test
-   `FEISHU_TEST_CHAT_ID`.
-2. A Lark webhook-delivery log (the HTTP response body from the real Lark API
-   after the bot posts the smoke-test message).
-3. A `tmux capture-pane -t <session>` excerpt showing the CC tty received the
-   forwarded message.
-
-All three must match named regex shapes before `--live` exits 0. See the
-reference skeleton in §8.
+The loop emits `<promise>ESR_V0_1_COMPLETE</promise>` only after `--live`
+exits 0. A Feishu notification is also posted to the same chat so the user
+sees "gate passed; nonce=SMOKE-XXXX; round-trip observed in Ns".
 
 ### 4.2 Scenario file — structure is contractually fixed
 
@@ -246,16 +271,19 @@ failure modes plus the reviewer's three Critical escape routes.
 - `scripts/ledger_append.py` itself is SHA-pinned via LG-11.
 - User audit command: `tail -20 docs/ralph-loop-ledger.md`.
 
-### 4.5 Promise vocabulary — two-tier
+### 4.5 Promise vocabulary — single-tier (v2.1)
 
 | Tag | Meaning | Who emits |
 |---|---|---|
-| `<promise>ESR_V0_1_LIVE_READY</promise>` | Phase 8 green in mock mode; all loopguard checks pass; `scripts/final_gate.sh --mock` exits 0 | Loop |
-| `<promise>BLOCKED: <reason></promise>` | Loopguard failed, or work cannot progress; see §4.8 below | Loop |
-| (no loop tag) | Production complete | `scripts/final_gate.sh --live` exits 0 when user runs it against a real Feishu app |
+| `<promise>ESR_V0_1_COMPLETE</promise>` | All 7 Final Gate conditions green, **including `scripts/final_gate.sh --live` exit 0** with the 4-artifact nonce verification (§4.1.1) | Loop |
+| `<promise>BLOCKED: <reason></promise>` | Loopguard failed, or work cannot progress; see §9 | Loop |
 
-There is deliberately no `COMPLETE`-level promise the loop can emit. That is the v1
-lesson.
+The v1 lesson was "don't let the loop self-adjudicate on a gate it can trivially
+satisfy." v2.1 keeps that lesson but moves the anti-gaming mechanism **inward**
+(into the gate script and its anti-forgery design) rather than **outward** (to
+human review). The SHA pin + user-authored-before-launch rule prevents the loop
+from neutering the script; the L4 server-side Lark query prevents the loop from
+faking the evidence. With both in place, a COMPLETE emission is meaningful.
 
 ## 5. Phase 8 decomposition
 
@@ -366,8 +394,8 @@ Section outline, to be expanded into the actual prompt text by the next skill:
   - §3.4 Elixir guardrails (unchanged)
   - §3.5 Python guardrails (unchanged)
   - §3.6 Append to ledger (new; replaces state file update)
-  - §3.7 Feishu progress reporting (unchanged; plus explicit "notify on
-    LIVE_READY with the exact command the user must run")
+  - §3.7 Feishu progress reporting (unchanged; `final_gate.sh --live` posts
+    the final success/failure notification to the test chat itself)
 - **§4 Phase 8 ordering** — 8a → 8b → 8c → 8d → 8e → 8f
 - **§5 Blockers** — format unchanged; loopguard failures use the same format with
   a specific prefix `BLOCKED: loopguard:LG-N`
@@ -382,8 +410,8 @@ Section outline, to be expanded into the actual prompt text by the next skill:
 
 ## 8. Revised Final Gate — exact expected outputs
 
-Loop can only emit `LIVE_READY` after **all** of the following hold, each with the
-named command producing output matching the named signature:
+Loop emits `ESR_V0_1_COMPLETE` after **all** of the following hold, each with
+the named command producing output matching the named signature:
 
 | # | Condition | Command | Required output |
 |---|---|---|---|
@@ -391,30 +419,32 @@ named command producing output matching the named signature:
 | 2 | PRD unit matrix | `uv run python scripts/verify_prd_matrix.py` | `all N FR tests located` |
 | 3 | Loopguard clean | `bash scripts/loopguard.sh` | `all 11 loopguard checks passed` |
 | 4 | Scenario mock-green | `esr scenario run e2e-feishu-cc` (defaults to mock) | `8/8 steps PASSED against live esrd (mock Feishu)` |
-| 5 | final_gate.sh --mock | `bash scripts/final_gate.sh --mock` | `FINAL GATE MOCK PASSED — ready for user --live verification` |
+| 5 | final_gate.sh --mock | `bash scripts/final_gate.sh --mock` | `FINAL GATE MOCK PASSED` |
 | 6 | Ledger coherent | `uv run python scripts/verify_ledger_append_only.py` | `ledger integrity OK — N iterations, 0 in-place edits` |
-| 7 | Acceptance green | `uv run python scripts/verify_prd_acceptance.py` | `all N Acceptance items ticked` |
+| 7 | Acceptance green | `uv run python scripts/verify_prd_acceptance.py --manifest ...` | `all N Acceptance items ticked` |
+| 8 | **final_gate.sh --live** | `bash scripts/final_gate.sh --live` | `FINAL GATE LIVE PASSED — nonce=SMOKE-XXXXXXXX; round-trip observed in Ns` |
 
-User's final step (outside the loop):
+Pre-launch one-time setup (by the user):
 
 ```bash
-# 1. Populate credentials
+# ~/.esr/live.env — readable by the loop, chmod 600
 cat > ~/.esr/live.env <<EOF
-FEISHU_APP_ID=cli_xxx
-FEISHU_APP_SECRET=xxx
-FEISHU_TEST_CHAT_ID=oc_xxx
+FEISHU_APP_ID=cli_a9563cc03d399cc9
+FEISHU_APP_SECRET=<secret>
+FEISHU_TEST_CHAT_ID=oc_d9b47511b085e9d5b66c4595b3ef9bb9
 EOF
-# 2. Run the live gate
-bash scripts/final_gate.sh --live
-# Expected tail output on success:
-#   FINAL GATE LIVE PASSED
-#   Sent /new-thread smoke-test-<timestamp> to <chat_id>
-#   Observed bidirectional round-trip in <N>ms
-#   You can now merge to main.
+chmod 600 ~/.esr/live.env
 ```
 
-The loop posts this exact set of instructions to Feishu when it emits
-`LIVE_READY`.
+Post-COMPLETE Feishu notification (auto-posted by the loop to
+`FEISHU_TEST_CHAT_ID`):
+
+```
+✓ ESR v0.1 COMPLETE — nonce SMOKE-A1B2C3D4 observed end-to-end in 12.4s.
+   L1 message_id=om_xxx  L4 server echo=om_yyy
+   git: main @ <short-sha>
+   Merge to deploy at will.
+```
 
 ## 9. Error handling
 
@@ -498,10 +528,17 @@ we trust it with a long-running loop:
       the initial pin matches the authored scripts)
 - [ ] **User moves** `scenarios/e2e-platform-validation.yaml` →
       `docs/archive/2026-04-18-e2e-platform-validation.yaml`
-- [ ] **User captures** ≥ 3 real Lark WebSocket sessions covering (a) text
-      message, (b) reply / thread, (c) card interaction; commits them as
-      fixtures at `adapters/feishu/tests/fixtures/live-capture/*.json` for
-      mock_feishu.py conformance tests
+- [ ] **Fixtures** at `adapters/feishu/tests/fixtures/live-capture/*.json` —
+      one of (a) or (b) is acceptable:
+      (a) Real captured Lark WebSocket sessions for text / thread-reply / card.
+          Recommended but requires restarting the running cc-openclaw
+          channel_server to pick up a brief logging hook (see plan Task 14).
+      (b) Schema-synthetic fixtures produced from the `lark_oapi.api.im.v1.
+          P2ImMessageReceiveV1` class via `lark_oapi.JSON.marshal`. Round-trip
+          validated so shape matches runtime.
+      The live gate (§4.1.1) does not depend on these fixtures; they only
+      feed `mock_feishu.py` conformance tests during Phase 8d-8e. Drift risk
+      (reviewer S5) is residual when (b) is used; log this in the ledger.
 - [ ] **User commits** `.ralph-loop-baseline` containing the git SHA at
       which the loop will start (consulted by LG-8)
 - [ ] **User commits** `docs/ralph-loop-ledger.md` with a header row and the
@@ -512,24 +549,26 @@ we trust it with a long-running loop:
 - [ ] v2 prompt file `docs/superpowers/ralph-loop-prompt-v2.md` exists and
       references this spec + the plan
 - [ ] All loopguard helper scripts implemented and individually unit-testable
-- [ ] `scripts/mock_feishu.py` passes the captured-session conformance tests
-      (11.1 item 6); `scripts/mock_cc.py` runs standalone
+- [ ] `scripts/mock_feishu.py` passes the mock-conformance tests (§11.1 item 6
+      captured or §11.1-alt schema-synthesized fixtures); `scripts/mock_cc.py`
+      runs standalone
 - [ ] `scenarios/e2e-feishu-cc.yaml` exists with 8 steps per §4.2
 - [ ] `esr scenario run e2e-feishu-cc` (mock mode, against live esrd via
       `scripts/esrd.sh`) reports `8/8 steps PASSED`
 - [ ] `bash scripts/final_gate.sh --mock` exits 0
-- [ ] Loop emits `<promise>ESR_V0_1_LIVE_READY</promise>` and a Feishu
-      notification with the exact `scripts/final_gate.sh --live` command for
-      the user to run
+- [ ] `bash scripts/final_gate.sh --live` exits 0 with 4-artifact nonce
+      correlation (§4.1.1) — this is loop-autonomous in v2.1
+- [ ] Loop emits `<promise>ESR_V0_1_COMPLETE</promise>` and posts the Feishu
+      success notification (§8 bottom) to `FEISHU_TEST_CHAT_ID`
 
-### 11.3 Final (user-operated; outside loop authority)
+### 11.3 Final — ground truth observable in Feishu
 
-- [ ] User populates `~/.esr/live.env`
-- [ ] User runs `bash scripts/final_gate.sh --live` and sees the three
-      forensic artifacts plus exit 0
-
-Acceptance 11.3 is outside the loop's power — it is the ground truth that
-"ESR v0.1 really works".
+After the loop exits with `ESR_V0_1_COMPLETE`, the user's Feishu chat shows a
+single visible confirmation message citing the nonce and round-trip time. If
+that message is present and the commit it references is in `git log`, v0.1 is
+done. If the message is absent, the loop is still running or has blocked —
+nothing about the autonomous gate can produce that Feishu message except the
+real round-trip succeeding.
 
 ---
 

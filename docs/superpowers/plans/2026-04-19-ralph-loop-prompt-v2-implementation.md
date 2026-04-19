@@ -1780,7 +1780,7 @@ Expected: `No such file or directory`.
 #
 # Usage:
 #   bash scripts/final_gate.sh --mock   # loop can run this; it's the last
-#                                       # loop-owned gate before LIVE_READY
+#                                       # gate 5/8 of Final Gate (v2.1)
 #   bash scripts/final_gate.sh --live   # USER runs this; requires
 #                                       # ~/.esr/live.env populated
 #
@@ -1835,10 +1835,7 @@ if [[ "$mode" == "--mock" ]]; then
 
   if [[ $fail -eq 0 ]]; then
     echo
-    echo "FINAL GATE MOCK PASSED — ready for user --live verification"
-    echo
-    echo "Next step: user populates ~/.esr/live.env and runs:"
-    echo "    bash scripts/final_gate.sh --live"
+    echo "FINAL GATE MOCK PASSED"
     exit 0
   else
     echo
@@ -1847,8 +1844,8 @@ if [[ "$mode" == "--mock" ]]; then
   fi
 fi
 
-# --live path is user-authored in Task 10.
-echo "LIVE mode not yet authored. See spec §4.1 — user must implement."
+# --live path body installed in Task 10.
+echo "LIVE mode body not yet installed. See plan Task 10."
 exit 3
 ```
 
@@ -1872,12 +1869,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 10: `final_gate.sh --live` body — user-authored forensic verification
+## Task 10: `final_gate.sh --live` body — 4-artifact nonce verification
 
-Per spec §4.1: the `--live` path cannot be trivial. It must collect three independent forensic artifacts. **This task is authored by the user, not by an automated agent**, because the user owns the real Feishu credentials and test chat.
+Per spec §4.1.1 (v2.1): the `--live` path runs **autonomously from inside the
+loop** but cannot be trivially faked, because it requires a random nonce to
+appear in four independent artifacts, one of them retrieved server-side from
+Lark. **The script is still user-authored pre-launch** (anti-circular-trust
+rule) — the agent drafts the body below, the user reviews and commits it
+before the loop's first iteration, then SHA-pins it.
 
 **Files:**
-- Modify: `scripts/final_gate.sh` (add the `--live` branch)
+- Modify: `scripts/final_gate.sh` (replace the `--live` branch)
 
 - [ ] **Step 1: Write the failing assertion**
 
@@ -1893,8 +1895,13 @@ Expected: `exit=3`.
 Edit the `echo "LIVE mode not yet authored..."` block at the bottom of `final_gate.sh` with the following body:
 
 ```bash
-# --live path (user-authored, spec §4.1).
-# Requires ~/.esr/live.env with FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_TEST_CHAT_ID.
+# --live path (user-authored, spec §4.1.1).
+# Runs autonomously from inside the loop. Anti-forgery rests on the L4
+# server-side check: only a real bidirectional round-trip can put the nonce
+# into the Lark chat-messages history.
+#
+# Requires ~/.esr/live.env with FEISHU_APP_ID, FEISHU_APP_SECRET,
+# FEISHU_TEST_CHAT_ID (chmod 600, outside the repo).
 
 env_file="$HOME/.esr/live.env"
 if [[ ! -f "$env_file" ]]; then
@@ -1907,62 +1914,144 @@ source "$env_file"
 : "${FEISHU_APP_SECRET:?not set}"
 : "${FEISHU_TEST_CHAT_ID:?not set}"
 
+# Random nonce — upper-hex, 8 chars. Must appear in 4 artifacts.
+nonce="SMOKE-$(openssl rand -hex 4 | tr 'a-f' 'A-F')"
 ts=$(date +%s)
-thread_id="smoke-test-$ts"
+thread_id="smoke-$nonce"
+echo "smoke-test nonce: $nonce"
 
-section "live 1/3 — start esrd"
+section "live 1/5 — start esrd (smoke-live instance)"
 if ! scripts/esrd.sh start --instance=smoke-live >/tmp/fg.live.esrd.log 2>&1; then
   echo "FAIL to start esrd"; tail -20 /tmp/fg.live.esrd.log; exit 1
 fi
 trap 'scripts/esrd.sh stop --instance=smoke-live >/dev/null 2>&1 || true' EXIT
+sleep 2  # let Phoenix endpoint bind
 
-section "live 2/3 — send /new-thread via real Feishu app"
-# Use the user's real app to post into FEISHU_TEST_CHAT_ID.
+section "live 2/5 — register feishu adapter for smoke-live"
 uv run --project py esr adapter add feishu-smoke \
     --type feishu --app-id "$FEISHU_APP_ID" --app-secret "$FEISHU_APP_SECRET" \
     >/tmp/fg.live.add.log 2>&1 || { echo "FAIL to add adapter"; cat /tmp/fg.live.add.log; exit 1; }
 
-# Capture the real Lark HTTP response — forensic artifact #1.
-lark_resp=$(uv run --project py python -c "
-import lark_oapi, os, json
-c = lark_oapi.Client.builder().app_id('$FEISHU_APP_ID').app_secret('$FEISHU_APP_SECRET').build()
-from lark_oapi.api.im.v1 import *
-req = CreateMessageRequest.builder().receive_id_type('chat_id').request_body(
-    CreateMessageRequestBody.builder().receive_id('$FEISHU_TEST_CHAT_ID')
-    .msg_type('text').content(json.dumps({'text': '/new-thread $thread_id'})).build()
-).build()
-resp = c.im.v1.message.create(req)
-print(json.dumps({'code': resp.code, 'message_id': resp.data.message_id if resp.data else None}))
-")
-echo "Lark response: $lark_resp"
-if ! echo "$lark_resp" | grep -qE '"code": 0'; then
-  echo "FAIL — Lark API did not accept the smoke-test message"
+section "live 3/5 — post /new-thread \$nonce to \$FEISHU_TEST_CHAT_ID (L1)"
+l1_message_id=$(uv run --project py python <<PY
+import json, os, sys
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest, CreateMessageRequestBody,
+)
+client = (lark.Client.builder()
+          .app_id(os.environ["FEISHU_APP_ID"])
+          .app_secret(os.environ["FEISHU_APP_SECRET"])
+          .build())
+req = (CreateMessageRequest.builder()
+       .receive_id_type("chat_id")
+       .request_body(CreateMessageRequestBody.builder()
+                     .receive_id(os.environ["FEISHU_TEST_CHAT_ID"])
+                     .msg_type("text")
+                     .content(json.dumps({"text": "/new-thread $thread_id"},
+                                         ensure_ascii=False))
+                     .build())
+       .build())
+resp = client.im.v1.message.create(req)
+if resp.code != 0 or not resp.data:
+    sys.stderr.write(f"Lark POST failed: code={resp.code} msg={resp.msg}\n")
+    sys.exit(1)
+print(resp.data.message_id)
+PY
+)
+if [[ -z "$l1_message_id" ]]; then
+  echo "FAIL — L1 Lark POST did not return a message_id"; exit 1
+fi
+echo "  L1 message_id: $l1_message_id"
+
+section "live 4/5 — wait for bidirectional round-trip (up to 60s)"
+deadline=$(( $(date +%s) + 60 ))
+l2_log="" l3_pane="" l4_server=""
+while (( $(date +%s) < deadline )); do
+  [[ -z "$l2_log" ]] && l2_log=$(grep -F "$nonce" ~/.esrd/smoke-live/logs/*.log 2>/dev/null | tail -1 || true)
+  [[ -z "$l3_pane" ]] && l3_pane=$(tmux capture-pane -t "$thread_id" -p 2>/dev/null | grep -F "$nonce" | tail -1 || true)
+  if [[ -z "$l4_server" ]]; then
+    # L4 — server-side: did a bot-authored reply containing the nonce land
+    # in FEISHU_TEST_CHAT_ID AFTER L1?
+    l4_server=$(uv run --project py python <<PY 2>/dev/null
+import json, os, sys
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import ListMessageRequest
+client = (lark.Client.builder()
+          .app_id(os.environ["FEISHU_APP_ID"])
+          .app_secret(os.environ["FEISHU_APP_SECRET"])
+          .build())
+req = (ListMessageRequest.builder()
+       .container_id_type("chat")
+       .container_id(os.environ["FEISHU_TEST_CHAT_ID"])
+       .sort_type("ByCreateTimeDesc")
+       .page_size(20)
+       .build())
+resp = client.im.v1.message.list(req)
+if resp.code != 0 or not resp.data or not resp.data.items:
+    sys.exit(0)
+# Look for a message (not the one we posted) whose content contains the nonce
+# and whose sender is the app (not the user).
+for m in resp.data.items:
+    if m.message_id == "$l1_message_id":
+        continue  # skip our own L1 post
+    try:
+        body = json.loads(m.body.content) if m.body and m.body.content else {}
+    except Exception:
+        body = {}
+    text = body.get("text", "") + " " + json.dumps(body, ensure_ascii=False)
+    if "$nonce" in text and getattr(m.sender, "sender_type", None) == "app":
+        print(m.message_id)
+        sys.exit(0)
+sys.exit(0)
+PY
+)
+  fi
+  [[ -n "$l2_log" && -n "$l3_pane" && -n "$l4_server" ]] && break
+  sleep 2
+done
+
+section "live 5/5 — verify 4 artifacts"
+missing=()
+[[ -z "$l2_log"    ]] && missing+=("L2: esrd log line with nonce $nonce")
+[[ -z "$l3_pane"   ]] && missing+=("L3: tmux pane content with nonce $nonce")
+[[ -z "$l4_server" ]] && missing+=("L4: Lark server-side bot reply containing nonce $nonce")
+if (( ${#missing[@]} > 0 )); then
+  echo "FAIL — missing artifacts:"
+  printf '  - %s\n' "${missing[@]}"
   exit 1
 fi
 
-# Wait for bidirectional round-trip.
-section "live 3/3 — observe forensic artifacts"
-sleep 10
-
-# Artifact 2 — esrd log line mentioning the test chat.
-log_artifact=$(grep -F "$FEISHU_TEST_CHAT_ID" ~/.esrd/smoke-live/logs/*.log | tail -1)
-if [[ -z "$log_artifact" ]]; then
-  echo "FAIL — no esrd log line for FEISHU_TEST_CHAT_ID"; exit 1
-fi
-echo "  esrd log: $log_artifact"
-
-# Artifact 3 — tmux capture-pane excerpt showing CC received the forwarded msg.
-tmux_artifact=$(tmux capture-pane -t "$thread_id" -p 2>/dev/null | grep -F "$thread_id" | tail -1 || true)
-if [[ -z "$tmux_artifact" ]]; then
-  echo "FAIL — no tmux capture-pane line for $thread_id"; exit 1
-fi
-echo "  tmux pane: $tmux_artifact"
-
+round_trip_s=$(( $(date +%s) - ts ))
 echo
-echo "FINAL GATE LIVE PASSED"
-echo "  Sent /new-thread $thread_id to $FEISHU_TEST_CHAT_ID"
-echo "  Observed bidirectional round-trip via esrd logs + tmux capture"
-echo "  You can now merge to main."
+echo "FINAL GATE LIVE PASSED — nonce=$nonce; round-trip observed in ${round_trip_s}s"
+echo "  L1 message_id : $l1_message_id"
+echo "  L2 esrd log   : $(echo "$l2_log" | head -c 120)..."
+echo "  L3 tmux pane  : $(echo "$l3_pane" | head -c 120)..."
+echo "  L4 server echo: $l4_server"
+
+# Post the success notification back to the test chat (closes §8 bottom).
+uv run --project py python <<PY >/dev/null 2>&1 || true
+import json, os
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+msg = (f"✓ ESR v0.1 COMPLETE — nonce $nonce observed end-to-end in ${round_trip_s}s.\n"
+       f"   L1 message_id=$l1_message_id  L4 server echo=$l4_server")
+client = (lark.Client.builder()
+          .app_id(os.environ["FEISHU_APP_ID"])
+          .app_secret(os.environ["FEISHU_APP_SECRET"])
+          .build())
+req = (CreateMessageRequest.builder()
+       .receive_id_type("chat_id")
+       .request_body(CreateMessageRequestBody.builder()
+                     .receive_id(os.environ["FEISHU_TEST_CHAT_ID"])
+                     .msg_type("text")
+                     .content(json.dumps({"text": msg}, ensure_ascii=False))
+                     .build())
+       .build())
+client.im.v1.message.create(req)
+PY
+
 exit 0
 ```
 
@@ -2563,11 +2652,11 @@ This document is **the prompt** fed to Claude repeatedly by `ralph-loop` to driv
 
 ```
 /ralph-loop "$(cat docs/superpowers/ralph-loop-prompt-v2.md)" \
-  --completion-promise "ESR_V0_1_LIVE_READY" \
+  --completion-promise "ESR_V0_1_COMPLETE" \
   --max-iterations 300
 ```
 
-**Loop-exit condition:** Claude emits `<promise>ESR_V0_1_LIVE_READY</promise>` — and only after `scripts/final_gate.sh --mock` exits 0.
+**Loop-exit condition (v2.1):** Claude emits `<promise>ESR_V0_1_COMPLETE</promise>` — and only after `scripts/final_gate.sh --live` exits 0 with the 4-artifact nonce correlation (spec §4.1.1). The loop runs `--live` itself; no manual step after.
 
 ---
 
@@ -2622,7 +2711,7 @@ Exit 0 → proceed. Non-zero → emit `<promise>BLOCKED: loopguard:LG-<id></prom
 
 ## 3.2 — Pick the smallest next task
 
-Work bottom-up: 8a (IPC activation, the F13 run() entries) → 8b (esrd daemon) → 8c (CLI `_submit_*` wiring) → 8d (mock_feishu.py, mock_cc.py) → 8e (scenario e2e-feishu-cc live-green in mock mode) → 8f (notification + wait).
+Work bottom-up: 8a (IPC activation, the F13 run() entries) → 8b (esrd daemon) → 8c (CLI `_submit_*` wiring) → 8d (mock_feishu.py, mock_cc.py) → 8e (scenario e2e-feishu-cc live-green in mock mode) → 8f (loop runs final_gate.sh --live autonomously; spec §4.1.1 4-artifact nonce check).
 
 One FR per commit. Prefer the narrowest red-green-refactor bite.
 
@@ -2666,8 +2755,8 @@ command's output, sha256s it, and writes a row.
 Do not issue an explicit exit. Finish your response. The stop hook re-feeds
 this prompt.
 
-Only emit `<promise>ESR_V0_1_LIVE_READY</promise>` when §7 Final Gate is
-green.
+Only emit `<promise>ESR_V0_1_COMPLETE</promise>` when §7 Final Gate (all
+8 conditions including `--live`) is green.
 
 ## 3.8 — Feishu progress reporting
 
@@ -2676,20 +2765,9 @@ ONLY on:
 - Phase boundary: `▶ Phase 8<a-f> start` / `✓ Phase 8<a-f> done`
 - Blocker (`<promise>BLOCKED: ...</promise>` emitted)
 - Regression (previously-green test now red)
-- `LIVE_READY` emission — send the exact command the user needs to run:
-
-```
-▶ ESR v0.1 Phase 8 loop complete. To ship:
-
-  cat > ~/.esr/live.env <<EOF
-  FEISHU_APP_ID=cli_xxx
-  FEISHU_APP_SECRET=xxx
-  FEISHU_TEST_CHAT_ID=oc_xxx
-  EOF
-  bash scripts/final_gate.sh --live
-
-Expected: "FINAL GATE LIVE PASSED" on exit 0.
-```
+- `ESR_V0_1_COMPLETE` emission — `final_gate.sh --live` itself posts the
+  success summary to the test chat (nonce, message_ids, round-trip time).
+  No separate MCP reply needed.
 
 - Every 30 iterations: heartbeat (phase, FR count, blockers).
 
@@ -2713,7 +2791,7 @@ After 8c green and after 8e green, dispatch a scoped code reviewer via
 `superpowers:requesting-code-review`. Critical/Significant findings are
 blockers for the next subphase.
 
-# 7. Final Gate — emit LIVE_READY only when all hold
+# 7. Final Gate — emit ESR_V0_1_COMPLETE only when all 8 hold
 
 | # | Condition | Command | Expected output |
 |---|---|---|---|
@@ -2721,12 +2799,14 @@ blockers for the next subphase.
 | 2 | PRD matrix | `uv run python scripts/verify_prd_matrix.py` | `all N FR tests located` |
 | 3 | Loopguard | `bash scripts/loopguard.sh` | `all 11 loopguard checks passed` |
 | 4 | Scenario mock | `uv run --project py esr scenario run e2e-feishu-cc` | `8/8 steps PASSED against live esrd (mock Feishu)` |
-| 5 | Final gate mock | `bash scripts/final_gate.sh --mock` | `FINAL GATE MOCK PASSED — ready for user --live verification` |
+| 5 | Final gate mock | `bash scripts/final_gate.sh --mock` | `FINAL GATE MOCK PASSED` |
 | 6 | Ledger | `uv run python scripts/verify_ledger_append_only.py` | `ledger integrity OK — N iterations, 0 in-place edits` |
 | 7 | PRD acceptance | `uv run python scripts/verify_prd_acceptance.py --manifest ...` | `all N Acceptance items ticked` |
+| 8 | **Final gate LIVE** (v2.1) | `bash scripts/final_gate.sh --live` | `FINAL GATE LIVE PASSED — nonce=SMOKE-XXXXXXXX; round-trip observed in Ns` |
 
-Only when all 7 are green AND the Feishu notification is sent: emit
-`<promise>ESR_V0_1_LIVE_READY</promise>`.
+Only when all 8 are green: emit `<promise>ESR_V0_1_COMPLETE</promise>`.
+`--live` is autonomous (spec §4.1.1 4-artifact nonce check); no manual
+step required after.
 
 # 8. Anti-patterns (how v1 failed — do not repeat)
 
