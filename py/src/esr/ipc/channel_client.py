@@ -164,6 +164,30 @@ class ChannelClient:
         ref = str(next(self._ref_counter))
         await self._send_frame([join_ref, ref, topic, event, payload])
 
+    async def call(
+        self,
+        topic: str,
+        event: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Push + await matching phx_reply. Returns the reply payload dict
+        (keys ``status`` + ``response``). Raises :class:`TimeoutError` on
+        timeout; raises :class:`ValueError` on push-before-join.
+        """
+        join_ref = self._topic_join_refs.get(topic)
+        if join_ref is None:
+            raise ValueError(f"call on topic {topic!r}: not joined")
+        ref = str(next(self._ref_counter))
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._pending_replies[ref] = fut
+        try:
+            await self._send_frame([join_ref, ref, topic, event, payload])
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending_replies.pop(ref, None)
+
     # --- internals -----------------------------------------------------
 
     async def _send_frame(self, frame: list[Any]) -> None:
