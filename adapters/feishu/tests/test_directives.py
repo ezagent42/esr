@@ -154,3 +154,77 @@ async def test_react_surfaces_lark_error() -> None:
         "react", {"msg_id": "om_x", "emoji_type": "HEART"}
     )
     assert ack["ok"] is False
+
+
+# --- F09: send_card ----------------------------------------------------
+
+
+async def test_send_card_uses_interactive_msg_type() -> None:
+    """send_card posts via im.v1.message.create with msg_type='interactive'."""
+    instance = _make_adapter()
+    stub = _StubClient()
+    instance._lark_client = stub
+
+    card_payload = {"config": {"wide_screen_mode": True}, "elements": []}
+    ack = await instance.on_directive(
+        "send_card", {"chat_id": "oc_abc", "card": card_payload}
+    )
+    assert ack == {"ok": True, "result": {"message_id": "msg_42"}}
+
+    body = stub.im.v1.message.last_request.request_body
+    assert body.receive_id == "oc_abc"
+    assert body.msg_type == "interactive"
+    # content is the JSON-serialised card
+    import json
+
+    assert json.loads(body.content) == card_payload
+
+
+# --- F10: pin / unpin --------------------------------------------------
+
+
+class _StubPinApi:
+    def __init__(self) -> None:
+        self.last_create_request: object | None = None
+        self.last_delete_request: object | None = None
+        self.canned_response: _StubResponse = _StubResponse(True)
+
+    def create(self, request: object) -> _StubResponse:
+        self.last_create_request = request
+        return self.canned_response
+
+    def delete(self, request: object) -> _StubResponse:
+        self.last_delete_request = request
+        return self.canned_response
+
+
+def _make_stub_with_pin_api() -> _StubClient:
+    stub = _StubClient()
+    stub.im.v1.pin = _StubPinApi()
+    return stub
+
+
+async def test_pin_calls_lark_pin_create() -> None:
+    instance = _make_adapter()
+    stub = _make_stub_with_pin_api()
+    instance._lark_client = stub
+
+    ack = await instance.on_directive("pin", {"msg_id": "om_abc"})
+    assert ack == {"ok": True}
+    req = stub.im.v1.pin.last_create_request
+    assert req is not None
+    # message_id lives on the request body per SDK shape
+    body = getattr(req, "request_body", req)
+    assert body.message_id == "om_abc"
+
+
+async def test_unpin_calls_lark_pin_delete() -> None:
+    instance = _make_adapter()
+    stub = _make_stub_with_pin_api()
+    instance._lark_client = stub
+
+    ack = await instance.on_directive("unpin", {"msg_id": "om_abc"})
+    assert ack == {"ok": True}
+    req = stub.im.v1.pin.last_delete_request
+    assert req is not None
+    assert req.message_id == "om_abc"

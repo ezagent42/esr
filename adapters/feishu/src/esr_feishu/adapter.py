@@ -83,6 +83,12 @@ class FeishuAdapter:
             return self._send_message(args)
         if action == "react":
             return self._react(args)
+        if action == "send_card":
+            return self._send_card(args)
+        if action == "pin":
+            return self._pin(args)
+        if action == "unpin":
+            return self._unpin(args)
         return {"ok": False, "error": f"unknown action: {action}"}
 
     def _send_message(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -133,3 +139,52 @@ class FeishuAdapter:
             )
             return {"ok": True, "result": {"reaction_id": reaction_id}}
         return {"ok": False, "error": _lark_error(response) or "react failed"}
+
+    def _send_card(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Send an interactive card via lark_oapi im.v1.message.create (PRD 04 F09)."""
+        import lark_oapi.api.im.v1 as im_v1
+
+        chat_id = args["chat_id"]
+        card = args["card"]
+        request = (
+            im_v1.CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                im_v1.CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("interactive")
+                .content(json.dumps(card))
+                .build()
+            )
+            .build()
+        )
+        response = self.client().im.v1.message.create(request)
+        if response.success():
+            return {"ok": True, "result": {"message_id": response.data.message_id}}
+        return {"ok": False, "error": _lark_error(response) or "send_card failed"}
+
+    def _pin(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Pin a message via lark_oapi im.v1.pin.create (PRD 04 F10)."""
+        import lark_oapi.api.im.v1 as im_v1
+
+        msg_id = args["msg_id"]
+        request = (
+            im_v1.CreatePinRequest.builder()
+            .request_body(im_v1.Pin.builder().message_id(msg_id).build())
+            .build()
+        )
+        response = self.client().im.v1.pin.create(request)
+        if response.success():
+            return {"ok": True}
+        return {"ok": False, "error": _lark_error(response) or "pin failed"}
+
+    def _unpin(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Unpin a message via lark_oapi im.v1.pin.delete (PRD 04 F10)."""
+        import lark_oapi.api.im.v1 as im_v1
+
+        msg_id = args["msg_id"]
+        request = im_v1.DeletePinRequest.builder().message_id(msg_id).build()
+        response = self.client().im.v1.pin.delete(request)
+        if response.success():
+            return {"ok": True}
+        return {"ok": False, "error": _lark_error(response) or "unpin failed"}
