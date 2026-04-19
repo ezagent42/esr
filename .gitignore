@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-*/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Elixir
+/runtime/_build/
+/runtime/deps/
+/runtime/cover/
+/runtime/doc/
+/runtime/.fetch
+erl_crash.dump
+*.ez
+
+# Local overrides / secrets
+esr-cc.local.sh
+.env
+.env.local
+.mcp.env
+.esr/
+~/.esrd/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Tool state
+.claude/.ralph-loop.local.md

@@ -1,0 +1,11 @@
+#!/bin/bash
+# Local overrides for esr-cc.sh. Copy to esr-cc.local.sh (gitignored).
+# Use this for proxies, API keys, anything machine-specific.
+
+# Example: HTTP proxy
+# export http_proxy=http://127.0.0.1:7897
+# export https_proxy=http://127.0.0.1:7897
+# export no_proxy=localhost,127.0.0.1
+
+# Example: Anthropic API key (if you route Claude Code through a specific key)
+# export ANTHROPIC_API_KEY=sk-ant-...
