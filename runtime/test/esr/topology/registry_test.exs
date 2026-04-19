@@ -60,4 +60,27 @@ defmodule Esr.Topology.RegistryTest do
     assert :ok = TopoRegistry.deactivate(handle)
     assert :error = TopoRegistry.lookup("c", %{})
   end
+
+  test "concurrent registers for the same (name, params) are atomic (S7)" do
+    # Reviewer S7: the old impl used lookup-then-insert, which could race.
+    # Spawn many tasks all registering the same key with DIFFERENT peer_ids
+    # lists; exactly one must win, and list_all/0 must return a single row.
+    name = "ic-race"
+    params = %{"n" => "42"}
+
+    tasks =
+      for i <- 1..32 do
+        Task.async(fn ->
+          TopoRegistry.register(name, params, ["peer-#{i}"])
+        end)
+      end
+
+    handles = Task.await_many(tasks, 2_000) |> Enum.map(fn {:ok, h} -> h end)
+
+    # All callers receive the SAME handle (winner's peer_ids).
+    assert Enum.uniq(handles) |> length() == 1
+
+    # Exactly one row for this (name, params) in the ETS table.
+    assert length(TopoRegistry.list_all()) == 1
+  end
 end

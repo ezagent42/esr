@@ -42,15 +42,15 @@ defmodule Esr.Topology.Registry do
   def register(name, params, peer_ids \\ [])
       when is_binary(name) and is_map(params) and is_list(peer_ids) do
     key = key_for(name, params)
+    handle = %Handle{name: name, params: params, peer_ids: peer_ids}
 
-    case :ets.lookup(@table, key) do
-      [{^key, handle}] ->
-        {:ok, handle}
-
-      [] ->
-        handle = %Handle{name: name, params: params, peer_ids: peer_ids}
-        :ets.insert(@table, {key, handle})
-        {:ok, handle}
+    # S7: `:ets.insert_new/2` is atomic — no TOCTOU between lookup and
+    # insert. If the key was already present, read the winning handle.
+    if :ets.insert_new(@table, {key, handle}) do
+      {:ok, handle}
+    else
+      [{^key, existing}] = :ets.lookup(@table, key)
+      {:ok, existing}
     end
   end
 
