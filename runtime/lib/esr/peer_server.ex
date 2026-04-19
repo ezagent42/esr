@@ -21,6 +21,7 @@ defmodule Esr.PeerServer do
   alias Esr.HandlerRouter
 
   @default_handler_timeout 5_000
+  @pause_queue_limit 1_000
 
   defstruct [
     :actor_id,
@@ -31,7 +32,8 @@ defmodule Esr.PeerServer do
     adapter_refs: %{},
     metadata: %{},
     dedup_keys: MapSet.new(),
-    paused: false
+    paused: false,
+    pending_events: []
   ]
 
   @type t :: %__MODULE__{
@@ -43,7 +45,8 @@ defmodule Esr.PeerServer do
           adapter_refs: map(),
           metadata: map(),
           dedup_keys: MapSet.t(String.t()),
-          paused: boolean()
+          paused: boolean(),
+          pending_events: [map()]
         }
 
   # ------------------------------------------------------------------
@@ -59,6 +62,21 @@ defmodule Esr.PeerServer do
   @spec get_state(String.t()) :: map()
   def get_state(actor_id) do
     GenServer.call(via(actor_id), :get_state)
+  end
+
+  @spec pause(String.t()) :: :ok
+  def pause(actor_id) do
+    GenServer.call(via(actor_id), :pause)
+  end
+
+  @spec resume(String.t()) :: :ok
+  def resume(actor_id) do
+    GenServer.call(via(actor_id), :resume)
+  end
+
+  @spec pending_count(String.t()) :: non_neg_integer()
+  def pending_count(actor_id) do
+    GenServer.call(via(actor_id), :pending_count)
   end
 
   defp via(actor_id), do: {:via, Registry, {Esr.PeerRegistry, actor_id}}
@@ -103,7 +121,38 @@ defmodule Esr.PeerServer do
     {:reply, s, acc}
   end
 
+  def handle_call(:pause, _from, %__MODULE__{} = state) do
+    :telemetry.execute([:esr, :actor, :paused], %{}, %{actor_id: state.actor_id})
+    {:reply, :ok, %__MODULE__{state | paused: true}}
+  end
+
+  def handle_call(:resume, _from, %__MODULE__{} = state) do
+    # pending_events is stored newest-at-head; replay in arrival order.
+    for envelope <- Enum.reverse(state.pending_events) do
+      send(self(), {:inbound_event, envelope})
+    end
+
+    :telemetry.execute([:esr, :actor, :resumed], %{}, %{
+      actor_id: state.actor_id,
+      drained: length(state.pending_events)
+    })
+
+    {:reply, :ok, %__MODULE__{state | paused: false, pending_events: []}}
+  end
+
+  def handle_call(:pending_count, _from, %__MODULE__{pending_events: q} = state) do
+    {:reply, length(q), state}
+  end
+
   @impl GenServer
+  def handle_info({:inbound_event, envelope}, %__MODULE__{paused: true} = state) do
+    if length(state.pending_events) >= @pause_queue_limit do
+      {:noreply, state}
+    else
+      {:noreply, %__MODULE__{state | pending_events: [envelope | state.pending_events]}}
+    end
+  end
+
   def handle_info({:inbound_event, envelope}, %__MODULE__{} = state) do
     idempotency_key = extract_idempotency_key(envelope)
 
