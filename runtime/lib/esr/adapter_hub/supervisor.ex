@@ -10,6 +10,10 @@ defmodule Esr.AdapterHub.Supervisor do
 
   @impl true
   def init(_opts) do
-    Supervisor.init([], strategy: :one_for_one)
+    children = [
+      Esr.AdapterHub.Registry
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end
