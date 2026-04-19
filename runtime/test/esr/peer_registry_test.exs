@@ -8,14 +8,30 @@ defmodule Esr.PeerRegistryTest do
   use ExUnit.Case, async: false
 
   setup do
-    # The Application's Registry persists across tests; start from a clean slate
-    # by unregistering every key. Registry doesn't expose "clear all" so we
-    # enumerate and unregister.
+    # The Application's Registry persists across tests; start from a clean
+    # slate by unregistering every key. Registry.unregister only removes
+    # entries owned by the caller, so entries for previously-linked pids
+    # from other tests may still be present; poll until :DOWN messages
+    # have been processed and the Registry is actually empty.
     for {actor_id, _pid} <- Esr.PeerRegistry.list_all() do
       Registry.unregister(Esr.PeerRegistry, actor_id)
     end
 
+    wait_until_empty(50)
     :ok
+  end
+
+  defp wait_until_empty(0), do: :ok
+
+  defp wait_until_empty(tries) do
+    case Esr.PeerRegistry.list_all() do
+      [] ->
+        :ok
+
+      _ ->
+        :timer.sleep(10)
+        wait_until_empty(tries - 1)
+    end
   end
 
   describe "lookup/1" do
