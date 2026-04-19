@@ -317,24 +317,60 @@ def adapter_add(
     cfg_path.write_text(yaml.safe_dump(doc, sort_keys=True))
     click.echo(f"added {instance_name} ({adapter_type})")
 
-    # Phase 8f: ask the runtime to launch a Python adapter_runner
-    # subprocess for this instance immediately, so inbound events
-    # (Lark WS / mock_feishu /ws) can arrive before any topology
-    # instantiation. Best-effort — if esrd isn't running yet, skip
-    # silently (the next esrd start will pick the instance up).
+    # Phase 8f: for recognised adapter types, auto-instantiate the
+    # matching "session" topology so inbound adapter messages route to a
+    # live PeerServer immediately. Without this, ``esr adapter add`` on
+    # its own leaves the adapter_runner (which spawns alongside the
+    # topology's feishu_app_proxy peer) unattached — no PeerServer is
+    # bound for the topic, so inbound envelopes hit "no binding" in
+    # AdapterChannel.forward/2 and never reach a handler.
+    #
+    # Feishu path: auto-run ``esr cmd run feishu-app-session --param
+    # app_id=<X>`` which spawns feishu-app:<X>, binds adapter:feishu/
+    # feishu-app:<X>, and triggers WorkerSupervisor.ensure_adapter from
+    # Topology.Instantiator.spawn_loop (the adapter_runner is launched
+    # there, not here — keeping the lifecycle with the topology).
+    if adapter_type == "feishu" and cfg_dict.get("app_id"):
+        _auto_instantiate_feishu_app_session(cfg_dict["app_id"])
+
+
+def _auto_instantiate_feishu_app_session(app_id: str) -> None:
+    """Compile + run feishu-app-session with app_id so a PeerServer
+    exists for the ``adapter:feishu/feishu-app:<app_id>`` topic."""
     from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+    import subprocess
+
+    # Compile if not cached — final_gate --live doesn't pre-compile.
+    compiled = (
+        Path(os.path.expanduser("~"))
+        / ".esrd" / "default" / "commands" / ".compiled"
+        / "feishu-app-session.yaml"
+    )
+    if not compiled.exists():
+        compiled.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                ["uv", "run", "--project", "py", "esr", "cmd", "compile",
+                 "feishu-app-session", "-o", str(compiled)],
+                check=True, capture_output=True, timeout=30,
+            )
+        except (subprocess.SubprocessError, FileNotFoundError) as exc:
+            click.echo(f"note: failed to compile feishu-app-session: {exc}", err=True)
+            return
+
+    artifact = yaml.safe_load(compiled.read_text())
     try:
-        resp = call_runtime(
-            topic=f"cli:adapter/start/{adapter_type}",
-            payload={"instance_id": instance_name, "config": cfg_dict},
-            timeout_sec=10.0,
+        call_runtime(
+            topic=f"cli:run/{artifact['name']}",
+            payload={"artifact": artifact, "params": {"app_id": str(app_id)}},
+            timeout_sec=30.0,
         )
-        data = _response(resp)
-        if data.get("ok") is False and data.get("reason"):
-            click.echo(f"warning: adapter worker spawn reported: {data['reason']}", err=True)
     except RuntimeUnreachable:
-        click.echo("note: esrd not running — adapter will be spawned on next esrd start",
-                   err=True)
+        click.echo(
+            "note: esrd not running — feishu-app-session will need to be "
+            "instantiated manually once the daemon is up",
+            err=True,
+        )
 
 
 def _parse_config_flags(args: tuple[str, ...]) -> dict[str, str]:

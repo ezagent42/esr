@@ -32,9 +32,10 @@ def test_compiles_to_single_node_topology() -> None:
     topo = compile_topology("feishu-app-session")
     assert len(topo.nodes) == 1
     assert topo.edges == ()
-    # Two template params declared (app_id + instance_name)
+    # 8f: pattern takes just app_id; adapter field is the bare TYPE
+    # (``feishu``) so the topic aligns with what Esr.WorkerSupervisor
+    # spawns via ensure_adapter/4. instance_name is no longer referenced.
     assert "app_id" in topo.params
-    assert "instance_name" in topo.params
 
 
 def test_node_fields_match_spec() -> None:
@@ -42,6 +43,9 @@ def test_node_fields_match_spec() -> None:
     n = topo.nodes[0]
     assert n.id == "feishu-app:{{app_id}}"
     assert n.actor_type == "feishu_app_proxy"
-    assert n.adapter == "feishu-{{instance_name}}"
+    # adapter is the TYPE, not an instance slug. The runtime binds
+    # adapter:feishu/feishu-app:<app_id> which matches the topic the
+    # adapter_runner (spawned by WorkerSupervisor) joins.
+    assert n.adapter == "feishu"
     assert n.handler == "feishu_app.on_msg"
     assert n.params == {"app_id": "{{app_id}}"}

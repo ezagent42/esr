@@ -14,7 +14,7 @@ def feishu_app_session() -> None:
     node(
         id="feishu-app:{{app_id}}",
         actor_type="feishu_app_proxy",
-        adapter="feishu-{{instance_name}}",
+        adapter="feishu",
         handler="feishu_app.on_msg",
         params={"app_id": "{{app_id}}"},
     )
