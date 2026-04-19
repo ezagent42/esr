@@ -1,16 +1,18 @@
-"""Handler decorator + registry (PRD 02 F04).
+"""Handler + state decorators and registries (PRD 02 F04 / F05 / F06).
 
 `@esr.handler(actor_type=..., name=...)` registers a pure function
 under the key ``f"{actor_type}.{name}"`` in the module-level
-``HANDLER_REGISTRY``. The decorator returns the callable unchanged
-so handlers remain directly invocable (important for unit tests —
-they call the function with a state + event and assert the
-returned ``(new_state, [Action])`` tuple).
+``HANDLER_REGISTRY``. `@esr.handler_state(actor_type=..., schema_version=...)`
+registers the associated pydantic state model under ``actor_type`` in
+``STATE_REGISTRY`` — there is at most one state model per actor_type.
 
-Duplicate registration is a hard error. The v0.1 runtime expects
-each (actor_type, name) pair to be unique across the loaded
-handler packages; collisions indicate a packaging bug that must
-surface at import time, not at message-dispatch time.
+Both decorators return the decorated object unchanged so that
+handler functions remain directly invocable and state models remain
+directly usable (instantiation, validation) in unit tests.
+
+Registries are plain mutable dicts. ``HANDLER_REGISTRY.clear()`` /
+``STATE_REGISTRY.clear()`` are the intended cleanup path for tests —
+see PRD 02 F06.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel
 
 HandlerFn = Callable[..., Any]
 
@@ -31,16 +35,27 @@ class HandlerEntry:
     fn: HandlerFn
 
 
+@dataclass(frozen=True)
+class StateEntry:
+    """A registered state model. See PRD 02 F05 / F06."""
+
+    actor_type: str
+    schema_version: int
+    model: type[BaseModel]
+
+
 HANDLER_REGISTRY: dict[str, HandlerEntry] = {}
 """Global handler registry — key is ``f"{actor_type}.{name}"``."""
+
+STATE_REGISTRY: dict[str, StateEntry] = {}
+"""Global state-model registry — key is ``actor_type``."""
 
 
 def handler(*, actor_type: str, name: str) -> Callable[[HandlerFn], HandlerFn]:
     """Register a handler function under ``actor_type.name``.
 
     Returns the original callable so the decorated function remains
-    usable directly (tests, composition). Duplicate registration
-    raises ``ValueError``.
+    usable directly. Duplicate registration raises ``ValueError``.
     """
 
     def decorate(fn: HandlerFn) -> HandlerFn:
@@ -51,3 +66,38 @@ def handler(*, actor_type: str, name: str) -> Callable[[HandlerFn], HandlerFn]:
         return fn
 
     return decorate
+
+
+def handler_state(
+    *, actor_type: str, schema_version: int
+) -> Callable[[type[BaseModel]], type[BaseModel]]:
+    """Register a frozen pydantic state model for ``actor_type``.
+
+    The model must have ``model_config`` containing ``frozen=True``;
+    otherwise registration fails with ``TypeError``. At most one
+    state model per actor_type — duplicate registration raises
+    ``ValueError``.
+    """
+
+    def decorate(cls: type[BaseModel]) -> type[BaseModel]:
+        if not _is_frozen_model(cls):
+            raise TypeError(
+                f"state model for {actor_type} must be frozen "
+                "(set model_config['frozen'] = True)"
+            )
+        if actor_type in STATE_REGISTRY:
+            raise ValueError(f"state for {actor_type} already registered")
+        STATE_REGISTRY[actor_type] = StateEntry(
+            actor_type=actor_type, schema_version=schema_version, model=cls
+        )
+        return cls
+
+    return decorate
+
+
+def _is_frozen_model(cls: type[BaseModel]) -> bool:
+    """True iff the pydantic model has ``frozen=True`` in its config."""
+    cfg = getattr(cls, "model_config", None)
+    if isinstance(cfg, dict):
+        return bool(cfg.get("frozen", False))
+    return bool(getattr(cfg, "frozen", False))
