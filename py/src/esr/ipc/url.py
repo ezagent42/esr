@@ -25,11 +25,13 @@ from __future__ import annotations
 import os
 from typing import Literal
 
-DEFAULT_ADAPTER_HUB_URL: str = "ws://localhost:4001/adapter_hub/socket/websocket"
-"""Default Phoenix adapter_hub socket URL for adapters."""
+DEFAULT_ADAPTER_HUB_URL: str = "ws://localhost:4001/adapter_hub/socket/websocket?vsn=2.0.0"
+"""Default Phoenix adapter_hub socket URL for adapters (vsn=2.0.0 selects
+the array-frame V2 JSON serializer; V1 expects map frames and rejects
+our list-shaped phx_join)."""
 
-DEFAULT_HANDLER_HUB_URL: str = "ws://localhost:4001/handler_hub/socket/websocket"
-"""Default Phoenix handler_hub socket URL for handler workers."""
+DEFAULT_HANDLER_HUB_URL: str = "ws://localhost:4001/handler_hub/socket/websocket?vsn=2.0.0"
+"""Default Phoenix handler_hub socket URL for handler workers (vsn=2.0.0)."""
 
 DEFAULT_RUNTIME_URL: str = DEFAULT_ADAPTER_HUB_URL
 """Legacy alias — old callers default to the adapter socket."""
