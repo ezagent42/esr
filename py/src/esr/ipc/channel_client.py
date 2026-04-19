@@ -177,8 +177,16 @@ class ChannelClient:
             async for msg in self._ws:
                 if msg.type != aiohttp.WSMsgType.TEXT:
                     continue
-                frame = json.loads(msg.data)
-                _join_ref, ref, topic, event, payload = frame
+                # Per-message recovery (reviewer S7): a single malformed
+                # frame must not kill the loop — log and move on. Only
+                # genuine socket failures fall through to reconnect.
+                try:
+                    frame = json.loads(msg.data)
+                    _join_ref, ref, topic, event, payload = frame
+                except (ValueError, TypeError) as exc:
+                    logger.warning("bad frame: %r; continuing", exc)
+                    continue
+
                 if event == "phx_reply":
                     fut = self._pending_replies.pop(ref, None)
                     if fut is not None and not fut.done():
@@ -186,7 +194,10 @@ class ChannelClient:
                     continue
                 handler = self._topic_handlers.get(topic)
                 if handler is not None:
-                    handler(frame)
+                    try:
+                        handler(frame)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("topic handler error: %r; continuing", exc)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — protect the read loop

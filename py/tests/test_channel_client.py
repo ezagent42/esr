@@ -277,6 +277,64 @@ async def _killswitch_server() -> AsyncIterator[tuple[str, list, asyncio.Event]]
         await runner.cleanup()
 
 
+@contextlib.asynccontextmanager
+async def _noisy_server() -> AsyncIterator[str]:
+    """Server that emits a garbage frame to the client BEFORE the phx_reply.
+
+    Used to verify the client's read loop recovers from a single bad
+    frame instead of closing the socket and reconnecting (reviewer S7).
+    """
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                continue
+            frame = json.loads(msg.data)
+            join_ref, ref, topic, event, _payload = frame
+            if event == "phx_join":
+                # First: garbage — invalid JSON. Client must discard.
+                await ws.send_str("{not-valid-json]")
+                # Second: wrong-arity but valid JSON.
+                await ws.send_str(json.dumps(["too", "short"]))
+                # Finally: the legitimate phx_reply.
+                await ws.send_str(
+                    json.dumps([join_ref, ref, topic, "phx_reply",
+                                {"status": "ok", "response": {}}])
+                )
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/socket/websocket", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        yield f"ws://127.0.0.1:{port}/socket/websocket"
+    finally:
+        await runner.cleanup()
+
+
+async def test_channel_client_tolerates_malformed_frames(caplog: Any) -> None:
+    """Reviewer S7: a garbage frame must not kill the read loop."""
+    async with _noisy_server() as url:
+        client = ChannelClient(url, auto_reconnect=False)
+        await client.connect()
+        # The join completes even though the client saw two bad frames
+        # before the real reply. If the read loop tore down the socket
+        # on the first exception, join() would time out.
+        result = await asyncio.wait_for(
+            client.join("handler:noisy", on_msg=lambda _: None),
+            timeout=2.0,
+        )
+        assert result["status"] == "ok"
+        assert client.connected is True  # still connected, not reconnected
+        await client.close()
+
+
 async def test_reconnect_rejoins_and_flushes_pending() -> None:
     """Server close → client reconnects, re-joins topics, flushes pending pushes."""
     async with _killswitch_server() as (url, received, kill):
