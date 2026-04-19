@@ -140,6 +140,18 @@ These clarifications matter because ESR is small and focused. If you position it
 
 ## The User Experience: `esr` CLI
 
+> **v0.1 CLI subset:** v0.1 implements ``esr use``,
+> ``esr status``, ``esr cmd install/run/stop/restart/list/show/
+> compile``, ``esr adapter install/add/list``, ``esr handler
+> install/list``, ``esr actors list/tree/inspect/logs``,
+> ``esr trace``, ``esr telemetry subscribe``, ``esr debug
+> {replay, inject, pause, resume}``, ``esr deadletter
+> {list, retry, flush}``, ``esr scenario run``, ``esr drain``,
+> ``esr-lint``. The Socialware-native verbs below
+> (``esr install <socialware>``, ``esr talk``, ``esr expose``)
+> land in v0.2 once Socialware packaging is in place. See
+> ``docs/superpowers/prds/07-cli.md`` for the full v0.1 matrix.
+
 The experience ESR delivers, from a user's perspective, centers on these commands:
 
 ```bash
