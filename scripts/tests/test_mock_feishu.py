@@ -6,6 +6,7 @@ so tests can assert the payload the CLI/runtime actually sent.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -49,6 +50,43 @@ async def test_create_message_returns_lark_shape() -> None:
         assert sent[0]["receive_id"] == "oc_test"
         assert sent[0]["msg_type"] == "text"
         assert sent[0]["message_id"] == message_id
+    finally:
+        await mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_inbound_event_pushed_to_connected_client() -> None:
+    """Mock's /ws endpoint is where the feishu adapter connects; mock
+    pushes P2ImMessageReceiveV1-shaped envelopes when push_inbound() is
+    called."""
+    import aiohttp
+
+    mock = MockFeishu()
+    url = await mock.start()
+    try:
+        ws_url = url.replace("http://", "ws://") + "/ws"
+        async with aiohttp.ClientSession() as sess:
+            async with sess.ws_connect(ws_url) as ws:
+                # Drive an inbound event from the test.
+                mock.push_inbound(
+                    chat_id="oc_test",
+                    sender_open_id="ou_user_1",
+                    msg_type="text",
+                    content_text="/new-thread smoke-1",
+                )
+
+                raw = await asyncio.wait_for(ws.receive(), timeout=2.0)
+                assert raw.type == aiohttp.WSMsgType.TEXT
+                envelope = json.loads(raw.data)
+
+        assert envelope["schema"] == "2.0"
+        assert envelope["header"]["event_type"] == "im.message.receive_v1"
+        evt = envelope["event"]
+        assert evt["message"]["chat_id"] == "oc_test"
+        assert evt["message"]["message_type"] == "text"
+        content = json.loads(evt["message"]["content"])
+        assert content["text"] == "/new-thread smoke-1"
+        assert evt["sender"]["sender_id"]["open_id"] == "ou_user_1"
     finally:
         await mock.stop()
 
