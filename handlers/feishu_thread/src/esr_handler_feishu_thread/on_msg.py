@@ -49,7 +49,7 @@ def _handle_inbound(
         new_state = new_state.with_chat_id(chat_id)
 
     actions: list[Action] = [
-        Emit(adapter="feishu-shared", action="react", args={"msg_id": msg_id, "emoji": "ack"}),
+        Emit(adapter="feishu", action="react", args={"msg_id": msg_id, "emoji": "ack"}),
         Emit(
             adapter="cc_tmux",
             action="send_keys",
@@ -70,7 +70,7 @@ def _handle_outbound(
     text = str(event.args.get("text", ""))
     return state, [
         Emit(
-            adapter="feishu-shared",
+            adapter="feishu",
             action="send_message",
             args={"chat_id": state.chat_id, "content": text},
         )

@@ -34,7 +34,7 @@ def test_inbound_msg_emits_react_and_send_keys() -> None:
     assert len(actions) == 2
     react, send_keys = actions
     assert isinstance(react, Emit)
-    assert react.adapter == "feishu-shared"
+    assert react.adapter == "feishu"
     assert react.action == "react"
     assert react.args["msg_id"] == "om_1"
     assert isinstance(send_keys, Emit)
@@ -72,7 +72,7 @@ def test_cc_output_emits_send_message_to_feishu() -> None:
     assert len(actions) == 1
     emit = actions[0]
     assert isinstance(emit, Emit)
-    assert emit.adapter == "feishu-shared"
+    assert emit.adapter == "feishu"
     assert emit.action == "send_message"
     assert emit.args["chat_id"] == "oc_abc"
     assert emit.args["content"] == "hello from cc"
