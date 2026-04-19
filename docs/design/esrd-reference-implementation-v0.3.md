@@ -499,6 +499,15 @@ Upgrading a Socialware:
 
 ## 7. Python Handler SDK (esr-handler-py)
 
+> **v0.1 implementation note:** In esrd v0.1 the Python Handler SDK uses
+> a pure-function model — handlers return ``(new_state, actions:
+> [Emit | Route | InvokeCommand])`` rather than calling
+> ``handler.publish()`` inline. The imperative SDK described below
+> remains valid for future versions; the pure-function model is the
+> practical starting point that enables CI-enforced purity and
+> simpler testing (see ``docs/superpowers/prds/02-python-sdk.md``
+> and ``docs/superpowers/prds/05-handlers.md``).
+
 ### 7.1 Role Reminder
 
 Python handlers are NOT agents. Agents (identity, state, subscriptions, routing) live in BEAM GenServers. Python handlers are the **business implementation** behind agents — where LLM calls, external API interactions, and domain logic happen.
