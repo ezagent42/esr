@@ -26,6 +26,7 @@ defmodule Esr.PeerServer do
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
   @pause_queue_limit 1_000
+  @dedup_limit 1_000
   @persist_table :esr_actor_states
 
   defstruct [
@@ -38,6 +39,7 @@ defmodule Esr.PeerServer do
     adapter_refs: %{},
     metadata: %{},
     dedup_keys: MapSet.new(),
+    dedup_order: :queue.new(),
     paused: false,
     pending_events: [],
     pending_directives: %{}
@@ -53,6 +55,7 @@ defmodule Esr.PeerServer do
           adapter_refs: map(),
           metadata: map(),
           dedup_keys: MapSet.t(String.t()),
+          dedup_order: :queue.queue(String.t()),
           paused: boolean(),
           pending_events: [map()],
           pending_directives: %{String.t() => map()}
@@ -300,9 +303,24 @@ defmodule Esr.PeerServer do
 
   defp record_dedup(%__MODULE__{} = state, nil), do: state
 
-  defp record_dedup(%__MODULE__{dedup_keys: keys} = state, key)
+  defp record_dedup(%__MODULE__{dedup_keys: keys, dedup_order: order} = state, key)
        when is_binary(key) do
-    %__MODULE__{state | dedup_keys: MapSet.put(keys, key)}
+    # PRD F05: bounded 1000-entry MapSet with FIFO eviction.
+    new_order = :queue.in(key, order)
+    new_keys = MapSet.put(keys, key)
+
+    {final_keys, final_order} = evict_if_full(new_keys, new_order)
+
+    %__MODULE__{state | dedup_keys: final_keys, dedup_order: final_order}
+  end
+
+  defp evict_if_full(keys, order) do
+    if MapSet.size(keys) > @dedup_limit do
+      {{:value, oldest}, trimmed_order} = :queue.out(order)
+      {MapSet.delete(keys, oldest), trimmed_order}
+    else
+      {keys, order}
+    end
   end
 
   defp persist_state(%__MODULE__{actor_id: actor_id, state: inner} = s) do

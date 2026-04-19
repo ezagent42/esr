@@ -74,4 +74,87 @@ defmodule Esr.PeerServerTest do
       assert Esr.PeerServer.get_state("test:state") == %{counter: 7}
     end
   end
+
+  describe "dedup_keys bound (F05)" do
+    test "dedup_keys is capped at 1000 entries with FIFO eviction" do
+      handler = "dedup-bound-#{System.unique_integer([:positive])}"
+      actor_id = "dedup-peer-#{System.unique_integer([:positive])}"
+
+      # Fake worker that accepts everything.
+      topic = "handler:" <> handler <> "/default"
+      test_pid = self()
+
+      Task.async(fn ->
+        :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+        send(test_pid, :worker_ready)
+        dedup_test_worker_loop()
+      end)
+
+      assert_receive :worker_ready, 500
+
+      {:ok, pid} =
+        Esr.PeerServer.start_link(
+          actor_id: actor_id,
+          actor_type: "dedup_bound",
+          handler_module: handler,
+          initial_state: %{},
+          handler_timeout: 500
+        )
+
+      # Inject 1002 events with unique idempotency keys.
+      for n <- 1..1002 do
+        key = "k-#{n}"
+
+        send(pid, {:inbound_event, %{
+          "id" => "e-#{n}",
+          "payload" => %{"args" => %{"idempotency_key" => key}}
+        }})
+      end
+
+      # Wait briefly for the mailbox to drain.
+      wait_until_dedup_size(pid, 1000, 200)
+
+      state = :sys.get_state(pid)
+      assert MapSet.size(state.dedup_keys) == 1000
+
+      # Oldest keys evicted; newest kept.
+      refute MapSet.member?(state.dedup_keys, "k-1")
+      refute MapSet.member?(state.dedup_keys, "k-2")
+      assert MapSet.member?(state.dedup_keys, "k-1001")
+      assert MapSet.member?(state.dedup_keys, "k-1002")
+    end
+  end
+
+  defp dedup_test_worker_loop do
+    receive do
+      %Phoenix.Socket.Broadcast{event: "handler_call", payload: env} ->
+        Phoenix.PubSub.broadcast(
+          EsrWeb.PubSub,
+          "handler_reply:" <> env["id"],
+          {:handler_reply,
+           %{"id" => env["id"], "payload" => %{"new_state" => %{}, "actions" => []}}}
+        )
+
+        dedup_test_worker_loop()
+
+      :stop ->
+        :ok
+    after
+      10_000 -> :timeout
+    end
+  end
+
+  defp wait_until_dedup_size(_pid, _target, 0), do: :ok
+
+  defp wait_until_dedup_size(pid, target, attempts) do
+    case :sys.get_state(pid) do
+      %{dedup_keys: keys} ->
+        if MapSet.size(keys) >= target do
+          :ok
+        else
+          Process.sleep(20)
+          wait_until_dedup_size(pid, target, attempts - 1)
+        end
+    end
+  end
 end
