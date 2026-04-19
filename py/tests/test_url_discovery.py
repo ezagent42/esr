@@ -16,7 +16,7 @@ def test_discover_defaults_when_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no env var, returns the documented default."""
     monkeypatch.delenv("ESR_RUNTIME_URL", raising=False)
     assert discover_runtime_url() == DEFAULT_RUNTIME_URL
-    assert DEFAULT_RUNTIME_URL == "ws://localhost:4001/adapter_hub/socket/websocket"
+    assert DEFAULT_RUNTIME_URL == "ws://localhost:4001/adapter_hub/socket/websocket?vsn=2.0.0"
 
 
 def test_discover_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
