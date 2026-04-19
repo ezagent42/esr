@@ -136,6 +136,89 @@ def cmd_list() -> None:
         click.echo(name)
 
 
+@cmd.command("install")
+@click.argument("source", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--compiled-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Directory for compiled YAML (default: patterns/.compiled/).",
+)
+def cmd_install(source: Path, compiled_dir: Path | None) -> None:
+    """Install a pattern: resolve deps + compile to YAML (PRD 07 F08).
+
+    Checks that every adapter type and handler referenced by the
+    pattern's nodes has an installed manifest under ``adapters/`` /
+    ``handlers/`` (PRD 06 F08). Missing deps → list + exit nonzero.
+    On success, writes ``<compiled-dir>/<name>.yaml`` (PRD 06 F09).
+    """
+    from esr.command import COMMAND_REGISTRY, compile_to_yaml, compile_topology
+
+    name = source.stem
+    COMMAND_REGISTRY.pop(name, None)
+    spec = importlib.util.spec_from_file_location(f"_pattern_{name}", source)
+    if spec is None or spec.loader is None:
+        click.echo(f"could not load {source}", err=True)
+        raise click.exceptions.Exit(code=1)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    topo = compile_topology(name)
+
+    missing = _missing_dependencies(topo)
+    if missing:
+        click.echo(
+            f"{name}: missing dependencies — install them first:", err=True
+        )
+        for dep in missing:
+            click.echo(f"  - {dep}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    out_dir = compiled_dir or (Path("patterns") / ".compiled")
+    out = out_dir / f"{name}.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    compile_to_yaml(topo, out)
+    click.echo(f"installed {name} → {out}")
+
+
+@cmd.command("show")
+@click.argument("name")
+@click.option(
+    "--compiled-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("patterns/.compiled"),
+    help="Directory holding compiled YAMLs (default: patterns/.compiled/).",
+)
+def cmd_show(name: str, compiled_dir: Path) -> None:
+    """Pretty-print a compiled command's topology (PRD 06 F10)."""
+    path = compiled_dir / f"{name}.yaml"
+    if not path.exists():
+        click.echo(f"no compiled topology for {name!r} at {path}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    data = yaml.safe_load(path.read_text())
+    click.echo(f"command: {data['name']} (schema v{data.get('schema_version', 1)})")
+    params = data.get("params") or []
+    if params:
+        click.echo(f"params: {', '.join(params)}")
+    nodes = data.get("nodes") or []
+    click.echo(f"nodes ({len(nodes)}):")
+    for n in nodes:
+        line = f"  - {n['id']}  [{n['actor_type']} / {n['handler']}]"
+        if n.get("adapter"):
+            line += f"  adapter={n['adapter']}"
+        if n.get("depends_on"):
+            line += f"  depends_on={n['depends_on']}"
+        click.echo(line)
+        if n.get("init_directive"):
+            click.echo(f"      init_directive: {n['init_directive']}")
+    edges = data.get("edges") or []
+    if edges:
+        click.echo(f"edges ({len(edges)}):")
+        for src, dst in edges:
+            click.echo(f"  {src} → {dst}")
+
+
 @cmd.command("compile")
 @click.argument("name")
 @click.option(
@@ -199,6 +282,53 @@ def lint(path: Path) -> None:
 
     if any_violation:
         raise click.exceptions.Exit(code=1)
+
+
+# --- Dependency resolution for cmd install (PRD 06 F08) ---------------
+
+
+def _extract_type_name(raw: str) -> str:
+    """Strip template suffix from an adapter name.
+
+    The convention is ``<type>-<instance_suffix>`` or
+    ``<type>-{{param}}`` — in either case we only need the leading
+    ``<type>`` for the "is this installed?" check.
+    """
+    if "{{" in raw:
+        raw = raw.split("{{", 1)[0].rstrip("-")
+    return raw.split("-", 1)[0] if "-" in raw else raw
+
+
+def _missing_dependencies(topo: object) -> list[str]:
+    """Return a sorted list of missing adapter/handler dependencies.
+
+    Adapter reference: ``node.adapter`` (a string, possibly templated).
+    Handler reference: ``node.handler`` is ``<handler_name>.<entry>`` —
+    the handler manifest lives at ``handlers/<handler_name>/``.
+    """
+    missing: list[str] = []
+    seen_adapters: set[str] = set()
+    seen_handlers: set[str] = set()
+
+    adapters_dir = Path("adapters")
+    handlers_dir = Path("handlers")
+
+    # Use duck-typing: topo has a .nodes attr
+    for n in getattr(topo, "nodes", ()):
+        if n.adapter:
+            type_name = _extract_type_name(str(n.adapter))
+            if type_name and type_name not in seen_adapters:
+                seen_adapters.add(type_name)
+                if not (adapters_dir / type_name / "esr.toml").exists():
+                    missing.append(f"adapter:{type_name}")
+        if n.handler:
+            h_name = str(n.handler).split(".", 1)[0]
+            if h_name and h_name not in seen_handlers:
+                seen_handlers.add(h_name)
+                if not (handlers_dir / h_name / "esr.toml").exists():
+                    missing.append(f"handler:{h_name}")
+
+    return sorted(missing)
 
 
 # --- Shared helpers for list commands ---------------------------------
