@@ -10,6 +10,7 @@ defmodule EsrWeb.HandlerSocket do
   use Phoenix.Socket
 
   channel "handler:*", EsrWeb.HandlerChannel
+  channel "cli:*", EsrWeb.CliChannel
 
   @impl Phoenix.Socket
   def connect(_params, socket, _connect_info), do: {:ok, socket}

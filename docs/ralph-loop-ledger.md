@@ -14,3 +14,4 @@
 | 5 | 2026-04-19 | 8a | F04-channel-call | 04e4789 | unit_tests | sha256:b063d4b65397eaa2 |
 | 6 | 2026-04-19 | 8c | runtime-bridge-call | f92a012 | unit_tests | sha256:9f6b7a11b0b71064 |
 | 7 | 2026-04-19 | 8c | submit-helpers-rewire | 4b18d7e | unit_tests | sha256:1e0e70a0f3952047 |
+| 8 | 2026-04-19 | 8c | cli-channel | 4293729 | unit_tests | sha256:0a8b2515259a1be3 |
