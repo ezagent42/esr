@@ -494,6 +494,87 @@ def cmd_compile(name: str, output: Path | None) -> None:
     click.echo(f"compiled {name} → {out}")
 
 
+def _submit_cmd_run(artifact: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
+    """Send a compiled artifact + params to the runtime for instantiation.
+
+    Live v0.1 implementation is a stub — the real hookup is a Phase 8
+    concern and uses a ``cli:run`` control channel. Unit tests mock
+    this function to decouple the CLI surface from the runtime.
+    Returns a handle dict: ``{"name", "params", "peer_ids"}``.
+    """
+    raise NotImplementedError(
+        "cmd run requires a live runtime; run `esr status` to verify "
+        "the runtime is reachable, then retry."
+    )
+
+
+@cmd.command("run")
+@click.argument("name")
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    help="Param binding (``key=value``); repeat for multiple params.",
+)
+@click.option(
+    "--compiled-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Override the .compiled/ lookup path (default: ~/.esrd/default/commands/.compiled).",
+)
+def cmd_run(name: str, params: tuple[str, ...], compiled_dir: Path | None) -> None:
+    """Instantiate a registered command (PRD 07 F11).
+
+    Loads the compiled artifact from ``.compiled/<name>.yaml``,
+    validates declared params are provided, and submits to the
+    runtime. Prints the instantiation handle on stdout. Timeout 30 s
+    per PRD.
+    """
+    root = compiled_dir or (
+        Path(os.path.expanduser("~")) / ".esrd" / "default" / "commands" / ".compiled"
+    )
+    path = root / f"{name}.yaml"
+    if not path.exists():
+        click.echo(f"command {name!r} not found at {path}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    artifact = yaml.safe_load(path.read_text()) or {}
+
+    # Parse --param k=v flags into a dict.
+    params_map: dict[str, str] = {}
+    for binding in params:
+        if "=" not in binding:
+            click.echo(f"invalid --param {binding!r}: expected key=value", err=True)
+            raise click.exceptions.Exit(code=1)
+        k, _, v = binding.partition("=")
+        params_map[k] = v
+
+    declared = artifact.get("params") or []
+    missing = [p for p in declared if p not in params_map]
+    if missing:
+        click.echo(
+            f"missing params: {', '.join(missing)} (pass with --param {missing[0]}=<value>)",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    try:
+        handle = _submit_cmd_run(artifact, params_map)
+    except TimeoutError as exc:
+        click.echo(
+            f"runtime timeout ({exc}); run `esr status` to check reachability",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1) from exc
+    except NotImplementedError as exc:
+        click.echo(f"cmd run: {exc}", err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    click.echo(
+        f"instantiated {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
+    )
+
+
 # --- lint (F14) --------------------------------------------------------
 
 
