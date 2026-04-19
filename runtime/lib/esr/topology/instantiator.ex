@@ -364,13 +364,15 @@ defmodule Esr.Topology.Instantiator do
     home = System.user_home!()
     base = Path.join(home, ".esrd")
 
-    with {:ok, entries} <- File.ls(base) do
-      entries
-      |> Enum.map(&Path.join([base, &1, "adapters.yaml"]))
-      |> Enum.filter(&File.regular?/1)
-      |> Enum.find_value(%{}, fn file -> read_adapter_entry(file, adapter_name) end)
-    else
-      _ -> %{}
+    case File.ls(base) do
+      {:ok, entries} ->
+        entries
+        |> Enum.map(&Path.join([base, &1, "adapters.yaml"]))
+        |> Enum.filter(&File.regular?/1)
+        |> Enum.find_value(%{}, fn file -> read_adapter_entry(file, adapter_name) end)
+
+      _ ->
+        %{}
     end
   end
 

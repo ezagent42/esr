@@ -267,14 +267,13 @@ defmodule Esr.WorkerSupervisor do
   defp spawn_python(extra_args) do
     repo = repo_root()
     log_path = log_path_for(extra_args)
-    # setsid gives us a new process group so `kill -<pid>` can terminate
-    # both uv and its child.
-    cmd =
-      "cd #{repo} && exec setsid uv run --project py python " <>
-        Enum.map_join(extra_args, " ", &shell_quote/1) <>
-        " >#{log_path} 2>&1 &"
+    # scripts/spawn_worker.sh daemonises the process and prints its pid —
+    # solves the bash-in-bash-in-elixir stdin/stdout-inheritance hang the
+    # inline `cmd & echo $!` invocation triggered on macOS.
+    wrapper = Path.join(repo, "scripts/spawn_worker.sh")
+    argv = [wrapper, log_path, "uv", "run", "--project", "py", "python"] ++ extra_args
 
-    case System.cmd("bash", ["-c", cmd <> " echo $!"], stderr_to_stdout: false) do
+    case System.cmd(hd(argv), tl(argv), cd: repo, stderr_to_stdout: false) do
       {out, 0} ->
         case out |> String.trim() |> Integer.parse() do
           {pid, _} when pid > 0 -> {:ok, pid}
