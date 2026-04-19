@@ -101,3 +101,51 @@ def test_parser_exception_is_caught() -> None:
     # content['content'] = 5 is non-iterable, so `for para in 5` raises TypeError
     out = parse_content("post", {"content": 5})
     assert out == "[post message — parse failed]"
+
+
+# --- F12: WS frame dispatch --------------------------------------------
+
+
+def test_parse_ws_event_msg_received() -> None:
+    """A P2ImMessageReceiveV1 frame yields a msg_received adapter event."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_abc"}},
+        "message": {
+            "message_id": "om_msg",
+            "chat_id": "oc_chat",
+            "message_type": "text",
+            "content": '{"text": "hello"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    assert out["event_type"] == "msg_received"
+    assert out["args"]["msg_id"] == "om_msg"
+    assert out["args"]["chat_id"] == "oc_chat"
+    assert out["args"]["msg_type"] == "text"
+    assert out["args"]["text"] == "hello"
+    assert out["args"]["sender_id"] == "ou_abc"
+
+
+def test_parse_ws_event_reaction_added() -> None:
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "message_id": "om_msg",
+        "reaction_type": {"emoji_type": "THUMBSUP"},
+        "operator_id": {"open_id": "ou_op"},
+    }
+    out = parse_ws_event("P2ImMessageReactionCreatedV1", raw)
+    assert out is not None
+    assert out["event_type"] == "reaction_added"
+    assert out["args"]["msg_id"] == "om_msg"
+    assert out["args"]["emoji_type"] == "THUMBSUP"
+    assert out["args"]["operator_id"] == "ou_op"
+
+
+def test_parse_ws_event_unknown_returns_none() -> None:
+    from esr_feishu.parsers import parse_ws_event
+
+    assert parse_ws_event("P2SomethingElseV1", {}) is None

@@ -162,3 +162,80 @@ def _parse_interactive(content: dict[str, Any]) -> str:
                     )
                     parts.append(f"[button: {label}]")
     return "\n".join(p for p in parts if p) or "[card]"
+
+
+# --- F12: WS event → normalised event dict -----------------------------
+
+
+def parse_ws_event(event_name: str, raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Turn a Feishu WS event frame into an adapter event dict.
+
+    Supported event names (PRD 04 F12):
+     - ``P2ImMessageReceiveV1``  → ``{event_type: "msg_received", args: {...}}``
+     - ``P2ImMessageReactionCreatedV1``
+                                 → ``{event_type: "reaction_added", args: {...}}``
+
+    ``raw`` is the event's ``data`` dict (already JSON-decoded). Returns
+    ``None`` for unrecognised event names so the caller can filter them.
+    """
+    if event_name == "P2ImMessageReceiveV1":
+        return _parse_msg_received(raw)
+    if event_name == "P2ImMessageReactionCreatedV1":
+        return _parse_reaction_created(raw)
+    return None
+
+
+def _parse_msg_received(raw: dict[str, Any]) -> dict[str, Any]:
+    """Shape a P2ImMessageReceiveV1 data dict for handler consumption."""
+    import json
+
+    message = raw.get("message") or {}
+    msg_type = message.get("message_type") or message.get("msg_type") or "unknown"
+    content_str = message.get("content", "")
+    try:
+        content = json.loads(content_str) if content_str else {}
+    except (ValueError, TypeError):
+        content = {}
+    text = parse_content(msg_type, content)
+    chat_id = message.get("chat_id", "")
+    msg_id = message.get("message_id", "")
+    sender = raw.get("sender") or {}
+    sender_id_field = sender.get("sender_id")
+    sender_id = (
+        sender_id_field.get("open_id", "")
+        if isinstance(sender_id_field, dict)
+        else str(sender.get("open_id", ""))
+    )
+    return {
+        "event_type": "msg_received",
+        "args": {
+            "msg_id": msg_id,
+            "chat_id": chat_id,
+            "msg_type": msg_type,
+            "text": text,
+            "sender_id": sender_id,
+            "content": content,
+        },
+    }
+
+
+def _parse_reaction_created(raw: dict[str, Any]) -> dict[str, Any]:
+    """Shape a P2ImMessageReactionCreatedV1 data dict for handler consumption."""
+    reaction_type = raw.get("reaction_type", {})
+    emoji_type = (
+        reaction_type.get("emoji_type", "")
+        if isinstance(reaction_type, dict)
+        else ""
+    )
+    operator = raw.get("operator_id") or raw.get("user_id") or {}
+    operator_id = (
+        operator.get("open_id", "") if isinstance(operator, dict) else ""
+    )
+    return {
+        "event_type": "reaction_added",
+        "args": {
+            "msg_id": raw.get("message_id", ""),
+            "emoji_type": emoji_type,
+            "operator_id": operator_id,
+        },
+    }
