@@ -508,6 +508,29 @@ def _submit_cmd_run(artifact: dict[str, Any], params: dict[str, str]) -> dict[st
     )
 
 
+def _submit_cmd_stop(name: str, params: dict[str, str]) -> dict[str, Any]:
+    """Deactivate a running instantiation by (name, params) via the runtime.
+
+    Mirrors ``_submit_cmd_run`` — stubbed for v0.1; live wiring in
+    Phase 8. Returns a handle: ``{"name", "params", "stopped_peer_ids"}``.
+    """
+    raise NotImplementedError(
+        "cmd stop requires a live runtime; run `esr status` to verify "
+        "the runtime is reachable, then retry."
+    )
+
+
+def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
+    """Parse ``--param k=v`` repeats into a dict; surface ``key=value`` format errors."""
+    out: dict[str, str] = {}
+    for binding in bindings:
+        if "=" not in binding:
+            raise click.BadParameter(f"invalid --param {binding!r}: expected key=value")
+        k, _, v = binding.partition("=")
+        out[k] = v
+    return out
+
+
 @cmd.command("run")
 @click.argument("name")
 @click.option(
@@ -572,6 +595,46 @@ def cmd_run(name: str, params: tuple[str, ...], compiled_dir: Path | None) -> No
 
     click.echo(
         f"instantiated {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
+    )
+
+
+@cmd.command("stop")
+@click.argument("name")
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    help="Param binding (``key=value``); must match the live (name, params) key.",
+)
+def cmd_stop(name: str, params: tuple[str, ...]) -> None:
+    """Deactivate a live topology instantiation (PRD 07 F12).
+
+    Identifies the target by ``(name, params)`` — the same key
+    Registry.register used — and triggers Registry.deactivate on
+    the runtime, cascading tear-down in reverse depends_on order
+    per spec §6.5.
+    """
+    try:
+        params_map = _parse_param_bindings(params)
+    except click.BadParameter as exc:
+        click.echo(str(exc), err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    try:
+        handle = _submit_cmd_stop(name, params_map)
+    except TimeoutError as exc:
+        click.echo(
+            f"runtime timeout ({exc}); run `esr status` to check reachability",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1) from exc
+    except NotImplementedError as exc:
+        click.echo(f"cmd stop: {exc}", err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    stopped = handle.get("stopped_peer_ids", [])
+    click.echo(
+        f"stopped {handle['name']!r} → peers={','.join(stopped)}"
     )
 
 
