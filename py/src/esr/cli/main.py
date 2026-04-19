@@ -317,6 +317,25 @@ def adapter_add(
     cfg_path.write_text(yaml.safe_dump(doc, sort_keys=True))
     click.echo(f"added {instance_name} ({adapter_type})")
 
+    # Phase 8f: ask the runtime to launch a Python adapter_runner
+    # subprocess for this instance immediately, so inbound events
+    # (Lark WS / mock_feishu /ws) can arrive before any topology
+    # instantiation. Best-effort — if esrd isn't running yet, skip
+    # silently (the next esrd start will pick the instance up).
+    from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+    try:
+        resp = call_runtime(
+            topic=f"cli:adapter/start/{adapter_type}",
+            payload={"instance_id": instance_name, "config": cfg_dict},
+            timeout_sec=10.0,
+        )
+        data = _response(resp)
+        if data.get("ok") is False and data.get("reason"):
+            click.echo(f"warning: adapter worker spawn reported: {data['reason']}", err=True)
+    except RuntimeUnreachable:
+        click.echo("note: esrd not running — adapter will be spawned on next esrd start",
+                   err=True)
+
 
 def _parse_config_flags(args: tuple[str, ...]) -> dict[str, str]:
     """Turn ``--key value`` / ``--key=value`` pairs into a dict.

@@ -185,6 +185,26 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"flushed" => flushed}}
   end
 
+  def dispatch("cli:adapter/start/" <> adapter_type, payload) when is_binary(adapter_type) do
+    instance_id = Map.get(payload, "instance_id")
+    config = Map.get(payload, "config") || %{}
+
+    if is_binary(instance_id) and instance_id != "" do
+      url =
+        "ws://127.0.0.1:" <>
+          Integer.to_string(phoenix_port()) <>
+          "/adapter_hub/socket/websocket?vsn=2.0.0"
+
+      case Esr.WorkerSupervisor.ensure_adapter(adapter_type, instance_id, config, url) do
+        :ok -> %{"data" => %{"ok" => true, "spawned" => true}}
+        :already_running -> %{"data" => %{"ok" => true, "spawned" => false}}
+        {:error, reason} -> %{"data" => %{"ok" => false, "reason" => inspect(reason)}}
+      end
+    else
+      %{"data" => %{"ok" => false, "reason" => "instance_id missing"}}
+    end
+  end
+
   def dispatch("cli:trace", payload) do
     duration_s =
       case Map.get(payload, "duration_seconds") do
@@ -263,6 +283,13 @@ defmodule EsrWeb.CliChannel do
   @spec stringify_key(term()) :: String.t()
   defp stringify_key(k) when is_binary(k), do: k
   defp stringify_key(k), do: to_string(k)
+
+  defp phoenix_port do
+    case EsrWeb.Endpoint.config(:http) do
+      opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
+      _ -> 4001
+    end
+  end
 
   @spec serialise_dl_entry(DeadLetterEntry.t()) :: map()
   defp serialise_dl_entry(%DeadLetterEntry{} = entry) do
