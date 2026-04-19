@@ -88,6 +88,8 @@ class _CommandCtx:
     name: str
     nodes: list[_Node] = field(default_factory=list)
     edges: list[tuple[str, str]] = field(default_factory=list)
+    ports_in: dict[str, str] = field(default_factory=dict)
+    ports_out: dict[str, str] = field(default_factory=dict)
 
 
 _CURRENT: ContextVar[_CommandCtx | None] = ContextVar("_esr_command_ctx", default=None)
@@ -149,3 +151,37 @@ def _validate_init_directive(d: dict[str, Any]) -> None:
         raise TypeError(
             "init_directive must be {'action': str, 'args': dict}; 'args' must be dict"
         )
+
+
+# --- Ports (F11) ---------------------------------------------------------
+
+
+class _Port:
+    """Namespace for ``port.input`` / ``port.output`` — a stateless
+    adapter over the current ``_CommandCtx``."""
+
+    @staticmethod
+    def input(name: str, type: str) -> str:  # noqa: A002
+        """Record a typed input port. Returns ``name`` (so it can be used as a node id)."""
+        ctx = _CURRENT.get(None)
+        if ctx is None:
+            raise RuntimeError("port.input() called outside a command context")
+        if name in ctx.ports_in:
+            raise ValueError(f"input port {name} already declared")
+        ctx.ports_in[name] = type
+        return name
+
+    @staticmethod
+    def output(name: str, type: str) -> str:  # noqa: A002
+        """Record a typed output port. Returns ``name``."""
+        ctx = _CURRENT.get(None)
+        if ctx is None:
+            raise RuntimeError("port.output() called outside a command context")
+        if name in ctx.ports_out:
+            raise ValueError(f"output port {name} already declared")
+        ctx.ports_out[name] = type
+        return name
+
+
+port = _Port()
+"""Namespace object — call ``port.input(name, type)`` / ``port.output(...)``."""

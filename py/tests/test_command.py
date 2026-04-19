@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from esr.command import COMMAND_REGISTRY, _command_context, command, node
+from esr.command import COMMAND_REGISTRY, _command_context, command, node, port
 
 
 @pytest.fixture(autouse=True)
@@ -137,3 +137,45 @@ def test_node_depends_on_accepts_iterable() -> None:
         )
 
     assert ctx.nodes[0].depends_on == ("a", "b")
+
+
+# --- PRD 02 F11: port.input / port.output ------------------------------
+
+
+def test_port_input_records_in_context() -> None:
+    """port.input records a typed input port in the current context."""
+    with _command_context("cmd") as ctx:
+        name = port.input("from_feishu", "FeishuMsg")
+
+    assert name == "from_feishu"
+    assert ctx.ports_in == {"from_feishu": "FeishuMsg"}
+
+
+def test_port_output_records_in_context() -> None:
+    """port.output records a typed output port in the current context."""
+    with _command_context("cmd") as ctx:
+        name = port.output("to_cc", "CCCmd")
+
+    assert name == "to_cc"
+    assert ctx.ports_out == {"to_cc": "CCCmd"}
+
+
+def test_port_input_outside_context_raises() -> None:
+    """port.input called outside a command context raises RuntimeError."""
+    with pytest.raises(RuntimeError, match=r"port\.input\(\) called outside"):
+        port.input("x", "T")
+
+
+def test_port_output_outside_context_raises() -> None:
+    """port.output called outside a command context raises RuntimeError."""
+    with pytest.raises(RuntimeError, match=r"port\.output\(\) called outside"):
+        port.output("x", "T")
+
+
+def test_port_duplicate_input_name_raises() -> None:
+    """Duplicate input-port name inside the same command raises ValueError."""
+    with _command_context("cmd"), pytest.raises(
+        ValueError, match=r"input port dup already declared"
+    ):
+        port.input("dup", "T")
+        port.input("dup", "T")
