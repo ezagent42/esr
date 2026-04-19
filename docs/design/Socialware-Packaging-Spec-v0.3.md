@@ -18,6 +18,15 @@ This specification defines the canonical format of a Socialware package.
 
 ## 1. Package Layout
 
+> **v0.1 note:** Socialware packaging lands in v0.2. In v0.1
+> patterns, adapters, and handlers ship as independent Python
+> packages installable via ``esr cmd install``,
+> ``esr adapter install``, ``esr handler install``. Bundling these
+> into a Socialware package (with ``socialware.yaml``) is a v0.2
+> convergence. See
+> ``docs/superpowers/specs/2026-04-18-esr-extraction-design.md``
+> for the v0.1 distribution model.
+
 A Socialware is a directory with a specific structure:
 
 ```
