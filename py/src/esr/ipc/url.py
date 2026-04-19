@@ -1,31 +1,78 @@
 """Runtime URL discovery (PRD 03 F11).
 
 Python-side processes (handler workers, adapter runners, CLI) find
-the Phoenix endpoint via the ``ESR_RUNTIME_URL`` environment variable.
-The default points at the dev esrd instance on localhost:4001 — the
-documented layout from spec §3.8.
+the Phoenix endpoint via environment variables. The runtime exposes
+two distinct WebSocket endpoints per spec §3.3 / §7.1:
 
-``esr use`` (PRD 07 F01) sets the env var on the shell; the processes
-it spawns inherit it automatically.
+- ``/adapter_hub/socket`` — for adapter processes
+- ``/handler_hub/socket`` — for handler workers
+
+Phoenix routes by socket path, so the same URL cannot serve both.
+Reviewer C1 in the Phase 2 review called out that the Python side
+was hardcoding only the adapter path — any handler-worker
+orchestration would silently connect to the wrong socket.
+
+Callers pass ``kind="adapter"`` or ``kind="handler"`` to pick the
+right default; the kind-agnostic legacy form (``ESR_RUNTIME_URL``)
+remains as a backward-compat alias for adapter_hub.
+
+``esr use`` (PRD 07 F01) sets the env vars on the shell; processes
+it spawns inherit them automatically.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Literal
 
-DEFAULT_RUNTIME_URL: str = "ws://localhost:4001/adapter_hub/socket/websocket"
-"""Documented default for the Phoenix adapter_hub socket."""
+DEFAULT_ADAPTER_HUB_URL: str = "ws://localhost:4001/adapter_hub/socket/websocket"
+"""Default Phoenix adapter_hub socket URL for adapters."""
+
+DEFAULT_HANDLER_HUB_URL: str = "ws://localhost:4001/handler_hub/socket/websocket"
+"""Default Phoenix handler_hub socket URL for handler workers."""
+
+DEFAULT_RUNTIME_URL: str = DEFAULT_ADAPTER_HUB_URL
+"""Legacy alias — old callers default to the adapter socket."""
+
+Kind = Literal["adapter", "handler"]
 
 
-def discover_runtime_url(*, override: str | None = None) -> str:
-    """Return the runtime WS URL.
+def discover_runtime_url(
+    *,
+    override: str | None = None,
+    kind: Kind | None = None,
+) -> str:
+    """Return the runtime WS URL for a given socket kind.
 
-    Priority: ``override`` argument > ``ESR_RUNTIME_URL`` env var >
-    ``DEFAULT_RUNTIME_URL``. An empty env value is treated as unset.
+    Priority (highest first):
+    1. ``override`` argument
+    2. ``ESR_ADAPTER_HUB_URL`` / ``ESR_HANDLER_HUB_URL`` (kind-specific env var)
+    3. ``ESR_RUNTIME_URL`` (kind-agnostic legacy env var)
+    4. Kind-specific default
+
+    If ``kind`` is ``None`` (legacy callers), behaves as before —
+    returns the adapter_hub URL via ``ESR_RUNTIME_URL`` or the
+    adapter default.
+
+    An empty env value is treated as unset.
     """
     if override:
         return override
-    env = os.environ.get("ESR_RUNTIME_URL", "")
-    if env:
-        return env
-    return DEFAULT_RUNTIME_URL
+
+    if kind == "handler":
+        specific = os.environ.get("ESR_HANDLER_HUB_URL", "")
+        if specific:
+            return specific
+        legacy = os.environ.get("ESR_RUNTIME_URL", "")
+        if legacy:
+            return legacy
+        return DEFAULT_HANDLER_HUB_URL
+
+    # kind in ("adapter", None) — default path
+    specific = os.environ.get("ESR_ADAPTER_HUB_URL", "")
+    if specific:
+        return specific
+    legacy = os.environ.get("ESR_RUNTIME_URL", "")
+    if legacy:
+        return legacy
+    return DEFAULT_ADAPTER_HUB_URL
