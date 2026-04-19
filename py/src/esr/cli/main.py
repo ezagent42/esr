@@ -514,7 +514,12 @@ def _submit_cmd_run(artifact: dict[str, Any], params: dict[str, str]) -> dict[st
         topic=f"cli:run/{name}",
         payload={"artifact": artifact, "params": params},
     ))
-    return {"name": name, "params": params, "peer_ids": resp.get("peer_ids", [])}
+    data = resp.get("data") or {}
+    return {
+        "name": data.get("name", name),
+        "params": data.get("params", params),
+        "peer_ids": data.get("peer_ids", []),
+    }
 
 
 def _submit_cmd_stop(name: str, params: dict[str, str]) -> dict[str, Any]:
@@ -524,7 +529,12 @@ def _submit_cmd_stop(name: str, params: dict[str, str]) -> dict[str, Any]:
         topic=f"cli:stop/{name}",
         payload={"name": name, "params": params},
     ))
-    return {"name": name, "params": params, "stopped_peer_ids": resp.get("stopped_peer_ids", [])}
+    data = resp.get("data") or {}
+    return {
+        "name": data.get("name", name),
+        "params": data.get("params", params),
+        "stopped_peer_ids": data.get("stopped_peer_ids", []),
+    }
 
 
 def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
@@ -554,15 +564,19 @@ def _submit_trace(
 def _submit_debug(action: str, args: dict[str, Any]) -> dict[str, Any]:
     """Debug control ops via ``cli:debug`` topic."""
     from esr.cli.runtime_bridge import call_runtime
-    return _response(call_runtime(topic=f"cli:debug/{action}", payload=args))
+    resp = _response(call_runtime(topic=f"cli:debug/{action}", payload=args))
+    data = resp.get("data") or {}
+    return data if isinstance(data, dict) else {}
 
 
 def _submit_drain(*, timeout: str | None) -> dict[str, Any]:
     """Graceful shutdown via ``cli:drain`` topic."""
     from esr.cli.runtime_bridge import call_runtime
-    return _response(call_runtime(
+    resp = _response(call_runtime(
         topic="cli:drain", payload={"timeout": timeout}, timeout_sec=120.0,
     ))
+    data = resp.get("data") or {}
+    return data if isinstance(data, dict) else {}
 
 
 def _stream_telemetry(

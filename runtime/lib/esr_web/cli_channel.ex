@@ -192,11 +192,14 @@ defmodule EsrWeb.CliChannel do
     %{"entries" => entries}
   end
 
-  def dispatch(topic, payload) do
-    # Phase 8c iterates: add a case clause per real cli:<op>. Until then,
-    # echo so the Python CLI can observe that its call reached the runtime
-    # and came back with a shaped response.
-    %{"echoed" => payload, "topic" => topic}
+  def dispatch(topic, _payload) do
+    # Closes reviewer-C2. Unknown topics surface as a structured error so
+    # typos and not-yet-implemented dispatches (cli:debug/replay,
+    # cli:debug/inject, cli:deadletter/retry, cli:telemetry/<pat>,
+    # cli:actors/logs) can't silently succeed with an echoing reply. Shape
+    # matches every other dispatch ({"data" => ...}) so the CLI helpers
+    # surface the error string via their existing data.get("error") paths.
+    %{"data" => %{"error" => "unknown_topic: #{topic}"}}
   end
 
   @spec instantiate_error_message(term()) :: String.t()

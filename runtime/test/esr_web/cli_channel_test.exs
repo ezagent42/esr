@@ -24,10 +24,11 @@ defmodule EsrWeb.CliChannelTest do
     assert socket.topic == "cli:probe"
   end
 
-  test "cli_call echoes payload in the reply", %{socket: socket} do
+  test "unknown cli:* topic returns structured error (reviewer C2)",
+       %{socket: socket} do
     ref = push(socket, "cli_call", %{"hello" => "world"})
     assert_reply ref, :ok, response
-    assert response == %{"echoed" => %{"hello" => "world"}, "topic" => "cli:probe"}
+    assert response["data"]["error"] == "unknown_topic: cli:probe"
   end
 
   test "unknown event returns :error reply", %{socket: socket} do
