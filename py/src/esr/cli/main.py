@@ -547,6 +547,17 @@ def _submit_trace(
     )
 
 
+def _submit_debug(action: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Debug control ops via the runtime.
+
+    Stubbed for v0.1; Phase 8 wires to a ``cli:debug`` topic.
+    Actions: replay / inject / pause / resume.
+    """
+    raise NotImplementedError(
+        "debug commands require a live runtime; run `esr status` to verify."
+    )
+
+
 def _stream_telemetry(
     *, pattern: str, format: str  # noqa: A002
 ) -> Iterator[dict[str, Any]]:
@@ -758,6 +769,51 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.group()
+def debug() -> None:
+    """Admin / debug commands (PRD 07 F18)."""
+
+
+@debug.command("replay")
+@click.argument("msg_id")
+def debug_replay(msg_id: str) -> None:
+    """Re-process a previously-received event by its envelope id."""
+    result = _submit_debug("replay", {"msg_id": msg_id})
+    click.echo(f"replayed {result.get('replayed', msg_id)!r}")
+
+
+@debug.command("inject")
+@click.option("--to", "to_actor", required=True, help="Target actor_id.")
+@click.option("--event", "event_json", required=True, help="Event JSON body.")
+def debug_inject(to_actor: str, event_json: str) -> None:
+    """Inject a synthetic event straight into a peer's mailbox."""
+    try:
+        event = json.loads(event_json)
+    except json.JSONDecodeError as exc:
+        click.echo(f"invalid --event JSON: {exc}", err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    result = _submit_debug("inject", {"to": to_actor, "event": event})
+    click.echo(f"injected into {result.get('actor_id', to_actor)!r}")
+
+
+@debug.command("pause")
+@click.argument("actor_id")
+def debug_pause(actor_id: str) -> None:
+    """Pause a peer (inbound events queue until resume)."""
+    _submit_debug("pause", {"actor_id": actor_id})
+    click.echo(f"paused {actor_id!r}")
+
+
+@debug.command("resume")
+@click.argument("actor_id")
+def debug_resume(actor_id: str) -> None:
+    """Resume a paused peer, draining queued events FIFO."""
+    result = _submit_debug("resume", {"actor_id": actor_id})
+    drained = result.get("drained", 0)
+    click.echo(f"resumed {actor_id!r} (drained {drained} queued events)")
 
 
 @cli.group()
