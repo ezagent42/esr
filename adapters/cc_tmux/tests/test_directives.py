@@ -121,3 +121,79 @@ async def test_unknown_directive_returns_error(monkeypatch: pytest.MonkeyPatch) 
     ack = await adapter_inst.on_directive("teleport", {})
     assert ack["ok"] is False
     assert "unknown action" in ack["error"]
+
+
+# --- F18: send_keys ---------------------------------------------------
+
+
+async def test_send_keys_passes_content_and_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send_keys invokes tmux send-keys with content + Enter."""
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive(
+        "send_keys", {"session_name": "sess-A", "content": "hello world"}
+    )
+    assert ack == {"ok": True}
+
+    # skip the tmux --version probe call
+    sk_call = calls[1]
+    assert sk_call == [
+        "tmux",
+        "send-keys",
+        "-t",
+        "sess-A",
+        "hello world",
+        "Enter",
+    ]
+
+
+async def test_send_keys_handles_shell_special_chars_without_reinterpretation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Content with $var / backticks / quotes reaches tmux verbatim (no shell)."""
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    tricky = "echo $HOME `uname` 'hi \"there\"'"
+    await adapter_inst.on_directive(
+        "send_keys", {"session_name": "s", "content": tricky}
+    )
+    # subprocess.run argv-mode does not re-interpret; content arrives verbatim
+    assert calls[1] == ["tmux", "send-keys", "-t", "s", tricky, "Enter"]
+
+
+# --- F19: kill_session ------------------------------------------------
+
+
+async def test_kill_session_calls_tmux_kill(monkeypatch: pytest.MonkeyPatch) -> None:
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive("kill_session", {"session_name": "sess-A"})
+    assert ack == {"ok": True}
+    assert calls[1] == ["tmux", "kill-session", "-t", "sess-A"]
+
+
+# --- F20: capture_pane ------------------------------------------------
+
+
+async def test_capture_pane_returns_pane_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    def _responder(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        if argv[:2] == ["tmux", "--version"]:
+            return _ok(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="pane text\nline2\n", stderr="")
+
+    _patch_run(monkeypatch, _responder)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive("capture_pane", {"session_name": "sess-A"})
+    assert ack == {"ok": True, "result": {"content": "pane text\nline2\n"}}

@@ -56,6 +56,12 @@ class CcTmuxAdapter:
 
         if action == "new_session":
             return self._new_session(args)
+        if action == "send_keys":
+            return self._send_keys(args)
+        if action == "kill_session":
+            return self._kill_session(args)
+        if action == "capture_pane":
+            return self._capture_pane(args)
         return {"ok": False, "error": f"unknown action: {action}"}
 
     def _ensure_tmux(self) -> bool:
@@ -83,4 +89,46 @@ class CcTmuxAdapter:
         )
         if result.returncode == 0:
             return {"ok": True}
+        return {"ok": False, "error": result.stderr.strip()}
+
+    def _send_keys(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Run ``tmux send-keys -t <session_name> <content> Enter`` (F18).
+
+        Content is passed as its own argv element — tmux receives it
+        verbatim without shell interpretation, so $vars / backticks /
+        quotes inside ``content`` are literal keystrokes.
+        """
+        session_name = args["session_name"]
+        content = args["content"]
+        result = subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, content, "Enter"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return {"ok": True}
+        return {"ok": False, "error": result.stderr.strip()}
+
+    def _kill_session(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Run ``tmux kill-session -t <session_name>`` (F19)."""
+        session_name = args["session_name"]
+        result = subprocess.run(
+            ["tmux", "kill-session", "-t", session_name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return {"ok": True}
+        return {"ok": False, "error": result.stderr.strip()}
+
+    def _capture_pane(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Run ``tmux capture-pane -t <session_name> -p`` returning pane text (F20)."""
+        session_name = args["session_name"]
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return {"ok": True, "result": {"content": result.stdout}}
         return {"ok": False, "error": result.stderr.strip()}
