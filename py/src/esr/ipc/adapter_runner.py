@@ -100,31 +100,60 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
         await pusher.push_envelope(env)
 
 
+async def run_with_client(
+    adapter: Any,
+    client: Any,
+    *,
+    topic: str,
+) -> None:
+    """TDD-friendly entry: given an already-constructed ``client`` and
+    ``adapter``, connect, join, and run the directive + event loops.
+
+    The Phoenix v2 frame shape — ``[join_ref, ref, topic, event, payload]`` —
+    is parsed inside the on_msg callback; envelopes are pushed onto a queue
+    that :func:`directive_loop` drains.
+    """
+    from esr.ipc.channel_pusher import ChannelPusher
+
+    await client.connect()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    def _on_frame(frame: list[Any]) -> None:
+        # frame is [join_ref, ref, topic, event, payload]
+        if len(frame) < 5:
+            return
+        event, payload = frame[3], frame[4]
+        if event != "envelope" or not isinstance(payload, dict):
+            return
+        if payload.get("kind") != "directive":
+            return
+        queue.put_nowait(payload)
+
+    await client.join(topic, _on_frame)
+    pusher = ChannelPusher(client=client, topic=topic, source_uri=topic)
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(directive_loop(adapter, queue, pusher))
+            tg.create_task(event_loop(adapter, pusher))
+    finally:
+        await client.close()
+
+
 async def run(
     adapter_name: str,
     instance_id: str,
     config: dict[str, Any],
     url: str,
 ) -> None:
-    """Full-orchestration entry point — wires directive + event loops against
-    a live :class:`esr.ipc.channel_client.ChannelClient` (spec §5.3 F13).
-
-    Phase 8a fills in: adapter factory lookup, ChannelClient construction,
-    queue wiring, asyncio.TaskGroup that runs ``directive_loop`` and
-    ``event_loop`` concurrently until either completes or the client closes.
+    """Full-orchestration entry point — loads an adapter factory, constructs
+    a :class:`ChannelClient`, and delegates to :func:`run_with_client`
+    (spec §5.3 F13). Phase 8b will supply the factory-loading logic.
     """
+    from esr.adapters import load_adapter_factory  # type: ignore[import-not-found]
     from esr.ipc.channel_client import ChannelClient
-    from esr.adapters import load_adapter_factory
 
     factory = load_adapter_factory(adapter_name)
     adapter = factory(instance_id, config)
-    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-    client = ChannelClient(url, source_uri=f"adapter:{adapter_name}/{instance_id}")
-    await client.connect()
-    client.on_directive = queue.put_nowait
-    try:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(directive_loop(adapter, queue, client))
-            tg.create_task(event_loop(adapter, client))
-    finally:
-        await client.close()
+    topic = f"adapter:{adapter_name}/{instance_id}"
+    client = ChannelClient(url)
+    await run_with_client(adapter, client, topic=topic)
