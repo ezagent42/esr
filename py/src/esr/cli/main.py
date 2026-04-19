@@ -638,6 +638,70 @@ def cmd_stop(name: str, params: tuple[str, ...]) -> None:
     )
 
 
+@cmd.command("restart")
+@click.argument("name")
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    help="Param binding (``key=value``); identifies the target and primes the restart.",
+)
+@click.option(
+    "--compiled-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Override the .compiled/ lookup path.",
+)
+def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -> None:
+    """Stop and immediately re-instantiate a topology (PRD 07 F13).
+
+    State preservation is a spec §6.5 guarantee: PeerServer state
+    persisted via F18 ETS survives the stop/run boundary, so a
+    restart keeps handler counters / dedup sets intact.
+    """
+    root = compiled_dir or (
+        Path(os.path.expanduser("~")) / ".esrd" / "default" / "commands" / ".compiled"
+    )
+    path = root / f"{name}.yaml"
+    if not path.exists():
+        click.echo(f"command {name!r} not found at {path}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    artifact = yaml.safe_load(path.read_text()) or {}
+
+    try:
+        params_map = _parse_param_bindings(params)
+    except click.BadParameter as exc:
+        click.echo(str(exc), err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    declared = artifact.get("params") or []
+    missing = [p for p in declared if p not in params_map]
+    if missing:
+        click.echo(
+            f"missing params: {', '.join(missing)} (pass with --param {missing[0]}=<value>)",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    try:
+        _submit_cmd_stop(name, params_map)  # idempotent; no-op if not running
+        handle = _submit_cmd_run(artifact, params_map)
+    except TimeoutError as exc:
+        click.echo(
+            f"runtime timeout ({exc}); run `esr status` to check reachability",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1) from exc
+    except NotImplementedError as exc:
+        click.echo(f"cmd restart: {exc}", err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    click.echo(
+        f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
+    )
+
+
 # --- lint (F14) --------------------------------------------------------
 
 
