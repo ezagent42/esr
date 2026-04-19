@@ -11,6 +11,17 @@ usable for typing / direct construction in tests.
 constraint. It is recorded here and read by the capability scan
 (PRD 02 F18) at CI time — runtime does not enforce it.
 
+**Purity is enforced at CI time, not at decoration time** (reviewer
+S2). The decorator validates the class *shape* (staticmethod
+factory present) but cannot detect I/O performed in the class
+body before ``@adapter(...)`` evaluates — a class with
+``SIDE = os.getcwd()`` at its class-body level runs that I/O
+before the decorator sees anything. The real safety net is
+``esr.verify.capability.scan_adapter``, which is driven by the
+``esr-lint adapters/`` CI hook. Pattern authors should treat the
+decorator as "registration + shape check" and rely on CI for
+pure-factory enforcement.
+
 ``AdapterConfig`` wraps a dict and exposes read-only attribute
 access. Setting an attribute raises; missing keys raise
 ``AttributeError`` (not ``KeyError``) so callers can use
