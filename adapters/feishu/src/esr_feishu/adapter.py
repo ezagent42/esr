@@ -15,10 +15,18 @@ F02 purity guarantee.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Callable
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
+
+_BACKOFF_SCHEDULE: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+"""Exponential backoff between 429 retries (PRD 04 F15). Total budget 30s."""
+
+_RETRY_DEADLINE_S: float = 30.0
+"""Wall-clock ceiling for all combined retry delays (spec §7.3)."""
 
 
 def _lark_error(response: Any) -> str:
@@ -28,6 +36,20 @@ def _lark_error(response: Any) -> str:
         or getattr(response, "error", "")
         or ""
     )
+
+
+def _lark_failure(response: Any, default_msg: str) -> dict[str, Any]:
+    """Shape a failing lark response into a directive ack, carrying the code."""
+    return {
+        "ok": False,
+        "error": _lark_error(response) or default_msg,
+        "code": getattr(response, "code", 0),
+    }
+
+
+def _is_rate_limited(ack: dict[str, Any]) -> bool:
+    """True if the ack's embedded HTTP code indicates a Lark 429."""
+    return ack.get("code") == 429
 
 
 @adapter(
@@ -80,16 +102,41 @@ class FeishuAdapter:
     ) -> dict[str, Any]:
         """Dispatch a directive. Returns {"ok": bool, result?/error?}."""
         if action == "send_message":
-            return self._send_message(args)
+            return await self._with_ratelimit_retry(lambda: self._send_message(args))
         if action == "react":
-            return self._react(args)
+            return await self._with_ratelimit_retry(lambda: self._react(args))
         if action == "send_card":
-            return self._send_card(args)
+            return await self._with_ratelimit_retry(lambda: self._send_card(args))
         if action == "pin":
-            return self._pin(args)
+            return await self._with_ratelimit_retry(lambda: self._pin(args))
         if action == "unpin":
-            return self._unpin(args)
+            return await self._with_ratelimit_retry(lambda: self._unpin(args))
         return {"ok": False, "error": f"unknown action: {action}"}
+
+    async def _with_ratelimit_retry(
+        self, fn: Callable[[], dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Run ``fn`` and transparently retry on 429 per PRD 04 F15.
+
+        Non-429 failures surface immediately. Retry delays follow an
+        exponential schedule; cumulative sleep cannot exceed
+        ``_RETRY_DEADLINE_S`` — once the next backoff would cross the
+        ceiling, returns ``{"ok": False, "error": "timeout"}``.
+        """
+        elapsed = 0.0
+        for delay in _BACKOFF_SCHEDULE:
+            result = fn()
+            if result.get("ok") or not _is_rate_limited(result):
+                return result
+            if elapsed + delay > _RETRY_DEADLINE_S:
+                return {"ok": False, "error": "timeout"}
+            await asyncio.sleep(delay)
+            elapsed += delay
+        # Final attempt after the last scheduled sleep
+        result = fn()
+        if result.get("ok") or not _is_rate_limited(result):
+            return result
+        return {"ok": False, "error": "timeout"}
 
     def _send_message(self, args: dict[str, Any]) -> dict[str, Any]:
         """Send a text message via lark_oapi im.v1.message.create (PRD 04 F07)."""
@@ -112,7 +159,7 @@ class FeishuAdapter:
         response = self.client().im.v1.message.create(request)
         if response.success():
             return {"ok": True, "result": {"message_id": response.data.message_id}}
-        return {"ok": False, "error": _lark_error(response) or "send failed"}
+        return _lark_failure(response, "send failed")
 
     def _react(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a reaction on a message via lark_oapi (PRD 04 F08)."""
@@ -138,7 +185,7 @@ class FeishuAdapter:
                 response.data, "message_id", ""
             )
             return {"ok": True, "result": {"reaction_id": reaction_id}}
-        return {"ok": False, "error": _lark_error(response) or "react failed"}
+        return _lark_failure(response, "react failed")
 
     def _send_card(self, args: dict[str, Any]) -> dict[str, Any]:
         """Send an interactive card via lark_oapi im.v1.message.create (PRD 04 F09)."""
@@ -161,7 +208,7 @@ class FeishuAdapter:
         response = self.client().im.v1.message.create(request)
         if response.success():
             return {"ok": True, "result": {"message_id": response.data.message_id}}
-        return {"ok": False, "error": _lark_error(response) or "send_card failed"}
+        return _lark_failure(response, "send_card failed")
 
     def _pin(self, args: dict[str, Any]) -> dict[str, Any]:
         """Pin a message via lark_oapi im.v1.pin.create (PRD 04 F10)."""
@@ -176,7 +223,7 @@ class FeishuAdapter:
         response = self.client().im.v1.pin.create(request)
         if response.success():
             return {"ok": True}
-        return {"ok": False, "error": _lark_error(response) or "pin failed"}
+        return _lark_failure(response, "pin failed")
 
     def _unpin(self, args: dict[str, Any]) -> dict[str, Any]:
         """Unpin a message via lark_oapi im.v1.pin.delete (PRD 04 F10)."""
@@ -187,4 +234,4 @@ class FeishuAdapter:
         response = self.client().im.v1.pin.delete(request)
         if response.success():
             return {"ok": True}
-        return {"ok": False, "error": _lark_error(response) or "unpin failed"}
+        return _lark_failure(response, "unpin failed")
