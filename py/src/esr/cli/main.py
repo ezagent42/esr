@@ -531,6 +531,21 @@ def _parse_param_bindings(bindings: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
+def _submit_actors(action: str, arg: str | None) -> Any:
+    """Actor-registry queries via the runtime.
+
+    Stubbed for v0.1; Phase 8 wires it to a ``cli:actors`` topic.
+    Returns:
+    - ``list`` → ``list[{"actor_id", "actor_type"}]``
+    - ``tree`` → ``{"roots": [...], "edges": [(from, to), ...]}``
+    - ``inspect`` → ``{"actor_id", "actor_type", "state", "paused"}``
+    - ``logs`` → ``list[{"ts", "event", ...}]``
+    """
+    raise NotImplementedError(
+        "actor queries require a live runtime; run `esr status` to verify."
+    )
+
+
 def _submit_deadletter(action: str, arg: str | None) -> Any:
     """Deadletter control ops via the runtime.
 
@@ -714,6 +729,69 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     click.echo(
         f"restarted {handle['name']!r} → peers={','.join(handle.get('peer_ids', []))}"
     )
+
+
+@cli.group()
+def actors() -> None:
+    """Query the live actor registry (PRD 07 F15)."""
+
+
+@actors.command("list")
+def actors_list() -> None:
+    """Enumerate every live actor as ``<actor_id>  <actor_type>``."""
+    entries = _submit_actors("list", None)
+    if not entries:
+        click.echo("no actors live")
+        return
+    for entry in entries:
+        click.echo(f"{entry['actor_id']}  {entry.get('actor_type', '?')}")
+
+
+@actors.command("tree")
+def actors_tree() -> None:
+    """Render the depends_on hierarchy as an indented tree."""
+    data = _submit_actors("tree", None)
+    children: dict[str, list[str]] = {}
+    for src, dst in data.get("edges", []):
+        children.setdefault(src, []).append(dst)
+
+    def _print(node: str, depth: int) -> None:
+        prefix = "  " * depth + ("└─ " if depth > 0 else "")
+        click.echo(f"{prefix}{node}")
+        for child in children.get(node, []):
+            _print(child, depth + 1)
+
+    for root in data.get("roots", []):
+        _print(root, 0)
+
+
+@actors.command("inspect")
+@click.argument("actor_id")
+def actors_inspect(actor_id: str) -> None:
+    """Dump one actor's state + metadata."""
+    info = _submit_actors("inspect", actor_id)
+    click.echo(f"{info['actor_id']}  type={info.get('actor_type', '?')}"
+               f"  paused={info.get('paused', False)}")
+    state = info.get("state", {})
+    for k, v in state.items():
+        click.echo(f"  {k} = {v!r}")
+
+
+@actors.command("logs")
+@click.argument("actor_id")
+@click.option("--follow", "-f", is_flag=True, help="Stream new lines (Phase 8 only).")
+def actors_logs(actor_id: str, follow: bool) -> None:
+    """Recent telemetry / events for this actor."""
+    _ = follow  # v0.1 returns a snapshot; live --follow is Phase 8.
+    entries = _submit_actors("logs", actor_id)
+    if not entries:
+        click.echo(f"no recent activity for {actor_id!r}")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry.get('ts', '-')}  {entry.get('event', '?')}  "
+            f"msg={entry.get('msg', '-')}"
+        )
 
 
 @cli.group()
