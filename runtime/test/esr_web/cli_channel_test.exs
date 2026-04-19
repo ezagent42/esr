@@ -35,4 +35,27 @@ defmodule EsrWeb.CliChannelTest do
     assert_reply ref, :error, reason
     assert reason.reason =~ "unhandled"
   end
+
+  describe "cli:actors/list" do
+    setup do
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-actors", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:actors/list")
+
+      %{actors_socket: socket}
+    end
+
+    test "cli_call returns the peer registry contents", %{actors_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert is_list(response["data"])
+
+      for entry <- response["data"] do
+        assert is_map(entry)
+        assert Map.has_key?(entry, "actor_id")
+        assert Map.has_key?(entry, "pid")
+      end
+    end
+  end
 end

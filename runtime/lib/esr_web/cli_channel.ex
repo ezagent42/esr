@@ -23,11 +23,29 @@ defmodule EsrWeb.CliChannel do
 
   @impl Phoenix.Channel
   def handle_in("cli_call", payload, socket) do
-    response = %{"echoed" => payload, "topic" => socket.assigns.topic}
-    {:reply, {:ok, response}, socket}
+    {:reply, {:ok, dispatch(socket.assigns.topic, payload)}, socket}
   end
 
   def handle_in(event, _payload, socket) do
     {:reply, {:error, %{reason: "unhandled event: #{event}"}}, socket}
+  end
+
+  @doc false
+  @spec dispatch(String.t(), map()) :: map()
+  def dispatch("cli:actors/list", _payload) do
+    data =
+      Esr.PeerRegistry.list_all()
+      |> Enum.map(fn {actor_id, pid} ->
+        %{"actor_id" => actor_id, "pid" => inspect(pid)}
+      end)
+
+    %{"data" => data}
+  end
+
+  def dispatch(topic, payload) do
+    # Phase 8c iterates: add a case clause per real cli:<op>. Until then,
+    # echo so the Python CLI can observe that its call reached the runtime
+    # and came back with a shaped response.
+    %{"echoed" => payload, "topic" => topic}
   end
 end
