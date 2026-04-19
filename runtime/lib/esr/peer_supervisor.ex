@@ -1,12 +1,14 @@
 defmodule Esr.PeerSupervisor do
   @moduledoc """
-  DynamicSupervisor for PeerServer processes. One-for-one strategy so
-  one actor crashing never cascades to sibling actors (spec §3.2, §5
-  isolation invariant).
+  DynamicSupervisor that owns PeerServer processes. One-for-one
+  strategy: one actor crashing must never cascade to siblings (spec
+  §3.2 + E2E Track D session-isolation invariant).
 
-  v0.1 scaffold — `start_peer/1` and `stop_peer/1` land in PRD 01 F04.
-  This module is created in F02 so the Application supervision tree can
-  reference it.
+  Children are PeerServers with `restart: :transient` — normal exit
+  does not respawn, but abnormal exit does within this supervisor's
+  restart intensity.
+
+  PRD 01 F04.
   """
   use DynamicSupervisor
 
@@ -15,8 +17,36 @@ defmodule Esr.PeerSupervisor do
     DynamicSupervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl true
+  @impl DynamicSupervisor
   def init(_opts) do
     DynamicSupervisor.init(strategy: :one_for_one)
+  end
+
+  @doc """
+  Spawns a new PeerServer under this supervisor.
+  `opts` is forwarded to `Esr.PeerServer.start_link/1`.
+  """
+  @spec start_peer(keyword()) :: DynamicSupervisor.on_start_child()
+  def start_peer(opts) do
+    child_spec = %{
+      id: Esr.PeerServer,
+      start: {Esr.PeerServer, :start_link, [opts]},
+      restart: :transient,
+      type: :worker
+    }
+
+    DynamicSupervisor.start_child(__MODULE__, child_spec)
+  end
+
+  @doc """
+  Terminates the PeerServer registered under `actor_id`.
+  Returns `:ok` on success or `{:error, :not_found}` if no such peer.
+  """
+  @spec stop_peer(String.t()) :: :ok | {:error, :not_found}
+  def stop_peer(actor_id) when is_binary(actor_id) do
+    case Esr.PeerRegistry.lookup(actor_id) do
+      {:ok, pid} -> DynamicSupervisor.terminate_child(__MODULE__, pid)
+      :error -> {:error, :not_found}
+    end
   end
 end
