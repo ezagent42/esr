@@ -17,6 +17,29 @@ defmodule Esr.PeerSupervisorTest do
     :ok
   end
 
+  # Poll PeerRegistry until the key is gone or timeout. Registry cleanup
+  # after child termination happens async to the Process.monitor DOWN,
+  # so a bounded wait is necessary in tests that assert post-stop state.
+  defp wait_until_unregistered(actor_id, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    wait_loop(actor_id, deadline)
+  end
+
+  defp wait_loop(actor_id, deadline) do
+    case Esr.PeerRegistry.lookup(actor_id) do
+      :error ->
+        true
+
+      {:ok, _pid} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          false
+        else
+          Process.sleep(5)
+          wait_loop(actor_id, deadline)
+        end
+    end
+  end
+
   describe "start_peer/1" do
     test "spawns a PeerServer under the supervisor" do
       {:ok, pid} =
@@ -50,7 +73,10 @@ defmodule Esr.PeerSupervisorTest do
       assert_receive {:DOWN, ^ref, :process, ^pid, _}, 500
 
       refute Process.alive?(pid)
-      assert Esr.PeerRegistry.lookup("cc:sess-B") == :error
+      # Registry.unregister runs in its own message queue after the owning
+      # process's EXIT; wait (bounded) for that to propagate.
+      assert wait_until_unregistered("cc:sess-B", 500),
+             "PeerRegistry did not unregister cc:sess-B within 500ms"
     end
 
     test "returns {:error, :not_found} for unknown actor_id" do
