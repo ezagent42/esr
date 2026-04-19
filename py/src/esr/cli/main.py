@@ -94,6 +94,51 @@ def adapter() -> None:
     """Adapter install / instance / list operations."""
 
 
+@adapter.command("install")
+@click.argument(
+    "source",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+def adapter_install(source: Path) -> None:
+    """Validate a local adapter package (PRD 07 F03).
+
+    v0.1 scope: parse ``esr.toml``, verify the source package exists,
+    and run ``esr.verify.capability.scan_adapter`` against the
+    adapter module. Full fetch-and-register into
+    ``~/.esrd/<instance>/adapters.yaml`` lands with runtime wiring
+    (Phase 8). This command is offline.
+    """
+    from esr.verify.capability import scan_adapter
+
+    manifest = source / "esr.toml"
+    if not manifest.exists():
+        click.echo(f"no esr.toml at {manifest}", err=True)
+        raise click.exceptions.Exit(code=1)
+    with manifest.open("rb") as f:
+        data = tomllib.load(f)
+
+    name = data.get("name", source.name)
+    module = data.get("module", "")
+    allowed_io = data.get("allowed_io", {})
+
+    # module is like "esr_<name>.adapter" → file src/<first>/<second>.py
+    if module:
+        parts = module.split(".")
+        src_path = source / "src" / parts[0] / (parts[-1] + ".py")
+        if src_path.exists():
+            violations = scan_adapter(src_path, allowed_io)
+            if violations:
+                click.echo(
+                    f"{name}: capability violations against declared allowed_io:",
+                    err=True,
+                )
+                for v in violations:
+                    click.echo(f"  {src_path}:{v.lineno}: {v.message}", err=True)
+                raise click.exceptions.Exit(code=1)
+
+    click.echo(f"validated adapter {name}")
+
+
 @adapter.command("list")
 def adapter_list() -> None:
     """List installed adapter types (PRD 07 F05).
@@ -107,6 +152,44 @@ def adapter_list() -> None:
 @cli.group()
 def handler() -> None:
     """Handler install / list / remove operations."""
+
+
+@handler.command("install")
+@click.argument(
+    "source",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+def handler_install(source: Path) -> None:
+    """Validate a local handler package (PRD 07 F06).
+
+    v0.1 scope: parse ``esr.toml``, run ``scan_imports`` on every
+    ``.py`` file under ``src/``. Full fetch-and-register into
+    ``~/.esrd/<instance>/handlers.yaml`` lands with runtime wiring
+    (Phase 8). This command is offline.
+    """
+    from esr.verify.purity import scan_imports
+
+    manifest = source / "esr.toml"
+    if not manifest.exists():
+        click.echo(f"no esr.toml at {manifest}", err=True)
+        raise click.exceptions.Exit(code=1)
+    with manifest.open("rb") as f:
+        data = tomllib.load(f)
+
+    name = data.get("name", source.name)
+    # Also accept the handler's own src package import (e.g.
+    # esr_handler_feishu_app) as allowed during its own self-scan.
+    extra = {f"esr_handler_{name}"} if name else set()
+
+    any_violation = False
+    for py in sorted((source / "src").rglob("*.py")):
+        for v in scan_imports(py, extra_allowed=extra):
+            click.echo(f"{py}:{v.lineno}: {v.message}", err=True)
+            any_violation = True
+    if any_violation:
+        raise click.exceptions.Exit(code=1)
+
+    click.echo(f"validated handler {name}")
 
 
 @handler.command("list")
