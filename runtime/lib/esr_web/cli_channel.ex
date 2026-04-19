@@ -70,6 +70,18 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
   end
 
+  def dispatch("cli:drain", _payload) do
+    handles = Esr.Topology.Registry.list_all()
+    Enum.each(handles, &Esr.Topology.Registry.deactivate/1)
+
+    %{
+      "data" => %{
+        "drained" => length(handles),
+        "timeouts" => []
+      }
+    }
+  end
+
   def dispatch("cli:debug/pause", %{"actor_id" => actor_id}) when is_binary(actor_id) do
     debug_toggle(actor_id, :pause)
   end

@@ -99,6 +99,48 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:drain" do
+    setup do
+      # register two topology instantiations so drain has work to do
+      :ok =
+        Enum.each(
+          [
+            {"feishu-thread-session", %{"thread_id" => "a"}, ["thread:a", "tmux:a", "cc:a"]},
+            {"feishu-app-session", %{"app_id" => "b"}, ["feishu-app:b"]}
+          ],
+          fn {name, params, peer_ids} ->
+            {:ok, _handle} = Esr.Topology.Registry.register(name, params, peer_ids)
+          end
+        )
+
+      on_exit(fn ->
+        # clear everything the test inserted
+        Esr.Topology.Registry.list_all()
+        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
+      end)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-drain", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:drain")
+
+      %{drain_socket: socket}
+    end
+
+    test "drain deactivates every registered topology", %{drain_socket: socket} do
+      initial = length(Esr.Topology.Registry.list_all())
+      assert initial >= 2
+
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+
+      data = response["data"]
+      assert data["drained"] == initial
+      assert data["timeouts"] == []
+      assert Esr.Topology.Registry.list_all() == []
+    end
+  end
+
   describe "cli:debug/pause and /resume" do
     setup do
       actor_id = "thread:debug-#{System.unique_integer([:positive])}"
