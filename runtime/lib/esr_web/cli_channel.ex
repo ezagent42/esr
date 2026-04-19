@@ -15,6 +15,7 @@ defmodule EsrWeb.CliChannel do
   alias Esr.DeadLetter.Entry, as: DeadLetterEntry
   alias Esr.Telemetry.Buffer
   alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
+  alias Esr.Topology.Instantiator
 
   @impl Phoenix.Channel
   def join("cli:" <> _op = topic, _payload, socket) do
@@ -68,6 +69,32 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:actors/inspect", _payload) do
     %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
+  end
+
+  def dispatch("cli:run/" <> name, payload) when is_binary(name) do
+    artifact = Map.get(payload, "artifact") || %{"name" => name}
+    params = Map.get(payload, "params") || %{}
+
+    case Instantiator.instantiate(artifact, params) do
+      {:ok, handle} ->
+        %{
+          "data" => %{
+            "name" => handle.name,
+            "params" => handle.params,
+            "peer_ids" => handle.peer_ids
+          }
+        }
+
+      {:error, reason} ->
+        %{
+          "data" => %{
+            "error" => instantiate_error_message(reason),
+            "name" => name,
+            "params" => params,
+            "peer_ids" => []
+          }
+        }
+    end
   end
 
   def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
@@ -156,6 +183,23 @@ defmodule EsrWeb.CliChannel do
     # echo so the Python CLI can observe that its call reached the runtime
     # and came back with a shaped response.
     %{"echoed" => payload, "topic" => topic}
+  end
+
+  @spec instantiate_error_message(term()) :: String.t()
+  defp instantiate_error_message({:missing_params, names}) do
+    "missing_params: #{Enum.join(names, ", ")}"
+  end
+
+  defp instantiate_error_message(:cycle_in_depends_on) do
+    "cycle_in_depends_on"
+  end
+
+  defp instantiate_error_message({:init_directive_failed, node_id, detail}) do
+    "init_directive_failed on #{node_id}: #{inspect(detail)}"
+  end
+
+  defp instantiate_error_message(other) do
+    "instantiate_failed: #{inspect(other)}"
   end
 
   @spec debug_toggle(String.t(), :pause | :resume) :: map()

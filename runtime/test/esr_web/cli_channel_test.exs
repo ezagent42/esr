@@ -99,6 +99,71 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:run/<name>" do
+    setup do
+      on_exit(fn ->
+        Esr.Topology.Registry.list_all()
+        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
+      end)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-run", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:run/simple-session")
+
+      %{run_socket: socket}
+    end
+
+    test "instantiates a one-node artifact and returns the handle",
+         %{run_socket: socket} do
+      artifact = %{
+        "name" => "simple-session",
+        "params" => ["thread_id"],
+        "nodes" => [
+          %{
+            "id" => "thread:{{thread_id}}",
+            "actor_type" => "feishu_thread_proxy",
+            "handler" => "feishu_thread.on_msg",
+            "depends_on" => []
+          }
+        ]
+      }
+
+      ref =
+        push(socket, "cli_call", %{
+          "artifact" => artifact,
+          "params" => %{"thread_id" => "run-a"}
+        })
+
+      assert_reply ref, :ok, response
+      assert response["data"]["name"] == "simple-session"
+      assert response["data"]["peer_ids"] == ["thread:run-a"]
+      assert match?({:ok, _}, Esr.Topology.Registry.lookup("simple-session",
+                                                           %{"thread_id" => "run-a"}))
+    end
+
+    test "missing required param returns structured error",
+         %{run_socket: socket} do
+      artifact = %{
+        "name" => "simple-session",
+        "params" => ["thread_id"],
+        "nodes" => [
+          %{
+            "id" => "thread:{{thread_id}}",
+            "actor_type" => "feishu_thread_proxy",
+            "handler" => "feishu_thread.on_msg",
+            "depends_on" => []
+          }
+        ]
+      }
+
+      ref = push(socket, "cli_call", %{"artifact" => artifact, "params" => %{}})
+      assert_reply ref, :ok, response
+      assert response["data"]["error"] =~ "missing_params"
+      assert response["data"]["peer_ids"] == []
+    end
+  end
+
   describe "cli:stop/<name>" do
     setup do
       peer_ids = ["thread:stop-a", "tmux:stop-a", "cc:stop-a"]
