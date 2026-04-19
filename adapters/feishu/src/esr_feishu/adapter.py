@@ -62,3 +62,17 @@ class FeishuAdapter:
                 .build()
             )
         return self._lark_client
+
+    # --- directive dispatch -------------------------------------------
+
+    async def on_directive(
+        self, action: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Dispatch a directive. Returns {"ok": bool, result?/error?}.
+
+        Currently dispatches no concrete actions — every call lands in
+        the unknown-action branch (PRD 04 F11). F07-F10 implementations
+        (send_message / react / send_card / pin / unpin) add proper
+        dispatch arms.
+        """
+        return {"ok": False, "error": f"unknown action: {action}"}
