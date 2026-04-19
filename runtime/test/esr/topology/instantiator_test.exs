@@ -11,13 +11,13 @@ defmodule Esr.Topology.InstantiatorTest do
   alias Esr.Topology.Registry, as: TopoRegistry
 
   setup do
-    # Clean slate: drop any live registrations + peer servers.
+    # Clean slate: drop topo handles and terminate every live PeerServer.
     for handle <- TopoRegistry.list_all() do
       TopoRegistry.deactivate(handle)
     end
 
-    for {actor_id, _pid} <- Esr.PeerRegistry.list_all() do
-      Registry.unregister(Esr.PeerRegistry, actor_id)
+    for {_id, pid, _type, _mods} <- DynamicSupervisor.which_children(Esr.PeerSupervisor) do
+      DynamicSupervisor.terminate_child(Esr.PeerSupervisor, pid)
     end
 
     :ok

@@ -32,8 +32,22 @@ defmodule EsrWeb.AdapterChannel do
     forward(socket, {:inbound_event, envelope})
   end
 
-  def handle_in("directive_ack", envelope, socket) do
+  def handle_in("directive_ack", %{"id" => id} = envelope, socket) do
+    # Dual-publish: broadcast to directive_ack:<id> so the original
+    # issuer (Instantiator for init_directive F13b, PeerServer for
+    # regular Emits) can correlate; and deliver to the bound
+    # PeerServer as a fallback tag so F09's routing stays intact.
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "directive_ack:" <> id,
+      {:directive_ack, envelope}
+    )
+
     forward(socket, {:directive_ack, envelope})
+  end
+
+  def handle_in("directive_ack", _envelope, socket) do
+    {:reply, {:error, %{reason: "directive_ack missing id"}}, socket}
   end
 
   def handle_in(event, _payload, socket) do

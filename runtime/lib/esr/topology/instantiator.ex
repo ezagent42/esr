@@ -29,12 +29,16 @@ defmodule Esr.Topology.Instantiator do
           required(String.t()) => term()
         }
 
-  @spec instantiate(artifact(), map()) ::
+  @default_init_directive_timeout 30_000
+
+  @spec instantiate(artifact(), map(), keyword()) ::
           {:ok, TopoRegistry.Handle.t()}
           | {:error, {:missing_params, [String.t()]}}
           | {:error, :cycle_in_depends_on}
+          | {:error, {:init_directive_failed, String.t(), term()}}
           | {:error, term()}
-  def instantiate(artifact, params) when is_map(artifact) and is_map(params) do
+  def instantiate(artifact, params, opts \\ [])
+      when is_map(artifact) and is_map(params) and is_list(opts) do
     name = Map.get(artifact, "name", "")
 
     case TopoRegistry.lookup(name, params) do
@@ -42,7 +46,7 @@ defmodule Esr.Topology.Instantiator do
         {:ok, existing}
 
       :error ->
-        do_instantiate(artifact, params, name)
+        do_instantiate(artifact, params, name, opts)
     end
   end
 
@@ -50,11 +54,11 @@ defmodule Esr.Topology.Instantiator do
   # Internals
   # ------------------------------------------------------------------
 
-  defp do_instantiate(artifact, params, name) do
+  defp do_instantiate(artifact, params, name, opts) do
     with :ok <- check_params(artifact, params),
          nodes <- substitute_all(Map.get(artifact, "nodes", []), params),
          {:ok, ordered_ids} <- toposort(nodes),
-         peer_ids <- spawn_in_order(nodes, ordered_ids) do
+         {:ok, peer_ids} <- spawn_in_order(nodes, ordered_ids, opts) do
       {:ok, handle} = TopoRegistry.register(name, params, peer_ids)
 
       :telemetry.execute([:esr, :topology, :instantiated], %{}, %{
@@ -171,17 +175,74 @@ defmodule Esr.Topology.Instantiator do
     kahn(next_ready, new_indeg, edges, [id | acc], expected)
   end
 
-  # --- Spawning + binding -------------------------------------------
+  # --- Spawning + binding + init_directive (F13b) -------------------
 
-  defp spawn_in_order(nodes, ordered_ids) do
+  defp spawn_in_order(nodes, ordered_ids, opts) do
     by_id = Map.new(nodes, &{&1["id"], &1})
+    timeout = Keyword.get(opts, :init_directive_timeout, @default_init_directive_timeout)
+    spawn_loop(ordered_ids, by_id, timeout, [])
+  end
 
-    Enum.map(ordered_ids, fn id ->
-      node = Map.fetch!(by_id, id)
-      {:ok, _pid} = start_peer(node)
-      bind_adapter(node)
-      id
-    end)
+  defp spawn_loop([], _by_id, _timeout, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp spawn_loop([id | rest], by_id, timeout, acc) do
+    node = Map.fetch!(by_id, id)
+    {:ok, _pid} = start_peer(node)
+    bind_adapter(node)
+
+    case issue_init_directive(node, timeout) do
+      :ok ->
+        spawn_loop(rest, by_id, timeout, [id | acc])
+
+      {:error, reason} ->
+        rollback_spawned([id | acc])
+        {:error, {:init_directive_failed, id, reason}}
+    end
+  end
+
+  defp issue_init_directive(%{"init_directive" => nil}, _timeout), do: :ok
+
+  defp issue_init_directive(%{"init_directive" => init, "id" => node_id, "adapter" => adapter}, timeout)
+       when is_map(init) and is_binary(adapter) do
+    id = "d-init-" <> Integer.to_string(System.unique_integer([:positive]))
+    topic = "adapter:" <> adapter <> "/" <> node_id
+    reply_topic = "directive_ack:" <> id
+
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, reply_topic)
+
+    envelope = %{
+      "id" => id,
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "directive",
+      "source" => "esr://localhost/actor/" <> node_id,
+      "payload" => %{
+        "adapter" => adapter,
+        "action" => init["action"],
+        "args" => Map.get(init, "args", %{})
+      }
+    }
+
+    EsrWeb.Endpoint.broadcast(topic, "directive", envelope)
+
+    try do
+      receive do
+        {:directive_ack, %{"id" => ^id, "payload" => %{"ok" => true}}} ->
+          :ok
+
+        {:directive_ack, %{"id" => ^id, "payload" => payload}} ->
+          {:error, payload}
+      after
+        timeout -> {:error, :timeout}
+      end
+    after
+      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, reply_topic)
+    end
+  end
+
+  defp issue_init_directive(_node, _timeout), do: :ok
+
+  defp rollback_spawned(ids) do
+    Enum.each(ids, &Esr.PeerSupervisor.stop_peer/1)
   end
 
   defp start_peer(node) do
