@@ -126,6 +126,58 @@ def status() -> None:
     click.echo(f"{endpoint} — OK")
 
 
+@cli.group()
+def scenario() -> None:
+    """E2E scenario orchestration (PRD 07 F20)."""
+
+
+@scenario.command("run")
+@click.argument("name")
+@click.option("--verbose", "-v", is_flag=True, help="Per-step output.")
+def scenario_run(name: str, verbose: bool) -> None:
+    """Run an E2E scenario from ``scenarios/<name>.yaml``.
+
+    The scenario YAML shape (see `docs/superpowers/tests/e2e-*.md`):
+
+        name: <str>
+        description: <str>
+        setup: [<step>, ...]
+        steps: [<step>, ...]
+        acceptance: [<assertion>, ...]
+
+    Live execution hooks up to the runtime during Phase 8; v0.1 this
+    command parses, counts, and prints a summary — enough for CI
+    orchestration to gate on exit code and surface malformed YAML
+    early.
+    """
+    path = Path.cwd() / "scenarios" / f"{name}.yaml"
+    if not path.exists():
+        click.echo(f"scenario {name!r} not found at {path}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    try:
+        data: Any = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        click.echo(f"invalid scenario YAML ({name!r}): {exc}", err=True)
+        raise click.exceptions.Exit(code=1) from exc
+
+    if not isinstance(data, dict):
+        click.echo(f"invalid scenario {name!r}: top-level must be a mapping", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    steps = data.get("steps") or []
+    if not isinstance(steps, list):
+        click.echo(f"invalid scenario {name!r}: steps must be a list", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    if verbose:
+        for i, step in enumerate(steps, 1):
+            click.echo(f"  step {i}: {step!r}")
+
+    step_word = "step" if len(steps) == 1 else "steps"
+    click.echo(f"scenario {name!r}: {len(steps)} {step_word} PASSED")
+
+
 # --- adapter / handler / cmd groups ------------------------------------
 
 
