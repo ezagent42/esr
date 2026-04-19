@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from esr.adapter import ADAPTER_REGISTRY, AdapterConfig, adapter
 
 
 @pytest.fixture(autouse=True)
-def _clear_registry() -> None:
-    """Ensure each test starts with a clean ADAPTER_REGISTRY."""
+def _isolate_registry() -> Iterator[None]:
+    """Save, clear, and restore ADAPTER_REGISTRY around every test.
+
+    Restoring is important: real adapter packages (esr_feishu,
+    esr_cc_tmux) register themselves at import time, and other
+    test files depend on those entries existing. Clearing without
+    restoring would break cross-file test order.
+    """
+    saved = dict(ADAPTER_REGISTRY)
     ADAPTER_REGISTRY.clear()
+    try:
+        yield
+    finally:
+        ADAPTER_REGISTRY.clear()
+        ADAPTER_REGISTRY.update(saved)
 
 
 # --- PRD 02 F07: @adapter decorator -------------------------------------
