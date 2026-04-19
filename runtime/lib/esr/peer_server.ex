@@ -69,6 +69,8 @@ defmodule Esr.PeerServer do
 
   @impl GenServer
   def init(opts) do
+    Process.flag(:trap_exit, true)
+
     state = %__MODULE__{
       actor_id: Keyword.fetch!(opts, :actor_id),
       actor_type: Keyword.fetch!(opts, :actor_type),
@@ -84,6 +86,16 @@ defmodule Esr.PeerServer do
     })
 
     {:ok, state}
+  end
+
+  @impl GenServer
+  def terminate(_reason, %__MODULE__{actor_id: actor_id, actor_type: actor_type}) do
+    :telemetry.execute([:esr, :peer_server, :stopped], %{}, %{
+      actor_id: actor_id,
+      actor_type: actor_type
+    })
+
+    :ok
   end
 
   @impl GenServer

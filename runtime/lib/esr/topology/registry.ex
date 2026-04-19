@@ -67,8 +67,20 @@ defmodule Esr.Topology.Registry do
   end
 
   @spec deactivate(Handle.t()) :: :ok
-  def deactivate(%Handle{name: name, params: params}) do
+  def deactivate(%Handle{name: name, params: params, peer_ids: peer_ids}) do
+    # Reverse topo order: dependents first, then their parents (PRD 01 F14).
+    for id <- Enum.reverse(peer_ids) do
+      Esr.PeerSupervisor.stop_peer(id)
+    end
+
     :ets.delete(@table, key_for(name, params))
+
+    :telemetry.execute([:esr, :topology, :deactivated], %{}, %{
+      name: name,
+      params: params,
+      peer_ids: peer_ids
+    })
+
     :ok
   end
 
