@@ -150,6 +150,10 @@ defmodule Esr.Topology.InitDirectiveTest do
                init_directive_timeout: 200
              )
 
+    # Registry cleanup after terminate_child is async — poll briefly.
+    wait_until_unregistered("thread:baz", 50)
+    wait_until_unregistered("tmux:baz", 50)
+
     assert :error = Esr.PeerRegistry.lookup("thread:baz")
     assert :error = Esr.PeerRegistry.lookup("tmux:baz")
   end
