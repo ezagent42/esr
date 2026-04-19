@@ -195,6 +195,10 @@ defmodule Esr.Topology.Instantiator do
     node = Map.fetch!(by_id, id)
     {:ok, _pid} = start_peer(node)
     bind_adapter(node)
+    # 8f: ensure the Python counterparts are running. Idempotent — any
+    # worker already pre-spawned by fixtures (scenario setup) or
+    # previously by this supervisor is reused via its pidfile.
+    ensure_python_workers(node)
 
     case issue_init_directive(node, timeout) do
       :ok ->
@@ -290,4 +294,96 @@ defmodule Esr.Topology.Instantiator do
   end
 
   defp bind_adapter(_), do: :ok
+
+  # Launch (or reuse) the Python adapter_runner / handler_worker
+  # subprocesses a node needs. WorkerSupervisor is idempotent — already-
+  # running workers (whether tracked or externally pre-spawned) are
+  # reused. Config for the adapter instance is loaded from
+  # ``~/.esrd/<instance>/adapters.yaml`` when available; absent-file
+  # falls back to `{}` so at minimum the adapter_runner can attempt
+  # to load the adapter factory.
+  defp ensure_python_workers(%{"handler" => handler} = node)
+       when is_binary(handler) and handler != "" do
+    handler_module = handler |> String.split(".", parts: 2) |> hd()
+    worker_id = derive_worker_id(node["id"] || "")
+    handler_url = handler_hub_url()
+
+    _ = Esr.WorkerSupervisor.ensure_handler(handler_module, worker_id, handler_url)
+
+    case node do
+      %{"adapter" => adapter, "id" => id}
+      when is_binary(adapter) and adapter != "" and is_binary(id) ->
+        config = load_adapter_config(adapter)
+        _ = Esr.WorkerSupervisor.ensure_adapter(adapter, id, config, adapter_hub_url())
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  end
+
+  defp ensure_python_workers(_), do: :ok
+
+  # Worker ids are short, stable per-actor slugs. Collisions across
+  # actor types within one topology are impossible because node ids are
+  # unique, so we strip the prefix and reuse the suffix.
+  defp derive_worker_id(actor_id) do
+    case String.split(actor_id, ":", parts: 2) do
+      [_prefix, suffix] -> "w-" <> suffix
+      _ -> "w-" <> actor_id
+    end
+  end
+
+  defp handler_hub_url do
+    "ws://127.0.0.1:" <>
+      Integer.to_string(phoenix_port()) <>
+      "/handler_hub/socket/websocket?vsn=2.0.0"
+  end
+
+  defp adapter_hub_url do
+    "ws://127.0.0.1:" <>
+      Integer.to_string(phoenix_port()) <>
+      "/adapter_hub/socket/websocket?vsn=2.0.0"
+  end
+
+  defp phoenix_port do
+    # EsrWeb.Endpoint is configured with http: [port: 4001] in dev/prod;
+    # tests may override. Read the live value.
+    case EsrWeb.Endpoint.config(:http) do
+      opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
+      _ -> 4001
+    end
+  end
+
+  defp load_adapter_config(adapter_name) do
+    # Scan every ~/.esrd/*/adapters.yaml — esrd instance layout has the
+    # config file next to each esrd's pidfile. The first match wins;
+    # for our live + scenario instances there is never more than one
+    # instance registered per adapter.
+    home = System.user_home!()
+    base = Path.join(home, ".esrd")
+
+    with {:ok, entries} <- File.ls(base) do
+      entries
+      |> Enum.map(&Path.join([base, &1, "adapters.yaml"]))
+      |> Enum.filter(&File.regular?/1)
+      |> Enum.find_value(%{}, fn file -> read_adapter_entry(file, adapter_name) end)
+    else
+      _ -> %{}
+    end
+  end
+
+  defp read_adapter_entry(file, adapter_name) do
+    with {:ok, contents} <- File.read(file),
+         {:ok, parsed} <- YamlElixir.read_from_string(contents),
+         %{"instances" => instances} when is_map(instances) <- parsed do
+      Enum.find_value(instances, nil, fn
+        {_name, %{"type" => ^adapter_name, "config" => cfg}} when is_map(cfg) -> cfg
+        _ -> nil
+      end)
+    else
+      _ -> nil
+    end
+  end
 end

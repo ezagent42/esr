@@ -32,6 +32,11 @@ defmodule Esr.Application do
       # 4b. Dead-letter queue — started before peers so enqueue never misses.
       {Esr.DeadLetter, name: Esr.DeadLetter},
 
+      # 4c. Python worker launcher — on-demand adapter_runner /
+      # handler_worker subprocesses for live topology instantiation
+      # (Phase 8f; final_gate.sh --live can't pre-spawn them externally).
+      Esr.WorkerSupervisor,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,

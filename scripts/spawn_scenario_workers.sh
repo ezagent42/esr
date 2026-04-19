@@ -42,6 +42,11 @@ CC_TMUX_CONFIG='{"start_cmd":"./e2e-cc.sh"}'
 # Unique feishu-shared instance for the e2e scenario.
 FEISHU_CONFIG='{"app_id":"mock_app","app_secret":"mock_secret","base_url":"http://127.0.0.1:8101"}'
 
+# Track ONLY the pidfiles this script creates — any leftover
+# /tmp/esr-worker-*.pid from prior unit-test runs of WorkerSupervisor
+# must not contaminate our liveness check.
+OUR_PIDFILES=()
+
 spawn_bg() {
   local slug="$1" log="$2"
   shift 2
@@ -51,6 +56,7 @@ spawn_bg() {
   ( "$@" >"$log" 2>&1 ) &
   local pid=$!
   echo "$pid" >"$pidfile"
+  OUR_PIDFILES+=("$pidfile")
   echo "spawned ${slug} pid=${pid} log=${log}"
 }
 
@@ -113,9 +119,11 @@ done
 # Give the workers a moment to connect + join.
 sleep 2
 
-# Sanity-check the pidfiles — every one must point to a live process.
+# Sanity-check only the pidfiles we just wrote — leftover /tmp pidfiles
+# from earlier WorkerSupervisor unit tests (short-lived noop processes)
+# must not cause this setup step to fail.
 fail=0
-for pf in /tmp/esr-worker-*.pid; do
+for pf in "${OUR_PIDFILES[@]}"; do
   pid=$(cat "$pf")
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "worker pidfile $pf is stale (pid=$pid not alive)" >&2

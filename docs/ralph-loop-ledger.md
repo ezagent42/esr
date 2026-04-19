@@ -45,3 +45,4 @@
 | 36 | 2026-04-19 | 8f | gate8-live-creds | d3fa5d2 | final_gate_mock | sha256:fcdf74008563fd5e |
 | 37 | 2026-04-19 | 8e | C1-C2-fixes | 0380c52 | unit_tests | sha256:26e42a378e7c4815 |
 | 38 | 2026-04-19 | 8e | S1-rollback-unbind | 2399f33 | unit_tests | sha256:d533c6986db3ff52 |
+| 39 | 2026-04-19 | 8f | worker-supervisor | dddd1d0 | unit_tests | sha256:8450ea7831f25e51 |
