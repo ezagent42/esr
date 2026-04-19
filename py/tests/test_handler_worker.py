@@ -45,7 +45,7 @@ def test_process_handler_call_returns_reply_payload() -> None:
         },
     }
     reply = process_handler_call(payload)
-    assert reply["new_state"] == {"counter": 4}
+    assert reply["new_state"] == {"counter": 4, "_schema_version": 1}
     assert reply["actions"] == [
         {"type": "emit", "adapter": "feishu", "action": "send", "args": {"x": 3}}
     ]
@@ -145,3 +145,53 @@ def test_process_handler_call_malformed_envelope_missing_event_type() -> None:
     reply = process_handler_call(payload)
     assert "error" in reply
     assert reply["error"]["type"] == "MalformedEnvelope"
+
+
+def test_process_handler_call_schema_version_mismatch() -> None:
+    """Reviewer C2 / PRD 02 F05: incoming state with _schema_version !=
+    the registered model's schema_version must return
+    SchemaVersionMismatch so Elixir can't silently persist a state
+    the Python side doesn't understand.
+    """
+    _register_noop()  # schema_version = 1
+
+    payload = {
+        "handler": "noop.on_msg",
+        "state": {"counter": 3, "_schema_version": 99},
+        "event": {"event_type": "tick", "args": {}},
+    }
+    reply = process_handler_call(payload)
+    assert "error" in reply
+    assert reply["error"]["type"] == "SchemaVersionMismatch"
+    assert "99" in reply["error"]["message"]
+    assert "1" in reply["error"]["message"]
+
+
+def test_process_handler_call_schema_version_absent_accepts() -> None:
+    """Legacy callers without _schema_version still work (default to
+    the registered version)."""
+    _register_noop()
+
+    payload = {
+        "handler": "noop.on_msg",
+        "state": {"counter": 0},  # no _schema_version at all
+        "event": {"event_type": "tick", "args": {}},
+    }
+    reply = process_handler_call(payload)
+    assert "error" not in reply
+
+
+def test_process_handler_call_reply_carries_schema_version() -> None:
+    """The new_state in the reply includes _schema_version so Elixir
+    can persist it alongside the payload and detect drift on reload.
+    """
+    _register_noop()
+
+    payload = {
+        "handler": "noop.on_msg",
+        "state": {"counter": 0},
+        "event": {"event_type": "tick", "args": {}},
+    }
+    reply = process_handler_call(payload)
+    assert "error" not in reply
+    assert reply["new_state"]["_schema_version"] == 1

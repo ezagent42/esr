@@ -61,8 +61,23 @@ def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
             f"state model for actor_type {handler_entry.actor_type} not registered",
         )
 
+    # PRD 02 F05 / reviewer C2: reject state dicts carrying a
+    # _schema_version that doesn't match the registered model.
+    incoming_schema = state_dict.get("_schema_version")
+    if incoming_schema is not None and incoming_schema != state_entry.schema_version:
+        return _error(
+            "SchemaVersionMismatch",
+            f"state for {handler_entry.actor_type} is at schema_version "
+            f"{incoming_schema}; this worker expects "
+            f"{state_entry.schema_version}",
+        )
+
+    # Strip the meta field before passing to pydantic (the model's
+    # schema doesn't declare it).
+    clean_state_dict = {k: v for k, v in state_dict.items() if k != "_schema_version"}
+
     try:
-        state = state_entry.model(**state_dict)
+        state = state_entry.model(**clean_state_dict)
     except Exception as exc:  # noqa: BLE001 — pydantic ValidationError + any ctor errors
         return _error(type(exc).__name__, str(exc))
 
@@ -73,8 +88,14 @@ def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — handler boundary; see F08
         return _error(type(exc).__name__, str(exc))
 
+    # Tag the outgoing state with the registered schema_version so the
+    # runtime can persist it alongside the payload and detect drift on
+    # reload.
+    dumped = _dump_state(new_state)
+    dumped["_schema_version"] = state_entry.schema_version
+
     return {
-        "new_state": _dump_state(new_state),
+        "new_state": dumped,
         "actions": [serialise_action(a) for a in actions],
     }
 
