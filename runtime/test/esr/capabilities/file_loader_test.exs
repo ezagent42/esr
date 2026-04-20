@@ -7,8 +7,13 @@ defmodule Esr.Capabilities.FileLoaderTest do
   @fixtures "test/support/capabilities_fixtures"
 
   setup do
-    start_supervised!(Registry)
-    start_supervised!(Grants)
+    if Process.whereis(Registry) == nil, do: start_supervised!(Registry)
+    if Process.whereis(Grants) == nil, do: start_supervised!(Grants)
+
+    # Reset state between tests — the app-level processes are long-lived.
+    Registry.reset()
+    Grants.load_snapshot(%{})
+
     # Registry must declare the permissions used in fixtures
     Registry.register("msg.send", declared_by: Test)
     Registry.register("session.create", declared_by: Test)

@@ -28,6 +28,10 @@ defmodule Esr.Permissions.Registry do
     :ets.tab2list(@table) |> Enum.map(fn {name, _} -> name end)
   end
 
+  @doc false
+  # Test-only: wipe all registrations. Not exposed via the façade.
+  def reset, do: GenServer.call(__MODULE__, :reset)
+
   @impl true
   def init(:ok) do
     :ets.new(@table, [:named_table, :set, read_concurrency: true])
@@ -37,6 +41,11 @@ defmodule Esr.Permissions.Registry do
   @impl true
   def handle_call({:register, name, declared_by}, _from, state) do
     :ets.insert(@table, {name, declared_by})
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    :ets.delete_all_objects(@table)
     {:reply, :ok, state}
   end
 end

@@ -4,7 +4,15 @@ defmodule Esr.Permissions.RegistryTest do
   alias Esr.Permissions.Registry
 
   setup do
-    start_supervised!(Registry)
+    # Registry is started by Esr.Application via Esr.Capabilities.Supervisor.
+    # Fall back to start_supervised! only if the app-level singleton is absent
+    # (e.g. in stripped-down test envs).
+    if Process.whereis(Registry) == nil do
+      start_supervised!(Registry)
+    end
+
+    # Reset state between tests — the app-level Registry is long-lived.
+    Registry.reset()
     :ok
   end
 

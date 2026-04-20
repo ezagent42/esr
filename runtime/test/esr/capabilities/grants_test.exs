@@ -4,7 +4,14 @@ defmodule Esr.Capabilities.GrantsTest do
   alias Esr.Capabilities.Grants
 
   setup do
-    start_supervised!(Grants)
+    # Grants is started by Esr.Application via Esr.Capabilities.Supervisor.
+    # Fall back to start_supervised! only if the app-level singleton is absent.
+    if Process.whereis(Grants) == nil do
+      start_supervised!(Grants)
+    end
+
+    # Reset state between tests — the app-level Grants is long-lived.
+    Grants.load_snapshot(%{})
     :ok
   end
 
