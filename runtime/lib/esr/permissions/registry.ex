@@ -28,6 +28,29 @@ defmodule Esr.Permissions.Registry do
     :ets.tab2list(@table) |> Enum.map(fn {name, _} -> name end)
   end
 
+  @doc """
+  Write a JSON snapshot of registered permissions to `path`, grouped by
+  the declaring module.
+
+  Output shape: `{"Elixir.Mod.Name": ["perm.a", "perm.b"], ...}` —
+  consumed by `esr cap list` (py/src/esr/cli/cap.py). This is a
+  one-shot snapshot taken at the end of bootstrap; the file is not
+  touched again at runtime.
+  """
+  @spec dump_json(Path.t()) :: :ok
+  def dump_json(path) do
+    entries =
+      :ets.tab2list(@table)
+      |> Enum.group_by(
+        fn {_name, declared_by} -> to_string(declared_by) end,
+        fn {name, _} -> name end
+      )
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, Jason.encode!(entries, pretty: true))
+    :ok
+  end
+
   @doc false
   # Test-only: wipe all registrations. Not exposed via the façade.
   def reset, do: GenServer.call(__MODULE__, :reset)

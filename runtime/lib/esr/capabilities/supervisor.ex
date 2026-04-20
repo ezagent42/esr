@@ -7,6 +7,7 @@ defmodule Esr.Capabilities.Supervisor do
   @impl true
   def init(opts) do
     path = Keyword.get(opts, :path, default_path())
+    dump_path = Path.join(Path.dirname(path), "permissions_registry.json")
 
     maybe_bootstrap_file(path)
 
@@ -14,7 +15,10 @@ defmodule Esr.Capabilities.Supervisor do
       Esr.Permissions.Registry,
       # Bootstrap must sit between Registry and Watcher so declared
       # permissions exist before FileLoader.validate/1 checks them.
-      Esr.Permissions.Bootstrap,
+      # `dump_path:` tells Bootstrap to write a JSON snapshot of the
+      # registry once registration completes — consumed by
+      # `esr cap list` (py/src/esr/cli/cap.py).
+      {Esr.Permissions.Bootstrap, dump_path: dump_path},
       Esr.Capabilities.Grants,
       {Esr.Capabilities.Watcher, path: path}
     ]

@@ -28,12 +28,19 @@ defmodule Esr.Permissions.Bootstrap do
   @doc """
   Child-spec shim so `Esr.Capabilities.Supervisor` can list this
   module directly in its child list. Starts a short-lived `Task`
-  that runs `bootstrap/0` and exits `:normal`.
+  that runs `bootstrap/1` and exits `:normal`.
+
+  Accepts `dump_path:` — when present, the task calls
+  `Esr.Permissions.Registry.dump_json/1` with that path once all
+  permissions have been registered. Used so `esr cap list` can read
+  a JSON snapshot of the registry without a live runtime RPC.
   """
-  def child_spec(_opts) do
+  def child_spec(opts) do
+    dump_path = Keyword.get(opts, :dump_path)
+
     %{
       id: __MODULE__,
-      start: {Task, :start_link, [&__MODULE__.bootstrap/0]},
+      start: {Task, :start_link, [fn -> bootstrap(dump_path: dump_path) end]},
       restart: :transient,
       type: :worker
     }
@@ -44,7 +51,15 @@ defmodule Esr.Permissions.Bootstrap do
   into `Esr.Permissions.Registry`. Idempotent — re-running is safe.
   """
   @spec bootstrap() :: :ok
-  def bootstrap do
+  def bootstrap, do: bootstrap([])
+
+  @doc """
+  Variant of `bootstrap/0` that additionally writes a JSON snapshot
+  of the registry to `opts[:dump_path]` once registration completes.
+  Snapshot omitted when no path is given.
+  """
+  @spec bootstrap(keyword()) :: :ok
+  def bootstrap(opts) when is_list(opts) do
     for {perm, mod} <- @subsystem_permissions do
       Registry.register(perm, declared_by: mod)
     end
@@ -54,7 +69,28 @@ defmodule Esr.Permissions.Bootstrap do
       Registry.register(perm, declared_by: mod)
     end
 
+    case Keyword.get(opts, :dump_path) do
+      nil -> :ok
+      path when is_binary(path) -> safe_dump(path)
+    end
+
     :ok
+  end
+
+  # Dump failures (e.g. permission denied, read-only volume) must not
+  # crash boot — snapshot is a convenience for CLI, not a liveness
+  # dependency. Log and continue.
+  defp safe_dump(path) do
+    try do
+      Registry.dump_json(path)
+    rescue
+      exc ->
+        require Logger
+        Logger.warning(
+          "permissions: dump_json failed at #{path} — #{Exception.message(exc)}; continuing"
+        )
+        :ok
+    end
   end
 
   # Find every loaded :esr module that exports permissions/0.

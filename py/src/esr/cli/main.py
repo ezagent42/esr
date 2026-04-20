@@ -14,6 +14,7 @@ from typing import Any
 import click
 import yaml
 
+from esr.cli.cap import cap as cap_group
 from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
@@ -65,6 +66,11 @@ def _host_port_from_endpoint(endpoint: str) -> str:
 @click.group()
 def cli() -> None:
     """``esr`` — command-line entry to a running esrd."""
+
+
+# Capability-based access control CLI lives in its own module so
+# Phase CAP-7 (grant/revoke) can extend it without bloating main.py.
+cli.add_command(cap_group)
 
 
 @cli.command("use")
