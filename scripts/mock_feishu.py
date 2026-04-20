@@ -86,6 +86,8 @@ class MockFeishu:
         app.router.add_post("/open-apis/im/v1/messages", self._on_create_message)
         app.router.add_get("/open-apis/im/v1/messages", self._on_list_messages)
         app.router.add_get("/ws", self._on_ws_connect)
+        app.router.add_post("/push_inbound", self._on_push_inbound)
+        app.router.add_get("/sent_messages", self._on_get_sent_messages)
 
         self._runner = web.AppRunner(app)
         await self._runner.setup()
@@ -195,6 +197,25 @@ class MockFeishu:
             if ws in self._ws_clients:
                 self._ws_clients.remove(ws)
         return ws
+
+    async def _on_push_inbound(self, request: web.Request) -> web.Response:
+        """POST /push_inbound — scenario helper: inject a Feishu-side
+        inbound message as if a user typed it. Body JSON shape:
+        {"chat_id": "oc_x", "app_id": "cli_x", "user": "ou_user1",
+         "text": "/new-session esr-dev tag=root"}
+        """
+        body = await request.json()
+        msg_id = self.push_inbound(
+            chat_id=body.get("chat_id", ""),
+            sender_open_id=body.get("user", "ou_test"),
+            content_text=body.get("text", ""),
+        )
+        return web.json_response({"ok": True, "message_id": msg_id})
+
+    async def _on_get_sent_messages(self, request: web.Request) -> web.Response:
+        """GET /sent_messages — scenario helper: return the outbound
+        message log as a JSON array for grep-style assertions."""
+        return web.json_response(list(self._sent_messages))
 
     async def _on_list_messages(self, request: web.Request) -> web.Response:
         """GET /open-apis/im/v1/messages — list chat history."""
