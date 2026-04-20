@@ -61,10 +61,18 @@ but no logic is implemented:
 
 - **Feishu group-membership auto-sync** (cc-openclaw sidecar's event-driven
   `is_user_member` / `is_admin` reconciliation). Manual YAML editing only.
-- **Agent principals at runtime** — the YAML supports `kind: agent` in
-  schema, but no agent actor currently populates a `principal_id` with its own
-  identity. All messages today originate from adapter-forwarded human users.
-- **Capability delegation** — an agent forwarding a grant to another agent.
+- **Explicit capability delegation** — a principal programmatically granting
+  a subset of its capabilities to another principal with time-bound /
+  revocable / audited semantics. The current design uses **implicit
+  delegation**: a CC session spawned on behalf of a user inherits that user's
+  full `principal_id` via `SessionRegistry` (see §6.3 and §6.5). Explicit
+  delegation is planned as `capabilities-v2` — see
+  `docs/futures/explicit-capability-delegation.md`.
+- **Autonomous / persistent agent identity** — a standalone agent that is
+  NOT a CC session spawned by a human. Such an agent would need its own
+  authenticated `principal_id` (not inherited). The permission check is
+  identical to the user case; only the identity-provenance mechanism is
+  missing. Deferred with the same timeline as explicit delegation.
 - **Audit log** — recording who was denied what, when. Logging goes to the
   standard runtime log, not a structured audit store.
 - **Per-chat or per-thread scope** — only `workspace` is a scope-prefix in v1.
@@ -428,6 +436,47 @@ the adapter (Feishu path) or at session registration (CC path) — both are
 places where the identity is already known. When agent-to-agent scenarios
 arrive (deferred), agents will likewise set `principal_id` in their
 outgoing envelopes; still no registry required.
+
+### 6.5 Implicit delegation (the CC-session spawner-inherit semantic)
+
+The "CC session inherits the spawner's `principal_id`" behavior in §6.3 is
+**a form of capability delegation** — just an implicit one. Worth naming:
+
+- **What is delegated**: the spawner's *entire* capability set. The CC
+  session has exactly what the spawner has, no more, no less.
+- **When it's delegated**: at session-spawn time. The handler creating the
+  session writes `principal_id` into `SessionRegistry`; subsequent
+  `tool_invoke` tuples from that session carry that principal through
+  Lane B.
+- **Duration**: for the lifetime of the session process. No expiration.
+- **Revocation**: only by killing the session or editing
+  `capabilities.yaml` to reduce the spawner's grants (which takes effect
+  on hot-reload within ~2 seconds).
+- **Audit**: implicit — the session's actions appear in logs under the
+  spawner's `principal_id`, so after-the-fact review shows "Alice did X"
+  rather than "Alice's agent Y did X".
+
+**Consequences worth understanding**:
+
+- If Alice holds `cap.manage`, so does her CC session. A prompt-injection
+  attack against her agent has the blast radius of Alice's full account.
+- Alice cannot spawn a CC session with a *restricted subset* of her caps
+  (e.g., "this session can `msg.send` but not `cap.manage`"). She gets
+  all-or-nothing.
+- Two sessions spawned by Alice cannot be distinguished from each other
+  at the capability-check layer — both are just "Alice".
+
+**When implicit delegation is the right tool**: trust boundary = user
+boundary. If the operator fully trusts every process running as them on
+their host, implicit delegation is the right model and matches common
+OS-level assumptions (a process inherits its invoker's privileges).
+
+**When it isn't** (covered by the planned explicit-delegation work,
+`docs/futures/explicit-capability-delegation.md`):
+- Running an untrusted third-party agent on one's behalf
+- Limiting an LLM-driven session to a narrow scope as defense-in-depth
+- Time-bound or revocable grants
+- Multi-agent systems where delegations form an auditable chain
 
 ## 7. Enforcement points
 
