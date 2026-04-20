@@ -41,6 +41,24 @@ _ws: EsrWSClient | None = None
 _mcp_server: Server | None = None
 
 
+def _format_channel_tag(envelope: dict[str, Any]) -> str:
+    """Wrap an inbound envelope as a <channel> XML tag matching
+    cc-openclaw's openclaw-channel output. CC's MCP client renders
+    text-content messages with a <channel> tag as an inbound user
+    message for the conversation context.
+    """
+    attrs = {
+        "source": envelope.get("source", ""),
+        "chat_id": envelope.get("chat_id", ""),
+        "message_id": envelope.get("message_id", ""),
+        "user": envelope.get("user", ""),
+        "ts": envelope.get("ts", ""),
+    }
+    attr_str = " ".join(f'{k}="{v}"' for k, v in attrs.items() if v)
+    body = envelope.get("content", "")
+    return f"<channel {attr_str}>\n{body}\n</channel>"
+
+
 async def _handle_inbound(envelope: dict[str, Any]) -> None:
     """Route inbound frames by kind (spec §5.3)."""
     kind = envelope.get("kind")
@@ -50,9 +68,18 @@ async def _handle_inbound(envelope: dict[str, Any]) -> None:
         if fut and not fut.done():
             fut.set_result(envelope)
     elif kind == "notification":
-        # Injection landed in P2-5.
-        log.info("notification from %s: %r", envelope.get("source"),
-                 envelope.get("content", "")[:80])
+        # Inject as an MCP-spec notification/logging message so CC sees
+        # it in the conversation context.
+        tag = _format_channel_tag(envelope)
+        log.info("inbound notification from %s, %d bytes",
+                 envelope.get("source", ""), len(tag))
+        if _mcp_server is not None:
+            try:
+                await _mcp_server.request_context.session.send_log_message(
+                    level="info", data=tag, logger="esr-channel"
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("failed to inject notification: %s", exc)
     elif kind == "session_killed":
         log.warning("session_killed: %s", envelope.get("reason"))
         await asyncio.sleep(0.5)
