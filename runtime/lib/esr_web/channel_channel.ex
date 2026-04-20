@@ -43,12 +43,32 @@ defmodule EsrWeb.ChannelChannel do
   end
 
   def handle_in("envelope", %{"kind" => "tool_invoke"} = payload, socket) do
-    # v0.2 P6 replaces this stub with a real PeerServer forward.
+    session_id = socket.assigns.session_id
     req_id = payload["req_id"]
-    {:reply, {:ok, %{"kind" => "tool_result", "req_id" => req_id,
-                     "ok" => false, "error" =>
-                     %{"type" => "not_implemented",
-                       "message" => "P6 not landed"}}}, socket}
+    tool = payload["tool"]
+    args = payload["args"] || %{}
+
+    peer_name = "thread:" <> session_id
+
+    case Registry.lookup(Esr.PeerRegistry, peer_name) do
+      [{peer_pid, _}] ->
+        send(peer_pid, {:tool_invoke, req_id, tool, args, self()})
+        {:noreply, socket}
+
+      [] ->
+        result = %{
+          "kind" => "tool_result",
+          "req_id" => req_id,
+          "ok" => false,
+          "error" => %{
+            "type" => "peer_vanished",
+            "message" => "no thread peer for session " <> session_id
+          }
+        }
+
+        push(socket, "envelope", result)
+        {:noreply, socket}
+    end
   end
 
   def handle_in("envelope", _payload, socket) do
@@ -58,6 +78,16 @@ defmodule EsrWeb.ChannelChannel do
   @impl Phoenix.Channel
   def handle_info({:push_envelope, envelope}, socket) do
     push(socket, "envelope", envelope)
+    {:noreply, socket}
+  end
+
+  def handle_info({:tool_result, req_id, result}, socket) do
+    push(
+      socket,
+      "envelope",
+      Map.merge(result, %{"kind" => "tool_result", "req_id" => req_id})
+    )
+
     {:noreply, socket}
   end
 
