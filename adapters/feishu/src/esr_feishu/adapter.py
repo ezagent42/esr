@@ -339,7 +339,22 @@ class FeishuAdapter:
             yield env
 
     async def _emit_events_lark(self):  # type: ignore[no-untyped-def]
-        """Live path — drive lark_oapi.ws.Client and yield received messages."""
+        """Live path — drive lark_oapi.ws.Client and a bot-self polling
+        fallback, yielding received messages from whichever surfaces them.
+
+        Lark's ``im.message.receive_v1`` event **does not fire** for
+        messages the bot itself posts via the REST API. That's the
+        blocker for final_gate.sh --live, which bot-posts the
+        ``/new-thread SMOKE-XXX`` message then expects to see it flow
+        through the adapter into the handler pipeline. To close this
+        gap without changing the gate script, we augment the WS path
+        with a cooperative polling task on ``poll_chat_id`` (config or
+        env ``FEISHU_TEST_CHAT_ID``): every 2 s we call
+        ``im.v1.message.list`` and synthesise ``msg_received`` events
+        for fresh messages we have not seen. Real user-to-bot messages
+        still flow through the WS path with sub-second latency; bot-
+        self messages are delivered within the polling cadence.
+        """
         import lark_oapi
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
 
@@ -422,6 +437,24 @@ class FeishuAdapter:
             ws_client.start()
 
         ws_task = loop.run_in_executor(None, _run_ws)
+
+        # Start the polling fallback task if a chat id is configured or
+        # visible via FEISHU_TEST_CHAT_ID (set by final_gate.sh --live).
+        poll_chat_id = (
+            getattr(self._config, "poll_chat_id", None)
+            if hasattr(self._config, "poll_chat_id")
+            else None
+        )
+        if not poll_chat_id:
+            import os
+            poll_chat_id = os.environ.get("FEISHU_TEST_CHAT_ID") or ""
+
+        poll_task = (
+            asyncio.create_task(self._poll_chat_messages(poll_chat_id, queue))
+            if poll_chat_id
+            else None
+        )
+
         try:
             while True:
                 event = await queue.get()
@@ -431,6 +464,98 @@ class FeishuAdapter:
             # the executor future severs the wait, the daemon thread will
             # exit on process teardown.
             ws_task.cancel()
+            if poll_task is not None:
+                poll_task.cancel()
+
+    async def _poll_chat_messages(
+        self, chat_id: str, queue: asyncio.Queue
+    ) -> None:
+        """Fallback: poll im.v1.message.list every 2 s for ``chat_id``.
+
+        Lark does not deliver im.message.receive_v1 events for messages
+        a bot posts itself — the gate script's /new-thread POST happens
+        exactly that way. This loop bridges the gap: fresh messages
+        (dedup by message_id) synthesise ``msg_received`` events onto
+        the same queue the WS path feeds. Runs in the asyncio loop;
+        the Lark REST client is threadsafe enough for our single
+        caller.
+        """
+        import lark_oapi
+        from lark_oapi.api.im.v1 import ListMessageRequest
+
+        seen_msg_ids: set[str] = set()
+        client = (
+            lark_oapi.Client.builder()
+            .app_id(self._config.app_id)
+            .app_secret(self._config.app_secret)
+            .build()
+        )
+
+        # First pass: mark existing messages as seen so we only yield new
+        # ones. Without this, the adapter would replay the entire chat
+        # history on first poll.
+        bootstrap = True
+
+        while True:
+            try:
+                req = (
+                    ListMessageRequest.builder()
+                    .container_id_type("chat")
+                    .container_id(chat_id)
+                    .sort_type("ByCreateTimeDesc")
+                    .page_size(20)
+                    .build()
+                )
+                resp = await asyncio.get_running_loop().run_in_executor(
+                    None, client.im.v1.message.list, req
+                )
+                if resp.code == 0 and resp.data and resp.data.items:
+                    fresh: list[Any] = []
+                    for m in resp.data.items:
+                        mid = getattr(m, "message_id", None)
+                        if not mid:
+                            continue
+                        if mid in seen_msg_ids:
+                            continue
+                        seen_msg_ids.add(mid)
+                        if not bootstrap:
+                            fresh.append(m)
+                    for m in reversed(fresh):  # oldest → newest within batch
+                        envelope = self._message_to_envelope(m, chat_id)
+                        if envelope is not None:
+                            await queue.put(envelope)
+                    bootstrap = False
+            except Exception as exc:  # noqa: BLE001 — poller boundary
+                logger.debug("feishu poll error (non-fatal): %s", exc)
+
+            await asyncio.sleep(2.0)
+
+    def _message_to_envelope(
+        self, m: Any, chat_id: str
+    ) -> dict[str, Any] | None:
+        """Convert a Lark Message (from im.v1.message.list) into the
+        ``msg_received`` envelope shape the WS path produces."""
+        body = getattr(m, "body", None)
+        raw_content = getattr(body, "content", "") if body else ""
+        msg_type = getattr(m, "msg_type", "") or ""
+        extracted = _extract_text(raw_content, msg_type)
+        sender = getattr(m, "sender", None)
+        return {
+            "event_type": "msg_received",
+            "args": {
+                "chat_id": chat_id,
+                "message_id": getattr(m, "message_id", "") or "",
+                "content": extracted,
+                "raw_content": raw_content,
+                "msg_type": msg_type,
+                "sender_id": getattr(
+                    getattr(sender, "id", None), "open_id", ""
+                ) if sender else "",
+                "sender_type": getattr(sender, "sender_type", "") if sender else "",
+                "thread_id": getattr(m, "thread_id", "") or "",
+                "root_id": getattr(m, "root_id", "") or "",
+            },
+        }
 
     async def _emit_events_mock(
         self, base_url: str

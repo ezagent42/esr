@@ -325,15 +325,11 @@ defmodule Esr.Topology.Instantiator do
 
   defp ensure_python_workers(_), do: :ok
 
-  # Worker ids are short, stable per-actor slugs. Collisions across
-  # actor types within one topology are impossible because node ids are
-  # unique, so we strip the prefix and reuse the suffix.
-  defp derive_worker_id(actor_id) do
-    case String.split(actor_id, ":", parts: 2) do
-      [_prefix, suffix] -> "w-" <> suffix
-      _ -> "w-" <> actor_id
-    end
-  end
+  # v0.1: HandlerRouter.call broadcasts on ``handler:<module>/default`` —
+  # one handler worker per module per esrd is enough (workers are
+  # stateless; PRD 03 F07 "handler_hub" allows multiple, but v0.1 keeps
+  # the default singleton). Pinning the worker id matches the wire.
+  defp derive_worker_id(_actor_id), do: "default"
 
   defp handler_hub_url do
     "ws://127.0.0.1:" <>

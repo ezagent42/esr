@@ -296,6 +296,17 @@ def adapter_add(
     # Parse the trailing pass-through args into a config dict.
     cfg_dict = _parse_config_flags(config_args)
 
+    # For feishu, forward FEISHU_TEST_CHAT_ID (set by final_gate.sh --live)
+    # as a ``poll_chat_id`` config entry so the adapter's bot-self-message
+    # polling fallback has a target. Lark does not fire
+    # im.message.receive_v1 events for messages posted by the bot itself,
+    # and the gate script's /new-thread POST is exactly that — the
+    # polling loop bridges the gap.
+    if adapter_type == "feishu" and "poll_chat_id" not in cfg_dict:
+        test_chat = os.environ.get("FEISHU_TEST_CHAT_ID")
+        if test_chat:
+            cfg_dict["poll_chat_id"] = test_chat
+
     cfg_path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "adapters.yaml"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
