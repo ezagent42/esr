@@ -27,6 +27,12 @@ defmodule EsrWeb.Endpoint do
     websocket: true,
     longpoll: false
 
+  # MCP bridge WebSocket — esr-channel Python processes join
+  # cli:channel/<session_id> topics here (PRD v0.2 §3.2).
+  socket "/channel/socket", EsrWeb.ChannelSocket,
+    websocket: true,
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
