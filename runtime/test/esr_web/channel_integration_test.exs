@@ -2,6 +2,7 @@ defmodule EsrWeb.ChannelIntegrationTest do
   use EsrWeb.ChannelCase, async: false
 
   alias Esr.SessionRegistry
+  alias Esr.TestSupport.AuthContext
 
   setup do
     # Guarantee emit_topic_for("feishu", ...) resolves to OUR test topic by
@@ -13,6 +14,14 @@ defmodule EsrWeb.ChannelIntegrationTest do
       end
     end
 
+    # CAP-4 Lane B: tool_invoke checks the caller's grants. The MCP
+    # channel defaults to ESR_BOOTSTRAP_PRINCIPAL_ID when no
+    # session_register lands — grant that principal admin so existing
+    # round-trip assertions keep passing.
+    System.put_env("ESR_BOOTSTRAP_PRINCIPAL_ID", "test_admin")
+    AuthContext.load_admin("test_admin")
+
+    on_exit(fn -> System.delete_env("ESR_BOOTSTRAP_PRINCIPAL_ID") end)
     :ok
   end
 
