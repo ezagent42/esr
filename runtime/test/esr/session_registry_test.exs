@@ -47,4 +47,35 @@ defmodule Esr.SessionRegistryTest do
     {:ok, row} = SessionRegistry.lookup(sid)
     assert row.workspace == "w2"
   end
+
+  test "notify_session pushes to the ws_pid when online", %{session_id: sid} do
+    parent = self()
+    ws_pid = spawn(fn ->
+      receive do
+        {:push_envelope, payload} -> send(parent, {:got, payload})
+      end
+    end)
+
+    :ok = SessionRegistry.register(sid, ws_pid: ws_pid,
+            chat_ids: [], app_ids: [], workspace: "w")
+
+    :ok = SessionRegistry.notify_session(sid,
+            %{"kind" => "notification", "content" => "hello"})
+
+    assert_receive {:got, %{"kind" => "notification", "content" => "hello"}}, 500
+  end
+
+  test "notify_session returns :error when offline", %{session_id: sid} do
+    :ok = SessionRegistry.register(sid, ws_pid: self(),
+            chat_ids: [], app_ids: [], workspace: "w")
+    :ok = SessionRegistry.mark_offline(sid)
+
+    assert {:error, :offline} =
+             SessionRegistry.notify_session(sid, %{"kind" => "notification"})
+  end
+
+  test "notify_session returns :error when unknown session", %{session_id: sid} do
+    assert {:error, :not_registered} =
+             SessionRegistry.notify_session(sid, %{"kind" => "notification"})
+  end
 end

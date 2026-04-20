@@ -44,6 +44,19 @@ defmodule Esr.SessionRegistry do
   @spec list() :: [{String.t(), map()}]
   def list, do: :ets.tab2list(@table)
 
+  @spec notify_session(String.t(), map()) ::
+          :ok | {:error, :offline} | {:error, :not_registered}
+  def notify_session(session_id, envelope) when is_binary(session_id) and is_map(envelope) do
+    case lookup(session_id) do
+      {:ok, %{status: :online, ws_pid: ws_pid}} ->
+        send(ws_pid, {:push_envelope, envelope})
+        :ok
+
+      {:ok, %{status: :offline}} -> {:error, :offline}
+      :error -> {:error, :not_registered}
+    end
+  end
+
   # ----- GenServer -----
   @impl GenServer
   def init(_) do
