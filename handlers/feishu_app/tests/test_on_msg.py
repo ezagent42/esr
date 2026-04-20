@@ -127,3 +127,21 @@ def test_arbitrary_event_ignored() -> None:
     new_s, actions = on_msg(s, event)
     assert new_s is s
     assert actions == []
+
+
+def test_state_tracks_active_thread_per_chat() -> None:
+    from esr_handler_feishu_app.state import FeishuAppState
+
+    s = FeishuAppState()
+    s2 = s.with_active_thread("oc_a", "dev-1")
+    assert s2.active_thread_by_chat == {"oc_a": "dev-1"}
+    # immutability
+    assert s.active_thread_by_chat == {}
+
+
+def test_state_tracks_last_chat_id() -> None:
+    from esr_handler_feishu_app.state import FeishuAppState
+
+    s = FeishuAppState()
+    s2 = s.with_last_chat_id("oc_abc")
+    assert s2.last_chat_id == "oc_abc"
