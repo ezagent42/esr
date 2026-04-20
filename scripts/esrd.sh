@@ -90,6 +90,18 @@ cmd_stop() {
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
   fi
   rm -f "$pidfile"
+
+  # Ephemeral smoke-* instances (final_gate.sh --live uses ``smoke-live``)
+  # get aggressive state cleanup so the next loop iteration can start
+  # fresh — wipe Python worker subprocesses + their pidfiles, AND the
+  # default adapters.yaml the CLI's ``esr adapter add`` targets (the CLI
+  # is not yet esrd-instance-aware in v0.1).
+  if [[ "$instance" == smoke-* ]]; then
+    pkill -f 'esr\.ipc\.(adapter_runner|handler_worker)' 2>/dev/null || true
+    rm -f /tmp/esr-worker-*.pid /tmp/esr-worker-*.log 2>/dev/null
+    rm -f "$ESRD_HOME/default/adapters.yaml" 2>/dev/null
+  fi
+
   echo "esrd[$instance] stopped"
 }
 

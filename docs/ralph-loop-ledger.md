@@ -52,3 +52,4 @@
 | 43 | 2026-04-19 | 8f | feishu-text-unwrap | 7ecee09 | unit_tests | sha256:e57d311690e87aee |
 | 44 | 2026-04-19 | 8f | feishu-thread-adapter-rename | 135ad5f | unit_tests | sha256:2cb63b29c837f3e0 |
 | 45 | 2026-04-19 | 8f | cc_tmux-emit-events | 281c295 | unit_tests | sha256:8a83cbb4e6b997c3 |
+| 46 | 2026-04-20 | 8f | esrd-smoke-cleanup | e18f9d0 | unit_tests | sha256:52f751921c645b7f |
