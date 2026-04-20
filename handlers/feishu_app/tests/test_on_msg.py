@@ -1,103 +1,94 @@
-"""PRD 05 F07 / F08 / F09 — feishu_app.on_msg."""
+"""PRD 05 F07 / F08 / F09 — feishu_app.on_msg (v0.2)."""
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from esr import Event, InvokeCommand, Route
 
 
-def _msg(content: str, *, thread_id: str | None = None) -> Event:
+def _msg(content: str, *, thread_id: str | None = None,
+         chat_id: str | None = None) -> Event:
     args: dict = {"content": content}
     if thread_id is not None:
         args["thread_id"] = thread_id
+    if chat_id is not None:
+        args["chat_id"] = chat_id
     return Event(source="esr://localhost/adapter/feishu", event_type="msg_received", args=args)
 
 
-# --- F07: /new-thread ---------------------------------------------------
+def _with_chat(event: Event, chat_id: str) -> Event:
+    """Return a copy of the event with chat_id merged into args."""
+    return replace(event, args={**event.args, "chat_id": chat_id})
 
 
-def test_new_thread_triggers_invoke_command() -> None:
+# --- /new-session (v0.2) -----------------------------------------------
+
+
+def test_new_session_triggers_invoke_command() -> None:
     from esr_handler_feishu_app.on_msg import on_msg
     from esr_handler_feishu_app.state import FeishuAppState
 
     s = FeishuAppState()
-    new_s, actions = on_msg(s, _msg("/new-thread foo"))
-    assert new_s.bound_threads == frozenset({"foo"})
+    # args include chat_id now for the pass-through
+    event = _with_chat(_msg("/new-session esr-dev tag=dev-root"), "oc_abc")
+
+    new_s, actions = on_msg(s, event)
+    assert new_s.bound_threads == frozenset({"dev-root"})
+    assert new_s.active_thread_by_chat == {"oc_abc": "dev-root"}
     assert len(actions) == 1
-    assert isinstance(actions[0], InvokeCommand)
-    assert actions[0].name == "feishu-thread-session"
-    # 8f: chat_id forwarded from event.args so the spawned feishu_thread
-    # can reply to the originating Feishu chat immediately.
-    assert actions[0].params == {"thread_id": "foo", "chat_id": ""}
+    ic = actions[0]
+    assert ic.name == "feishu-thread-session"
+    assert ic.params == {
+        "thread_id": "dev-root",
+        "chat_id": "oc_abc",
+        "workspace": "esr-dev",
+        "tag": "dev-root",
+    }
 
 
-def test_new_thread_duplicate_is_idempotent() -> None:
-    from esr_handler_feishu_app.on_msg import on_msg
-    from esr_handler_feishu_app.state import FeishuAppState
-
-    s = FeishuAppState(bound_threads=frozenset({"foo"}))
-    new_s, actions = on_msg(s, _msg("/new-thread foo"))
-    assert new_s is s  # same instance — no change
-    assert actions == []
-
-
-def test_new_thread_malformed_is_ignored() -> None:
-    """`/new-thread ` (empty name) → (state, [])."""
+def test_new_thread_legacy_alias_still_works() -> None:
+    """v0.1 compat alias — /new-thread <tag> → InvokeCommand with workspace=legacy."""
     from esr_handler_feishu_app.on_msg import on_msg
     from esr_handler_feishu_app.state import FeishuAppState
 
     s = FeishuAppState()
-    new_s, actions = on_msg(s, _msg("/new-thread   "))
-    assert new_s is s
-    assert actions == []
-
-
-def test_new_thread_without_prefix_space_ignored() -> None:
-    """`/new-threadfoo` must not trigger; prefix requires a space."""
-    from esr_handler_feishu_app.on_msg import on_msg
-    from esr_handler_feishu_app.state import FeishuAppState
-
-    s = FeishuAppState()
-    new_s, actions = on_msg(s, _msg("/new-threadfoo"))
-    assert new_s is s
-    assert actions == []
-
-
-# --- F08: route to bound thread ---------------------------------------
-
-
-def test_regular_msg_routes_to_bound_thread() -> None:
-    from esr_handler_feishu_app.on_msg import on_msg
-    from esr_handler_feishu_app.state import FeishuAppState
-
-    s = FeishuAppState(bound_threads=frozenset({"foo"}))
-    new_s, actions = on_msg(s, _msg("hello world", thread_id="foo"))
-    assert new_s is s
+    event = _with_chat(_msg("/new-thread alpha"), "oc_x")
+    new_s, actions = on_msg(s, event)
+    assert new_s.bound_threads == frozenset({"alpha"})
     assert len(actions) == 1
-    assert isinstance(actions[0], Route)
-    assert actions[0].target == "thread:foo"
-    assert actions[0].msg == "hello world"
+    ic = actions[0]
+    assert ic.name == "feishu-thread-session"
+    assert ic.params["thread_id"] == "alpha"
+    assert ic.params["workspace"] == "legacy"
 
 
-def test_unknown_thread_is_silent() -> None:
-    """A message with thread_id not in bound_threads produces no routes."""
+def test_at_prefix_addressing_routes_to_named_thread() -> None:
     from esr_handler_feishu_app.on_msg import on_msg
     from esr_handler_feishu_app.state import FeishuAppState
 
-    s = FeishuAppState(bound_threads=frozenset({"foo"}))
-    new_s, actions = on_msg(s, _msg("hello", thread_id="other"))
-    assert new_s is s
-    assert actions == []
+    s = FeishuAppState(bound_threads=frozenset({"alpha", "beta"}),
+                       active_thread_by_chat={"oc_x": "alpha"})
+    event = _with_chat(_msg("@beta hello there"), "oc_x")
+    new_s, actions = on_msg(s, event)
+    assert len(actions) == 1
+    r = actions[0]
+    assert isinstance(r, Route)
+    assert r.target == "thread:beta"
+    assert r.msg["args"]["content"] == "hello there"
 
 
-def test_msg_without_thread_id_is_silent() -> None:
-    """A msg_received with no thread_id and not /new-thread → no routes."""
+def test_non_command_msg_routes_to_active_thread_by_chat() -> None:
     from esr_handler_feishu_app.on_msg import on_msg
     from esr_handler_feishu_app.state import FeishuAppState
 
-    s = FeishuAppState()
-    new_s, actions = on_msg(s, _msg("hello"))
-    assert new_s is s
-    assert actions == []
+    s = FeishuAppState(bound_threads=frozenset({"alpha"}),
+                       active_thread_by_chat={"oc_x": "alpha"})
+    event = _with_chat(_msg("hello plain"), "oc_x")
+    new_s, actions = on_msg(s, event)
+    assert len(actions) == 1
+    r = actions[0]
+    assert r.target == "thread:alpha"
 
 
 # --- F09: non-msg events ----------------------------------------------
