@@ -394,6 +394,47 @@ defmodule Esr.PeerServer do
     Enum.reduce(actions, state, &dispatch_action/2)
   end
 
+  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via SessionRegistry.
+  defp dispatch_action(
+         %{"type" => "emit", "adapter" => "esr-channel"} = action,
+         %__MODULE__{} = state
+       ) do
+    args = Map.get(action, "args", %{})
+    session_id = Map.get(args, "session_id", "")
+
+    envelope = %{
+      "kind" => "notification",
+      "source" => Map.get(args, "source", ""),
+      "chat_id" => Map.get(args, "chat_id", ""),
+      "message_id" => Map.get(args, "message_id", ""),
+      "user" => Map.get(args, "user", ""),
+      "content" => Map.get(args, "content", ""),
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
+      actor_id: state.actor_id,
+      adapter: "esr-channel",
+      action: "notify_session",
+      session_id: session_id
+    })
+
+    case Esr.SessionRegistry.notify_session(session_id, envelope) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        :telemetry.execute([:esr, :emit, :failed], %{}, %{
+          actor_id: state.actor_id,
+          adapter: "esr-channel",
+          session_id: session_id,
+          reason: reason
+        })
+    end
+
+    state
+  end
+
   defp dispatch_action(%{"type" => "emit"} = action, %__MODULE__{} = state) do
     adapter = action["adapter"]
     # Prefer the topic of a peer ALREADY bound to this adapter name —
@@ -523,5 +564,10 @@ defmodule Esr.PeerServer do
       directive_id: id,
       reason: payload
     })
+  end
+
+  if Mix.env() == :test do
+    @doc false
+    def dispatch_action_for_test(action, state), do: dispatch_action(action, state)
   end
 end
