@@ -56,6 +56,7 @@ defmodule Esr.Topology.Instantiator do
 
   defp do_instantiate(artifact, params, name, opts) do
     with :ok <- check_params(artifact, params),
+         :ok <- validate_workspace_apps(params),
          nodes <- substitute_all(Map.get(artifact, "nodes", []), params),
          {:ok, ordered_ids} <- toposort(nodes),
          {:ok, peer_ids} <- spawn_in_order(nodes, ordered_ids, opts) do
@@ -72,6 +73,53 @@ defmodule Esr.Topology.Instantiator do
   end
 
   # --- Param validation ---------------------------------------------
+
+  # v0.2 §3.3 — verify that the workspace (if any) in params references
+  # only live adapter instances. Unknown workspace → skip (v0.3 will
+  # tighten). Empty/missing workspace → skip.
+  defp validate_workspace_apps(params) do
+    case Map.get(params, "workspace") do
+      nil ->
+        :ok
+
+      "" ->
+        :ok
+
+      ws_name when is_binary(ws_name) ->
+        case Esr.Workspaces.Registry.get(ws_name) do
+          {:ok, ws} -> check_ws_app_ids(ws)
+          :error -> :ok
+        end
+    end
+  end
+
+  # v0.2 §3.3 + reviewer C3: exact-match on the parsed app_id suffix of
+  # the AdapterHub topic, not String.contains? — otherwise a short
+  # prefix "cli_a9" would spuriously match "cli_a9563...".
+  # Topic format is `adapter:feishu/feishu-app:<app_id>`.
+  defp check_ws_app_ids(%{chats: chats}) do
+    live_app_ids =
+      HubRegistry.list()
+      |> Enum.flat_map(fn {topic, _bound_actor} ->
+        case topic do
+          "adapter:feishu/feishu-app:" <> app_id -> [app_id]
+          _ -> []
+        end
+      end)
+      |> MapSet.new()
+
+    missing =
+      chats
+      |> Enum.map(fn chat -> Map.get(chat, "app_id") || Map.get(chat, :app_id) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(live_app_ids, &1))
+
+    case missing do
+      [] -> :ok
+      [first | _] -> {:error, {:app_not_registered, first}}
+    end
+  end
 
   defp check_params(artifact, params) do
     required = Map.get(artifact, "params", []) |> Enum.map(&to_string/1)
