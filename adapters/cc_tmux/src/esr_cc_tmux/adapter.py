@@ -108,14 +108,20 @@ class CcTmuxAdapter:
         return self._tmux_available
 
     def _new_session(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Run ``tmux new-session -d -s <session_name> <start_cmd>`` (F17)."""
+        """Run ``tmux new-session -d -s <name> [-e K=V ...] [-c <cwd>] <cmd>`` (F17 + v0.2)."""
         session_name = args["session_name"]
         start_cmd = args["start_cmd"]
-        result = subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session_name, start_cmd],
-            capture_output=True,
-            text=True,
-        )
+        env: dict[str, str] = args.get("env") or {}
+        cwd: str | None = args.get("cwd")
+
+        argv = ["tmux", "new-session", "-d", "-s", session_name]
+        for k, v in env.items():
+            argv.extend(["-e", f"{k}={v}"])
+        if cwd:
+            argv.extend(["-c", cwd])
+        argv.append(start_cmd)
+
+        result = subprocess.run(argv, capture_output=True, text=True)
         if result.returncode == 0:
             return {"ok": True}
         return {"ok": False, "error": result.stderr.strip()}

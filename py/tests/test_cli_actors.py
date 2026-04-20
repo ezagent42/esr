@@ -88,3 +88,25 @@ def test_actors_logs_emits_recent_entries(ctx_home: Path) -> None:
     submit.assert_called_once_with("logs", "thread:foo")
     assert "inbound_event" in result.output
     assert "handler_invoked" in result.output
+
+
+def test_actors_inspect_prints_chat_ids(ctx_home: Path) -> None:
+    from esr.cli.main import cli
+    from click.testing import CliRunner
+    from unittest.mock import patch
+
+    with patch("esr.cli.main._submit_actors") as submit:
+        submit.return_value = {
+            "actor_id": "cc:dev-root",
+            "actor_type": "cc_proxy",
+            "handler_module": "cc_session",
+            "paused": False,
+            "state": {"session_name": "dev-root", "parent_thread": "dev-root"},
+            "chat_ids": ["oc_aaa"],
+            "default_chat_id": "oc_aaa",
+        }
+        runner = CliRunner()
+        result = runner.invoke(cli, ["actors", "inspect", "cc:dev-root"])
+
+    assert result.exit_code == 0, result.output
+    assert "oc_aaa" in result.output

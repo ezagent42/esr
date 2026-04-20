@@ -84,6 +84,7 @@ def _extract_text(raw_content: str, msg_type: str) -> str:
         "lark_oapi": "*",
         "aiohttp": "*",
         "http": ["open.feishu.cn"],
+        "urllib": ["127.0.0.1", "localhost"],
     },
 )
 class FeishuAdapter:
@@ -167,11 +168,23 @@ class FeishuAdapter:
         return {"ok": False, "error": "timeout"}
 
     def _send_message(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Send a text message via lark_oapi im.v1.message.create (PRD 04 F07)."""
-        import lark_oapi.api.im.v1 as im_v1
-
+        """Send a text message. Mock path: POST to mock_feishu when
+        base_url points at 127.0.0.1/localhost. Live path: lark_oapi
+        im.v1.message.create (PRD 04 F07)."""
         chat_id = args["chat_id"]
         content = args["content"]
+
+        base_url = getattr(self._config, "base_url", None) if (
+            hasattr(self._config, "base_url")
+        ) else None
+        if isinstance(base_url, str) and (
+            base_url.startswith("http://127.0.0.1")
+            or base_url.startswith("http://localhost")
+        ):
+            return self._send_message_mock(base_url, chat_id, content)
+
+        import lark_oapi.api.im.v1 as im_v1
+
         request = (
             im_v1.CreateMessageRequest.builder()
             .receive_id_type("chat_id")
@@ -188,6 +201,28 @@ class FeishuAdapter:
         if response.success():
             return {"ok": True, "result": {"message_id": response.data.message_id}}
         return _lark_failure(response, "send failed")
+
+    def _send_message_mock(self, base_url: str, chat_id: str, content: str) -> dict[str, Any]:
+        import urllib.request
+        import urllib.error
+
+        body = json.dumps({
+            "receive_id": chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": content}),
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/open-apis/im/v1/messages?receive_id_type=chat_id",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return {"ok": True, "result": data.get("data") or {}}
+        except urllib.error.URLError as exc:
+            return {"ok": False, "error": f"mock POST failed: {exc}"}
 
     def _react(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a reaction on a message via lark_oapi (PRD 04 F08)."""

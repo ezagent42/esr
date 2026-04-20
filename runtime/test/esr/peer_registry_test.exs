@@ -9,26 +9,34 @@ defmodule Esr.PeerRegistryTest do
 
   setup do
     # The Application's Registry persists across tests; start from a clean
-    # slate by unregistering every key. Registry.unregister only removes
-    # entries owned by the caller, so entries for previously-linked pids
-    # from other tests may still be present; poll until :DOWN messages
-    # have been processed and the Registry is actually empty.
-    for {actor_id, _pid} <- Esr.PeerRegistry.list_all() do
-      Registry.unregister(Esr.PeerRegistry, actor_id)
+    # slate. PeerServers from earlier tests may still be alive (ExUnit tears
+    # them down asynchronously after the owning test exits). Force-kill any
+    # stray pids so the Registry receives :DOWN and cleans up promptly.
+    for {_actor_id, pid} <- Esr.PeerRegistry.list_all() do
+      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :kill)
     end
 
-    wait_until_empty(50)
+    case wait_until_empty(500) do
+      :ok -> :ok
+      :timeout -> flunk("PeerRegistry not empty after 5 s — stray peer pids from earlier tests")
+    end
+
     :ok
   end
 
-  defp wait_until_empty(0), do: :ok
+  defp wait_until_empty(0), do: :timeout
 
   defp wait_until_empty(tries) do
     case Esr.PeerRegistry.list_all() do
       [] ->
         :ok
 
-      _ ->
+      entries ->
+        # Stray peers may still be appearing after test teardown — kill them.
+        for {_id, pid} <- entries, is_pid(pid), Process.alive?(pid) do
+          Process.exit(pid, :kill)
+        end
+
         :timer.sleep(10)
         wait_until_empty(tries - 1)
     end

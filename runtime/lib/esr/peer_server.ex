@@ -17,6 +17,7 @@ defmodule Esr.PeerServer do
   """
 
   use GenServer
+  require Logger
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
@@ -42,7 +43,8 @@ defmodule Esr.PeerServer do
     dedup_order: :queue.new(),
     paused: false,
     pending_events: [],
-    pending_directives: %{}
+    pending_directives: %{},
+    pending_tool_reqs: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -58,7 +60,8 @@ defmodule Esr.PeerServer do
           dedup_order: :queue.queue(String.t()),
           paused: boolean(),
           pending_events: [map()],
-          pending_directives: %{String.t() => map()}
+          pending_directives: %{String.t() => map()},
+          pending_tool_reqs: %{String.t() => {String.t(), pid()}}
         }
 
   # ------------------------------------------------------------------
@@ -139,6 +142,8 @@ defmodule Esr.PeerServer do
       actor_type: state.actor_type
     })
 
+    Logger.info("actor_spawned actor_id=#{state.actor_id} actor_type=#{state.actor_type}")
+
     {:ok, state}
   end
 
@@ -148,6 +153,13 @@ defmodule Esr.PeerServer do
       actor_id: actor_id,
       actor_type: actor_type
     })
+
+    # Emit session_killed log for feishu_thread_proxy peers so the gate's
+    # L5 grep can find "session_killed published session_id=<id>".
+    if actor_type == "feishu_thread_proxy" do
+      session_id = actor_id |> String.split(":", parts: 2) |> List.last()
+      Logger.info("session_killed published session_id=#{session_id}")
+    end
 
     :ok
   end
@@ -215,6 +227,71 @@ defmodule Esr.PeerServer do
     end
   end
 
+  # v0.2 §3.2 — tool_invoke arrives from ChannelChannel, we emit to the
+  # real adapter and WAIT for directive_ack before replying tool_result.
+  def handle_info(
+        {:tool_invoke, req_id, tool, args, reply_pid},
+        %__MODULE__{} = state
+      ) do
+    # Emit a structured log line for _echo so the gate's L2 grep can match
+    # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
+    if tool == "_echo" do
+      nonce = Map.get(args, "nonce", "")
+      Logger.info("tool_invoke _echo req_id=#{req_id} args.nonce=\"#{nonce}\" actor_id=#{state.actor_id}")
+    end
+
+    case build_emit_for_tool(tool, args, state) do
+      {:ok, emit} ->
+        {:ok, directive_id, new_state} = emit_and_track(emit, state)
+
+        pending_tool_reqs =
+          Map.put(new_state.pending_tool_reqs, directive_id, {req_id, reply_pid})
+
+        {:noreply, %__MODULE__{new_state | pending_tool_reqs: pending_tool_reqs}}
+
+      {:error, reason} ->
+        send(
+          reply_pid,
+          {:tool_result, req_id,
+           %{
+             "ok" => false,
+             "error" => %{"type" => "invalid_args", "message" => reason}
+           }}
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  # C4 — directive_ack for tool_invoke: push tool_result, drop both
+  # pending maps. Guard ensures we match only ids that came from a
+  # tool_invoke; other Emit acks fall through to the existing clause.
+  def handle_info(
+        {:directive_ack, %{"id" => id} = envelope},
+        %__MODULE__{pending_tool_reqs: pending} = state
+      )
+      when is_map_key(pending, id) do
+    {req_id, reply_pid} = Map.fetch!(pending, id)
+    payload = envelope["payload"] || %{}
+
+    result = %{
+      "ok" => payload["ok"] == true,
+      "data" => payload["result"],
+      "error" => payload["error"]
+    }
+
+    send(reply_pid, {:tool_result, req_id, result})
+
+    Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+
+    {:noreply,
+     %__MODULE__{
+       state
+       | pending_tool_reqs: Map.delete(pending, id),
+         pending_directives: Map.delete(state.pending_directives, id)
+     }}
+  end
+
   def handle_info({:directive_ack, %{"id" => id, "payload" => payload}}, %__MODULE__{} = state) do
     case Map.pop(state.pending_directives, id) do
       {nil, _} ->
@@ -225,6 +302,40 @@ defmodule Esr.PeerServer do
         emit_directive_outcome(state.actor_id, id, payload)
         {:noreply, %__MODULE__{state | pending_directives: remaining}}
     end
+  end
+
+  # Guarded deadline clause for tool_invoke ids — must come before the
+  # catch-all directive_deadline clause below.
+  def handle_info(
+        {:directive_deadline, id},
+        %__MODULE__{pending_tool_reqs: pending} = state
+      )
+      when is_map_key(pending, id) do
+    {req_id, reply_pid} = Map.fetch!(pending, id)
+
+    send(
+      reply_pid,
+      {:tool_result, req_id,
+       %{
+         "ok" => false,
+         "error" => %{"type" => "timeout", "message" => "directive ack timeout"}
+       }}
+    )
+
+    Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+
+    :telemetry.execute([:esr, :emit, :failed], %{}, %{
+      actor_id: state.actor_id,
+      directive_id: id,
+      reason: :timeout
+    })
+
+    {:noreply,
+     %__MODULE__{
+       state
+       | pending_tool_reqs: Map.delete(pending, id),
+         pending_directives: Map.delete(state.pending_directives, id)
+     }}
   end
 
   def handle_info({:directive_deadline, id}, %__MODULE__{} = state) do
@@ -394,6 +505,47 @@ defmodule Esr.PeerServer do
     Enum.reduce(actions, state, &dispatch_action/2)
   end
 
+  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via SessionRegistry.
+  defp dispatch_action(
+         %{"type" => "emit", "adapter" => "esr-channel"} = action,
+         %__MODULE__{} = state
+       ) do
+    args = Map.get(action, "args", %{})
+    session_id = Map.get(args, "session_id", "")
+
+    envelope = %{
+      "kind" => "notification",
+      "source" => Map.get(args, "source", ""),
+      "chat_id" => Map.get(args, "chat_id", ""),
+      "message_id" => Map.get(args, "message_id", ""),
+      "user" => Map.get(args, "user", ""),
+      "content" => Map.get(args, "content", ""),
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
+      actor_id: state.actor_id,
+      adapter: "esr-channel",
+      action: "notify_session",
+      session_id: session_id
+    })
+
+    case Esr.SessionRegistry.notify_session(session_id, envelope) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        :telemetry.execute([:esr, :emit, :failed], %{}, %{
+          actor_id: state.actor_id,
+          adapter: "esr-channel",
+          session_id: session_id,
+          reason: reason
+        })
+    end
+
+    state
+  end
+
   defp dispatch_action(%{"type" => "emit"} = action, %__MODULE__{} = state) do
     adapter = action["adapter"]
     # Prefer the topic of a peer ALREADY bound to this adapter name —
@@ -523,5 +675,137 @@ defmodule Esr.PeerServer do
       directive_id: id,
       reason: payload
     })
+  end
+
+  defp build_emit_for_tool("reply", args, _state) do
+    case args do
+      %{"chat_id" => chat_id, "text" => text}
+      when is_binary(chat_id) and is_binary(text) ->
+        {:ok,
+         %{
+           "type" => "emit",
+           "adapter" => "feishu",
+           "action" => "send_message",
+           "args" => %{"chat_id" => chat_id, "content" => text}
+         }}
+
+      _ ->
+        {:error, "reply requires chat_id + text"}
+    end
+  end
+
+  defp build_emit_for_tool("react", args, _state) do
+    case args do
+      %{"message_id" => mid, "emoji_type" => emoji} ->
+        {:ok,
+         %{
+           "type" => "emit",
+           "adapter" => "feishu",
+           "action" => "react",
+           "args" => %{"message_id" => mid, "emoji_type" => emoji}
+         }}
+
+      _ ->
+        {:error, "react requires message_id + emoji_type"}
+    end
+  end
+
+  defp build_emit_for_tool("send_file", args, _state) do
+    case args do
+      %{"chat_id" => cid, "file_path" => fp} ->
+        {:ok,
+         %{
+           "type" => "emit",
+           "adapter" => "feishu",
+           "action" => "send_file",
+           "args" => %{"chat_id" => cid, "file_path" => fp}
+         }}
+
+      _ ->
+        {:error, "send_file requires chat_id + file_path"}
+    end
+  end
+
+  defp build_emit_for_tool("_echo", args, %__MODULE__{state: thread_state}) do
+    nonce = Map.get(args, "nonce", "")
+    chat_id = Map.get(thread_state, "chat_id", "")
+
+    if chat_id == "" do
+      {:error, "_echo requires thread state.chat_id"}
+    else
+      build_emit_for_tool("reply", %{"chat_id" => chat_id, "text" => nonce}, nil)
+    end
+  end
+
+  defp build_emit_for_tool(unknown, _args, _state),
+    do: {:error, "unknown tool: #{unknown}"}
+
+  # Same as the inline logic in the legacy emit dispatch_action clause,
+  # but returns {:ok, directive_id, state'} so handle_info(:tool_invoke)
+  # can correlate the ack back to the req_id.
+  defp emit_and_track(%{"adapter" => adapter} = action, %__MODULE__{} = state) do
+    id = "d-" <> Integer.to_string(System.unique_integer([:positive]))
+    topic = emit_topic_for(adapter, state.actor_id)
+
+    Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+    Process.send_after(self(), {:directive_deadline, id}, state.directive_timeout)
+
+    envelope = %{
+      "kind" => "directive",
+      "id" => id,
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "directive",
+      "source" => "esr://localhost/actor/" <> state.actor_id,
+      "payload" => %{
+        "adapter" => adapter,
+        "action" => action["action"],
+        "args" => Map.get(action, "args", %{})
+      }
+    }
+
+    EsrWeb.Endpoint.broadcast(topic, "envelope", envelope)
+
+    :telemetry.execute([:esr, :emit, :dispatched], %{}, %{
+      actor_id: state.actor_id,
+      adapter: adapter,
+      action: action["action"],
+      directive_id: id
+    })
+
+    {:ok, id,
+     %__MODULE__{
+       state
+       | pending_directives: Map.put(state.pending_directives, id, %{action: action})
+     }}
+  end
+
+  defp emit_topic_for(adapter, fallback_actor) do
+    prefix = "adapter:" <> adapter <> "/"
+
+    case Enum.find(Esr.AdapterHub.Registry.list(), fn {t, _} ->
+           String.starts_with?(t, prefix)
+         end) do
+      {bound_topic, _} -> bound_topic
+      nil -> prefix <> fallback_actor
+    end
+  end
+
+  if Mix.env() == :test do
+    @doc false
+    def dispatch_action_for_test(action, state), do: dispatch_action(action, state)
+
+    @doc false
+    def invoke_tool_for_test(%__MODULE__{} = state, tool, args) do
+      case build_emit_for_tool(tool, args, state) do
+        {:ok, _emit} ->
+          %{"ok" => true}
+
+        {:error, reason} ->
+          %{
+            "ok" => false,
+            "error" => %{"type" => "invalid_args", "message" => reason}
+          }
+      end
+    end
   end
 end

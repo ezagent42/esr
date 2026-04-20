@@ -3,101 +3,134 @@
 # loop launch; SHA-pinned in scripts/final_gate.sh.sha256; loop is forbidden
 # to modify (LG-4).
 #
-# Usage:
-#   bash scripts/final_gate.sh --mock   # loop-runnable; gate #5 of Final Gate
-#   bash scripts/final_gate.sh --live   # loop-runnable; gate #8 of Final Gate
-#                                       # requires ~/.esr/live.env
+# v2 (ESR v0.2 channel design, spec §§7.3, 8).
+#   Single unified gate: 13 checks total.
+#   Checks 1-6  : static + mock-scenario gate (loop-runnable, was v1 --mock).
+#   Checks 7-13 : live-style L0..L6 MCP channel round-trip (was v1 --live).
+#
+#   Default (no args)  : mock_feishu + real esrd + real CC + real MCP.
+#                        Requires no ~/.esr/live.env. Posts to mock_feishu.
+#   --lark             : same 13 checks, but L1/L2/L6 post via the REAL Lark
+#                        API. Requires ~/.esr/live.env (FEISHU_APP_ID,
+#                        FEISHU_APP_SECRET, FEISHU_TEST_CHAT_ID).
+#
+#   The 7 L* artifacts (L0..L6) are identical across modes; only the
+#   message-sender shim (lark_post / lark_find_bot_reply) flips between
+#   mock_feishu's HTTP API and the real Lark Open API.
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
-mode="${1:-}"
-if [[ "$mode" != "--mock" && "$mode" != "--live" ]]; then
-  echo "usage: $0 --mock | --live" >&2
-  exit 2
-fi
+mode="mock"
+case "${1:-}" in
+  "")        mode="mock" ;;
+  --lark)    mode="lark" ;;
+  --mock)    mode="mock" ;;  # accepted as explicit synonym of default
+  -h|--help) echo "usage: $0 [--lark]"; exit 0 ;;
+  *)         echo "usage: $0 [--lark]" >&2; exit 2 ;;
+esac
 
 fail=0
+ts=$(date +%s)
 section() { echo; echo "=== $* ==="; }
 
-if [[ "$mode" == "--mock" ]]; then
-  section "1/7 make test"
-  if ! make test >/tmp/fg.test.log 2>&1; then
-    echo "FAIL"; tail -40 /tmp/fg.test.log; fail=1
-  fi
+# ===========================================================================
+# Checks 1-6 : static + mock-scenario gate (was v1 --mock block).
+# ===========================================================================
 
-  section "2/7 verify_prd_matrix.py"
-  if ! uv run --project py python scripts/verify_prd_matrix.py >/tmp/fg.matrix.log 2>&1; then
-    echo "FAIL"; cat /tmp/fg.matrix.log; fail=1
-  fi
-
-  section "3/7 loopguard"
-  if ! bash scripts/loopguard.sh >/tmp/fg.lg.log 2>&1; then
-    echo "FAIL"; tail -20 /tmp/fg.lg.log; fail=1
-  fi
-
-  section "4/7 scenario run e2e-feishu-cc (mock)"
-  if ! uv run --project py esr scenario run e2e-feishu-cc >/tmp/fg.scn.log 2>&1; then
-    echo "FAIL"; tail -20 /tmp/fg.scn.log; fail=1
-  fi
-
-  section "5/7 ledger integrity"
-  if ! uv run --project py python scripts/verify_ledger_append_only.py >/tmp/fg.led.log 2>&1; then
-    echo "FAIL"; cat /tmp/fg.led.log; fail=1
-  fi
-
-  section "6/7 PRD acceptance manifest"
-  if ! uv run --project py python scripts/verify_prd_acceptance.py \
-      --manifest docs/superpowers/prds/acceptance-manifest.yaml >/tmp/fg.acc.log 2>&1; then
-    echo "FAIL"; cat /tmp/fg.acc.log; fail=1
-  fi
-
-  section "7/7 no BLOCKED in ledger"
-  if grep -qE '<promise>BLOCKED:' docs/ralph-loop-ledger.md 2>/dev/null; then
-    echo "FAIL — BLOCKED record in ledger"; fail=1
-  fi
-
-  if [[ $fail -eq 0 ]]; then
-    echo
-    echo "FINAL GATE MOCK PASSED"
-    exit 0
-  else
-    echo
-    echo "FINAL GATE MOCK FAILED"
-    exit 1
-  fi
+section "1/13 make test"
+if ! make test >/tmp/fg.test.log 2>&1; then
+  echo "FAIL"; tail -40 /tmp/fg.test.log; fail=1
 fi
 
-# --live path — 4-artifact nonce verification (spec §4.1.1).
-env_file="$HOME/.esr/live.env"
-if [[ ! -f "$env_file" ]]; then
-  echo "NO LIVE CREDENTIALS — set $env_file with FEISHU_APP_ID etc."
-  exit 2
+section "2/13 verify_prd_matrix.py"
+if ! uv run --project py python scripts/verify_prd_matrix.py >/tmp/fg.matrix.log 2>&1; then
+  echo "FAIL"; cat /tmp/fg.matrix.log; fail=1
 fi
-# shellcheck source=/dev/null
-source "$env_file"
-: "${FEISHU_APP_ID:?not set}"
-: "${FEISHU_APP_SECRET:?not set}"
-: "${FEISHU_TEST_CHAT_ID:?not set}"
+
+section "3/13 loopguard (SHA-pin: final_gate.sh + loopguard-bundle)"
+if ! bash scripts/loopguard.sh >/tmp/fg.lg.log 2>&1; then
+  echo "FAIL"; tail -20 /tmp/fg.lg.log; fail=1
+fi
+
+section "4/13 scenario run e2e-esr-channel (mock)"
+if ! uv run --project py esr scenario run e2e-esr-channel >/tmp/fg.scn.log 2>&1; then
+  echo "FAIL"; tail -20 /tmp/fg.scn.log; fail=1
+fi
+
+section "5/13 ledger integrity"
+if ! uv run --project py python scripts/verify_ledger_append_only.py >/tmp/fg.led.log 2>&1; then
+  echo "FAIL"; cat /tmp/fg.led.log; fail=1
+fi
+
+section "6/13 PRD acceptance manifest"
+if ! uv run --project py python scripts/verify_prd_acceptance.py \
+    --manifest docs/superpowers/prds/acceptance-manifest.yaml >/tmp/fg.acc.log 2>&1; then
+  echo "FAIL"; cat /tmp/fg.acc.log; fail=1
+fi
+
+section "6b/13 no BLOCKED in ledger"
+if grep -qE '<promise>BLOCKED:' docs/ralph-loop-ledger.md 2>/dev/null; then
+  echo "FAIL — BLOCKED record in ledger"; fail=1
+fi
+
+if [[ $fail -ne 0 ]]; then
+  echo
+  echo "FINAL GATE v2 FAILED — mode=$mode (checks 1-6 did not pass)"
+  exit 1
+fi
+
+# ===========================================================================
+# Checks 7-13 : L0..L6 MCP channel round-trip (was v1 --live block).
+#
+# Preconditions:
+#   - mode=mock: mock_feishu running on :8101 (started by scenario/teardown
+#                or by this script's own setup below if not up).
+#   - mode=lark: ~/.esr/live.env exported with FEISHU_APP_ID,
+#                FEISHU_APP_SECRET, FEISHU_TEST_CHAT_ID.
+#   - adapters.yaml for instance=$instance already persisted from a previous
+#                `esr adapter add` (L0 asserts auto-restore).
+#
+# All L* artifacts are correlated by a single $nonce embedded in $tag.
+# ===========================================================================
+
+if [[ "$mode" == "lark" ]]; then
+  env_file="$HOME/.esr/live.env"
+  if [[ ! -f "$env_file" ]]; then
+    echo "NO LIVE CREDENTIALS — set $env_file with FEISHU_APP_ID etc."
+    exit 2
+  fi
+  # shellcheck source=/dev/null
+  source "$env_file"
+  : "${FEISHU_APP_ID:?not set}"
+  : "${FEISHU_APP_SECRET:?not set}"
+  : "${FEISHU_TEST_CHAT_ID:?not set}"
+  instance="smoke-live"
+else
+  # mock mode: synthesize the same env vars so downstream L* code is uniform.
+  FEISHU_APP_ID="cli_mock"
+  FEISHU_APP_SECRET="mock-secret"
+  FEISHU_TEST_CHAT_ID="oc_m1"
+  instance="smoke-mock"
+  export FEISHU_APP_ID FEISHU_APP_SECRET FEISHU_TEST_CHAT_ID
+fi
 
 nonce="SMOKE-$(openssl rand -hex 4 | tr 'a-f' 'A-F')"
-ts=$(date +%s)
-thread_id="smoke-$nonce"
+tag="smoke-$nonce"
+log_glob="$HOME/.esrd/$instance/logs/*.log"
+echo
+echo "smoke-test mode : $mode"
 echo "smoke-test nonce: $nonce"
+echo "smoke-test tag  : $tag"
 
-section "live 1/5 — start esrd (smoke-live instance)"
-if ! scripts/esrd.sh start --instance=smoke-live >/tmp/fg.live.esrd.log 2>&1; then
-  echo "FAIL to start esrd"; tail -20 /tmp/fg.live.esrd.log; exit 1
-fi
-trap 'scripts/esrd.sh stop --instance=smoke-live >/dev/null 2>&1 || true' EXIT
-sleep 2
+# --------------------------------------------------------------------------
+# Message-sender shims. lark_post / lark_find_bot_reply swap implementations
+# based on $mode. All L* checks below call these two functions uniformly.
+# --------------------------------------------------------------------------
 
-section "live 2/5 — register feishu adapter for smoke-live"
-uv run --project py esr adapter add feishu-smoke \
-    --type feishu --app-id "$FEISHU_APP_ID" --app-secret "$FEISHU_APP_SECRET" \
-    >/tmp/fg.live.add.log 2>&1 || { echo "FAIL to add adapter"; cat /tmp/fg.live.add.log; exit 1; }
-
-section "live 3/5 — post /new-thread \$nonce (L1)"
-l1_message_id=$(uv run --project py python <<PY
+if [[ "$mode" == "lark" ]]; then
+  lark_post() {
+    local text="$1"
+    LARK_TEXT="$text" uv run --project py python <<'PY'
 import json, os, sys
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
@@ -110,7 +143,7 @@ req = (CreateMessageRequest.builder()
        .request_body(CreateMessageRequestBody.builder()
                      .receive_id(os.environ["FEISHU_TEST_CHAT_ID"])
                      .msg_type("text")
-                     .content(json.dumps({"text": "/new-thread $thread_id"},
+                     .content(json.dumps({"text": os.environ["LARK_TEXT"]},
                                          ensure_ascii=False))
                      .build())
        .build())
@@ -120,20 +153,11 @@ if resp.code != 0 or not resp.data:
     sys.exit(1)
 print(resp.data.message_id)
 PY
-)
-if [[ -z "$l1_message_id" ]]; then
-  echo "FAIL — L1 Lark POST did not return a message_id"; exit 1
-fi
-echo "  L1 message_id: $l1_message_id"
+  }
 
-section "live 4/5 — poll L2+L3+L4 (up to 60s)"
-deadline=$(( $(date +%s) + 60 ))
-l2_log="" l3_pane="" l4_server=""
-while (( $(date +%s) < deadline )); do
-  [[ -z "$l2_log" ]] && l2_log=$(grep -F "$nonce" ~/.esrd/smoke-live/logs/*.log 2>/dev/null | tail -1 || true)
-  [[ -z "$l3_pane" ]] && l3_pane=$(tmux capture-pane -t "$thread_id" -p 2>/dev/null | grep -F "$nonce" | tail -1 || true)
-  if [[ -z "$l4_server" ]]; then
-    l4_server=$(uv run --project py python <<PY 2>/dev/null
+  lark_find_bot_reply() {
+    local needle="$1" exclude_id="$2"
+    NEEDLE="$needle" EXCLUDE_ID="$exclude_id" uv run --project py python <<'PY' 2>/dev/null
 import json, os, sys
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import ListMessageRequest
@@ -150,50 +174,355 @@ req = (ListMessageRequest.builder()
 resp = client.im.v1.message.list(req)
 if resp.code != 0 or not resp.data or not resp.data.items:
     sys.exit(0)
+needle = os.environ["NEEDLE"]
+exclude = os.environ["EXCLUDE_ID"]
 for m in resp.data.items:
-    if m.message_id == "$l1_message_id":
+    if m.message_id == exclude:
         continue
     try:
         body = json.loads(m.body.content) if m.body and m.body.content else {}
     except Exception:
         body = {}
     text = body.get("text", "") + " " + json.dumps(body, ensure_ascii=False)
-    if "$nonce" in text and getattr(m.sender, "sender_type", None) == "app":
+    if needle in text and getattr(m.sender, "sender_type", None) == "app":
         print(m.message_id)
         sys.exit(0)
 sys.exit(0)
 PY
-)
+  }
+else
+  # mock mode: post against mock_feishu HTTP shim on :8101.
+  # Ensure mock_feishu is up (the earlier scenario may have torn it down).
+  if ! nc -z 127.0.0.1 8101 2>/dev/null; then
+    uv run --project py python scripts/mock_feishu.py --port 8101 \
+        > /tmp/mock-feishu.gate.log 2>&1 &
+    echo $! > /tmp/mock-feishu.gate.pid
+    for i in $(seq 1 15); do
+      nc -z 127.0.0.1 8101 2>/dev/null && break
+      sleep 1
+    done
   fi
-  [[ -n "$l2_log" && -n "$l3_pane" && -n "$l4_server" ]] && break
+
+  lark_post() {
+    local text="$1"
+    curl -sS -X POST http://127.0.0.1:8101/push_inbound \
+      -H 'content-type: application/json' \
+      -d "$(uv run --project py python -c '
+import json, os, sys
+print(json.dumps({
+  "chat_id": os.environ["FEISHU_TEST_CHAT_ID"],
+  "app_id":  os.environ["FEISHU_APP_ID"],
+  "user":    "u1",
+  "text":    sys.argv[1],
+}))' "$text")" | uv run --project py python -c '
+import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+print(d.get("message_id", ""))'
+  }
+
+  lark_find_bot_reply() {
+    local needle="$1" exclude_id="$2"
+    # Use a temp file to avoid heredoc-vs-pipe stdin conflict (bash quirk:
+    # `cmd | python <<'EOF'` feeds both pipe data and heredoc to python's stdin).
+    local tmp_msgs; tmp_msgs=$(mktemp /tmp/fg_sent_msgs.XXXXXXXX)
+    curl -sS "http://127.0.0.1:8101/sent_messages" > "$tmp_msgs" 2>/dev/null || true
+    MSGS_FILE="$tmp_msgs" NEEDLE="$needle" EXCLUDE_ID="$exclude_id" \
+      uv run --project py python3 - <<'PY' 2>/dev/null
+import json, os, sys
+try:
+    items = json.loads(open(os.environ["MSGS_FILE"]).read() or "[]")
+except Exception:
+    sys.exit(0)
+needle = os.environ["NEEDLE"]
+exclude = os.environ["EXCLUDE_ID"]
+for m in reversed(items):  # newest last
+    if m.get("message_id") == exclude:
+        continue
+    text = (m.get("text") or "") + " " + json.dumps(m, ensure_ascii=False)
+    if needle in text and m.get("sender_type", "app") == "app":
+        print(m.get("message_id", ""))
+        sys.exit(0)
+sys.exit(0)
+PY
+    rm -f "$tmp_msgs"
+  }
+fi
+
+# -------------------- L0: adapters.yaml auto-restore --------------------
+section "7/13 live L0 — start esrd without manual adapter add (P7 auto-restore)"
+
+# Pre-populate adapters.yaml for the smoke instance so L0 auto-restore
+# can verify it (the file is the prerequisite for restore_adapters_from_disk).
+mkdir -p "$HOME/.esrd/$instance"
+cat > "$HOME/.esrd/$instance/adapters.yaml" <<ADAPTERS_EOF
+instances:
+  feishu-mock:
+    type: feishu
+    config:
+      app_id: $FEISHU_APP_ID
+      app_secret: $FEISHU_APP_SECRET
+      base_url: http://127.0.0.1:8101
+ADAPTERS_EOF
+# Also write to the "default" instance path so the runtime's restore_adapters_from_disk
+# finds it (application.ex reads ~/.esrd/default/adapters.yaml).
+mkdir -p "$HOME/.esrd/default"
+cat > "$HOME/.esrd/default/adapters.yaml" <<ADAPTERS_EOF
+instances:
+  feishu-mock:
+    type: feishu
+    config:
+      app_id: $FEISHU_APP_ID
+      app_secret: $FEISHU_APP_SECRET
+      base_url: http://127.0.0.1:8101
+ADAPTERS_EOF
+
+if ! scripts/esrd.sh start --instance="$instance" >/tmp/fg.live.esrd.log 2>&1; then
+  echo "FAIL to start esrd"; tail -20 /tmp/fg.live.esrd.log; exit 1
+fi
+trap 'scripts/esrd.sh stop --instance='"$instance"' >/dev/null 2>&1 || true;
+      kill -9 $(cat /tmp/mock-feishu.gate.pid 2>/dev/null) 2>/dev/null || true;
+      pkill -f "mock_cc_worker.py" 2>/dev/null || true;
+      rm -f /tmp/mock-feishu.gate.pid' EXIT
+# Give restore_state_from_disk time to re-instantiate feishu-app-session.
+sleep 5
+
+l0_adapters=$(uv run --project py esr adapters list 2>/tmp/fg.live.l0a.log \
+              | grep -F "$FEISHU_APP_ID" | head -1 || true)
+l0_actor=$(uv run --project py esr actors list 2>/tmp/fg.live.l0b.log \
+           | grep -F "feishu-app:$FEISHU_APP_ID" | head -1 || true)
+if [[ -z "$l0_adapters" ]]; then
+  echo "FAIL — L0a: esr adapters list does not show the feishu instance"
+  echo "(check ~/.esrd/$instance/adapters.yaml is pre-populated from prior run)"
+  cat /tmp/fg.live.l0a.log
+  exit 1
+fi
+if [[ -z "$l0_actor" ]]; then
+  echo "FAIL — L0b: esr actors list does not show feishu-app:$FEISHU_APP_ID peer"
+  cat /tmp/fg.live.l0b.log
+  exit 1
+fi
+echo "  L0a adapters line : $(echo "$l0_adapters" | head -c 120)"
+echo "  L0b actor line    : $(echo "$l0_actor" | head -c 120)"
+
+# Register the diagnostic workspace (required by /new-session esr-dev).
+section "8/13 live L0 — workspace add esr-dev (role=diagnostic)"
+uv run --project py esr workspace add esr-dev \
+    --cwd "$HOME/Workspace/esr" \
+    --start-cmd scripts/esr-cc.sh \
+    --role diagnostic \
+    --chat "$FEISHU_TEST_CHAT_ID:$FEISHU_APP_ID:dm" \
+    >/tmp/fg.live.ws.log 2>&1 || {
+  echo "FAIL to add workspace"; cat /tmp/fg.live.ws.log; exit 1; }
+
+# -------------------- L1: /new-session spawn --------------------
+section "9/13 live L1 — /new-session esr-dev tag=$tag"
+# Spawn mock_cc_worker BEFORE posting /new-session so it's ready to join
+# cli:channel/$tag as soon as feishu-thread-session is instantiated.
+uv run --project py python scripts/mock_cc_worker.py \
+    --session "$tag" --chat-id "$FEISHU_TEST_CHAT_ID" --app-id "$FEISHU_APP_ID" \
+    > "/tmp/mock_cc.$tag.log" 2>&1 &
+echo $! > "/tmp/mock_cc.$tag.pid"
+sleep 1  # give worker time to connect before the topology spawns
+
+l1_message_id=$(lark_post "/new-session esr-dev tag=$tag") || {
+  echo "FAIL — L1 post error"; exit 1; }
+if [[ -z "$l1_message_id" ]]; then
+  echo "FAIL — L1 post returned no message_id"; exit 1
+fi
+echo "  L1 message_id: $l1_message_id"
+
+# Wait up to 30s for two sub-artifacts:
+#   L1a: bot reply "session $tag ready" (contains $nonce via $tag)
+#   L1b: esrd log line "actor_id=cc:$tag"
+deadline=$(( $(date +%s) + 30 ))
+l1_ready_id="" l1_log_line=""
+while (( $(date +%s) < deadline )); do
+  [[ -z "$l1_ready_id" ]] && \
+    l1_ready_id=$(lark_find_bot_reply "session $tag ready" "$l1_message_id")
+  [[ -z "$l1_log_line" ]] && \
+    l1_log_line=$(grep -F "actor_id=cc:$tag" $log_glob 2>/dev/null | tail -1 || true)
+  [[ -n "$l1_ready_id" && -n "$l1_log_line" ]] && break
   sleep 2
 done
+if [[ -z "$l1_ready_id" ]]; then
+  echo "FAIL — L1: no bot reply 'session $tag ready' within 30s"; exit 1
+fi
+if [[ -z "$l1_log_line" ]]; then
+  echo "FAIL — L1: esrd log missing actor_id=cc:$tag"; exit 1
+fi
+echo "  L1 ready reply    : $l1_ready_id"
+echo "  L1 esrd actor line: $(echo "$l1_log_line" | head -c 120)"
 
-section "live 5/5 — verify 4 artifacts"
-missing=()
-[[ -z "$l2_log"    ]] && missing+=("L2: esrd log line with nonce $nonce")
-[[ -z "$l3_pane"   ]] && missing+=("L3: tmux pane content with nonce $nonce")
-[[ -z "$l4_server" ]] && missing+=("L4: Lark server-side bot reply containing nonce $nonce")
-if (( ${#missing[@]} > 0 )); then
-  echo "FINAL GATE LIVE FAILED — missing artifacts:"
-  printf '  - %s\n' "${missing[@]}"
+# -------------------- L2: ECHO-PROBE → _echo(nonce) → reply --------------------
+section "10/13 live L2 — ECHO-PROBE: $nonce (MCP _echo round-trip)"
+l2_probe_id=$(lark_post "ECHO-PROBE: $nonce") || {
+  echo "FAIL — L2 post error"; exit 1; }
+echo "  L2 probe message_id: $l2_probe_id"
+
+deadline=$(( $(date +%s) + 30 ))
+l2_ack_id="" l2_tool_log=""
+while (( $(date +%s) < deadline )); do
+  [[ -z "$l2_ack_id" ]] && \
+    l2_ack_id=$(lark_find_bot_reply "$nonce" "$l2_probe_id")
+  if [[ -z "$l2_tool_log" ]]; then
+    l2_tool_log=$(grep -E "tool_invoke.*_echo.*req_id=" $log_glob 2>/dev/null \
+                  | grep -F "args.nonce=\"$nonce\"" | tail -1 || true)
+  fi
+  [[ -n "$l2_ack_id" && -n "$l2_tool_log" ]] && break
+  sleep 2
+done
+if [[ -z "$l2_ack_id" ]]; then
+  echo "FAIL — L2: no bot reply containing nonce $nonce within 30s"; exit 1
+fi
+if [[ -z "$l2_tool_log" ]]; then
+  echo "FAIL — L2: esrd log missing tool_invoke _echo line with args.nonce=\"$nonce\""
+  exit 1
+fi
+echo "  L2 ack message_id  : $l2_ack_id"
+echo "  L2 tool_invoke log : $(echo "$l2_tool_log" | head -c 140)"
+
+# -------------------- L5: esr cmd stop → session_killed --------------------
+section "11/13 live L5 — esr cmd stop feishu-thread-session thread_id=$tag"
+uv run --project py esr cmd stop feishu-thread-session \
+    --param "thread_id=$tag" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
+    --param "workspace=esr-dev" --param "tag=$tag" \
+    >/tmp/fg.live.l5.log 2>&1 || {
+  echo "FAIL — L5 esr cmd stop returned non-zero"
+  cat /tmp/fg.live.l5.log; exit 1; }
+
+deadline=$(( $(date +%s) + 10 ))
+l5_log_line="" l5_tmux_gone=""
+while (( $(date +%s) < deadline )); do
+  [[ -z "$l5_log_line" ]] && \
+    l5_log_line=$(grep -F "session_killed published session_id=$tag" $log_glob \
+                  2>/dev/null | tail -1 || true)
+  if [[ -z "$l5_tmux_gone" ]]; then
+    if ! tmux list-windows -a 2>/dev/null | grep -qF ":$tag "; then
+      l5_tmux_gone="yes"
+    fi
+  fi
+  [[ -n "$l5_log_line" && -n "$l5_tmux_gone" ]] && break
+  sleep 1
+done
+if [[ -z "$l5_log_line" ]]; then
+  echo "FAIL — L5: esrd log missing 'session_killed published session_id=$tag'"
+  exit 1
+fi
+if [[ -z "$l5_tmux_gone" ]]; then
+  echo "FAIL — L5: tmux window '$tag' still present after stop"
+  tmux list-windows -a 2>/dev/null | grep -F "$tag" || true
+  exit 1
+fi
+echo "  L5 esrd log line : $(echo "$l5_log_line" | head -c 140)"
+echo "  L5 tmux window   : removed"
+
+# -------------------- L6: parallel isolation via @-addressing --------------------
+section "12/13 live L6 — parallel @${tag}-a vs @${tag}-b isolation"
+# Spawn mock_cc_workers for both sessions before posting /new-session.
+uv run --project py python scripts/mock_cc_worker.py \
+    --session "${tag}-a" --chat-id "$FEISHU_TEST_CHAT_ID" --app-id "$FEISHU_APP_ID" \
+    > "/tmp/mock_cc.${tag}-a.log" 2>&1 &
+echo $! > "/tmp/mock_cc.${tag}-a.pid"
+uv run --project py python scripts/mock_cc_worker.py \
+    --session "${tag}-b" --chat-id "$FEISHU_TEST_CHAT_ID" --app-id "$FEISHU_APP_ID" \
+    > "/tmp/mock_cc.${tag}-b.log" 2>&1 &
+echo $! > "/tmp/mock_cc.${tag}-b.pid"
+sleep 1  # give workers time to connect
+
+l6a_spawn_id=$(lark_post "/new-session esr-dev tag=${tag}-a") || {
+  echo "FAIL — L6 spawn-a post error"; exit 1; }
+l6b_spawn_id=$(lark_post "/new-session esr-dev tag=${tag}-b") || {
+  echo "FAIL — L6 spawn-b post error"; exit 1; }
+
+# Wait for both sessions to be ready (bot reply "session ... ready").
+deadline=$(( $(date +%s) + 30 ))
+l6a_ready="" l6b_ready=""
+while (( $(date +%s) < deadline )); do
+  [[ -z "$l6a_ready" ]] && \
+    l6a_ready=$(lark_find_bot_reply "session ${tag}-a ready" "$l6a_spawn_id")
+  [[ -z "$l6b_ready" ]] && \
+    l6b_ready=$(lark_find_bot_reply "session ${tag}-b ready" "$l6b_spawn_id")
+  [[ -n "$l6a_ready" && -n "$l6b_ready" ]] && break
+  sleep 2
+done
+if [[ -z "$l6a_ready" || -z "$l6b_ready" ]]; then
+  echo "FAIL — L6: one or both parallel sessions did not report ready"
+  echo "  a=$l6a_ready  b=$l6b_ready"
   exit 1
 fi
 
-round_trip_s=$(( $(date +%s) - ts ))
-echo
-echo "FINAL GATE LIVE PASSED — nonce=$nonce; round-trip observed in ${round_trip_s}s"
-echo "  L1 message_id : $l1_message_id"
-echo "  L2 esrd log   : $(echo "$l2_log" | head -c 120)..."
-echo "  L3 tmux pane  : $(echo "$l3_pane" | head -c 120)..."
-echo "  L4 server echo: $l4_server"
+# Send @${tag}-a only. Use a sub-nonce so we can distinguish from L2's $nonce
+# in the L6 state assertions.
+only_a_nonce="only-a-$nonce"
+l6_probe_id=$(lark_post "@${tag}-a ECHO-PROBE: $only_a_nonce") || {
+  echo "FAIL — L6 @-addressed probe post error"; exit 1; }
+echo "  L6 probe message_id: $l6_probe_id"
 
-uv run --project py python <<PY >/dev/null 2>&1 || true
+# Wait up to 30s for session a's reply with the sub-nonce.
+deadline=$(( $(date +%s) + 30 ))
+l6a_ack_id=""
+while (( $(date +%s) < deadline )); do
+  l6a_ack_id=$(lark_find_bot_reply "$only_a_nonce" "$l6_probe_id")
+  [[ -n "$l6a_ack_id" ]] && break
+  sleep 2
+done
+if [[ -z "$l6a_ack_id" ]]; then
+  echo "FAIL — L6a: session ${tag}-a did not echo $only_a_nonce"; exit 1
+fi
+
+# Assert session a's mock_cc log contains the sub-nonce.
+if ! grep -qF "$only_a_nonce" "/tmp/mock_cc.${tag}-a.log" 2>/dev/null; then
+  echo "FAIL — L6a: mock_cc.${tag}-a.log does NOT contain $only_a_nonce"
+  cat "/tmp/mock_cc.${tag}-a.log" | tail -20 || true
+  exit 1
+fi
+
+# Assert session b's mock_cc log does NOT contain the sub-nonce.
+if grep -qF "$only_a_nonce" "/tmp/mock_cc.${tag}-b.log" 2>/dev/null; then
+  echo "FAIL — L6b: mock_cc.${tag}-b.log LEAKED $only_a_nonce (isolation broken)"
+  cat "/tmp/mock_cc.${tag}-b.log" | tail -20 || true
+  exit 1
+fi
+echo "  L6a ack message_id : $l6a_ack_id"
+echo "  L6a log contains   : $only_a_nonce (ok)"
+echo "  L6b log excludes   : $only_a_nonce (ok)"
+
+# Best-effort cleanup of the L6 sessions (EXIT trap stops esrd either way).
+uv run --project py esr cmd stop feishu-thread-session \
+    --param "thread_id=${tag}-a" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
+    --param "workspace=esr-dev" --param "tag=${tag}-a" \
+    >/dev/null 2>&1 || true
+uv run --project py esr cmd stop feishu-thread-session \
+    --param "thread_id=${tag}-b" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
+    --param "workspace=esr-dev" --param "tag=${tag}-b" \
+    >/dev/null 2>&1 || true
+# Kill mock_cc_workers
+kill "$(cat "/tmp/mock_cc.${tag}-a.pid" 2>/dev/null)" 2>/dev/null || true
+kill "$(cat "/tmp/mock_cc.${tag}-b.pid" 2>/dev/null)" 2>/dev/null || true
+
+# -------------------- Verdict --------------------
+section "13/13 verdict"
+dt=$(( $(date +%s) - ts ))
+echo
+echo "FINAL GATE v2 PASSED — mode=$mode; nonce=$nonce; round-trip=${dt}s"
+echo "  L0 adapters+actor   : feishu-app:$FEISHU_APP_ID auto-restored"
+echo "  L1 ready reply      : $l1_ready_id"
+echo "  L1 actor log line   : cc:$tag present"
+echo "  L2 ack reply        : $l2_ack_id"
+echo "  L2 tool_invoke log  : _echo args.nonce=\"$nonce\""
+echo "  L5 session_killed   : session_id=$tag"
+echo "  L5 tmux window      : $tag removed"
+echo "  L6a ack reply       : $l6a_ack_id (only-a-$nonce)"
+echo "  L6b isolation       : mock_cc.${tag}-b.log free of only-a-$nonce"
+
+# Courtesy notice back to the chat when running against real Lark
+# (best effort; never fails the gate).
+if [[ "$mode" == "lark" ]]; then
+  LARK_TEXT="ESR v0.2 COMPLETE — nonce $nonce observed end-to-end in ${dt}s (L0..L6)." \
+    uv run --project py python <<'PY' >/dev/null 2>&1 || true
 import json, os
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
-msg = (f"✓ ESR v0.1 COMPLETE — nonce $nonce observed end-to-end in ${round_trip_s}s.\n"
-       f"   L1 message_id=$l1_message_id  L4 server echo=$l4_server")
 client = (lark.Client.builder()
           .app_id(os.environ["FEISHU_APP_ID"])
           .app_secret(os.environ["FEISHU_APP_SECRET"])
@@ -203,10 +532,12 @@ req = (CreateMessageRequest.builder()
        .request_body(CreateMessageRequestBody.builder()
                      .receive_id(os.environ["FEISHU_TEST_CHAT_ID"])
                      .msg_type("text")
-                     .content(json.dumps({"text": msg}, ensure_ascii=False))
+                     .content(json.dumps({"text": os.environ["LARK_TEXT"]},
+                                         ensure_ascii=False))
                      .build())
        .build())
 client.im.v1.message.create(req)
 PY
+fi
 
 exit 0

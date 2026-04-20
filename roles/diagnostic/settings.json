@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__esr-channel__reply",
+      "mcp__esr-channel__react",
+      "mcp__esr-channel__send_file",
+      "mcp__esr-channel___echo"
+    ],
+    "deny": []
+  }
+}
