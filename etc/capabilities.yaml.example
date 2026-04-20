@@ -1,0 +1,17 @@
+# ESR capabilities configuration.
+# Edit to grant users permissions; changes hot-reload automatically.
+# Copy this file to ~/.esrd/default/capabilities.yaml to activate.
+#
+# Grant format:
+#   "*"                       — admin wildcard (all permissions, all workspaces)
+#   "workspace:<name>/<perm>" — permission <perm> in workspace <name>
+#   "workspace:*/<perm>"      — permission <perm> in any workspace
+#   "workspace:<name>/*"      — any permission in workspace <name>
+#
+# See capabilities spec §3.3 for the full matching rules.
+
+principals:
+  - id: ou_CHANGEME
+    kind: feishu_user
+    note: admin (owner)
+    capabilities: ["*"]
