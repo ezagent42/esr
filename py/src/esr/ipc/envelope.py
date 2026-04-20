@@ -67,17 +67,32 @@ def make_event(
     source: str,
     event_type: str,
     args: dict[str, Any],
+    principal_id: str | None = None,
+    workspace_name: str | None = None,
 ) -> dict[str, Any]:
-    """Build an ``event`` envelope (adapter → runtime)."""
+    """Build an ``event`` envelope (adapter → runtime).
+
+    Capabilities spec §6.2/§6.3: when the emitter (an adapter or
+    colocated worker) knows *who* the event is attributable to and
+    *which* workspace the subject chat is bound to, those go on the
+    envelope top-level so Lane A / Lane B (Elixir PeerServer +
+    capabilities checks) can read them without descending into
+    ``payload.args``. Both default to ``None`` for callers (e.g.
+    synthetic events, older adapters) that cannot supply them; Lane A
+    / Lane B treat missing values as "deny unless bootstrap".
+    """
     _check_source(source)
-    return {
+    env: dict[str, Any] = {
         "kind": TYPE_EVENT,
         "id": _new_id("e"),
         "ts": _now_iso(),
         "type": TYPE_EVENT,
         "source": source,
+        "principal_id": principal_id,
+        "workspace_name": workspace_name,
         "payload": {"event_type": event_type, "args": dict(args)},
     }
+    return env
 
 
 def make_directive_ack(

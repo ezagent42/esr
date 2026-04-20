@@ -101,10 +101,17 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
     if emit is None:
         return
     async for event_dict in emit():
+        # Adapters may set principal_id / workspace_name at the top
+        # level of the yielded dict (capabilities spec §6.2/§6.3). For
+        # adapters that don't, the fields default to None — Lane A and
+        # Lane B in the Elixir runtime treat that as "deny unless
+        # bootstrap principal".
         env = make_event(
             source=pusher.source_uri,
             event_type=event_dict["event_type"],
             args=dict(event_dict.get("args", {})),
+            principal_id=event_dict.get("principal_id"),
+            workspace_name=event_dict.get("workspace_name"),
         )
         await pusher.push_envelope(env)
 

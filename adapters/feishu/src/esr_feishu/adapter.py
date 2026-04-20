@@ -18,11 +18,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
+from esr.workspaces import read_workspaces
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,87 @@ class FeishuAdapter:
         self.actor_id = actor_id
         self._config = config
         self._lark_client: Any | None = None
+        # Capabilities spec §6.2/§6.3: every msg_received envelope
+        # carries `principal_id` (sender.open_id) and `workspace_name`
+        # (reverse-lookup from the (chat_id, app_id) tuple against
+        # workspaces.yaml). Load the reverse-lookup map at startup;
+        # missing file → empty map → every envelope emits
+        # `workspace_name=None` and Lane A / Lane B treat that as the
+        # "chat not bound to any workspace" case.
+        self._workspace_of: dict[tuple[str, str], str] = (
+            self._load_workspace_map()
+        )
+
+    @property
+    def app_id(self) -> str:
+        """The Feishu app_id this adapter is bound to (one-liner for
+        call sites that need it for the (chat_id, app_id) lookup)."""
+        return self._config.app_id
+
+    def _load_workspace_map(self) -> dict[tuple[str, str], str]:
+        """Build the ``(chat_id, app_id) → workspace_name`` dict from
+        the workspaces.yaml at ``${ESRD_HOME:-~/.esrd}/default/workspaces.yaml``.
+
+        Config override: if ``AdapterConfig`` carries a
+        ``workspaces_path`` key (used by tests), prefer that. Missing
+        file returns an empty dict — callers get
+        ``workspace_name=None`` on every envelope, which Lane A treats
+        as "deny unless bootstrap".
+        """
+        configured = (
+            getattr(self._config, "workspaces_path", None)
+            if hasattr(self._config, "workspaces_path")
+            else None
+        )
+        if configured:
+            path = Path(configured)
+        else:
+            esrd_home = os.environ.get("ESRD_HOME") or str(
+                Path.home() / ".esrd"
+            )
+            path = Path(esrd_home) / "default" / "workspaces.yaml"
+
+        try:
+            workspaces = read_workspaces(path)
+        except Exception as exc:  # noqa: BLE001 — startup boundary
+            logger.warning(
+                "feishu adapter: workspaces.yaml load failed (%s); "
+                "envelopes will carry workspace_name=None",
+                exc,
+            )
+            return {}
+
+        out: dict[tuple[str, str], str] = {}
+        for ws in workspaces.values():
+            for chat in ws.chats:
+                chat_id = chat.get("chat_id")
+                app_id = chat.get("app_id")
+                if isinstance(chat_id, str) and isinstance(app_id, str):
+                    out[(chat_id, app_id)] = ws.name
+        return out
+
+    def _build_msg_received_envelope(
+        self,
+        args: dict[str, Any],
+        sender_open_id: str,
+    ) -> dict[str, Any]:
+        """Construct the canonical ``msg_received`` envelope dict.
+
+        Factored helper called from all three inbound paths (WS live,
+        polling fallback, mock). Sets ``principal_id`` to the sender's
+        open_id and ``workspace_name`` from the reverse-lookup map
+        (None if the (chat_id, app_id) tuple isn't bound to any
+        workspace).
+        """
+        chat_id = args.get("chat_id") or ""
+        return {
+            "event_type": "msg_received",
+            "args": args,
+            "principal_id": sender_open_id or None,
+            "workspace_name": self._workspace_of.get(
+                (chat_id, self.app_id)
+            ),
+        }
 
     @staticmethod
     def factory(actor_id: str, config: AdapterConfig) -> FeishuAdapter:
@@ -423,22 +506,23 @@ class FeishuAdapter:
                 # so unwrap once at the adapter boundary and keep raw under
                 # a separate key for debugging.
                 extracted = _extract_text(raw_content, msg_type)
-                payload = {
-                    "event_type": "msg_received",
-                    "args": {
+                sender_open_id = getattr(
+                    getattr(sender, "sender_id", None), "open_id", ""
+                ) or ""
+                payload = self._build_msg_received_envelope(
+                    args={
                         "chat_id": getattr(message, "chat_id", "") or "",
                         "message_id": getattr(message, "message_id", "") or "",
                         "content": extracted,
                         "raw_content": raw_content,
                         "msg_type": msg_type,
-                        "sender_id": getattr(
-                            getattr(sender, "sender_id", None), "open_id", ""
-                        ) or "",
+                        "sender_id": sender_open_id,
                         "sender_type": getattr(sender, "sender_type", "") or "",
                         "thread_id": getattr(message, "thread_id", "") or "",
                         "root_id": getattr(message, "root_id", "") or "",
                     },
-                }
+                    sender_open_id=sender_open_id,
+                )
                 # Schedule enqueue on the loop — callback fires from the
                 # WSClient thread so we cross-thread via call_soon_threadsafe.
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
@@ -575,22 +659,23 @@ class FeishuAdapter:
         msg_type = getattr(m, "msg_type", "") or ""
         extracted = _extract_text(raw_content, msg_type)
         sender = getattr(m, "sender", None)
-        return {
-            "event_type": "msg_received",
-            "args": {
+        sender_open_id = (
+            getattr(getattr(sender, "id", None), "open_id", "") if sender else ""
+        ) or ""
+        return self._build_msg_received_envelope(
+            args={
                 "chat_id": chat_id,
                 "message_id": getattr(m, "message_id", "") or "",
                 "content": extracted,
                 "raw_content": raw_content,
                 "msg_type": msg_type,
-                "sender_id": getattr(
-                    getattr(sender, "id", None), "open_id", ""
-                ) if sender else "",
+                "sender_id": sender_open_id,
                 "sender_type": getattr(sender, "sender_type", "") if sender else "",
                 "thread_id": getattr(m, "thread_id", "") or "",
                 "root_id": getattr(m, "root_id", "") or "",
             },
-        }
+            sender_open_id=sender_open_id,
+        )
 
     async def _emit_events_mock(
         self, base_url: str
@@ -624,20 +709,21 @@ class FeishuAdapter:
                             sender_id = sender.get("sender_id") or {}
                             raw_content = message.get("content", "")
                             msg_type = message.get("message_type", "")
-                            yield {
-                                "event_type": "msg_received",
-                                "args": {
+                            sender_open_id = sender_id.get("open_id", "") or ""
+                            yield self._build_msg_received_envelope(
+                                args={
                                     "chat_id": message.get("chat_id", ""),
                                     "message_id": message.get("message_id", ""),
                                     "content": _extract_text(raw_content, msg_type),
                                     "raw_content": raw_content,
                                     "msg_type": msg_type,
-                                    "sender_id": sender_id.get("open_id", ""),
+                                    "sender_id": sender_open_id,
                                     "sender_type": sender.get("sender_type", ""),
                                     "thread_id": message.get("thread_id", ""),
                                     "root_id": message.get("root_id", ""),
                                 },
-                            }
+                                sender_open_id=sender_open_id,
+                            )
                 except (aiohttp.ClientError, TimeoutError):
                     # mock_feishu restart-tolerance: back off and retry.
                     await asyncio.sleep(1)
