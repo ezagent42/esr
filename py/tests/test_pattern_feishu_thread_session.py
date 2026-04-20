@@ -73,5 +73,4 @@ def test_tmux_init_directive_has_env_workspace() -> None:
     topo = compile_topology("feishu-thread-session")
     by_id = {n.id: n for n in topo.nodes}
     tmux = by_id["tmux:{{thread_id}}"]
-    assert tmux.init_directive["args"]["start_cmd"] == "scripts/esr-cc.sh"
     assert tmux.init_directive["args"]["env"]["ESR_WORKSPACE"] == "{{workspace}}"

@@ -16,6 +16,8 @@ from esr import command, node
 
 @command("feishu-thread-session")
 def feishu_thread_session() -> None:
+    # tag is user-facing handle (for @<tag> addressing) — scoped to the thread
+    # actor only. CC session is keyed by thread_id, so no tag env passthrough.
     thread = node(
         id="thread:{{thread_id}}",
         actor_type="feishu_thread_proxy",
