@@ -34,8 +34,18 @@ def on_msg(
             return state, []  # malformed
         if thread_id in state.bound_threads:
             return state, []  # idempotent
+        # Pass chat_id through so the spawned feishu_thread_proxy can
+        # reply to the same chat without waiting for a subsequent inbound
+        # message (final_gate.sh --live's L4 depends on a reply firing
+        # from the first /new-thread alone). Empty-string chat_id is
+        # OK — feishu_thread.on_msg just no-ops outbound until it
+        # learns one.
+        chat_id = str(event.args.get("chat_id", ""))
         return state.with_added_thread(thread_id), [
-            InvokeCommand(name="feishu-thread-session", params={"thread_id": thread_id}),
+            InvokeCommand(
+                name="feishu-thread-session",
+                params={"thread_id": thread_id, "chat_id": chat_id},
+            ),
         ]
 
     # F08: route regular messages into their bound thread.

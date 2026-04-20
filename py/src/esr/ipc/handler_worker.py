@@ -105,12 +105,33 @@ def _error(type_: str, message: str) -> dict[str, Any]:
 
 
 def _dump_state(state: Any) -> dict[str, Any]:
-    """Serialise a pydantic state instance back to a plain dict."""
+    """Serialise a pydantic state instance back to a JSON-compatible dict.
+
+    Frozen state models use ``frozenset`` for dedup-style fields (e.g.
+    FeishuAppState.bound_threads) — pydantic's ``model_dump`` returns
+    them as-is, but the caller serialises the reply via Phoenix's
+    JSON encoder which does not accept sets. Coerce every
+    non-JSON-native container we encounter into list/dict/tuple
+    equivalents.
+    """
     if hasattr(state, "model_dump"):
-        return dict(state.model_dump())
+        return _to_json_native(dict(state.model_dump()))
     if isinstance(state, dict):
-        return dict(state)
+        return _to_json_native(dict(state))
     raise TypeError(f"handler returned non-state value: {type(state).__name__}")
+
+
+def _to_json_native(value: Any) -> Any:
+    """Recursively convert frozenset/set into sorted lists for JSON."""
+    if isinstance(value, (frozenset, set)):
+        return sorted(value, key=str)
+    if isinstance(value, dict):
+        return {k: _to_json_native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_json_native(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_json_native(v) for v in value]
+    return value
 
 
 async def run_with_client(client: Any, *, topic: str) -> None:

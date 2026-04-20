@@ -70,7 +70,7 @@ steps:
       actor_id= per peer (sig-B).
     command: >-
       uv run --project py esr cmd run feishu-thread-session
-      --param thread_id=alpha
+      --param thread_id=alpha --param chat_id=oc_mock_alpha
     expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
     expect_exit: 0
     timeout_sec: 30
@@ -82,7 +82,7 @@ steps:
       independent (name, params) pairs. Sig-B.
     command: >-
       uv run --project py esr cmd run feishu-thread-session
-      --param thread_id=beta
+      --param thread_id=beta --param chat_id=oc_mock_beta
     expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
     expect_exit: 0
     timeout_sec: 30
@@ -104,7 +104,7 @@ steps:
       actor_id= (sig-B) of stopped peers.
     command: >-
       uv run --project py esr cmd stop feishu-thread-session
-      --param thread_id=alpha
+      --param thread_id=alpha --param chat_id=oc_mock_alpha
     expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
     expect_exit: 0
     timeout_sec: 15
@@ -135,7 +135,7 @@ steps:
       Spawn gamma, pause its peer, inspect emits actor_id=thread:gamma
       (sig-B) with paused=true, then resume.
     command: >-
-      uv run --project py esr cmd run feishu-thread-session --param thread_id=gamma &&
+      uv run --project py esr cmd run feishu-thread-session --param thread_id=gamma --param chat_id=oc_mock_gamma &&
       uv run --project py esr debug pause thread:gamma &&
       uv run --project py esr actors inspect thread:gamma &&
       uv run --project py esr debug resume thread:gamma
@@ -151,7 +151,7 @@ steps:
       the registry was touched but returned cleanly.
     command: >-
       uv run --project py esr deadletter list &&
-      uv run --project py esr cmd stop feishu-thread-session --param thread_id=gamma
+      uv run --project py esr cmd stop feishu-thread-session --param thread_id=gamma --param chat_id=oc_mock_gamma
     expect_stdout_match: "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"
     expect_exit: 0
     timeout_sec: 20

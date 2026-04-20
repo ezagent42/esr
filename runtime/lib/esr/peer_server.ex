@@ -259,7 +259,14 @@ defmodule Esr.PeerServer do
   # ------------------------------------------------------------------
 
   defp invoke_handler(%__MODULE__{} = state, envelope, idempotency_key) do
+    # The Python handler_worker looks up the handler fn in
+    # HANDLER_REGISTRY keyed by ``<actor_type>.<handler_name>`` — we
+    # register ``on_msg`` per-actor_type so the key is synthesised from
+    # actor_type + "on_msg" at call time. PRD 05 names "on_msg" as the
+    # sole v0.1 entry; future variants can thread the name through from
+    # the pattern if needed.
     payload = %{
+      "handler" => state.actor_type <> ".on_msg",
       "state" => state.state,
       "event" => Map.get(envelope, "payload", %{})
     }
@@ -389,11 +396,21 @@ defmodule Esr.PeerServer do
 
   defp dispatch_action(%{"type" => "emit"} = action, %__MODULE__{} = state) do
     adapter = action["adapter"]
-    # AdapterChannel joins on "adapter:<name>/<instance_id>" where
-    # instance_id is the bound peer's actor_id (see Instantiator.
-    # spawn_node → HubRegistry.bind). A bare "adapter:<name>"
-    # broadcast would never reach the channel.
-    topic = "adapter:" <> adapter <> "/" <> state.actor_id
+    # Prefer the topic of a peer ALREADY bound to this adapter name —
+    # otherwise the emitter (e.g. feishu_thread_proxy) is never joined
+    # to a Phoenix channel, and broadcasts to adapter:<name>/<emitter>
+    # would go to nobody. HubRegistry.list is tiny (bounded by peer
+    # count), so the scan is cheap.
+    prefix = "adapter:" <> adapter <> "/"
+
+    topic =
+      case Enum.find(Esr.AdapterHub.Registry.list(), fn {t, _actor_id} ->
+             String.starts_with?(t, prefix)
+           end) do
+        {bound_topic, _actor_id} -> bound_topic
+        nil -> prefix <> state.actor_id
+      end
+
     id = "d-" <> Integer.to_string(System.unique_integer([:positive]))
 
     # Subscribe BEFORE broadcast so a fast ack lands in our mailbox.

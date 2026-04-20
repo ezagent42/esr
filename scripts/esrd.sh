@@ -95,10 +95,19 @@ cmd_stop() {
   # get aggressive state cleanup so the next loop iteration can start
   # fresh — wipe Python worker subprocesses + their pidfiles, AND the
   # default adapters.yaml the CLI's ``esr adapter add`` targets (the CLI
-  # is not yet esrd-instance-aware in v0.1).
+  # is not yet esrd-instance-aware in v0.1). Worker .log files are
+  # preserved under $ESRD_HOME/<instance>/logs/workers/ so post-mortem
+  # debugging survives restarts.
   if [[ "$instance" == smoke-* ]]; then
+    local worker_logs_dir="$ESRD_HOME/$instance/logs/workers"
+    mkdir -p "$worker_logs_dir"
+    for log in /tmp/esr-worker-*.log; do
+      [ -f "$log" ] || continue
+      mv "$log" "$worker_logs_dir/" 2>/dev/null || true
+    done
+
     pkill -f 'esr\.ipc\.(adapter_runner|handler_worker)' 2>/dev/null || true
-    rm -f /tmp/esr-worker-*.pid /tmp/esr-worker-*.log 2>/dev/null
+    rm -f /tmp/esr-worker-*.pid 2>/dev/null
     rm -f "$ESRD_HOME/default/adapters.yaml" 2>/dev/null
   fi
 

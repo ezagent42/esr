@@ -89,6 +89,11 @@ defmodule EsrWeb.CliChannel do
     artifact = Map.get(payload, "artifact") || %{"name" => name}
     params = Map.get(payload, "params") || %{}
 
+    # Register the artifact so future InvokeCommand actions (fired by
+    # handlers via e.g. /new-thread) can look it up. ETS is shared
+    # across all PeerServers; one put_artifact per distinct name.
+    :ok = Esr.Topology.Registry.put_artifact(name, artifact)
+
     case Instantiator.instantiate(artifact, params) do
       {:ok, handle} ->
         %{

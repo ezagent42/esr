@@ -37,7 +37,12 @@ def test_cc_output_routed_to_cc_session() -> None:
     assert len(actions) == 1
     assert isinstance(actions[0], Route)
     assert actions[0].target == "cc:sess-A"
-    assert actions[0].msg == {"session": "sess-A", "text": "hello"}
+    # 8f: Route msg now carries event_type so the downstream
+    # cc_session.on_msg can dispatch on it.
+    assert actions[0].msg == {
+        "event_type": "cc_output",
+        "args": {"session": "sess-A", "text": "hello"},
+    }
 
 
 def test_unknown_event_ignored() -> None:

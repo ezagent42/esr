@@ -25,7 +25,9 @@ def test_new_thread_triggers_invoke_command() -> None:
     assert len(actions) == 1
     assert isinstance(actions[0], InvokeCommand)
     assert actions[0].name == "feishu-thread-session"
-    assert actions[0].params == {"thread_id": "foo"}
+    # 8f: chat_id forwarded from event.args so the spawned feishu_thread
+    # can reply to the originating Feishu chat immediately.
+    assert actions[0].params == {"thread_id": "foo", "chat_id": ""}
 
 
 def test_new_thread_duplicate_is_idempotent() -> None:

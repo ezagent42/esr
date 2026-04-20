@@ -20,7 +20,10 @@ def feishu_thread_session() -> None:
         id="thread:{{thread_id}}",
         actor_type="feishu_thread_proxy",
         handler="feishu_thread.on_msg",
-        params={"thread_id": "{{thread_id}}"},
+        # chat_id forwarded from feishu_app.on_msg's InvokeCommand so
+        # outbound send_message can reach the originating Feishu chat
+        # as soon as cc_output starts flowing (L4 under --live).
+        params={"thread_id": "{{thread_id}}", "chat_id": "{{chat_id}}"},
     )
     tmux = node(
         id="tmux:{{thread_id}}",
@@ -28,11 +31,15 @@ def feishu_thread_session() -> None:
         adapter="cc_tmux",
         handler="tmux_proxy.on_msg",
         depends_on=[thread.id],
+        # tmux_proxy.on_msg uses state.session_name to route cc_output
+        # events to cc:<session_name>. Without this the tmux_proxy
+        # silently drops cc_output and L4 never lights up.
+        params={"session_name": "{{thread_id}}"},
         init_directive={
             "action": "new_session",
             "args": {
                 "session_name": "{{thread_id}}",
-                "start_cmd": "./e2e-cc.sh",
+                "start_cmd": "scripts/e2e-cc.sh",
             },
         },
     )
@@ -41,5 +48,9 @@ def feishu_thread_session() -> None:
         actor_type="cc_proxy",
         handler="cc_session.on_msg",
         depends_on=[tmux.id],
+        # Thread the thread_id so cc_session knows which thread_proxy
+        # owns it — without this, cc_session.parent_thread stays "" and
+        # cc_output events can't route back to feishu_thread (L4 fails).
+        params={"session_name": "{{thread_id}}", "parent_thread": "{{thread_id}}"},
     )
     thread >> tmux >> cc

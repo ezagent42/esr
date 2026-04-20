@@ -208,6 +208,10 @@ def main(argv: list[str] | None = None) -> int:
     instance, so it runs indefinitely (event loop never returns under
     normal operation). KeyboardInterrupt / cancellation → clean exit.
     """
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
     ns = _parse_main_args(argv if argv is not None else [])
     try:
         asyncio.run(run(ns.adapter, ns.instance_id, ns.config, ns.url))

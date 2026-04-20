@@ -235,10 +235,32 @@ defmodule Esr.Topology.Instantiator do
 
     # Broadcast under the unified "envelope" event shape the Python
     # adapter_runner filters on (event == "envelope", payload.kind
-    # == "directive"). The envelope carries its own kind for dispatch.
+    # == "directive"). Since WorkerSupervisor.ensure_adapter just
+    # kicked off the adapter_runner subprocess, the adapter may not
+    # yet have joined its channel — Phoenix broadcasts are fire-and-
+    # forget and don't buffer. Re-broadcast every 1 s until we get the
+    # ack or hit the timeout; an adapter that joins late eventually
+    # catches a broadcast and ack's.
     EsrWeb.Endpoint.broadcast(topic, "envelope", envelope)
 
     try do
+      wait_for_ack(topic, envelope, id, timeout)
+    after
+      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, reply_topic)
+    end
+  end
+
+  defp wait_for_ack(topic, envelope, id, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_ack(topic, envelope, id, deadline)
+  end
+
+  defp do_wait_for_ack(topic, envelope, id, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      {:error, :timeout}
+    else
       receive do
         {:directive_ack, %{"id" => ^id, "payload" => %{"ok" => true}}} ->
           :ok
@@ -246,10 +268,16 @@ defmodule Esr.Topology.Instantiator do
         {:directive_ack, %{"id" => ^id, "payload" => payload}} ->
           {:error, payload}
       after
-        timeout -> {:error, :timeout}
+        # Re-broadcast every 1 s (or less if we're near the deadline).
+        # Adapters that joined after the first broadcast still get a
+        # fresh one and can ack. Idempotency on the adapter side is
+        # fine because the Python adapter_runner just calls
+        # on_directive(action, args) — new_session with the same
+        # session_name is a tmux no-op on the second call.
+        min(1_000, remaining) ->
+          EsrWeb.Endpoint.broadcast(topic, "envelope", envelope)
+          do_wait_for_ack(topic, envelope, id, deadline)
       end
-    after
-      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, reply_topic)
     end
   end
 
@@ -274,10 +302,16 @@ defmodule Esr.Topology.Instantiator do
   end
 
   defp start_peer(node) do
+    # Node params become the PeerServer's initial_state — handlers often
+    # need them on first event (e.g. cc_session needs parent_thread so
+    # cc_output can Route back to the feishu_thread proxy).
+    initial_state = Map.get(node, "params") || %{}
+
     PeerSupervisor.start_peer(
       actor_id: node["id"],
       actor_type: node["actor_type"],
-      handler_module: handler_module_name(node["handler"])
+      handler_module: handler_module_name(node["handler"]),
+      initial_state: initial_state
     )
   end
 

@@ -26,7 +26,14 @@ def on_msg(
             Emit(adapter="cc_tmux", action="send_keys", args=dict(event.args)),
         ]
     if event.event_type == "cc_output":
+        # Route ``msg`` must be a full event-shaped dict (event_type +
+        # args) — downstream cc_session.on_msg dispatches on event_type,
+        # and handler_worker.process_handler_call requires event_type
+        # on the envelope payload. Wrapping keeps the hop transparent.
         return state, [
-            Route(target=f"cc:{state.session_name}", msg=dict(event.args)),
+            Route(
+                target=f"cc:{state.session_name}",
+                msg={"event_type": "cc_output", "args": dict(event.args)},
+            ),
         ]
     return state, []

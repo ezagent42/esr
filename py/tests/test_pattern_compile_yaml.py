@@ -82,6 +82,6 @@ def test_thread_session_init_directive_round_trips(tmp_path: Path) -> None:
         "action": "new_session",
         "args": {
             "session_name": "{{thread_id}}",
-            "start_cmd": "./e2e-cc.sh",
+            "start_cmd": "scripts/e2e-cc.sh",
         },
     }

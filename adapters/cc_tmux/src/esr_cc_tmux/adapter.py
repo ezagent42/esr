@@ -178,10 +178,19 @@ class CcTmuxAdapter:
         import asyncio as _asyncio
 
         session_name = self.actor_id.split(":", 1)[-1] if ":" in self.actor_id else self.actor_id
+        logger.info("cc_tmux emit_events starting for session=%s", session_name)
         seen: set[str] = set()
+        # Session is created by init_directive AFTER the adapter joins
+        # its channel; this coroutine starts immediately on join, so the
+        # first poll will often race ahead of the tmux new-session call.
+        # Tolerate consecutive failures until the session shows up OR
+        # we decide it's never coming (stop after ~10 min of nothing).
+        consecutive_missing = 0
+        missing_limit = 1200  # 1200 × 0.5 s = 10 min
 
         while True:
             if not self._ensure_tmux():
+                logger.warning("cc_tmux: tmux not available, stopping emit_events")
                 return
             result = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_name, "-p"],
@@ -189,9 +198,22 @@ class CcTmuxAdapter:
                 text=True,
             )
             if result.returncode != 0:
-                # Session gone — stop emitting; directive dispatch will
-                # surface the failure separately.
-                return
+                consecutive_missing += 1
+                if consecutive_missing == 1 or consecutive_missing % 20 == 0:
+                    logger.info("cc_tmux: capture-pane -t %s pending (rc=%s stderr=%r, attempt %d/%d)",
+                                session_name, result.returncode, result.stderr[:120],
+                                consecutive_missing, missing_limit)
+                if consecutive_missing >= missing_limit:
+                    logger.warning("cc_tmux: session %s never appeared, giving up", session_name)
+                    return
+                await _asyncio.sleep(0.5)
+                continue
+
+            # Session appeared — reset the miss counter and process lines.
+            if consecutive_missing > 0:
+                logger.info("cc_tmux: session %s appeared after %d attempts", session_name, consecutive_missing)
+                consecutive_missing = 0
+
             for line in result.stdout.splitlines():
                 if not line.startswith(SENTINEL_PREFIX):
                     continue
@@ -200,6 +222,7 @@ class CcTmuxAdapter:
                 seen.add(line)
                 parsed = parse_sentinel_line(session_name, line + "\n")
                 if parsed is not None:
+                    logger.info("cc_tmux: emitting cc_output text=%r", parsed["args"].get("text", ""))
                     yield parsed
 
             await _asyncio.sleep(0.5)

@@ -61,9 +61,12 @@ def test_init_directive_on_tmux_node() -> None:
     assert init is not None
     assert init["action"] == "new_session"
     assert init["args"]["session_name"] == "{{thread_id}}"
-    assert init["args"]["start_cmd"] == "./e2e-cc.sh"
+    assert init["args"]["start_cmd"] == "scripts/e2e-cc.sh"
 
 
-def test_single_param_thread_id() -> None:
+def test_params_thread_id_and_chat_id() -> None:
+    # 8f: chat_id added so feishu_thread_proxy.state.chat_id is
+    # pre-set from InvokeCommand params; enables outbound send_message
+    # on the first cc_output event (L4 in final_gate.sh --live).
     topo = compile_topology("feishu-thread-session")
-    assert topo.params == ("thread_id",)
+    assert set(topo.params) == {"thread_id", "chat_id"}

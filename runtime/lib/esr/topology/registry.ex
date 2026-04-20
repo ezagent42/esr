@@ -112,7 +112,39 @@ defmodule Esr.Topology.Registry do
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@artifact_table, [:named_table, :public, :set, read_concurrency: true])
+    # Bootstrap artifact registry from the default esrd instance's
+    # ``commands/.compiled/*.yaml`` dir. Handlers fire InvokeCommand
+    # actions by name, and without a pre-populated registry the dispatch
+    # silently drops (no cmd run was invoked for the secondary
+    # pattern). On --live the /new-thread handler emits InvokeCommand
+    # for ``feishu-thread-session`` without the CLI ever running
+    # ``esr cmd run`` for it — this scan closes the gap.
+    #
+    # Disabled via :esr :bootstrap_artifacts false (test suite sets
+    # this in config/test.exs) so per-test empty-registry expectations
+    # still hold.
+    if Application.get_env(:esr, :bootstrap_artifacts, true) do
+      load_artifacts_from_dir()
+    end
     {:ok, %{}}
+  end
+
+  defp load_artifacts_from_dir do
+    dir = Path.join([System.user_home!(), ".esrd", "default", "commands", ".compiled"])
+
+    if File.dir?(dir) do
+      dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".yaml"))
+      |> Enum.each(fn file ->
+        path = Path.join(dir, file)
+
+        with {:ok, parsed} <- YamlElixir.read_from_file(path),
+             name when is_binary(name) <- Map.get(parsed, "name") do
+          :ets.insert(@artifact_table, {name, parsed})
+        end
+      end)
+    end
   end
 
   # ------------------------------------------------------------------
