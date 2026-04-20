@@ -197,3 +197,78 @@ async def test_capture_pane_returns_pane_text(monkeypatch: pytest.MonkeyPatch) -
 
     ack = await adapter_inst.on_directive("capture_pane", {"session_name": "sess-A"})
     assert ack == {"ok": True, "result": {"content": "pane text\nline2\n"}}
+
+
+# --- v0.2: new_session env + cwd --------------------------------------
+
+
+async def test_new_session_passes_env_vars_to_tmux(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """new_session must support args.env (dict) so the spawned shell inherits env vars."""
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive(
+        "new_session",
+        {
+            "session_name": "test-s",
+            "start_cmd": "scripts/esr-cc.sh",
+            "env": {"ESR_WORKSPACE": "w1", "ESR_SESSION_ID": "test-s"},
+        },
+    )
+    assert ack == {"ok": True}
+
+    argv = calls[1]  # skip the tmux --version probe
+    assert "-e" in argv
+    env_pairs = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+    assert "ESR_WORKSPACE=w1" in env_pairs
+    assert "ESR_SESSION_ID=test-s" in env_pairs
+
+
+async def test_new_session_passes_cwd_to_tmux(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """new_session must support args.cwd (str) so tmux starts in the correct directory."""
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive(
+        "new_session",
+        {
+            "session_name": "test-cwd",
+            "start_cmd": "scripts/esr-cc.sh",
+            "cwd": "/workspace/project",
+        },
+    )
+    assert ack == {"ok": True}
+
+    argv = calls[1]
+    assert "-c" in argv
+    cwd_idx = argv.index("-c")
+    assert argv[cwd_idx + 1] == "/workspace/project"
+
+
+async def test_new_session_legacy_no_env_no_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy callers omitting env/cwd still produce a clean argv with no extra flags."""
+    from esr_cc_tmux.adapter import CcTmuxAdapter
+
+    calls = _patch_run(monkeypatch, _ok)
+    adapter_inst = CcTmuxAdapter.factory("cc", AdapterConfig({}))
+
+    ack = await adapter_inst.on_directive(
+        "new_session",
+        {"session_name": "legacy", "start_cmd": "/usr/bin/claude"},
+    )
+    assert ack == {"ok": True}
+
+    argv = calls[1]
+    assert "-e" not in argv
+    assert "-c" not in argv
+    assert argv == ["tmux", "new-session", "-d", "-s", "legacy", "/usr/bin/claude"]
