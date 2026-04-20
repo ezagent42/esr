@@ -8,6 +8,11 @@ handlers stay adapter-symmetric.
 These tests drive the mock path (config.base_url ∈ {http://127.0.0.1,
 http://localhost}) against a live MockFeishu harness. The live-Lark
 path requires real credentials and is covered by the --live gate.
+
+Capabilities: Lane A (§7.1) now gates every emit site, so this test
+supplies a workspaces.yaml binding the test chat to a workspace and a
+capabilities.yaml granting ``*`` to the synthetic sender. Lane A
+enforcement itself is exercised in ``test_lane_a.py``.
 """
 from __future__ import annotations
 
@@ -18,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from esr.adapter import AdapterConfig
+from esr.workspaces import Workspace, write_workspace
 from esr_feishu.adapter import FeishuAdapter
 
 # Import MockFeishu from scripts/
@@ -27,13 +33,30 @@ from mock_feishu import MockFeishu  # noqa: E402
 
 
 @pytest.mark.asyncio
-async def test_emit_events_mock_yields_msg_received() -> None:
+async def test_emit_events_mock_yields_msg_received(
+    tmp_path: Path, allow_all_capabilities: Path
+) -> None:
     """When base_url points at a mock, emit_events relays /ws frames.
 
     Seeds the mock with an inbound message, then awaits one envelope
     from the adapter's generator. Verifies the flattened shape matches
     what the feishu_app / feishu_thread handlers expect.
     """
+    # Bind the synthetic chat to a workspace so Lane A can pass the
+    # (chat_id, app_id) lookup for an authorized principal.
+    workspaces_path = tmp_path / "workspaces.yaml"
+    write_workspace(
+        workspaces_path,
+        Workspace(
+            name="proj-t",
+            cwd="/tmp",
+            start_cmd="x",
+            role="dev",
+            chats=[
+                {"chat_id": "oc_unit_test", "app_id": "mock_app", "kind": "dm"}
+            ],
+        ),
+    )
     mock = MockFeishu()
     url = await mock.start()
     try:
@@ -43,6 +66,8 @@ async def test_emit_events_mock_yields_msg_received() -> None:
                 "app_id": "mock_app",
                 "app_secret": "mock_secret",
                 "base_url": url,
+                "workspaces_path": str(workspaces_path),
+                "capabilities_path": str(allow_all_capabilities),
             }),
         )
 
