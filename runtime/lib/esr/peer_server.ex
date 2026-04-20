@@ -240,8 +240,13 @@ defmodule Esr.PeerServer do
 
   # v0.2 §3.2 — tool_invoke arrives from ChannelChannel, we emit to the
   # real adapter and WAIT for directive_ack before replying tool_result.
+  #
+  # Capabilities spec §6.3: arity 6 carries ``principal_id`` (the
+  # identity that invoked the tool, as captured by ChannelChannel on
+  # ``session_register``). CAP-3 only threads it through — Lane B
+  # enforcement against ``workspace:<ws>/<tool>`` lands in CAP-4.
   def handle_info(
-        {:tool_invoke, req_id, tool, args, reply_pid},
+        {:tool_invoke, req_id, tool, args, reply_pid, _principal_id},
         %__MODULE__{} = state
       ) do
     # Emit a structured log line for _echo so the gate's L2 grep can match

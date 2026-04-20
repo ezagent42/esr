@@ -45,6 +45,9 @@ defmodule EsrWeb.AdapterChannelTest do
       "ts" => "2026-04-19T10:00:00Z",
       "type" => "event",
       "source" => "esr://localhost/adapter/feishu-shared",
+      # Capabilities spec §6.2: inbound events MUST carry principal_id
+      "principal_id" => "ou_tester",
+      "workspace_name" => "proj-a",
       "payload" => %{"event_type" => "msg_received", "args" => %{"chat_id" => "oc_1"}}
     }
 
@@ -52,6 +55,9 @@ defmodule EsrWeb.AdapterChannelTest do
     assert_receive {:inbound_event, received}, 500
     assert received["id"] == "e-abc"
     assert received["payload"]["event_type"] == "msg_received"
+    # Principal fields survive the forward into PeerServer's mailbox
+    assert received["principal_id"] == "ou_tester"
+    assert received["workspace_name"] == "proj-a"
   end
 
   test "'directive_ack' push routes to bound PeerServer as {:directive_ack, _}",
@@ -83,6 +89,8 @@ defmodule EsrWeb.AdapterChannelTest do
     envelope = %{
       "kind" => "event",
       "id" => "e-env",
+      "principal_id" => "ou_tester",
+      "workspace_name" => nil,
       "payload" => %{"event_type" => "msg_received", "args" => %{}}
     }
 
@@ -123,7 +131,13 @@ defmodule EsrWeb.AdapterChannelTest do
 
     # A push against an unbound topic replies :error — no PeerServer to
     # route to, so the forward/2 helper yields the "no binding" reason.
-    ref = push(socket, "event", %{"id" => "e-no-bind", "payload" => %{}})
+    ref =
+      push(socket, "event", %{
+        "id" => "e-no-bind",
+        "principal_id" => "ou_tester",
+        "payload" => %{}
+      })
+
     assert_reply ref, :error, %{reason: "no binding"}
   end
 
@@ -137,7 +151,13 @@ defmodule EsrWeb.AdapterChannelTest do
     # Unregister the binding to simulate a dead PeerServer.
     Registry.unregister(Esr.PeerRegistry, actor_id)
 
-    ref = push(socket, "event", %{"id" => "e-orphan", "payload" => %{}})
+    ref =
+      push(socket, "event", %{
+        "id" => "e-orphan",
+        "principal_id" => "ou_tester",
+        "payload" => %{}
+      })
+
     assert_reply ref, :error, %{reason: _}
   end
 end

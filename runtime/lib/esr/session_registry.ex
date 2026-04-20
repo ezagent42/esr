@@ -4,7 +4,14 @@ defmodule Esr.SessionRegistry do
 
   State row per session_id:
     %{ws_pid, chat_ids, app_ids, workspace,
+      principal_id, workspace_name,
       status: :online | :offline, last_seen_ms}
+
+  ``principal_id`` + ``workspace_name`` (capabilities spec §6.2/§6.3):
+  captured when the CC worker sends ``session_register``. Both default
+  to ``nil`` when the frame doesn't supply them (e.g. pre-capabilities
+  clients); Lane B will fall back to the bootstrap principal for
+  tool_invoke dispatch.
 
   Backed by a named GenServer + ETS public set so reads are
   concurrent / lock-free; writes serialise through the GenServer to
@@ -68,7 +75,14 @@ defmodule Esr.SessionRegistry do
   def handle_call({:register, sid, row_fields}, _from, state) do
     row =
       row_fields
-      |> Map.take([:ws_pid, :chat_ids, :app_ids, :workspace])
+      |> Map.take([
+        :ws_pid,
+        :chat_ids,
+        :app_ids,
+        :workspace,
+        :principal_id,
+        :workspace_name
+      ])
       |> Map.put(:status, :online)
       |> Map.put(:last_seen_ms, System.system_time(:millisecond))
 

@@ -19,25 +19,52 @@ defmodule EsrWeb.ChannelChannel do
       ws_pid: self(),
       chat_ids: [],
       app_ids: [],
-      workspace: ""
+      workspace: "",
+      principal_id: nil,
+      workspace_name: nil
     )
 
-    {:ok, %{registered: true}, assign(socket, :session_id, session_id)}
+    socket =
+      socket
+      |> assign(:session_id, session_id)
+      |> assign(:principal_id, nil)
+      |> assign(:workspace_name, nil)
+
+    {:ok, %{registered: true}, socket}
   end
 
+  # Capabilities spec §6.2/§6.3 — CC session worker declares its
+  # principal_id (the admin/user running CC) and workspace_name (which
+  # workspace row this session operates in) on register. Both end up
+  # on the SessionRegistry row AND on the socket's assigns so the
+  # tool_invoke handler can inject principal_id into the arity-6
+  # {:tool_invoke, ...} tuple that Lane B (CAP-4) enforces against.
+  #
+  # principal_id default: ``ESR_BOOTSTRAP_PRINCIPAL_ID`` — lets the
+  # bootstrap admin run tools before any capabilities.yaml grant
+  # exists (matches Lane A bootstrap in Esr.Capabilities).
   @impl Phoenix.Channel
   def handle_in("envelope", %{"kind" => "session_register"} = payload, socket) do
     session_id = socket.assigns.session_id
     chats = payload["chats"] || []
     chat_ids = Enum.map(chats, &(&1["chat_id"]))
     app_ids = chats |> Enum.map(&(&1["app_id"])) |> Enum.uniq()
+    principal_id = payload["principal_id"] || System.get_env("ESR_BOOTSTRAP_PRINCIPAL_ID")
+    workspace_name = payload["workspace_name"]
 
     SessionRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: chat_ids,
       app_ids: app_ids,
-      workspace: payload["workspace"] || ""
+      workspace: payload["workspace"] || "",
+      principal_id: principal_id,
+      workspace_name: workspace_name
     )
+
+    socket =
+      socket
+      |> assign(:principal_id, principal_id)
+      |> assign(:workspace_name, workspace_name)
 
     {:reply, :ok, socket}
   end
@@ -47,12 +74,15 @@ defmodule EsrWeb.ChannelChannel do
     req_id = payload["req_id"]
     tool = payload["tool"]
     args = payload["args"] || %{}
+    principal_id =
+      socket.assigns[:principal_id] ||
+        System.get_env("ESR_BOOTSTRAP_PRINCIPAL_ID")
 
     peer_name = "thread:" <> session_id
 
     case Registry.lookup(Esr.PeerRegistry, peer_name) do
       [{peer_pid, _}] ->
-        send(peer_pid, {:tool_invoke, req_id, tool, args, self()})
+        send(peer_pid, {:tool_invoke, req_id, tool, args, self(), principal_id})
         {:noreply, socket}
 
       [] ->
