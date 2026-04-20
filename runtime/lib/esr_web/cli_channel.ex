@@ -225,6 +225,28 @@ defmodule EsrWeb.CliChannel do
     %{"entries" => entries}
   end
 
+  def dispatch("cli:workspace/register", payload) do
+    alias Esr.Workspaces.Registry, as: WorkspacesReg
+
+    name = Map.get(payload, "name")
+
+    if is_binary(name) and name != "" do
+      ws = %WorkspacesReg.Workspace{
+        name: name,
+        cwd: payload["cwd"] || "",
+        start_cmd: payload["start_cmd"] || "",
+        role: payload["role"] || "dev",
+        chats: payload["chats"] || [],
+        env: payload["env"] || %{}
+      }
+
+      :ok = WorkspacesReg.put(ws)
+      %{"data" => %{"ok" => true, "name" => name}}
+    else
+      %{"data" => %{"ok" => false, "reason" => "missing name"}}
+    end
+  end
+
   def dispatch(topic, _payload) do
     # Closes reviewer-C2. Unknown topics surface as a structured error so
     # typos and not-yet-implemented dispatches (cli:debug/replay,

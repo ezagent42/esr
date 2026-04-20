@@ -1218,6 +1218,20 @@ def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
     except ValueError as exc:
         click.echo(str(exc), err=True)
         raise click.exceptions.Exit(code=1)
+    # Push to live esrd so /new-session can find the workspace
+    # without restarting (best-effort — offline esrd is not an error
+    # here; next esrd start will bootstrap from yaml).
+    from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+    try:
+        call_runtime(
+            topic="cli:workspace/register",
+            payload={"name": name, "cwd": cwd, "start_cmd": start_cmd,
+                     "role": role, "chats": parsed_chats, "env": env_dict},
+            timeout_sec=5.0,
+        )
+    except RuntimeUnreachable:
+        click.echo("note: esrd not running — workspace saved to disk; "
+                   "will load on next esrd start", err=True)
     click.echo(f"added {name}")
 
 
