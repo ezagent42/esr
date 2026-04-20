@@ -1,1 +1,1 @@
-"""CI-time verification: handler purity and adapter capability scans."""
+"""CI-time verification: handler purity and adapter I/O-permission scans."""

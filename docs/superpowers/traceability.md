@@ -31,7 +31,7 @@
 | §4.4 | Action palette: Emit / Route / InvokeCommand only | PRD 02-F02; PRD 01-F07 | H-2 | Phase 2, Task 2.2 |
 | §4.5 | State pydantic frozen + schema_version | PRD 02-F05; PRD 05-F03 | F-3 | Phase 5 |
 | §5.1 | Adapter factory + allowed_io | PRD 02-F07, F08; PRD 04-F02, F03 | A | Phase 4 |
-| §5.2 | Capability declaration enforcement | PRD 02-F18 | A | Phase 2, Task 2.x |
+| §5.2 | I/O-permission declaration enforcement | PRD 02-F18 | A | Phase 2, Task 2.x |
 | §5.3 | Directive / Event semantics | PRD 02-F03; PRD 03-F02 | C | Phase 2 / 3 |
 | §5.4 | Adapter lifecycle + `esr adapter add` | PRD 07-F04 | A | Phase 7 |
 | §5.5 | No adapter nesting — depends_on in topology | PRD 02-F10, F13; PRD 06-F02, F07 | B | Phase 2 / 6 |
@@ -66,7 +66,7 @@
 
 **Track A — Registration:**
 - PRD 02-F04 / F07 / F09 (registrations exist)
-- PRD 04-F03 / F04 (capability + manifest)
+- PRD 04-F03 / F04 (I/O-permission + manifest)
 - PRD 05-F02 (handler manifest)
 - PRD 06-F08, F09 (pattern install writes compiled YAML)
 - PRD 07-F03–F10 (CLI install / add / list)
@@ -100,7 +100,7 @@
 - PRD 07-F18, F19 (debug subcommands + deadletter)
 
 **Track H — Correctness:**
-- PRD 02-F16, F17, F18 (purity + capability)
+- PRD 02-F16, F17, F18 (purity + I/O-permission)
 - PRD 06-F03, F04 (deterministic compiled YAML)
 - PRD 01-F07 (action type validation)
 

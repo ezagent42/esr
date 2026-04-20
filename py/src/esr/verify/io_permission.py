@@ -1,4 +1,4 @@
-"""Adapter capability scan (PRD 02 F18; spec §5.4).
+"""Adapter I/O-permission scan (PRD 02 F18; spec §5.4).
 
 ``scan_adapter(path, allowed_io) -> [Violation]`` walks the adapter
 module at ``path`` and reports any top-level import whose root is not
@@ -8,7 +8,7 @@ A small fixed set of stdlib modules and ``esr`` itself are always
 allowed — adapters legitimately import ``asyncio``, ``json``,
 ``logging`` and so on, and forcing authors to declare those in every
 manifest would only create noise. Non-stdlib imports *must* be
-declared — that is the whole point of the capability manifest.
+declared — that is the whole point of the ``allowed_io`` manifest.
 """
 
 from __future__ import annotations

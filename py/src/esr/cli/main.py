@@ -444,12 +444,12 @@ def adapter_install(source: Path) -> None:
     """Validate a local adapter package (PRD 07 F03).
 
     v0.1 scope: parse ``esr.toml``, verify the source package exists,
-    and run ``esr.verify.capability.scan_adapter`` against the
+    and run ``esr.verify.io_permission.scan_adapter`` against the
     adapter module. Full fetch-and-register into
     ``~/.esrd/<instance>/adapters.yaml`` lands with runtime wiring
     (Phase 8). This command is offline.
     """
-    from esr.verify.capability import scan_adapter
+    from esr.verify.io_permission import scan_adapter
 
     manifest = source / "esr.toml"
     if not manifest.exists():
@@ -470,7 +470,7 @@ def adapter_install(source: Path) -> None:
             violations = scan_adapter(src_path, allowed_io)
             if violations:
                 click.echo(
-                    f"{name}: capability violations against declared allowed_io:",
+                    f"{name}: I/O-permission violations against declared allowed_io:",
                     err=True,
                 )
                 for v in violations:

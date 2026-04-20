@@ -30,9 +30,9 @@ Prints an organisation-level view: installed counts, active actor count, active 
 Accepts local path, git URL, or Python package name. Workflow per spec §5.6:
 1. Fetch source into `adapters/` (local copy; no global install)
 2. Parse the `esr.toml` manifest
-3. Invoke capability scan (`esr.verify.capability.scan_adapter`)
+3. Invoke I/O-permission scan (`esr.verify.io_permission.scan_adapter`)
 4. Register type in `~/.esrd/<instance>/adapters.yaml`
-On failure, roll back the filesystem copy. **Unit test:** `py/tests/test_cli_adapter_install.py` — local path happy, capability violation fails, git URL clones.
+On failure, roll back the filesystem copy. **Unit test:** `py/tests/test_cli_adapter_install.py` — local path happy, I/O-permission violation fails, git URL clones.
 
 ### F04 — `esr adapter add <instance_name> --type <module> [--<key> <val> ...]`
 Configures a new adapter instance. Flags map to the adapter's `AdapterConfig`. Written to `~/.esrd/<instance>/adapters.yaml`. Secrets (fields marked `secret=True` in the adapter manifest) go to `~/.esrd/<instance>/secrets/<adapter>.json` with `chmod 600`. **Unit test:** `py/tests/test_cli_adapter_add.py`.
@@ -65,7 +65,7 @@ Deactivates a running instantiation by (name, params). Cascade tear-down per §6
 Stops + runs with same params, preserving Elixir-side state (the PeerServers are torn down and respawned; the state in ETS-persistence survives). **Unit test:** `py/tests/test_cli_cmd_restart.py`.
 
 ### F14 — `esr-lint <path>`
-Standalone purity linter (installed as a separate entry point or `esr lint <path>`). Scans `.py` files in the given directory, runs Checks 1 (imports) and 2 (decorator presence for handlers) plus adapter capability scan. Exits nonzero on any violation. Used in CI and as a pre-commit hook. **Unit test:** `py/tests/test_cli_lint.py`.
+Standalone purity linter (installed as a separate entry point or `esr lint <path>`). Scans `.py` files in the given directory, runs Checks 1 (imports) and 2 (decorator presence for handlers) plus adapter I/O-permission scan. Exits nonzero on any violation. Used in CI and as a pre-commit hook. **Unit test:** `py/tests/test_cli_lint.py`.
 
 ### F15 — `esr actors {list, tree, inspect <id>, logs <id> [--follow]}`
 Queries via `cli:actors` control topic. `list` → table (id, type, handler, uptime). `tree` → DAG visualisation (ASCII art or `rich.tree`). `inspect` → JSON dump of state. `logs` tails per-actor log via a streaming channel. **Unit test:** each.

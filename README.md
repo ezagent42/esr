@@ -47,7 +47,7 @@ Four disciplined layers (see `docs/superpowers/specs/` §2):
 
 - **Layer 1 — Actor Runtime (Elixir/OTP)** — PeerServer per actor, Phoenix.PubSub messaging, AdapterHub + HandlerRouter for IPC with Python
 - **Layer 2 — Handler (Python, pure function)** — `(state, event) → (new_state, actions)`
-- **Layer 3 — Adapter (Python, I/O)** — pure factory → impure I/O object, per-adapter capability declaration
+- **Layer 3 — Adapter (Python, I/O)** — pure factory → impure I/O object, per-adapter I/O-permission declaration
 - **Layer 4 — Command (Python, compile-time)** — typed open-graph pattern compiler; EDSL authoring + YAML canonical artifact
 
 ## License

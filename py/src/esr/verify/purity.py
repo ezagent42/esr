@@ -37,7 +37,7 @@ _CORE_ALLOWED: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class Violation:
-    """A single violation surfaced by a purity/capability scan."""
+    """A single violation surfaced by a purity/io_permission scan."""
 
     module: str
     lineno: int
