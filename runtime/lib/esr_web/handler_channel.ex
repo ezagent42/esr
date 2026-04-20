@@ -36,6 +36,21 @@ defmodule EsrWeb.HandlerChannel do
     handle_in("handler_reply", envelope, socket)
   end
 
+  # Boot handshake (capabilities spec §3.1, §4.1) — the Python worker
+  # announces the union of permissions declared by the handler modules
+  # it loaded. Register each so operator-authored capabilities.yaml
+  # entries can reference them. Late-boot registrations are safe: the
+  # Registry accepts inserts for the lifetime of the node.
+  def handle_in("envelope", %{"kind" => "handler_hello"} = envelope, socket) do
+    perms =
+      envelope
+      |> Map.get("payload", %{})
+      |> Map.get("permissions", [])
+
+    register_permissions(perms, {:handler_worker, socket.assigns[:topic]})
+    {:reply, :ok, socket}
+  end
+
   def handle_in("envelope", _envelope, socket) do
     {:reply, {:error, %{reason: "envelope missing/unknown kind"}}, socket}
   end
@@ -57,4 +72,14 @@ defmodule EsrWeb.HandlerChannel do
   def handle_in(event, _payload, socket) do
     {:reply, {:error, %{reason: "unhandled event: #{event}"}}, socket}
   end
+
+  defp register_permissions(perms, declared_by) when is_list(perms) do
+    for perm <- perms, is_binary(perm) do
+      Esr.Permissions.Registry.register(perm, declared_by: declared_by)
+    end
+
+    :ok
+  end
+
+  defp register_permissions(_other, _declared_by), do: :ok
 end

@@ -32,6 +32,12 @@ TYPE_DIRECTIVE = "directive"
 TYPE_DIRECTIVE_ACK = "directive_ack"
 TYPE_HANDLER_CALL = "handler_call"
 TYPE_HANDLER_REPLY = "handler_reply"
+# Boot-time handshake carrying the union of permissions declared by
+# every handler loaded into this Python process. Pushed once per
+# worker on channel join; Elixir AdapterChannel / HandlerChannel
+# register each permission name into Esr.Permissions.Registry.
+# (capabilities spec §3.1, §4.1)
+TYPE_HANDLER_HELLO = "handler_hello"
 
 
 # --- Internal helpers --------------------------------------------------
@@ -126,6 +132,29 @@ def make_handler_reply(
         "type": TYPE_HANDLER_REPLY,
         "source": source,
         "payload": {"new_state": dict(new_state), "actions": list(actions)},
+    }
+
+
+def make_handler_hello(
+    *,
+    source: str,
+    permissions: list[str],
+) -> dict[str, Any]:
+    """Build a ``handler_hello`` envelope (python worker → runtime).
+
+    Pushed once on channel join so the Elixir runtime can register
+    every permission name this Python process declares into
+    ``Esr.Permissions.Registry`` (capabilities spec §3.1, §4.1).
+    ``permissions`` should already be sorted for wire determinism.
+    """
+    _check_source(source)
+    return {
+        "kind": TYPE_HANDLER_HELLO,
+        "id": _new_id("hh"),
+        "ts": _now_iso(),
+        "type": TYPE_HANDLER_HELLO,
+        "source": source,
+        "payload": {"permissions": list(permissions)},
     }
 
 

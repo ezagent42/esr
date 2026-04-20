@@ -17,7 +17,9 @@ from esr import Action, Emit, Event, Route, handler
 from esr_handler_tmux_proxy.state import TmuxProxyState
 
 
-@handler(actor_type="tmux_proxy", name="on_msg")
+# Pure pass-through bridge (Emit + Route only) — no user-facing
+# actions; declare empty permissions explicitly.
+@handler(actor_type="tmux_proxy", name="on_msg", permissions=[])
 def on_msg(
     state: TmuxProxyState, event: Event
 ) -> tuple[TmuxProxyState, list[Action]]:
