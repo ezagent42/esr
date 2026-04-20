@@ -9,6 +9,9 @@ defmodule Esr.Capabilities.Supervisor do
 
     children = [
       Esr.Permissions.Registry,
+      # Bootstrap must sit between Registry and Watcher so declared
+      # permissions exist before FileLoader.validate/1 checks them.
+      Esr.Permissions.Bootstrap,
       Esr.Capabilities.Grants,
       {Esr.Capabilities.Watcher, path: path}
     ]

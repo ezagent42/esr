@@ -17,12 +17,23 @@ defmodule Esr.PeerServer do
   """
 
   use GenServer
+  @behaviour Esr.Handler
   require Logger
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
   alias Esr.Topology.Instantiator, as: TopoInstantiator
   alias Esr.Topology.Registry, as: TopoRegistry
+
+  @doc """
+  Built-in MCP tool names exposed by `build_emit_for_tool/3`
+  (see `lib/esr/peer_server.ex` §"build_emit_for_tool" clauses).
+  CAP-4 derives required permissions as `workspace:<ws>/<tool_name>`,
+  so these four names must be registered in `Esr.Permissions.Registry`
+  at boot or every tool_invoke would be denied.
+  """
+  @impl Esr.Handler
+  def permissions, do: ["reply", "react", "send_file", "_echo"]
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
