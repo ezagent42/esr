@@ -1157,6 +1157,11 @@ def actors_inspect(actor_id: str) -> None:
     state = info.get("state", {})
     for k, v in state.items():
         click.echo(f"  {k} = {v!r}")
+    chat_ids = info.get("chat_ids") or []
+    if chat_ids:
+        click.echo(f"  chat_ids={','.join(chat_ids)}")
+    if info.get("default_chat_id"):
+        click.echo(f"  default_chat_id={info['default_chat_id']}")
 
 
 @actors.command("logs")

@@ -74,6 +74,21 @@ defmodule EsrWeb.CliChannel do
           "state" => stringify_keys(snap.state)
         }
 
+        # Augment with chat_ids from SessionRegistry if this actor is a
+        # cc_proxy / feishu_thread_proxy etc tracked there.
+        session_ctx =
+          case Esr.SessionRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
+            {:ok, row} ->
+              %{
+                "chat_ids" => row.chat_ids,
+                "default_chat_id" => List.first(row.chat_ids) || ""
+              }
+
+            :error ->
+              %{}
+          end
+
+        data = Map.merge(data, session_ctx)
         %{"data" => data}
 
       :error ->
@@ -329,5 +344,12 @@ defmodule EsrWeb.CliChannel do
       "msg" => inspect(entry.msg),
       "metadata" => entry.metadata
     }
+  end
+
+  defp actor_id_strip_prefix(actor_id) do
+    case String.split(actor_id, ":", parts: 2) do
+      [_prefix, suffix] -> suffix
+      _ -> actor_id
+    end
   end
 end
