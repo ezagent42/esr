@@ -17,6 +17,7 @@ defmodule Esr.PeerServer do
   """
 
   use GenServer
+  require Logger
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
@@ -141,6 +142,8 @@ defmodule Esr.PeerServer do
       actor_type: state.actor_type
     })
 
+    Logger.info("actor_spawned actor_id=#{state.actor_id} actor_type=#{state.actor_type}")
+
     {:ok, state}
   end
 
@@ -150,6 +153,13 @@ defmodule Esr.PeerServer do
       actor_id: actor_id,
       actor_type: actor_type
     })
+
+    # Emit session_killed log for feishu_thread_proxy peers so the gate's
+    # L5 grep can find "session_killed published session_id=<id>".
+    if actor_type == "feishu_thread_proxy" do
+      session_id = actor_id |> String.split(":", parts: 2) |> List.last()
+      Logger.info("session_killed published session_id=#{session_id}")
+    end
 
     :ok
   end
@@ -223,6 +233,13 @@ defmodule Esr.PeerServer do
         {:tool_invoke, req_id, tool, args, reply_pid},
         %__MODULE__{} = state
       ) do
+    # Emit a structured log line for _echo so the gate's L2 grep can match
+    # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
+    if tool == "_echo" do
+      nonce = Map.get(args, "nonce", "")
+      Logger.info("tool_invoke _echo req_id=#{req_id} args.nonce=\"#{nonce}\" actor_id=#{state.actor_id}")
+    end
+
     case build_emit_for_tool(tool, args, state) do
       {:ok, emit} ->
         {:ok, directive_id, new_state} = emit_and_track(emit, state)

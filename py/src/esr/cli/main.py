@@ -274,6 +274,33 @@ def scenario_run(name: str, verbose: bool) -> None:
 
 
 @cli.group()
+def adapters() -> None:
+    """Plural alias — list configured adapter instances (from adapters.yaml)."""
+
+
+@adapters.command("list")
+def adapters_list() -> None:
+    """List configured adapter instances from ~/.esrd/default/adapters.yaml."""
+    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "adapters.yaml"
+    if not path.exists():
+        click.echo("no adapter instances configured")
+        return
+    doc = yaml.safe_load(path.read_text()) or {}
+    instances = doc.get("instances") or {}
+    if not instances:
+        click.echo("no adapter instances configured")
+        return
+    for name, entry in instances.items():
+        cfg = (entry or {}).get("config") or {}
+        parts = [f"type={entry.get('type', '') if entry else ''}"]
+        if "app_id" in cfg:
+            parts.append(f"app_id={cfg['app_id']}")
+        if "base_url" in cfg:
+            parts.append(f"base_url={cfg['base_url']}")
+        click.echo(f"{name}  " + "  ".join(parts))
+
+
+@cli.group()
 def adapter() -> None:
     """Adapter install / instance / list operations."""
 

@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ALLOWED = {"e2e-feishu-cc.yaml"}
+ALLOWED = {"e2e-feishu-cc.yaml", "e2e-esr-channel.yaml"}
 
 
 def check(scenarios_dir: Path) -> list[str]:
