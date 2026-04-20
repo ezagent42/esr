@@ -1,7 +1,7 @@
 """``esr cap`` — capability-based access control CLI.
 
-Read-only inspection commands — `list`, `show`, `who-can`. Write
-commands (`grant`, `revoke`) arrive in Phase CAP-7.
+Read commands — `list`, `show`, `who-can` — plus write commands
+`grant` and `revoke`.
 
 ``list`` consumes ``permissions_registry.json`` — a snapshot the
 runtime drops next to ``capabilities.yaml`` once the permissions
@@ -9,6 +9,11 @@ registry finishes bootstrap. ``show`` and ``who-can`` read
 ``capabilities.yaml`` directly; no runtime RPC is involved, so these
 commands work offline (useful when operators need to audit a
 capabilities file without standing up esrd).
+
+``grant`` and ``revoke`` mutate ``capabilities.yaml`` in place using
+``ruamel.yaml`` so header comments and whitespace survive the
+round-trip. The watcher in ``Esr.Capabilities.Watcher`` picks up the
+change within its poll interval — no esrd restart needed.
 """
 from __future__ import annotations
 
@@ -17,9 +22,17 @@ from pathlib import Path
 
 import click
 import yaml
+from ruamel.yaml import YAML
 
 from esr.capabilities import CapabilitiesChecker
 from esr.cli.paths import capabilities_yaml_path
+
+# Shared round-tripping loader/dumper — preserves comments, quote
+# style, and uses the block-style indent matching the seeded fixtures
+# and the runtime's conventional layout.
+_yaml = YAML()
+_yaml.preserve_quotes = True
+_yaml.indent(mapping=2, sequence=4, offset=2)
 
 
 @click.group()
@@ -96,3 +109,79 @@ def cap_who_can(permission: str) -> None:
         click.echo(h)
     if not hits:
         click.echo("no matching principals", err=True)
+
+
+@cap.command("grant")
+@click.argument("principal_id")
+@click.argument("permission")
+@click.option("--kind", default="feishu_user", help="Principal kind (default: feishu_user)")
+@click.option("--note", default="", help="Human-readable note for new principals")
+def cap_grant(principal_id: str, permission: str, kind: str, note: str) -> None:
+    """Grant ``permission`` to ``principal_id``.
+
+    Creates the principal entry if missing; idempotent if the
+    permission is already held. Preserves header comments and
+    formatting in ``capabilities.yaml`` via ruamel round-trip.
+    """
+    path = Path(capabilities_yaml_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = _yaml.load(path) if path.exists() else {}
+    if doc is None:
+        doc = {}
+    doc.setdefault("principals", [])
+
+    target = next(
+        (e for e in doc["principals"] if e.get("id") == principal_id),
+        None,
+    )
+    if target is None:
+        entry: dict[str, object] = {
+            "id": principal_id,
+            "kind": kind,
+            "capabilities": [permission],
+        }
+        if note:
+            entry["note"] = note
+        doc["principals"].append(entry)
+        click.echo(f"added principal {principal_id} with {permission}")
+    else:
+        if permission in (target.get("capabilities") or []):
+            click.echo(f"{principal_id} already has {permission}; no change")
+            return
+        target.setdefault("capabilities", []).append(permission)
+        click.echo(f"{principal_id} + {permission}")
+
+    _yaml.dump(doc, path)
+
+
+@cap.command("revoke")
+@click.argument("principal_id")
+@click.argument("permission")
+def cap_revoke(principal_id: str, permission: str) -> None:
+    """Revoke ``permission`` from ``principal_id``.
+
+    No-op with a message if the principal or permission isn't found.
+    The principal entry is retained even if its capabilities list
+    becomes empty — note/kind persist for future grants.
+    """
+    path = Path(capabilities_yaml_path())
+    if not path.exists():
+        click.echo("no capabilities file; nothing to revoke")
+        return
+
+    doc = _yaml.load(path)
+    if doc is None:
+        doc = {}
+
+    target = next(
+        (e for e in doc.get("principals") or [] if e.get("id") == principal_id),
+        None,
+    )
+    if target is None or permission not in (target.get("capabilities") or []):
+        click.echo("no matching capability")
+        return
+
+    target["capabilities"].remove(permission)
+    _yaml.dump(doc, path)
+    click.echo(f"{principal_id} - {permission}")
