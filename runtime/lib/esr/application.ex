@@ -37,6 +37,9 @@ defmodule Esr.Application do
       # (Phase 8f; final_gate.sh --live can't pre-spawn them externally).
       Esr.WorkerSupervisor,
 
+      # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
+      Esr.SessionRegistry,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,
