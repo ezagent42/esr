@@ -395,9 +395,21 @@ class FeishuAdapter:
             event_handler=handler,
         )
 
-        # WSClient.start() blocks; run in a thread so the coroutine can
-        # keep yielding from the queue.
-        ws_task = loop.run_in_executor(None, ws_client.start)
+        # lark_oapi.ws.Client.start() does loop.run_until_complete on a
+        # module-level asyncio event loop captured at import time — that
+        # loop IS our running asyncio loop, so start() from an executor
+        # thread raises "event loop is already running". Work around by
+        # installing a fresh loop on the executor thread AND patching the
+        # module-level reference so lark_oapi uses it.
+        import lark_oapi.ws.client as _ws_client_mod
+
+        def _run_ws():
+            thread_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(thread_loop)
+            _ws_client_mod.loop = thread_loop
+            ws_client.start()
+
+        ws_task = loop.run_in_executor(None, _run_ws)
         try:
             while True:
                 event = await queue.get()
