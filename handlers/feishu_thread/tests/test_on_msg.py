@@ -1,15 +1,16 @@
-"""PRD 05 F12 / F13 / F14 — feishu_thread.on_msg."""
+"""PRD 05 F12 / F13 / F14 — feishu_thread.on_msg (v0.2 §3.3)."""
 
 from __future__ import annotations
 
 from esr import Emit, Event
 
 
-def _inbound(msg_id: str, content: str = "hi", chat_id: str = "oc_abc") -> Event:
+def _inbound(msg_id: str, *, content: str = "hi", chat_id: str = "oc_abc") -> Event:
     return Event(
         source="esr://localhost/adapter/feishu",
-        event_type="feishu_msg_received",
-        args={"msg_id": msg_id, "content": content, "chat_id": chat_id},
+        event_type="msg_received",  # v0.2: unified event name
+        args={"message_id": msg_id, "chat_id": chat_id, "content": content,
+              "sender_id": "ou_user"},
     )
 
 
@@ -21,27 +22,22 @@ def _cc_output(text: str) -> Event:
     )
 
 
-# --- F12: inbound ack + forward ---------------------------------------
+# --- F12: inbound notify_session --------------------------------------
 
 
-def test_inbound_msg_emits_react_and_send_keys() -> None:
+def test_inbound_emits_notify_session() -> None:
     from esr_handler_feishu_thread.on_msg import on_msg
     from esr_handler_feishu_thread.state import FeishuThreadState
 
-    s = FeishuThreadState(thread_id="threadA")
+    s = FeishuThreadState(thread_id="dev-root")
     new_s, actions = on_msg(s, _inbound("om_1", content="hi there"))
 
-    assert len(actions) == 2
-    react, send_keys = actions
-    assert isinstance(react, Emit)
-    assert react.adapter == "feishu"
-    assert react.action == "react"
-    assert react.args["msg_id"] == "om_1"
-    assert isinstance(send_keys, Emit)
-    assert send_keys.adapter == "cc_tmux"
-    assert send_keys.action == "send_keys"
-    assert send_keys.args["session_name"] == "threadA"
-    assert send_keys.args["content"] == "hi there"
+    assert len(actions) == 1
+    emit = actions[0]
+    assert emit.adapter == "esr-channel"
+    assert emit.action == "notify_session"
+    assert emit.args["session_id"] == "dev-root"
+    assert emit.args["content"] == "hi there"
 
     # dedup + chat_id captured
     assert "om_1" in new_s.dedup
