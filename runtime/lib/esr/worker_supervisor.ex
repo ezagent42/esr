@@ -309,12 +309,6 @@ defmodule Esr.WorkerSupervisor do
     end
   end
 
-  defp shell_quote(s) do
-    # Wrap every arg in single quotes; escape embedded single quotes by
-    # terminating + reopening the quote.
-    "'" <> String.replace(s, "'", ~S('\'')) <> "'"
-  end
-
   defp kill_pid(pid) do
     _ = System.cmd("kill", ["-TERM", Integer.to_string(pid)], stderr_to_stdout: true)
     :timer.sleep(500)
