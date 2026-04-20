@@ -1177,6 +1177,77 @@ def actors_logs(actor_id: str, follow: bool) -> None:
 
 
 @cli.group()
+def workspace() -> None:
+    """Workspace (CC session template) management (PRD v0.2 §3.4)."""
+
+
+@workspace.command("add", context_settings={"ignore_unknown_options": True})
+@click.argument("name")
+@click.option("--cwd", required=True, type=click.Path())
+@click.option("--start-cmd", required=True)
+@click.option("--role", default="dev")
+@click.option("--chat", "chats", multiple=True,
+              help="<chat_id>:<app_id>:<kind> triple; repeat for multiple chats")
+@click.option("--env", "envs", multiple=True, help="KEY=VAL; repeat for multiple env vars")
+def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
+                  chats: tuple[str, ...], envs: tuple[str, ...]) -> None:
+    """Declare a workspace template for `/new-session <name>`."""
+    from esr.workspaces import Workspace, write_workspace
+
+    parsed_chats = []
+    for s in chats:
+        parts = s.split(":")
+        if len(parts) != 3:
+            click.echo(f"--chat must be <chat_id>:<app_id>:<kind>, got {s!r}", err=True)
+            raise click.exceptions.Exit(code=1)
+        parsed_chats.append({"chat_id": parts[0], "app_id": parts[1], "kind": parts[2]})
+
+    env_dict: dict[str, str] = {}
+    for e in envs:
+        if "=" not in e:
+            click.echo(f"--env must be KEY=VAL, got {e!r}", err=True)
+            raise click.exceptions.Exit(code=1)
+        k, v = e.split("=", 1)
+        env_dict[k] = v
+
+    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    ws = Workspace(name=name, cwd=cwd, start_cmd=start_cmd, role=role,
+                   chats=parsed_chats, env=env_dict)
+    try:
+        write_workspace(path, ws)
+    except ValueError as exc:
+        click.echo(str(exc), err=True)
+        raise click.exceptions.Exit(code=1)
+    click.echo(f"added {name}")
+
+
+@workspace.command("list")
+def workspace_list() -> None:
+    """List declared workspaces."""
+    from esr.workspaces import read_workspaces
+
+    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    for name, ws in read_workspaces(path).items():
+        chat_refs = ",".join(
+            f"{c['chat_id']}@{c['app_id']}" for c in ws.chats
+        )
+        click.echo(f"{name}  cwd={ws.cwd}  role={ws.role}  chats={chat_refs}")
+
+
+@workspace.command("remove")
+@click.argument("name")
+def workspace_remove(name: str) -> None:
+    """Remove a workspace declaration."""
+    from esr.workspaces import remove_workspace
+
+    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    if not remove_workspace(path, name):
+        click.echo(f"workspace {name!r} not found", err=True)
+        raise click.exceptions.Exit(code=1)
+    click.echo(f"removed {name}")
+
+
+@cli.group()
 def deadletter() -> None:
     """DeadLetter queue inspection + recovery (PRD 07 F19)."""
 
