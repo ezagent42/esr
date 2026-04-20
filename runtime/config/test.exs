@@ -13,6 +13,7 @@ config :logger, level: :warning
 # Don't auto-bootstrap artifacts from ~/.esrd in test runs — each test
 # case sets up the exact registry state it expects.
 config :esr, bootstrap_artifacts: false
+config :esr, restore_on_start: false
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

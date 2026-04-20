@@ -55,7 +55,38 @@ defmodule Esr.Application do
     ]
 
     opts = [strategy: :one_for_one, name: Esr.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    if Application.get_env(:esr, :restore_on_start, true) do
+      esrd_home =
+        System.get_env("ESRD_HOME", Path.join(System.user_home!(), ".esrd"))
+
+      _ = load_workspaces_from_disk(esrd_home)
+    end
+
+    result
+  end
+
+  @doc """
+  Load `<home>/default/workspaces.yaml` into
+  `Esr.Workspaces.Registry`. v0.2 uses instance="default". Missing
+  file is not an error — returns :ok.
+  """
+  @spec load_workspaces_from_disk(Path.t()) :: :ok
+  def load_workspaces_from_disk(esrd_home) do
+    path = Path.join([esrd_home, "default", "workspaces.yaml"])
+
+    case Esr.Workspaces.Registry.load_from_file(path) do
+      {:ok, workspaces} ->
+        for {_name, ws} <- workspaces do
+          :ok = Esr.Workspaces.Registry.put(ws)
+        end
+
+        :ok
+
+      _ ->
+        :ok
+    end
   end
 
   @impl Application
