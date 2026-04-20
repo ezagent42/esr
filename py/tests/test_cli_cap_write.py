@@ -20,7 +20,6 @@ from click.testing import CliRunner
 
 from esr.cli.main import cli
 
-
 # --- Fixtures ---------------------------------------------------------
 
 

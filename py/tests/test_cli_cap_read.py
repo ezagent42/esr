@@ -97,7 +97,9 @@ def test_cap_list_prints_grouped_permissions(seeded_registry: Path) -> None:
     # The next module header marks the end of the PeerServer block; in
     # sorted module order, Capabilities < PeerServer, so PeerServer is
     # actually the trailing block here. Slice up to EOF either way.
-    lines = [l.strip() for l in peer_block.splitlines() if l.strip().startswith("- ")]
+    lines = [
+        ln.strip() for ln in peer_block.splitlines() if ln.strip().startswith("- ")
+    ]
     # reply < send_file alphabetically? "_echo" < "react" < "reply" < "send_file"
     assert lines == sorted(lines)
 
