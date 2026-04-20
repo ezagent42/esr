@@ -3,6 +3,19 @@ defmodule EsrWeb.ChannelIntegrationTest do
 
   alias Esr.SessionRegistry
 
+  setup do
+    # Guarantee emit_topic_for("feishu", ...) resolves to OUR test topic by
+    # clearing any feishu-adapter bindings left by earlier tests in the
+    # shared HubRegistry ETS.
+    for {topic, _actor_id} <- Esr.AdapterHub.Registry.list() do
+      if String.starts_with?(topic, "adapter:feishu/") do
+        :ok = Esr.AdapterHub.Registry.unbind(topic)
+      end
+    end
+
+    :ok
+  end
+
   test "tool_invoke reply round-trips through feishu fake adapter" do
     sid = "int-sid-#{System.unique_integer([:positive])}"
     actor_id = "thread:" <> sid
