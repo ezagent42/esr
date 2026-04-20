@@ -343,6 +343,16 @@ class FeishuAdapter:
         import lark_oapi
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
 
+        # lark_oapi has its own logger (INFO-level by default) — bump to
+        # DEBUG so frame-level activity lands in our adapter log for --live
+        # diagnostics.
+        try:
+            from lark_oapi.core.log import logger as _lark_logger
+
+            _lark_logger.setLevel(logging.DEBUG)
+        except Exception:  # noqa: BLE001 — diagnostic only
+            pass
+
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -350,6 +360,8 @@ class FeishuAdapter:
             # data is a P2ImMessageReceiveV1 pydantic-like object. Lark
             # nests the message under data.event.message; we flatten to
             # the minimum the feishu_app handler needs.
+            logger.info("lark im.message.receive_v1 received (event keys=%s)",
+                        list(getattr(data, "__dict__", {}).keys()) if data else "none")
             try:
                 event = data.event
                 message = event.message
