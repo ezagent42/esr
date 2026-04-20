@@ -1,4 +1,10 @@
 """Feishu app-proxy handler (PRD 05 F07 / v0.2 §3.3)."""
+# NOTE v0.2 §3.3 workspace app_id validation — the handler CANNOT
+# access AdapterHub.Registry (pure-python sandbox). Validation lives
+# in Elixir Instantiator (Task P6-3); unregistered app → InvokeCommand
+# returns `{:error, :app_not_registered}` and the topology isn't spawned,
+# surfaced back to the Feishu chat via the feishu_app Route-to-error
+# path (TODO v0.3: wire this back to the user).
 from __future__ import annotations
 
 from esr import Action, Event, InvokeCommand, Route, handler
