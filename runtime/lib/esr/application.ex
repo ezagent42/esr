@@ -62,6 +62,7 @@ defmodule Esr.Application do
         System.get_env("ESRD_HOME", Path.join(System.user_home!(), ".esrd"))
 
       _ = load_workspaces_from_disk(esrd_home)
+      _ = restore_adapters_from_disk(esrd_home)
     end
 
     result
@@ -87,6 +88,52 @@ defmodule Esr.Application do
       _ ->
         :ok
     end
+  end
+
+  @doc """
+  Read `<home>/default/adapters.yaml` and spawn each instance via
+  `Esr.WorkerSupervisor.ensure_adapter/4`. Missing file → `:ok`.
+
+  `opts[:spawn_fn]` is an injection point for tests; prod uses
+  `ensure_adapter` via `default_adapter_ws_url/0`.
+  """
+  @spec restore_adapters_from_disk(Path.t(), keyword()) :: :ok
+  def restore_adapters_from_disk(esrd_home, opts \\ []) do
+    spawn_fn =
+      Keyword.get(opts, :spawn_fn, fn instance, type, config ->
+        url = default_adapter_ws_url()
+
+        case Esr.WorkerSupervisor.ensure_adapter(type, instance, config, url) do
+          :ok -> :ok
+          :already_running -> :ok
+          {:error, _} = err -> err
+        end
+      end)
+
+    path = Path.join([esrd_home, "default", "adapters.yaml"])
+
+    if File.exists?(path) do
+      with {:ok, parsed} <- YamlElixir.read_from_file(path),
+           instances when is_map(instances) <- parsed["instances"] || %{} do
+        for {name, row} <- instances do
+          type = row["type"] || ""
+          config = row["config"] || %{}
+          _ = spawn_fn.(name, type, config)
+        end
+      end
+    end
+
+    :ok
+  end
+
+  defp default_adapter_ws_url do
+    port =
+      case EsrWeb.Endpoint.config(:http) do
+        opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
+        _ -> 4001
+      end
+
+    "ws://127.0.0.1:" <> Integer.to_string(port) <> "/adapter_hub/socket/websocket?vsn=2.0.0"
   end
 
   @impl Application
