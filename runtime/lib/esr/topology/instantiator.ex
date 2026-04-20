@@ -110,7 +110,7 @@ defmodule Esr.Topology.Instantiator do
 
     missing =
       chats
-      |> Enum.map(fn chat -> Map.get(chat, "app_id") || Map.get(chat, :app_id) end)
+      |> Enum.map(fn chat -> Map.get(chat, "app_id", Map.get(chat, :app_id)) end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
       |> Enum.reject(&MapSet.member?(live_app_ids, &1))
