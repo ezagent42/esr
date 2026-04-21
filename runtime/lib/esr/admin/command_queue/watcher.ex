@@ -16,12 +16,37 @@ defmodule Esr.Admin.CommandQueue.Watcher do
        continue (moving the file to `failed/` is the Task 14/14b
        Dispatcher's responsibility).
 
+  On `init/1` the Watcher additionally runs two recovery sweeps
+  (spec §9.3, plan DI-7b Task 14d):
+
+    * `scan_pending_orphans/1` — any `pending/*.yaml` already on disk
+      at boot is re-cast to the Dispatcher. Covers the window
+      between the CLI's atomic write and the Watcher arming its
+      FileSystem subscription, during which an `esrd` kill would
+      otherwise strand the command.
+
+    * `scan_stale_processing/0` — any `processing/*.yaml` whose
+      mtime is older than 10 minutes is renamed back to `pending/`.
+      Covers "Dispatcher crashed mid-command" — the moved file then
+      rides the pending-orphan sweep on the next boot (or is picked
+      up immediately by the freshly-armed FileSystem subscription
+      on this one).
+
+  Commands are required to be idempotent (§9.3), so re-dispatch is
+  safe — re-running `session_new` on an existing branch is a no-op,
+  `register_adapter` with identical args replaces the same
+  adapters.yaml entry, etc.
+
   Dispatcher is started *before* Watcher by `Esr.Admin.Supervisor`
   (`:rest_for_one`, Dispatcher is first child), so the cast always
   lands on a live named process.
   """
   use GenServer
   require Logger
+
+  # Processing files older than this are considered stranded by a
+  # Dispatcher crash and are moved back to `pending/` on boot.
+  @stale_processing_seconds 10 * 60
 
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -30,11 +55,18 @@ defmodule Esr.Admin.CommandQueue.Watcher do
   def init(_opts) do
     admin_dir = Esr.Paths.admin_queue_dir()
     pending_dir = Path.join(admin_dir, "pending")
+    processing_dir = Path.join(admin_dir, "processing")
 
     File.mkdir_p!(pending_dir)
-    File.mkdir_p!(Path.join(admin_dir, "processing"))
+    File.mkdir_p!(processing_dir)
     File.mkdir_p!(Path.join(admin_dir, "completed"))
     File.mkdir_p!(Path.join(admin_dir, "failed"))
+
+    # Recovery sweeps run before arming the FileSystem watcher so that
+    # we don't race the watcher's own `:created` events for files we
+    # just renamed from `processing/` back into `pending/`.
+    scan_stale_processing(processing_dir, pending_dir)
+    scan_pending_orphans(pending_dir)
 
     {:ok, pid} = FileSystem.start_link(dirs: [pending_dir])
     FileSystem.subscribe(pid)
@@ -57,23 +89,86 @@ defmodule Esr.Admin.CommandQueue.Watcher do
         # Debounce so the rename-driven `:created` event and any
         # residual writes coalesce before we read.
         Process.sleep(50)
-
-        case YamlElixir.read_from_file(path) do
-          {:ok, cmd} ->
-            GenServer.cast(
-              Esr.Admin.Dispatcher,
-              {:execute, cmd, {:reply_to, {:file, completed_path(basename)}}}
-            )
-
-          {:error, err} ->
-            Logger.error("admin.watcher: bad yaml #{path}: #{inspect(err)}")
-        end
-
+        dispatch_pending_file(path, basename)
         {:noreply, state}
     end
   end
 
   def handle_info({:file_event, _pid, :stop}, state), do: {:noreply, state}
+
+  # ------------------------------------------------------------------
+  # Boot-time recovery sweeps (spec §9.3, plan DI-7b Task 14d)
+  # ------------------------------------------------------------------
+
+  defp scan_pending_orphans(pending_dir) do
+    case File.ls(pending_dir) do
+      {:ok, entries} ->
+        for file <- entries, String.ends_with?(file, ".yaml") do
+          full = Path.join(pending_dir, file)
+          Logger.info("admin.watcher: recovering pending orphan #{file}")
+          dispatch_pending_file(full, file)
+        end
+
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp scan_stale_processing(processing_dir, pending_dir) do
+    cutoff = System.system_time(:second) - @stale_processing_seconds
+
+    case File.ls(processing_dir) do
+      {:ok, entries} ->
+        for file <- entries, String.ends_with?(file, ".yaml") do
+          full = Path.join(processing_dir, file)
+
+          case File.stat(full, time: :posix) do
+            {:ok, %{mtime: mt}} when mt < cutoff ->
+              dest = Path.join(pending_dir, file)
+
+              Logger.warning(
+                "admin.watcher: processing/#{file} is stale (mtime=#{mt}, cutoff=#{cutoff}); returning to pending/"
+              )
+
+              case File.rename(full, dest) do
+                :ok ->
+                  :ok
+
+                {:error, reason} ->
+                  Logger.error(
+                    "admin.watcher: failed to rename #{full} -> #{dest}: #{inspect(reason)}"
+                  )
+              end
+
+            _ ->
+              :ok
+          end
+        end
+
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  # Read a `pending/<basename>.yaml` and cast it into the Dispatcher
+  # with a reply-to pointing at the eventual `completed/<basename>`.
+  # Shared by the live fs-event path and the boot-time recovery sweep.
+  defp dispatch_pending_file(path, basename) do
+    case YamlElixir.read_from_file(path) do
+      {:ok, cmd} ->
+        GenServer.cast(
+          Esr.Admin.Dispatcher,
+          {:execute, cmd, {:reply_to, {:file, completed_path(basename)}}}
+        )
+
+      {:error, err} ->
+        Logger.error("admin.watcher: bad yaml #{path}: #{inspect(err)}")
+    end
+  end
 
   defp completed_path(basename),
     do: Path.join([Esr.Paths.admin_queue_dir(), "completed", basename])
