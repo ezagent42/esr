@@ -1,0 +1,148 @@
+{
+  "module": "adapter-cc-tmux",
+  "path": "adapters/cc_tmux",
+  "language": "python",
+  "python_requires": ">=3.11",
+  "package": "esr_cc_tmux",
+  "entry": "esr_cc_tmux.adapter:CcTmuxAdapter",
+  "manifest": {
+    "file": "adapters/cc_tmux/esr.toml",
+    "name": "cc_tmux",
+    "version": "0.1.0",
+    "allowed_io": {"subprocess": ["tmux"]}
+  },
+  "purpose": "Wrap tmux to drive a long-running Claude Code (CC) TUI session: spawn detached panes, send keystrokes, capture pane text, and parse sentinel-prefixed output lines into cc_output events.",
+  "files_reviewed": [
+    "adapters/cc_tmux/esr.toml",
+    "adapters/cc_tmux/pyproject.toml",
+    "adapters/cc_tmux/src/esr_cc_tmux/__init__.py",
+    "adapters/cc_tmux/src/esr_cc_tmux/adapter.py",
+    "adapters/cc_tmux/tests/test_capability.py",
+    "adapters/cc_tmux/tests/test_directives.py",
+    "adapters/cc_tmux/tests/test_env.py",
+    "adapters/cc_tmux/tests/test_events.py",
+    "adapters/cc_tmux/tests/test_factory_purity.py",
+    "adapters/cc_tmux/tests/test_registration.py"
+  ],
+  "public_surface": {
+    "class": "CcTmuxAdapter",
+    "decorator": "@adapter(name='cc_tmux', allowed_io={'subprocess': ['tmux']})",
+    "factory": "CcTmuxAdapter.factory(actor_id, config) -> CcTmuxAdapter (pure, no I/O — PRD 04 F02)",
+    "dispatch": "async on_directive(action, args) -> {'ok': bool, 'result'?: dict, 'error'?: str}",
+    "event_stream": "async emit_events() generator yielding cc_output event dicts",
+    "helpers": ["parse_sentinel_line(session, line)", "CcTmuxAdapter.parse_line (staticmethod alias)"]
+  },
+  "directives": {
+    "new_session": {
+      "prd_ref": "F17 (+ v0.2 env/cwd)",
+      "argv": "tmux new-session -d -s <session_name> [-e K=V ...] [-c <cwd>] <start_cmd>",
+      "args": {"session_name": "str", "start_cmd": "str", "env": "dict[str,str] optional", "cwd": "str optional"}
+    },
+    "send_keys": {
+      "prd_ref": "F18",
+      "argv": "tmux send-keys -t <session_name> <content> Enter",
+      "args": {"session_name": "str", "content": "str (verbatim — no shell interpretation)"}
+    },
+    "kill_session": {
+      "prd_ref": "F19",
+      "argv": "tmux kill-session -t <session_name>",
+      "args": {"session_name": "str"}
+    },
+    "capture_pane": {
+      "prd_ref": "F20",
+      "argv": "tmux capture-pane -t <session_name> -p",
+      "args": {"session_name": "str"},
+      "returns": "{'ok': True, 'result': {'content': <stdout>}}"
+    }
+  },
+  "unknown_directive_behavior": "{'ok': False, 'error': 'unknown action: <name>'}",
+  "tmux_probe": {
+    "prd_ref": "F22",
+    "command": "tmux --version",
+    "lazy": true,
+    "cached": true,
+    "missing_response": "{'ok': False, 'error': 'tmux not installed'}"
+  },
+  "sentinel_pattern": {
+    "prefix": "[esr-cc] ",
+    "constant": "SENTINEL_PREFIX",
+    "rules": [
+      "line must start with the exact prefix (no leading whitespace/ANSI)",
+      "trailing newline stripped, internal whitespace preserved verbatim",
+      "bare '[esr-cc]' with no payload is treated as noise (returns None)",
+      "non-sentinel lines return None so the poller skips cheaply"
+    ],
+    "emitted_event": {
+      "event_type": "cc_output",
+      "args": {"session": "<session_name>", "text": "<payload after sentinel>"}
+    }
+  },
+  "events": [
+    {
+      "name": "cc_output",
+      "emitted_by": "emit_events() async generator + parse_sentinel_line()",
+      "args": {"session": "str (tmux session name)", "text": "str (payload after sentinel prefix)"},
+      "prd_ref": "F21"
+    }
+  ],
+  "emit_events_behavior": {
+    "session_name_source": "actor_id after ':' split — actor_id is 'tmux:<thread_id>' so session_name == <thread_id>",
+    "poll_cadence_s": 0.5,
+    "dedup": "set of already-seen full lines (by string)",
+    "startup_race_tolerance": "up to 1200 consecutive misses (~10 min) before giving up, to cover the race where emit_events starts before init_directive creates the session",
+    "exit_condition": "tmux probe fails OR missing_limit reached"
+  },
+  "env_passing": {
+    "mechanism": "new_session args.env is a dict[str, str]; adapter expands each pair into ['-e', 'K=V'] argv entries before start_cmd",
+    "cwd_mechanism": "new_session args.cwd (str) is forwarded as tmux '-c <cwd>' flag",
+    "typical_keys_in_tests": ["ESR_WORKSPACE", "ESR_SESSION_ID"],
+    "session_name_received_via": "args.session_name on new_session; for emit_events it is derived from actor_id ('tmux:<thread_id>')",
+    "legacy_compat": "when env/cwd are absent, argv contains neither -e nor -c — clean pass-through"
+  },
+  "registration": {
+    "auto_registers_on_import": true,
+    "import_path": "esr_cc_tmux.adapter (triggered by esr_cc_tmux/__init__.py)",
+    "registry": "esr.adapter.ADAPTER_REGISTRY['cc_tmux']",
+    "allowed_io_declared": {"subprocess": ["tmux"]}
+  },
+  "capability_scan": {
+    "tool": "esr.verify.capability.scan_adapter",
+    "expected": "no violations against allowed_io (only 'tmux' subprocess calls present)"
+  },
+  "factory_purity": {
+    "prd_ref": "F02",
+    "guarantee": "factory never calls subprocess.run/Popen; tmux probe deferred until first on_directive",
+    "verified_by": "tests/test_factory_purity.py (monkeypatches both subprocess.run and subprocess.Popen to raise)"
+  },
+  "tests": {
+    "framework": "pytest (asyncio_mode=auto, importlib import mode)",
+    "command": "cd py && uv run pytest ../adapters/cc_tmux/tests/ -q",
+    "summary": "23 passed in 0.31s",
+    "files": {
+      "test_registration.py": "3 tests — ADAPTER_REGISTRY entry, allowed_io, factory instance",
+      "test_factory_purity.py": "1 test — factory never shells out",
+      "test_capability.py": "1 test — esr.verify.capability scan finds 0 violations",
+      "test_env.py": "2 tests — missing-tmux graceful error + probe caching (1 probe for N directives)",
+      "test_directives.py": "10 tests — new_session argv/error/unknown, send_keys verbatim content, kill_session, capture_pane, v0.2 env + cwd + legacy argv",
+      "test_events.py": "5 tests — sentinel match, non-sentinel ignored, trailing newline stripped, internal whitespace preserved, adapter.parse_line alias exposed"
+    },
+    "total": 23,
+    "passed": 23,
+    "failed": 0,
+    "skipped": 0
+  },
+  "key_design_notes": [
+    "Factory is pure (F02) — adapter can be instantiated without tmux installed; probe runs lazily on first on_directive and caches its bool result.",
+    "Sentinel scheme isolates ESR event signal from arbitrary terminal output/ANSI noise; payload after '[esr-cc] ' is passed verbatim so downstream handlers can carry JSON or free text.",
+    "send_keys uses argv form (list) — no shell interpretation, so $vars, backticks, and embedded quotes reach tmux as literal keystrokes.",
+    "emit_events tolerates a long startup race (~10 min) because the async generator is scheduled on channel-join while init_directive runs separately."
+  ],
+  "dependencies": {
+    "runtime": ["esr (editable path ../../py)"],
+    "external_binary": "tmux"
+  },
+  "risk_notes": [
+    "Line-based dedup in emit_events keeps an unbounded set of seen lines for the session's lifetime — could grow for extremely long-running CCs.",
+    "_ensure_tmux() does not check the completed process returncode — any tmux binary that exits non-zero on --version would still be treated as available; only FileNotFoundError flips the cache to False."
+  ]
+}

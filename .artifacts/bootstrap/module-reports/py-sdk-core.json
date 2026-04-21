@@ -1,0 +1,353 @@
+{
+  "module_name": "py-sdk-core",
+  "module_path": "py/src/esr/ + py/tests/ (core SDK)",
+  "description": "Python SDK for ESR v0.1 — decorators/registries for handlers, adapters, commands; the pattern EDSL (node/port/compose/compile_to_yaml); frozen Action/Event/Directive dataclasses; esr:// URI parser; workspaces.yaml helpers.",
+  "files_analyzed": [
+    {
+      "path": "py/src/esr/__init__.py",
+      "lines": 40,
+      "key_symbols": [
+        {"name": "__version__", "type": "constant", "line": 19, "description": "Package version string '0.1.0'."},
+        {"name": "__all__", "type": "constant", "line": 21, "description": "Public API names re-exported from submodules (PRD 02 F19)."}
+      ]
+    },
+    {
+      "path": "py/src/esr/actions.py",
+      "lines": 63,
+      "key_symbols": [
+        {"name": "Emit", "type": "class", "line": 28, "description": "Frozen dataclass; directive to an adapter. args wrapped in MappingProxyType (deep-frozen)."},
+        {"name": "Route", "type": "class", "line": 42, "description": "Frozen dataclass; route a message to another actor in the same esrd."},
+        {"name": "InvokeCommand", "type": "class", "line": 50, "description": "Frozen dataclass; instantiate a registered command sub-topology; params frozen via MappingProxyType."},
+        {"name": "Action", "type": "type_alias", "line": 62, "description": "Union alias Emit | Route | InvokeCommand — all shapes a handler may return."}
+      ]
+    },
+    {
+      "path": "py/src/esr/adapter.py",
+      "lines": 91,
+      "key_symbols": [
+        {"name": "AdapterEntry", "type": "class", "line": 40, "description": "Frozen registry entry: name, cls, allowed_io dict."},
+        {"name": "ADAPTER_REGISTRY", "type": "constant", "line": 49, "description": "Global dict[str, AdapterEntry] — keyed by adapter name."},
+        {"name": "adapter", "type": "function", "line": 53, "description": "Decorator @adapter(name=..., allowed_io=...); asserts static factory exists; rejects duplicate names."},
+        {"name": "AdapterConfig", "type": "class", "line": 74, "description": "Read-only attribute wrapper over a config dict (PRD 02 F08); __slots__ + __getattr__/__setattr__."}
+      ]
+    },
+    {
+      "path": "py/src/esr/adapters.py",
+      "lines": 52,
+      "key_symbols": [
+        {"name": "AdapterNotFound", "type": "class", "line": 18, "description": "LookupError subclass raised when adapter name is unresolvable."},
+        {"name": "load_adapter_factory", "type": "function", "line": 22, "description": "Import esr_<name> package (hyphens → underscores) and return the class's unwrapped factory callable."}
+      ]
+    },
+    {
+      "path": "py/src/esr/command.py",
+      "lines": 533,
+      "key_symbols": [
+        {"name": "CommandEntry", "type": "class", "line": 38, "description": "Frozen registry entry: name + fn."},
+        {"name": "COMMAND_REGISTRY", "type": "constant", "line": 46, "description": "Global dict[str, CommandEntry]."},
+        {"name": "command", "type": "function", "line": 50, "description": "@command(name) decorator (PRD 02 F09); rejects duplicates."},
+        {"name": "_Node", "type": "class", "line": 65, "description": "Frozen topology node; supports `a >> b` via __rshift__ recording edges into current _CommandCtx."},
+        {"name": "_CommandCtx", "type": "class", "line": 92, "description": "Mutable accumulator (nodes, edges, ports_in, ports_out) used inside _command_context."},
+        {"name": "_command_context", "type": "function", "line": 106, "description": "ContextVar-based context manager — pushes a fresh _CommandCtx."},
+        {"name": "node", "type": "function", "line": 121, "description": "EDSL primitive declaring a node; validates init_directive shape; wraps params/init_directive in MappingProxyType."},
+        {"name": "port", "type": "object", "line": 194, "description": "Namespace with static .input(name, type) / .output(name, type)."},
+        {"name": "compose", "type": "object", "line": 260, "description": "Namespace with static .serial(a, b) combining two pattern fns, matching shared ports by name+type."},
+        {"name": "Topology", "type": "class", "line": 307, "description": "Frozen dataclass returned by compile_topology (nodes/edges/ports_in/ports_out/params); custom __hash__."},
+        {"name": "compile_topology", "type": "function", "line": 335, "description": "Compile a registered command: cycle check + dead-node elimination + param lint + freeze into Topology."},
+        {"name": "_eliminate_dead_nodes", "type": "function", "line": 399, "description": "Drop orphan nodes (PRD 06 F05) when any edge/depends_on exists."},
+        {"name": "_check_cycles", "type": "function", "line": 434, "description": "Kahn's algorithm cycle detection over depends_on."},
+        {"name": "_extract_params", "type": "function", "line": 459, "description": "Scan node string fields + params + init_directive.args for {{template}} names."},
+        {"name": "compile_to_yaml", "type": "function", "line": 491, "description": "Deterministic YAML dump of Topology (PRD 02 F14)."}
+      ]
+    },
+    {
+      "path": "py/src/esr/events.py",
+      "lines": 57,
+      "key_symbols": [
+        {"name": "Event", "type": "class", "line": 20, "description": "Frozen inbound event (source, event_type, args); includes from_envelope classmethod."},
+        {"name": "Directive", "type": "class", "line": 50, "description": "Frozen outbound directive to an adapter (adapter, action, args)."}
+      ]
+    },
+    {
+      "path": "py/src/esr/handler.py",
+      "lines": 103,
+      "key_symbols": [
+        {"name": "HandlerEntry", "type": "class", "line": 29, "description": "Frozen registry entry; actor_type, name, fn."},
+        {"name": "StateEntry", "type": "class", "line": 38, "description": "Frozen registry entry; actor_type, schema_version, model."},
+        {"name": "HANDLER_REGISTRY", "type": "constant", "line": 47, "description": "Global dict keyed by 'actor_type.name'."},
+        {"name": "STATE_REGISTRY", "type": "constant", "line": 50, "description": "Global dict keyed by actor_type (one state model per actor_type)."},
+        {"name": "handler", "type": "function", "line": 54, "description": "@handler(actor_type=, name=) decorator — keyword-only, dup-rejecting."},
+        {"name": "handler_state", "type": "function", "line": 71, "description": "@handler_state decorator; requires frozen pydantic BaseModel (model_config['frozen']=True)."},
+        {"name": "_is_frozen_model", "type": "function", "line": 98, "description": "Detect pydantic frozen config."}
+      ]
+    },
+    {
+      "path": "py/src/esr/uri.py",
+      "lines": 150,
+      "key_symbols": [
+        {"name": "_VALID_TYPES", "type": "constant", "line": 24, "description": "frozenset({'adapter','actor','command'})."},
+        {"name": "EsrURI", "type": "class", "line": 27, "description": "Frozen dataclass with custom __eq__/__hash__ over (org,host,port,type,id,params)."},
+        {"name": "parse", "type": "function", "line": 63, "description": "Strict parser; rejects empty host, unknown type, ids with slashes (matches Elixir Esr.Uri)."},
+        {"name": "build", "type": "function", "line": 121, "description": "Canonical URI builder producing esr://[org@]host[:port]/<type>/<id>[?params]."}
+      ]
+    },
+    {
+      "path": "py/src/esr/workspaces.py",
+      "lines": 92,
+      "key_symbols": [
+        {"name": "SCHEMA_VERSION", "type": "constant", "line": 21, "description": "workspaces.yaml schema version — 1."},
+        {"name": "Workspace", "type": "class", "line": 24, "description": "Frozen dataclass for a named workspace (cwd, start_cmd, role, chats, env)."},
+        {"name": "read_workspaces", "type": "function", "line": 34, "description": "Parse workspaces.yaml into {name: Workspace}; returns {} if missing."},
+        {"name": "write_workspace", "type": "function", "line": 53, "description": "Append a new workspace; rejects duplicates; creates parent dirs."},
+        {"name": "remove_workspace", "type": "function", "line": 82, "description": "Delete a workspace by name; returns True/False."}
+      ]
+    },
+    {
+      "path": "py/tests/__init__.py",
+      "lines": 0,
+      "key_symbols": []
+    },
+    {
+      "path": "py/tests/conftest.py",
+      "lines": 27,
+      "key_symbols": [
+        {"name": "EsrdHandle", "type": "class", "line": 14, "description": "Placeholder esrd-process wrapper; run_cli raises until Phase 8c wires a real subprocess."},
+        {"name": "esrd_fixture", "type": "function", "line": 25, "description": "Pytest fixture yielding an EsrdHandle()."}
+      ]
+    },
+    {
+      "path": "py/tests/test_actions.py",
+      "lines": 68,
+      "key_symbols": [
+        {"name": "test_emit_is_frozen", "type": "function", "line": 10, "description": "Emit mutation raises."},
+        {"name": "test_emit_args_are_deep_frozen", "type": "function", "line": 45, "description": "Reviewer S1: Emit.args inner dict read-only."},
+        {"name": "test_emit_passes_by_value_callers_dont_see_subsequent_mutation", "type": "function", "line": 63, "description": "Construction copies caller dict."}
+      ]
+    },
+    {
+      "path": "py/tests/test_adapter.py",
+      "lines": 111,
+      "key_symbols": [
+        {"name": "_isolate_registry", "type": "function", "line": 13, "description": "Autouse fixture; save/clear/restore ADAPTER_REGISTRY."},
+        {"name": "test_adapter_without_factory_rejected", "type": "function", "line": 49, "description": "Decorator rejects classes missing static factory."},
+        {"name": "test_adapter_config_is_readonly", "type": "function", "line": 100, "description": "AdapterConfig setattr raises AttributeError."}
+      ]
+    },
+    {
+      "path": "py/tests/test_adapter_layout.py",
+      "lines": 48,
+      "key_symbols": [
+        {"name": "ADAPTERS", "type": "constant", "line": 24, "description": "('feishu', 'cc_tmux') — adapters checked for layout."},
+        {"name": "test_adapter_has_pyproject", "type": "function", "line": 28, "description": "Parametrized: adapters/<name>/pyproject.toml exists."}
+      ]
+    },
+    {
+      "path": "py/tests/test_command.py",
+      "lines": 286,
+      "key_symbols": [
+        {"name": "test_rshift_chain", "type": "function", "line": 92, "description": "`a >> b >> c` produces two edges."},
+        {"name": "test_compile_topology_extracts_params", "type": "function", "line": 229, "description": "{{template}} refs in params / init_directive.args collected."},
+        {"name": "test_compile_topology_nodes_are_also_frozen", "type": "function", "line": 268, "description": "Reviewer C3 — deep-frozen topology is hashable."}
+      ]
+    },
+    {
+      "path": "py/tests/test_command_compose.py",
+      "lines": 91,
+      "key_symbols": [
+        {"name": "test_serial_with_shared_port", "type": "function", "line": 29, "description": "Shared port becomes internal; unshared ports preserved."},
+        {"name": "test_serial_does_not_auto_wire_differently_named_nodes", "type": "function", "line": 72, "description": "Reviewer S4: compose.serial v0.1 does NOT add implicit edges."}
+      ]
+    },
+    {
+      "path": "py/tests/test_command_yaml.py",
+      "lines": 104,
+      "key_symbols": [
+        {"name": "test_yaml_round_trip", "type": "function", "line": 25, "description": "compile → YAML → reload preserves fields including init_directive."},
+        {"name": "test_yaml_deterministic_key_order", "type": "function", "line": 67, "description": "Byte-deterministic dump across repeated serialisation."}
+      ]
+    },
+    {
+      "path": "py/tests/test_events.py",
+      "lines": 51,
+      "key_symbols": [
+        {"name": "test_event_from_envelope", "type": "function", "line": 40, "description": "IPC envelope → Event deserialisation."}
+      ]
+    },
+    {
+      "path": "py/tests/test_handler.py",
+      "lines": 151,
+      "key_symbols": [
+        {"name": "test_handler_state_rejects_non_frozen_model", "type": "function", "line": 82, "description": "State model without frozen=True is rejected."},
+        {"name": "test_handler_registry_clear", "type": "function", "line": 109, "description": "Registries are plain dicts — test cleanup path."}
+      ]
+    },
+    {
+      "path": "py/tests/test_handler_layout.py",
+      "lines": 60,
+      "key_symbols": [
+        {"name": "HANDLERS", "type": "constant", "line": 12, "description": "('feishu_app', 'feishu_thread', 'tmux_proxy', 'cc_session')."},
+        {"name": "test_manifest_required_keys", "type": "function", "line": 47, "description": "esr.toml must declare name/version/module/entry/actor_type."}
+      ]
+    },
+    {
+      "path": "py/tests/test_optimizer_cse.py",
+      "lines": 60,
+      "key_symbols": [
+        {"name": "test_compose_serial_dedups_identical_nodes", "type": "function", "line": 29, "description": "PRD 06 F06 CSE — same node id across A+B appears once."}
+      ]
+    },
+    {
+      "path": "py/tests/test_optimizer_dead_node.py",
+      "lines": 55,
+      "key_symbols": [
+        {"name": "test_orphan_node_is_removed", "type": "function", "line": 15, "description": "PRD 06 F05 — orphan with no edges/ports/depends_on is dropped."},
+        {"name": "test_single_node_is_not_considered_dead", "type": "function", "line": 33, "description": "Single-node pattern keeps its lone node."}
+      ]
+    },
+    {
+      "path": "py/tests/test_package.py",
+      "lines": 17,
+      "key_symbols": [
+        {"name": "test_esr_imports_and_reports_version", "type": "function", "line": 6, "description": "esr.__version__ == '0.1.0'."},
+        {"name": "test_subpackages_import", "type": "function", "line": 13, "description": "esr.cli/ipc/verify importable."}
+      ]
+    },
+    {
+      "path": "py/tests/test_pattern_compile_yaml.py",
+      "lines": 91,
+      "key_symbols": [
+        {"name": "test_yaml_round_trip", "type": "function", "line": 34, "description": "Parametrized: patterns/<name>.py → Topology → YAML → parse matches."},
+        {"name": "test_yaml_is_byte_deterministic", "type": "function", "line": 61, "description": "Two compile_to_yaml writes produce identical bytes."}
+      ]
+    },
+    {
+      "path": "py/tests/test_pattern_cycle_rejected.py",
+      "lines": 37,
+      "key_symbols": [
+        {"name": "test_cycle_in_depends_on_raises", "type": "function", "line": 15, "description": "PRD 06 F07 — depends_on cycle fails compile."},
+        {"name": "test_self_cycle_rejected", "type": "function", "line": 27, "description": "A node depending on itself raises."}
+      ]
+    },
+    {
+      "path": "py/tests/test_pattern_feishu_app_session.py",
+      "lines": 52,
+      "key_symbols": [
+        {"name": "test_compiles_to_single_node_topology", "type": "function", "line": 31, "description": "feishu-app-session has one node, adapter type 'feishu'."},
+        {"name": "test_node_fields_match_spec", "type": "function", "line": 41, "description": "id='feishu-app:{{app_id}}', actor_type='feishu_app_proxy', handler='feishu_app.on_msg'."}
+      ]
+    },
+    {
+      "path": "py/tests/test_pattern_feishu_thread_session.py",
+      "lines": 77,
+      "key_symbols": [
+        {"name": "test_compiles_to_three_node_topology", "type": "function", "line": 30, "description": "Thread pattern: [thread, tmux, cc] chain."},
+        {"name": "test_init_directive_on_tmux_node", "type": "function", "line": 57, "description": "tmux node carries init_directive 'new_session' with session_name template."}
+      ]
+    },
+    {
+      "path": "py/tests/test_pattern_param_lint.py",
+      "lines": 72,
+      "key_symbols": [
+        {"name": "test_undeclared_template_fails_when_ports_used", "type": "function", "line": 15, "description": "PRD 06 F11 — {{bar}} without port.input('bar') fails compile."},
+        {"name": "test_patterns_without_ports_have_implicit_params", "type": "function", "line": 44, "description": "No port.input → templates become implicit params."}
+      ]
+    },
+    {
+      "path": "py/tests/test_public_api.py",
+      "lines": 58,
+      "key_symbols": [
+        {"name": "test_all_public_names_importable", "type": "function", "line": 6, "description": "PRD 02 F19 — every promised public name is exposed."},
+        {"name": "test_handler_registration_via_public_api", "type": "function", "line": 46, "description": "esr.handler and esr.handler.handler share the same registry."}
+      ]
+    },
+    {
+      "path": "py/tests/test_uri.py",
+      "lines": 113,
+      "key_symbols": [
+        {"name": "test_parse_with_org_and_params", "type": "function", "line": 28, "description": "Full authority + query parsing."},
+        {"name": "test_parse_id_with_slash_raises", "type": "function", "line": 68, "description": "Reviewer S5 — cross-boundary parity with Elixir."},
+        {"name": "test_build_round_trip_through_parse", "type": "function", "line": 103, "description": "build() and parse() are inverse for canonical URIs."}
+      ]
+    },
+    {
+      "path": "py/tests/test_workspaces.py",
+      "lines": 36,
+      "key_symbols": [
+        {"name": "test_write_then_read_roundtrip", "type": "function", "line": 13, "description": "Workspace round-trip with chats + env."},
+        {"name": "test_write_rejects_duplicate_name", "type": "function", "line": 31, "description": "write_workspace rejects existing name."}
+      ]
+    }
+  ],
+  "interfaces": [
+    {"name": "@handler(actor_type, name) / @handler_state(actor_type, schema_version)", "file": "py/src/esr/handler.py", "line": 54, "description": "Register pure handler function and its frozen pydantic state model into HANDLER_REGISTRY / STATE_REGISTRY (PRD 02 F04/F05/F06)."},
+    {"name": "@adapter(name, allowed_io) + AdapterConfig", "file": "py/src/esr/adapter.py", "line": 53, "description": "Register an adapter class (must have staticmethod factory) into ADAPTER_REGISTRY; AdapterConfig wraps config dict with read-only attribute access."},
+    {"name": "@command / node / port / compose / compile_topology / compile_to_yaml", "file": "py/src/esr/command.py", "line": 50, "description": "Pattern EDSL and compile pipeline: `>>` edges, port.input/output, compose.serial, cycle/dead-node/param-lint checks, deterministic YAML emit (PRD 02 F09-F14, PRD 06 F05-F11)."},
+    {"name": "Emit / Route / InvokeCommand (Action union)", "file": "py/src/esr/actions.py", "line": 28, "description": "The three handler-return action shapes, all frozen with MappingProxyType payloads (§4.4, PRD 02 F02)."},
+    {"name": "Event / Directive (+ Event.from_envelope)", "file": "py/src/esr/events.py", "line": 20, "description": "Frozen inbound/outbound message dataclasses; Event.from_envelope deserialises an IPC envelope (PRD 02 F03)."},
+    {"name": "EsrURI parse/build", "file": "py/src/esr/uri.py", "line": 63, "description": "Strict esr://[org@]host[:port]/<type>/<id>[?k=v] parser + builder matching the Elixir Esr.URI (PRD 02 F15)."},
+    {"name": "load_adapter_factory(name)", "file": "py/src/esr/adapters.py", "line": 22, "description": "Imports esr_<name> to trigger registration and returns the class's unwrapped factory callable (Phase 8a/8b)."},
+    {"name": "read_workspaces / write_workspace / remove_workspace", "file": "py/src/esr/workspaces.py", "line": 34, "description": "workspaces.yaml CRUD with schema_version=1 (spec §5.1)."}
+  ],
+  "dependencies": [
+    "pydantic (BaseModel for handler_state, frozen model enforcement)",
+    "PyYAML (yaml.safe_load / yaml.safe_dump for command YAML + workspaces.yaml)",
+    "stdlib: dataclasses, types.MappingProxyType, contextvars, contextlib, importlib, urllib.parse, pathlib, re, tomllib (tests), typing"
+  ],
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest tests/test_actions.py tests/test_adapter.py tests/test_adapter_layout.py tests/test_command.py tests/test_command_compose.py tests/test_command_yaml.py tests/test_events.py tests/test_handler.py tests/test_handler_layout.py tests/test_optimizer_cse.py tests/test_optimizer_dead_node.py tests/test_package.py tests/test_pattern_compile_yaml.py tests/test_pattern_cycle_rejected.py tests/test_pattern_feishu_app_session.py tests/test_pattern_feishu_thread_session.py tests/test_pattern_param_lint.py tests/test_public_api.py tests/test_uri.py tests/test_workspaces.py -q",
+    "exit_code": 0,
+    "passed": 149,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_first_1000": "........................................................................ [ 48%]\n........................................................................ [ 96%]\n.....                                                                    [100%]\n149 passed in 0.93s"
+  },
+  "user_flows": [
+    {
+      "name": "Author a handler + state",
+      "steps": [
+        "Define a frozen pydantic BaseModel (model_config={'frozen': True}) and decorate with @esr.handler_state(actor_type=..., schema_version=1).",
+        "Write a pure function `(state, event) -> (new_state, [Action])` and decorate with @esr.handler(actor_type=..., name=...).",
+        "Return Emit/Route/InvokeCommand actions; their args/params are auto-frozen via MappingProxyType."
+      ],
+      "entry_point": "py/src/esr/handler.py:54"
+    },
+    {
+      "name": "Register an adapter package",
+      "steps": [
+        "Create esr_<name>/__init__.py that exposes a class with @adapter(name=..., allowed_io={...}).",
+        "Class must define @staticmethod factory(actor_id, config: AdapterConfig).",
+        "Runtime calls load_adapter_factory(name) which imports the package and returns the unwrapped factory."
+      ],
+      "entry_point": "py/src/esr/adapter.py:53"
+    },
+    {
+      "name": "Compose a pattern and emit deterministic YAML",
+      "steps": [
+        "Decorate a zero-arg function with @command('<name>').",
+        "Inside the function call port.input/output and node(...) and use `a >> b` to wire edges; optionally compose.serial(pattern_a, pattern_b).",
+        "Call compile_topology(name) to cycle-check, eliminate dead nodes, lint templates, and freeze into a Topology.",
+        "Call compile_to_yaml(topo, path) to produce schema_version:1 YAML with deterministic key order."
+      ],
+      "entry_point": "py/src/esr/command.py:335"
+    },
+    {
+      "name": "Parse / build esr:// URIs across the Python/Elixir boundary",
+      "steps": [
+        "esr.uri.parse('esr://[org@]host[:port]/<type>/<id>[?params]') → EsrURI.",
+        "esr.uri.build(type, id, host=..., port=..., org=..., params=...) → canonical string.",
+        "Matches Elixir Esr.URI strictness (rejects empty host, unknown type, slashes in id)."
+      ],
+      "entry_point": "py/src/esr/uri.py:63"
+    },
+    {
+      "name": "Manage workspaces.yaml",
+      "steps": [
+        "read_workspaces(path) → {name: Workspace}.",
+        "write_workspace(path, Workspace(...)) appends; duplicate name raises.",
+        "remove_workspace(path, name) deletes and returns True/False."
+      ],
+      "entry_point": "py/src/esr/workspaces.py:34"
+    }
+  ],
+  "notes": "Purity rules are documented in esr/adapter.py: the @adapter decorator only performs a shape check (staticmethod factory present) — pure-factory I/O enforcement is deferred to esr.verify.capability.scan_adapter driven by the CI `esr-lint adapters/` hook (reviewer S2). All public dataclasses (Emit/Route/InvokeCommand/Event/Directive/_Node/Topology/EsrURI/Workspace/CommandEntry/HandlerEntry/StateEntry/AdapterEntry) are frozen; dict payloads are wrapped in types.MappingProxyType so they are read-only and hashable. EDSL uses contextvars (_CURRENT ContextVar) so `node()`/`>>`/`port`/`compose` work only inside `_command_context` or `compile_topology`; calling them outside raises RuntimeError. Optimizer rules: dead-node elimination only triggers when any edge or depends_on exists (PRD 06 F05); CSE in compose dedupes nodes by id (PRD 06 F06); Kahn's algorithm rejects depends_on cycles (PRD 06 F07); param lint rejects {{templates}} that are not declared port.inputs — but only when port.inputs exist (PRD 06 F11). EDSL operator: `_Node.__rshift__` implements `a >> b` by appending an edge tuple to the current context; returns `other` so chains like `a >> b >> c` work. URI parser intentionally rejects ids containing slashes to match the Elixir Esr.URI implementation (reviewer S5)."
+}

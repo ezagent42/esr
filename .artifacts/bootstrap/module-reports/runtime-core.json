@@ -1,0 +1,216 @@
+{
+  "module": "runtime-core",
+  "scope": "Elixir/OTP actor runtime core: Application supervision tree, PeerServer (per-actor GenServer), PeerSupervisor (DynamicSupervisor), PeerRegistry + SessionRegistry, WorkerSupervisor, DeadLetter queue, esr:// URI parser.",
+  "files_read": 31,
+  "test_summary": {
+    "command": "mix test test/esr/application_restore_adapters_test.exs test/esr/application_restore_test.exs test/esr/application_test.exs test/esr/dead_letter_test.exs test/esr/peer_registry_test.exs test/esr/peer_server_action_dispatch_test.exs test/esr/peer_server_emit_ack_test.exs test/esr/peer_server_esr_channel_test.exs test/esr/peer_server_event_handling_test.exs test/esr/peer_server_invoke_command_test.exs test/esr/peer_server_pause_test.exs test/esr/peer_server_persist_test.exs test/esr/peer_server_retry_test.exs test/esr/peer_server_test.exs test/esr/peer_server_tool_invoke_test.exs test/esr/peer_supervisor_test.exs test/esr/session_registry_test.exs test/esr/uri_test.exs test/esr/worker_supervisor_test.exs test/esr/workspaces_registry_test.exs",
+    "total": 73,
+    "passed": 73,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 3.8,
+    "seed": 385766,
+    "warnings": [
+      "lib/esr/topology/instantiator.ex:332 — non-grouped defp issue_init_directive/2 clauses (stylistic, does not affect behavior)"
+    ]
+  },
+  "supervision_tree": {
+    "root": "Esr.Supervisor",
+    "strategy": ":one_for_one",
+    "restore_on_start": "After start_link returns, Esr.Application loads $ESRD_HOME/default/workspaces.yaml into Esr.Workspaces.Registry and $ESRD_HOME/default/adapters.yaml via WorkerSupervisor.ensure_adapter; feishu adapters trigger Task-spawned feishu-app-session topology auto-restore (2s grace).",
+    "children_in_order": [
+      {"idx": 1, "name": "DNSCluster", "args": "query: Application.get_env(:esr, :dns_cluster_query) || :ignore"},
+      {"idx": 2, "name": "EsrWeb.Telemetry"},
+      {"idx": 3, "name": "Phoenix.PubSub", "args": "name: EsrWeb.PubSub"},
+      {"idx": 4, "name": "Registry (Esr.PeerRegistry)", "args": "keys: :unique", "note": "must be up before any PeerServer registers"},
+      {"idx": 5, "name": "Esr.PeerSupervisor", "kind": "DynamicSupervisor", "note": "hosts live PeerServers"},
+      {"idx": 6, "name": "Esr.DeadLetter", "args": "name: Esr.DeadLetter", "note": "default 10_000 entries"},
+      {"idx": 7, "name": "Esr.WorkerSupervisor", "note": "Python adapter_runner/handler_worker subprocess launcher (Phase 8f)"},
+      {"idx": 8, "name": "Esr.SessionRegistry", "note": "CC <-> WS bindings (PRD v0.2 §3.2)"},
+      {"idx": 9, "name": "Esr.Workspaces.Registry", "note": "PRD v0.2 §3.6"},
+      {"idx": 10, "name": "Esr.AdapterHub.Supervisor"},
+      {"idx": 11, "name": "Esr.HandlerRouter.Supervisor"},
+      {"idx": 12, "name": "Esr.Topology.Supervisor"},
+      {"idx": 13, "name": "Esr.Persistence.Supervisor"},
+      {"idx": 14, "name": "Esr.Telemetry.Supervisor"},
+      {"idx": 15, "name": "EsrWeb.Endpoint", "note": "started last so channels serve only after registries are up"}
+    ]
+  },
+  "peer_server": {
+    "process_type": "GenServer (trap_exit: true)",
+    "registration": "{:via, Registry, {Esr.PeerRegistry, actor_id}}",
+    "state_struct_fields": [
+      "actor_id :: String",
+      "actor_type :: String",
+      "handler_module :: String",
+      "state :: map (rehydrated from Esr.Persistence.Ets table :esr_actor_states on init)",
+      "handler_timeout :: pos_integer (default 5_000)",
+      "directive_timeout :: pos_integer (default 30_000)",
+      "adapter_refs :: map",
+      "metadata :: map",
+      "dedup_keys :: MapSet<String> (bounded FIFO, limit 1000)",
+      "dedup_order :: :queue (FIFO for eviction)",
+      "paused :: boolean",
+      "pending_events :: [envelope] (newest-at-head; replayed in arrival order on resume; capped @pause_queue_limit=1000)",
+      "pending_directives :: %{directive_id => %{action: ...}}",
+      "pending_tool_reqs :: %{directive_id => {req_id, reply_pid}}"
+    ],
+    "handle_call": [
+      ":get_state -> returns inner state",
+      ":describe -> snapshot map {actor_id, actor_type, handler_module, paused, state}",
+      ":pause -> sets paused=true + [:esr,:actor,:paused] telemetry",
+      ":resume -> replays pending_events in FIFO order + [:esr,:actor,:resumed] telemetry",
+      ":pending_count -> length(pending_events)"
+    ],
+    "handle_info": [
+      "{:inbound_event, envelope} when paused -> enqueue (cap 1000)",
+      "{:inbound_event, envelope} -> dedup-by-idempotency_key (payload.args.idempotency_key); HandlerRouter.call (one retry on :handler_timeout); persist via Persistence.Ets BEFORE dispatching returned actions; on retry_exhausted -> DeadLetter.enqueue",
+      "{:tool_invoke, req_id, tool, args, reply_pid} -> build_emit_for_tool (reply/react/send_file/_echo) -> emit_and_track, store {req_id, reply_pid} in pending_tool_reqs",
+      "{:directive_ack, %{id,payload}} when id in pending_tool_reqs -> push tool_result to reply_pid; unsubscribe",
+      "{:directive_ack, %{id,payload}} -> pop pending_directives; emit [:esr,:emit,:completed|:failed]",
+      "{:directive_deadline, id} when id in pending_tool_reqs -> tool_result timeout error",
+      "{:directive_deadline, id} -> [:esr,:emit,:failed] reason: :timeout",
+      "{:EXIT, _, _} -> swallowed (stray EXITs; PeerServer doesn't link workers)"
+    ],
+    "action_dispatch": [
+      "%{type:'emit', adapter:'esr-channel'} -> SessionRegistry.notify_session (synthetic; v0.2 §3.3)",
+      "%{type:'emit', adapter} -> broadcast envelope to adapter:<name>/<actor_id> via EsrWeb.Endpoint; subscribe to directive_ack:<id>; Process.send_after(:directive_deadline)",
+      "%{type:'route', target, msg} -> Registry.lookup + send({:inbound_event, %{payload: msg}}); [:esr,:route,:target_missing] on miss",
+      "%{type:'invoke_command', name, params} -> Topology.Registry.get_artifact + Task.start(Topology.Instantiator.instantiate); emits [:esr,:topology,:activated|:failed] or [:esr,:invoke_command,:unknown]"
+    ],
+    "persistence": "invoke_handler writes the returned new_state into Esr.Persistence.Ets @table :esr_actor_states via PersistStore.put BEFORE dispatching actions (spec §7.4 persist-then-emit). init/1 rehydrates from the same table — prior state wins over initial_state for fresh spawns.",
+    "retry_policy": "call_with_retry does one retry on :handler_timeout; others are non-retryable. Exhaustion -> DeadLetter.enqueue reason: :handler_retry_exhausted",
+    "telemetry_events": [
+      "[:esr, :actor, :spawned] (init)",
+      "[:esr, :actor, :paused]",
+      "[:esr, :actor, :resumed]",
+      "[:esr, :peer_server, :stopped] (terminate)",
+      "[:esr, :handler, :invoked]",
+      "[:esr, :handler, :error]",
+      "[:esr, :handler, :dedup_drop]",
+      "[:esr, :handler, :retry_exhausted]",
+      "[:esr, :emit, :dispatched|:completed|:failed]",
+      "[:esr, :route, :target_missing]",
+      "[:esr, :invoke_command, :unknown]",
+      "[:esr, :topology, :activated|:failed]",
+      "[:esr, :action, :unknown]"
+    ],
+    "tool_invoke_v02": "Built-in tool builders: reply (chat_id+text -> feishu send_message), react (message_id+emoji_type -> feishu react), send_file (chat_id+file_path -> feishu send_file), _echo (requires state.chat_id, synthesises reply). Unknown tool -> error."
+  },
+  "registries": {
+    "Esr.PeerRegistry": {
+      "type": "Elixir Registry (keys: :unique)",
+      "maps": "actor_id :: String -> pid (one PeerServer per key). Wrapper API: register/2 (must be self-registration), lookup/1, list_all/0. Registry auto-cleans on monitor DOWN."
+    },
+    "Esr.SessionRegistry": {
+      "type": "Named GenServer + public named ETS set (:esr_session_registry, read_concurrency: true)",
+      "maps": "session_id :: String -> %{ws_pid, chat_ids, app_ids, workspace, status: :online|:offline, last_seen_ms}",
+      "notify_session/2": "looks up session_id; if online, send(ws_pid, {:push_envelope, envelope}); else {:error, :offline|:not_registered}",
+      "design_note_S1": "peer_pid is deliberately NOT stored — authoritative lookup is Registry.lookup(Esr.PeerRegistry, \"thread:<sid>\"). Avoids drift between two stores."
+    }
+  },
+  "uri_parser": {
+    "module": "Esr.Uri",
+    "grammar": "esr://[org@]host[:port]/<type>/<id>[?params]",
+    "valid_types": ["actor", "adapter", "handler", "command", "interface"],
+    "required": "host (empty host rejected with :empty_host)",
+    "struct_fields": ["org", "host", "port", "type :: atom", "id :: String", "params :: %{String=>String}"],
+    "error_atoms": [":bad_scheme", ":empty_host", ":bad_port", ":bad_path", ":unknown_type", ":no_path"],
+    "build/3": "produces 'esr://<host>/<type>/<id>' (port/org/params not assembled)"
+  },
+  "dead_letter": {
+    "module": "Esr.DeadLetter",
+    "type": "GenServer backed by :queue with size counter",
+    "default_capacity": 10000,
+    "eviction": "oldest-first (FIFO drop) on overflow, size stays at max",
+    "captures_messages_when": [
+      "handler_retry_exhausted — PeerServer calls DeadLetter.enqueue after the second HandlerRouter.call attempt fails (source=actor_id, metadata={handler_module, last_error})",
+      "(documented targets per moduledoc) unknown Route/Emit target and adapter directive failure after retries — currently only the handler_retry_exhausted caller site is wired in lib/; other two captured via external subsystems not in this module scope"
+    ],
+    "entry_struct": {"id": "dl-<base64url>", "ts_unix_ms": "int", "reason": "atom", "target": "String|nil", "msg": "any", "source": "String|nil", "metadata": "map"},
+    "telemetry": "[:esr, :deadletter, :event] on every enqueue with measurements {size} and metadata {reason, target, id}",
+    "api": ["enqueue/2 (cast)", "list/1 (call)", "clear/1 (call)"]
+  },
+  "peer_supervisor": {
+    "type": "DynamicSupervisor",
+    "strategy": ":one_for_one",
+    "child_restart": ":transient (normal exit not respawned; abnormal restarts within supervisor intensity)",
+    "api": ["start_peer/1 (forwards opts to PeerServer.start_link)", "stop_peer/1 (looks up via PeerRegistry, terminates child; {:error, :not_found} on miss)"]
+  },
+  "worker_supervisor": {
+    "type": "GenServer (trap_exit: true)",
+    "purpose": "On-demand launcher for Python adapter_runner and handler_worker subprocesses (Phase 8f; lets final_gate.sh --live bootstrap without external fixtures).",
+    "api": [
+      "ensure_adapter/4(adapter_name, instance_id, config, url) -> :ok|:already_running|{:error,_}",
+      "ensure_handler/3(handler_module, worker_id, url) -> :ok|:already_running|{:error,_}",
+      "list/0 -> [{:adapter|:handler, name, id, os_pid}]"
+    ],
+    "idempotency": "Checks tracked_alive? first (pid_alive? via `kill -0`), then external pidfile (/tmp/esr-worker-<slug>.pid) written by scripts/spawn_scenario_workers.sh. Only when both absent does it spawn via scripts/spawn_worker.sh (daemonises + prints pid).",
+    "shutdown": "terminate/2 SIGTERMs then SIGKILLs every tracked pid (500ms gap). Pidfile dir is NOT cleaned."
+  },
+  "restore_semantics": {
+    "trigger": "Application.start/2 after Supervisor.start_link, only if Application.get_env(:esr, :restore_on_start, true)",
+    "home": "System.get_env(\"ESRD_HOME\", Path.join(System.user_home!(), \".esrd\"))",
+    "workspaces": "load_workspaces_from_disk/1 reads <home>/default/workspaces.yaml via Esr.Workspaces.Registry.load_from_file -> for each {name, ws} put into registry. Missing file returns :ok.",
+    "adapters": "restore_adapters_from_disk/2 reads <home>/default/adapters.yaml via YamlElixir; for each instance calls opts[:spawn_fn] (default = WorkerSupervisor.ensure_adapter with default_adapter_ws_url()). If type==feishu and config.app_id is non-empty, spawns Task.start/0 that sleeps 2s, then Topology.Registry.get_artifact(\"feishu-app-session\") + Topology.Instantiator.instantiate with %{\"app_id\"=>app_id}. Logs info/warning on outcome.",
+    "actor_state": "PeerServer.init/1 independently rehydrates per-actor state from :esr_actor_states ETS table via Esr.Persistence.Ets.get — prior state wins, initial_state is the fresh-spawn fallback."
+  },
+  "key_invariants": [
+    "Supervision root Esr.Supervisor uses :one_for_one — one subsystem crash does not cascade to siblings (Track D session-isolation).",
+    "PeerRegistry must be alive before any PeerServer registers via {:via, Registry, ...}; order in children list enforces this.",
+    "PeerServer registration is :unique — duplicate actor_id causes {:error, {:already_registered, _}}.",
+    "PeerServer persists new_state to Esr.Persistence.Ets BEFORE dispatching any returned actions (spec §7.4 persist-then-emit).",
+    "Handler retry is exactly once on :handler_timeout; every other error is non-retryable.",
+    "Dedup keys bounded at 1000 entries with FIFO eviction (state.dedup_keys MapSet + state.dedup_order :queue).",
+    "Paused PeerServer queues inbound_events up to @pause_queue_limit=1000; further events are silently dropped; resume replays in arrival order then processes new input.",
+    "Emit directive flow: subscribe to directive_ack:<id> BEFORE broadcasting so a fast ack lands in mailbox; Process.send_after fires :directive_deadline after directive_timeout.",
+    "Emit topic lookup prefers an actor already bound under adapter:<name>/* in Esr.AdapterHub.Registry; falls back to adapter:<name>/<self.actor_id>.",
+    "Emit adapter='esr-channel' is synthetic — short-circuits through SessionRegistry.notify_session (v0.2 §3.3), does not hit AdapterHub.",
+    "SessionRegistry intentionally does NOT store peer_pid (reviewer S1) — authoritative lookup is Registry.lookup(Esr.PeerRegistry, \"thread:<sid>\").",
+    "PeerRegistry.register/2 refuses to register a foreign pid ({:error, :cannot_register_other_pid}) — Elixir Registry only registers the calling process; PeerServer.init/1 calls register(actor_id, self()).",
+    "DeadLetter eviction keeps size pinned at max_entries when full (drops oldest, inserts newest) — size never exceeds max.",
+    "WorkerSupervisor.ensure_* is idempotent across in-process tracking and external pidfiles.",
+    "Esr.Uri requires non-empty host; type must be one of {actor, adapter, handler, command, interface}.",
+    "PeerServer sets trap_exit=true so terminate/2 fires for [:esr,:peer_server,:stopped] telemetry and feishu_thread_proxy session_killed log; stray {:EXIT, _, _} info messages are swallowed to avoid FunctionClauseError (reviewer S8).",
+    "Restore is best-effort: missing workspaces.yaml/adapters.yaml is :ok, per-adapter spawn errors are logged-and-continued, and feishu-app-session auto-restore is deferred via Task with 2s grace so Application.start returns promptly."
+  ],
+  "files": {
+    "lib": [
+      "/home/yaosh/projects/esr/runtime/lib/esr.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/application.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/dead_letter.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/peer_registry.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/peer_server.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/peer_supervisor.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/session_registry.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/uri.ex",
+      "/home/yaosh/projects/esr/runtime/lib/esr/worker_supervisor.ex"
+    ],
+    "test": [
+      "/home/yaosh/projects/esr/runtime/test/esr/application_restore_adapters_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/application_restore_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/application_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/dead_letter_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_registry_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_action_dispatch_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_emit_ack_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_esr_channel_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_event_handling_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_invoke_command_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_pause_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_persist_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_retry_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_server_tool_invoke_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/peer_supervisor_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/session_registry_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/uri_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/worker_supervisor_test.exs",
+      "/home/yaosh/projects/esr/runtime/test/esr/workspaces_registry_test.exs"
+    ],
+    "support": [
+      "/home/yaosh/projects/esr/runtime/test/support/channel_case.ex",
+      "/home/yaosh/projects/esr/runtime/test/support/conn_case.ex"
+    ]
+  }
+}

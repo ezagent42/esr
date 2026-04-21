@@ -1,0 +1,221 @@
+{
+  "module": "adapter-cc-mcp",
+  "path": "adapters/cc_mcp",
+  "language": "python",
+  "python_requires": ">=3.11",
+  "package": "esr_cc_mcp",
+  "entry": "esr_cc_mcp.channel:main",
+  "manifest": {
+    "file": "adapters/cc_mcp/esr.toml",
+    "name": "cc_mcp",
+    "version": "0.2.0",
+    "kind": "adapter",
+    "description": "esr-channel MCP stdio bridge — per-CC-session WS to esrd",
+    "allowed_io": {"mcp": "*", "websocket": "*", "http": []}
+  },
+  "purpose": "v0.2 MCP-based CC adapter. Alternative to cc_tmux: instead of driving Claude Code via a tmux TUI, it runs as an MCP stdio bridge spawned by CC itself. Exposes channel tools (reply/react/send_file/_echo) to CC via MCP, and proxies tool calls as envelope frames over a Phoenix-style WebSocket to esrd. Inbound esrd envelopes are routed: tool_result matches pending futures, notifications are injected into CC's conversation as <channel>-tagged text via MCP logging, session_killed terminates the process.",
+  "files_reviewed": [
+    "adapters/cc_mcp/esr.toml",
+    "adapters/cc_mcp/pyproject.toml",
+    "adapters/cc_mcp/src/esr_cc_mcp/__init__.py",
+    "adapters/cc_mcp/src/esr_cc_mcp/channel.py",
+    "adapters/cc_mcp/src/esr_cc_mcp/tools.py",
+    "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py",
+    "adapters/cc_mcp/tests/__init__.py",
+    "adapters/cc_mcp/tests/test_channel_main.py",
+    "adapters/cc_mcp/tests/test_notification_inject.py",
+    "adapters/cc_mcp/tests/test_tools.py",
+    "adapters/cc_mcp/tests/test_ws_client.py"
+  ],
+  "files_analyzed": [
+    {
+      "path": "adapters/cc_mcp/esr.toml",
+      "lines": 5,
+      "key_symbols": [
+        {"name": "kind", "type": "manifest_field", "line": 4, "description": "Declares this package as an 'adapter'."},
+        {"name": "allowed_io", "type": "manifest_field", "line": 5, "description": "Unrestricted MCP + websocket I/O; no direct HTTP."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/pyproject.toml",
+      "lines": 20,
+      "key_symbols": [
+        {"name": "project.dependencies", "type": "config", "line": 5, "description": "mcp>=1.0, anyio>=4.0, aiohttp>=3.9, websockets>=12.0."},
+        {"name": "tool.pytest.ini_options.asyncio_mode", "type": "config", "line": 20, "description": "auto — pytest-asyncio runs async tests without explicit marks."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/__init__.py",
+      "lines": 2,
+      "key_symbols": [
+        {"name": "__version__", "type": "constant", "line": 2, "description": "'0.2.0' — package version."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/channel.py",
+      "lines": 181,
+      "key_symbols": [
+        {"name": "_pending", "type": "module_global", "line": 39, "description": "dict[req_id, Future] awaiting tool_result frames from esrd."},
+        {"name": "_ws", "type": "module_global", "line": 40, "description": "Singleton EsrWSClient set in _main."},
+        {"name": "_mcp_server", "type": "module_global", "line": 41, "description": "Singleton MCP Server — used by notification path to send_log_message."},
+        {"name": "_format_channel_tag", "type": "function", "line": 44, "description": "Wrap an inbound envelope as a <channel source=... chat_id=... message_id=... user=... ts=...>body</channel> XML tag matching cc-openclaw's openclaw-channel output — makes CC's MCP client render it as an inbound user message."},
+        {"name": "_handle_inbound", "type": "async_function", "line": 62, "description": "Spec §5.3 router. kind='tool_result' resolves _pending future; kind='notification' formats channel tag and MCP-logs it to CC; kind='session_killed' warns and exits(0) after 0.5s."},
+        {"name": "_invoke_tool", "type": "async_function", "line": 89, "description": "MCP call_tool bridge: generates req_id, stores Future in _pending, pushes {kind:'tool_invoke', req_id, tool, args} envelope, awaits tool_result up to 30s; returns [TextContent(json)] with ok/data/error shape. Timeouts & exceptions fall through as esrd_disconnect errors."},
+        {"name": "_build_server", "type": "function", "line": 121, "description": "Construct MCP Server('esr-channel'); registers list_tools (delegates to list_tool_schemas(role)) and call_tool (delegates to _invoke_tool). Assigns Server to module global _mcp_server for notification injection."},
+        {"name": "_main", "type": "async_function", "line": 138, "description": "Entrypoint: reads ESR_ESRD_URL/ESR_SESSION_ID/ESR_WORKSPACE/ESR_CHAT_IDS/ESR_ROLE env vars, constructs EsrWSClient, and launches two concurrent tasks in an anyio task group — ws.connect_and_run(_handle_inbound) and _run_stdio(server)."},
+        {"name": "_run_stdio", "type": "async_function", "line": 158, "description": "Wrap MCP stdio_server with InitializationOptions (server_name='esr-channel', version 0.2.0) and run the Server over stdin/stdout."},
+        {"name": "main", "type": "function", "line": 171, "description": "Synchronous sys.exit entry: anyio.run(_main); KeyboardInterrupt → 0."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/tools.py",
+      "lines": 84,
+      "key_symbols": [
+        {"name": "_REPLY", "type": "constant", "line": 12, "description": "Tool schema — reply(chat_id, text, edit_message_id?) — sends/edits Feishu message; covers update_title via edit_message_id."},
+        {"name": "_REACT", "type": "constant", "line": 33, "description": "Tool schema — react(message_id, emoji_type) — Feishu emoji reaction (THUMBSUP, DONE, OK)."},
+        {"name": "_SEND_FILE", "type": "constant", "line": 47, "description": "Tool schema — send_file(chat_id, file_path) — upload local file and send as Feishu file message."},
+        {"name": "_ECHO", "type": "constant", "line": 63, "description": "Tool schema — _echo(nonce) — diagnostic-only tool, role-gated; used by final_gate --live v2 to make L2/L6 deterministic without LLM judgement."},
+        {"name": "list_tool_schemas", "type": "function", "line": 78, "description": "Return [reply, react, send_file] for any role; append _echo only when role='diagnostic'. API-compatible with cc-openclaw's openclaw-channel for drop-in switching (spec §1.1)."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py",
+      "lines": 121,
+      "key_symbols": [
+        {"name": "compute_backoff", "type": "function", "line": 25, "description": "Spec §6.2b jittered exponential backoff: delay = min(30, 2^attempt) * (0.5 + rng()). attempt starts at 0; rng injectable for deterministic tests."},
+        {"name": "EsrWSClient.__init__", "type": "method", "line": 39, "description": "Stores url/session_id/workspace/chats; _join_ref='cli-channel-join'; _topic=f'cli:channel/{session_id}'; _ref counter for Phoenix v2 framing."},
+        {"name": "EsrWSClient._send_frame", "type": "async_method", "line": 55, "description": "Phoenix v2 array frame encoder: [join_ref, ref, topic, event, payload] as JSON."},
+        {"name": "EsrWSClient.push", "type": "async_method", "line": 62, "description": "Public send — wraps payload in an 'envelope' event; raises if ws not connected (no queueing)."},
+        {"name": "EsrWSClient.connect_and_run", "type": "async_method", "line": 66, "description": "Reconnect loop forever: run _session_loop, catch all non-cancel exceptions, sleep compute_backoff(attempt). Cancels cleanly when enclosing task group cancels (CC stdio EOF)."},
+        {"name": "EsrWSClient._session_loop", "type": "async_method", "line": 84, "description": "Connect to f'{url}/channel/socket/websocket?vsn=2.0.0' with 30s heartbeat; send phx_join frame; immediately push {kind:'session_register', session_id, workspace, chats}; iterate inbound TEXT frames; decode Phoenix v2 array frame; for event=='envelope' with dict payload, await on_envelope(payload)."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/tests/__init__.py",
+      "lines": 1,
+      "key_symbols": []
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_channel_main.py",
+      "lines": 16,
+      "key_symbols": [
+        {"name": "test_channel_module_is_importable", "type": "function", "line": 8, "description": "Subprocess smoke test: `python -c 'import esr_cc_mcp.channel'` prints 'ok' with exit 0."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_notification_inject.py",
+      "lines": 25,
+      "key_symbols": [
+        {"name": "test_channel_tag_includes_all_identity_fields", "type": "function", "line": 11, "description": "_format_channel_tag with source='feishu', chat_id (oc_...), message_id (om_...), user, ts, content='hello' emits <channel ...>hello</channel> with each attribute and closing tag."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_tools.py",
+      "lines": 23,
+      "key_symbols": [
+        {"name": "test_returns_3_tools_by_default", "type": "function", "line": 4, "description": "role='dev' yields exactly {reply, react, send_file}."},
+        {"name": "test_diagnostic_role_adds_echo_tool", "type": "function", "line": 10, "description": "role='diagnostic' adds _echo → {reply, react, send_file, _echo}."},
+        {"name": "test_reply_schema_has_chat_id_and_text", "type": "function", "line": 16, "description": "reply.inputSchema.properties has chat_id (string) and text."}
+      ]
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_ws_client.py",
+      "lines": 22,
+      "key_symbols": [
+        {"name": "test_backoff_has_jitter_and_is_bounded", "type": "function", "line": 8, "description": "rng=0.5 makes factor 1.0: delays[0]=1.0, delays[3]=8.0, delays[9]>=29.999 (capped at 30)."},
+        {"name": "test_compute_backoff_ranges_with_rng", "type": "function", "line": 17, "description": "attempt=5 (2^5=32 capped to 30): rng=0→15.0, rng=1→45.0."}
+      ]
+    }
+  ],
+  "interfaces": [
+    {"name": "python -m esr_cc_mcp.channel (main entrypoint)", "file": "adapters/cc_mcp/src/esr_cc_mcp/channel.py", "line": 171, "description": "Invoked by CC as an MCP stdio server. Reads ESR_ESRD_URL, ESR_SESSION_ID, ESR_WORKSPACE, ESR_CHAT_IDS, ESR_ROLE. Exits 0 on KeyboardInterrupt or session_killed."},
+    {"name": "MCP list_tools / call_tool handlers", "file": "adapters/cc_mcp/src/esr_cc_mcp/channel.py", "line": 127, "description": "Server('esr-channel') exposes list_tool_schemas(role) and proxies every call_tool(name, args) to _invoke_tool, which sends tool_invoke envelope over WS and awaits tool_result (30s timeout)."},
+    {"name": "list_tool_schemas(role) -> [Tool]", "file": "adapters/cc_mcp/src/esr_cc_mcp/tools.py", "line": 78, "description": "Returns [reply, react, send_file] by default; +[_echo] when role='diagnostic'. API-compatible with cc-openclaw's openclaw-channel."},
+    {"name": "EsrWSClient(url, session_id, workspace, chats)", "file": "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py", "line": 38, "description": "Phoenix v2 WS client with connect_and_run(on_envelope) reconnect loop and push(envelope) send. Topic 'cli:channel/{session_id}', vsn=2.0.0 endpoint /channel/socket/websocket."},
+    {"name": "compute_backoff(attempt, rng=random.random)", "file": "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py", "line": 25, "description": "Deterministic-testable jittered exponential backoff: min(30, 2^attempt) * (0.5 + rng())."}
+  ],
+  "dependencies": [
+    "mcp>=1.0.0 (Server, InitializationOptions, NotificationOptions, stdio_server, Tool, TextContent)",
+    "anyio>=4.0 (task group, anyio.run)",
+    "aiohttp>=3.9 (ClientSession + ws_connect for Phoenix WS)",
+    "websockets>=12.0 (declared dep; not directly imported in the reviewed modules)",
+    "stdlib: asyncio, json, logging, os, sys, uuid, random, typing, collections.abc"
+  ],
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/adapters/cc_mcp && PYTHONPATH=src uv run --with mcp --with anyio --with aiohttp --with websockets --with pytest --with pytest-asyncio pytest tests/ -q",
+    "note": "Original command (cd /home/yaosh/projects/esr/py && uv run pytest ../adapters/cc_mcp/tests/ -q) fails with ModuleNotFoundError because the py workspace's venv does not install the esr_cc_mcp package. Ran from the adapter dir with uv's ephemeral deps + PYTHONPATH=src to exercise the actual module.",
+    "exit_code": 0,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_tail": ".......                                                                  [100%]\n7 passed in 8.94s"
+  },
+  "special_focus": {
+    "mcp_tools_exposed": {
+      "default_role_dev": ["reply", "react", "send_file"],
+      "diagnostic_role_additions": ["_echo"],
+      "api_compat_note": "Names + schemas mirror cc-openclaw's openclaw-channel tools so switching CC between cc_tmux-era and cc_mcp-era channels is drop-in (spec §1.1 point 1).",
+      "schemas": {
+        "reply": {"required": ["chat_id", "text"], "optional": ["edit_message_id"], "semantics": "Send a Feishu message; edit_message_id edits in place (covers update_title)."},
+        "react": {"required": ["message_id", "emoji_type"], "semantics": "Add an emoji reaction (THUMBSUP, DONE, OK)."},
+        "send_file": {"required": ["chat_id", "file_path"], "semantics": "Upload a local file and send as a Feishu file message."},
+        "_echo": {"required": ["nonce"], "gated_on": "role=diagnostic", "semantics": "Echo nonce back as reply to ESR_SELF_CHAT_ID; used by final_gate --live v2 for deterministic L2/L6 without LLM judgement."}
+      }
+    },
+    "websocket_lifecycle": {
+      "connect": "connect_and_run opens an aiohttp.ClientSession, calls _session_loop which connects to f'{url}/channel/socket/websocket?vsn=2.0.0' with heartbeat=30s. On open: resets _attempt to 0, sends Phoenix v2 phx_join frame [join_ref, ref, 'cli:channel/<session_id>', 'phx_join', {}], then immediately pushes a {kind:'session_register', session_id, workspace, chats} envelope so esrd binds chat_ids to this session.",
+      "send": "push(envelope) → _send_frame('envelope', envelope) → encodes Phoenix v2 array [join_ref, next_ref, topic, event, payload] as JSON and sends via ws.send_str. Raises RuntimeError if not connected (no queueing; MCP call handlers surface this as ok:false esrd_disconnect error).",
+      "recv": "_session_loop iterates `async for msg in ws`, keeps only TEXT frames, json-decodes, requires len>=5 Phoenix v2 array shape. Only frames with event=='envelope' and dict payload are delivered to on_envelope(payload). Non-JSON and non-envelope frames silently dropped.",
+      "close": "Normal close: the async-for loop exits, _session_loop returns, connect_and_run's outer while True increments _attempt and sleeps compute_backoff(attempt) before reconnecting — reconnect is infinite. Abnormal close: exceptions (except asyncio.CancelledError) are logged and treated as normal close for backoff purposes. Cancellation (propagated CancelledError when CC stdio EOFs and the anyio task group cancels) is the only way to exit cleanly; the aiohttp.ClientSession is closed by its async-with on exit."
+    },
+    "bridge_description": {
+      "outbound_cc_to_esrd": "CC (MCP client) calls one of the exposed tools → channel.py handle_call_tool fires → _invoke_tool(name, args) generates a req_id, stores an asyncio.Future in _pending[req_id], and _ws.push({kind:'tool_invoke', req_id, tool, args}) sends a Phoenix v2 envelope over WS → esrd processes the tool and replies with {kind:'tool_result', req_id, ok, data, error} → _handle_inbound resolves the Future → _invoke_tool returns [TextContent(JSON)] to CC. 30s timeout and any exception map to ok:false with error.type='esrd_disconnect'.",
+      "inbound_esrd_to_cc": "esrd sends kind='notification' envelopes (e.g. incoming Feishu messages) → _handle_inbound formats them as <channel source=... chat_id=... message_id=... user=... ts=...>body</channel> XML via _format_channel_tag → calls server.request_context.session.send_log_message(level='info', data=tag, logger='esr-channel'), which CC's MCP client renders as an inbound user message in the conversation context. Failures are logged but do not abort the session.",
+      "lifecycle_signals": "esrd may send kind='session_killed' with a reason — _handle_inbound logs a warning, sleeps 0.5s to let CC flush, and sys.exit(0)s. The module also sends a one-shot {kind:'session_register', session_id, workspace, chats} envelope on every (re)join so esrd can (re)bind the CC session to its chat_ids."
+    },
+    "test_notification_inject_description": "test_notification_inject.py tests the inbound-notification path's formatting (not the MCP session injection itself). It calls _format_channel_tag with a fully-populated envelope (source=feishu, chat_id=oc_..., message_id=om_..., user, ts, content) and asserts the output contains <channel, source=\"feishu\", chat_id=\"oc_...\", hello, and </channel>. This validates the XML shape CC's MCP client renders as an inbound user message — the actual MCP send_log_message call in _handle_inbound is exercised only at runtime under a real CC MCP session (covered by the higher-level e2e-esr-channel scenario + final_gate v2 described in recent git commits)."
+  },
+  "user_flows": [
+    {
+      "name": "CC author sends a Feishu reply via reply tool",
+      "steps": [
+        "CC (running the esr-channel MCP server) calls tool 'reply' with {chat_id:'oc_...', text:'hi'}.",
+        "channel._invoke_tool generates req_id, pushes {kind:'tool_invoke', req_id, tool:'reply', args} over WS.",
+        "esrd routes to feishu adapter, receives the response, and sends {kind:'tool_result', req_id, ok:true, data:{message_id:'om_...'}}.",
+        "_handle_inbound resolves the pending Future; _invoke_tool returns [TextContent(JSON)] to CC; CC sees success."
+      ],
+      "entry_point": "adapters/cc_mcp/src/esr_cc_mcp/channel.py:89"
+    },
+    {
+      "name": "Inbound Feishu message appears in CC conversation",
+      "steps": [
+        "Feishu webhook → feishu adapter → esrd routes to this session as {kind:'notification', source:'feishu', chat_id, message_id, user, ts, content}.",
+        "WS delivers envelope; _handle_inbound runs; _format_channel_tag wraps it as <channel ...>content</channel>.",
+        "channel calls server.request_context.session.send_log_message(level='info', data=tag, logger='esr-channel').",
+        "CC's MCP client renders the log message as an inbound user turn, feeding it into the conversation context."
+      ],
+      "entry_point": "adapters/cc_mcp/src/esr_cc_mcp/channel.py:62"
+    },
+    {
+      "name": "final_gate --live v2 deterministic loop via _echo",
+      "steps": [
+        "Launch esr-channel with ESR_ROLE=diagnostic — list_tool_schemas now includes _echo.",
+        "Harness drives CC to call _echo(nonce=N).",
+        "esrd replies by sending a Feishu message containing N back to ESR_SELF_CHAT_ID.",
+        "final_gate observes the echoed nonce through the Feishu mock, scoring L2/L6 without LLM judgement."
+      ],
+      "entry_point": "adapters/cc_mcp/src/esr_cc_mcp/tools.py:63"
+    },
+    {
+      "name": "esrd restart / reconnect",
+      "steps": [
+        "WS closes (esrd restart or network blip).",
+        "connect_and_run catches, logs, sleeps compute_backoff(attempt) — deterministic under injected rng.",
+        "On reconnect, phx_join sent; session_register re-pushed so esrd re-binds chat_ids.",
+        "Any outstanding tool_invoke futures time out at 30s with esrd_disconnect; CC sees ok:false."
+      ],
+      "entry_point": "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py:66"
+    }
+  ],
+  "notes": "This adapter is declared with kind='adapter' in esr.toml (allowed_io mcp=*, websocket=*, http=[]) but unlike cc_tmux it does not register via @esr.adapter / AdapterConfig in the Python SDK's ADAPTER_REGISTRY — it is a standalone MCP stdio process that CC spawns per session (entry `python -m esr_cc_mcp.channel`). Identity comes from env (ESR_ESRD_URL, ESR_SESSION_ID, ESR_WORKSPACE, ESR_CHAT_IDS, ESR_ROLE). All module state (_pending futures, _ws, _mcp_server) is module-global — safe because each CC session spawns a fresh process. Phoenix v2 framing: array frames [join_ref, ref, topic, event, payload]; topic 'cli:channel/<session_id>'; vsn=2.0.0 endpoint. Reconnect is infinite with min(30, 2^attempt)*(0.5+rng()) jitter; only CancelledError (propagated when CC stdio EOFs and the anyio task group cancels) exits cleanly. No queueing on push() — tool_invoke between reconnects returns ok:false esrd_disconnect via timeout. The test command in the prompt (cd py && uv run pytest ../adapters/cc_mcp/tests/) fails because the py workspace does not install esr_cc_mcp; tests were run with uv ephemeral deps + PYTHONPATH=src from the adapter directory and all 7 tests pass. The recent git history (54c7d42, 9f8add3, 56d45ab, 9feb1f9) shows this module is the subject of the v0.2 final_gate v2 + e2e-esr-channel scenario validating the full MCP bridge."
+}

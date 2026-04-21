@@ -1,0 +1,52 @@
+{
+  "module": "handler-cc-session",
+  "path": "handlers/cc_session",
+  "version": "0.1.0",
+  "prd_refs": ["PRD 05 F02", "PRD 05 F17", "PRD 05 F18", "PRD 05 F19"],
+  "manifest": {
+    "name": "cc_session",
+    "module": "esr_handler_cc_session.on_msg",
+    "entry": "on_msg",
+    "actor_type": "cc_proxy",
+    "allowed_imports": []
+  },
+  "state": {
+    "class": "CcSessionState",
+    "schema_version": 1,
+    "frozen": true,
+    "fields": {
+      "session_name": "str (tmux session id, default '')",
+      "parent_thread": "str (owning feishu_thread actor id, default '')",
+      "pending_outputs": "tuple[str, ...] (reserved buffer, unused yet)"
+    }
+  },
+  "events": {
+    "inbound": ["cc_output (from cc_tmux adapter)"],
+    "outbound_actions": ["Route -> thread:<parent_thread> with msg {event_type: cc_output, args}"],
+    "ignored": ["all non cc_output event types", "cc_output when parent_thread unset"]
+  },
+  "routing": {
+    "direction": "reverse: CC session -> feishu_thread",
+    "target_format": "thread:{state.parent_thread}",
+    "payload": "{event_type: 'cc_output', args: dict(event.args)}",
+    "note": "parent_thread binding must be populated at actor spawn; no send_keys handling here (downstream side)"
+  },
+  "tests": {
+    "files": ["tests/test_on_msg.py", "tests/test_state.py"],
+    "cases": 4,
+    "command": "cd py && uv run pytest ../handlers/cc_session/tests/ -q",
+    "result": "4 passed in 0.51s",
+    "coverage": ["reverse route happy path", "silent when no parent_thread", "unknown event ignored", "state defaults + frozen"]
+  },
+  "dependencies": {
+    "runtime": ["esr (py/, editable)"],
+    "imports_used": ["esr.Action", "esr.Event", "esr.Route", "esr.handler", "esr.handler_state", "pydantic.BaseModel"]
+  },
+  "observations": [
+    "Handler is minimal: single reverse-routing rule, no state mutation (state returned unchanged).",
+    "pending_outputs field declared but never written — reserved for future buffering.",
+    "send_keys path is NOT in this handler; this module only handles cc_output ↑ back to thread.",
+    "Complementary handler (likely feishu_thread) owns the send_keys ↓ direction to this cc_proxy actor."
+  ],
+  "status": "healthy"
+}

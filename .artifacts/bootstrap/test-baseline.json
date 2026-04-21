@@ -1,0 +1,121 @@
+{
+  "project_root": "/home/yaosh/projects/esr",
+  "timestamp": "2026-04-21T02:42:19Z",
+  "summary": {
+    "total_tests": 636,
+    "total_passed": 630,
+    "total_failed": 5,
+    "total_skipped": 1,
+    "environment_errors": 0
+  },
+  "test_runs": [
+    {
+      "suite": "python-core-and-packages",
+      "command": "cd py && uv run pytest",
+      "description": "Runs py/tests + ../adapters/feishu/tests + ../adapters/cc_tmux/tests + ../handlers/*/tests (per pyproject.toml testpaths)",
+      "exit_code": 0,
+      "duration_seconds": 18.54,
+      "passed": 440,
+      "failed": 0,
+      "skipped": 1,
+      "notes": "1 skipped = tests/test_ipc_integration.py::test_ipc_integration_live \u2014 gated on ESR_E2E_RUNTIME=1 env var (intentional, not env-broken)."
+    },
+    {
+      "suite": "python-cc-mcp-adapter",
+      "command": "cd adapters/cc_mcp && PYTHONPATH=src uv run --with mcp --with anyio --with aiohttp --with websockets --with pytest --with pytest-asyncio pytest tests/ -q",
+      "description": "cc_mcp adapter \u2014 NOT registered in py/pyproject.toml tool.uv.sources (only feishu+cc_tmux+handlers are). Runs out-of-tree via pytest-with-deps.",
+      "exit_code": 0,
+      "duration_seconds": 3.74,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "notes": "ENV-ISSUE-CANDIDATE: cc_mcp is missing from py/pyproject.toml [tool.uv.sources] and [dependency-groups.dev]. Consider adding for uniform test execution."
+    },
+    {
+      "suite": "scripts",
+      "command": "uv run --project py pytest scripts/tests/",
+      "description": "Tests for mock_cc, mock_feishu, mock_mcp_ctl, ledger_append, loopguard_* and verify_* utilities. Not in py testpaths.",
+      "exit_code": 1,
+      "duration_seconds": 4.77,
+      "passed": 32,
+      "failed": 1,
+      "skipped": 0,
+      "failures": [
+        {
+          "test": "scripts/tests/test_loopguard_scenarios_allowlist.py::test_exactly_one_allowed_file_passes",
+          "cause": "CODE-BUG: fixture is stale. v0.2-channel widened the loopguard allowlist in scripts/loopguard_scenarios_allowlist.py:8 to require BOTH {e2e-feishu-cc.yaml, e2e-esr-channel.yaml}, but the test fixture writes only one file. Not an env issue."
+        }
+      ],
+      "notes": "Also includes bash test scripts/tests/test_esrd_sh.sh (runs separately, 6/6 pass)."
+    },
+    {
+      "suite": "scripts-bash",
+      "command": "bash scripts/tests/test_esrd_sh.sh",
+      "description": "Bash integration test for scripts/esrd.sh lifecycle (start, status, stop, idempotency).",
+      "exit_code": 0,
+      "duration_seconds": 0.5,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notes": "6/6 PASS: start\u2192pidfile, kill-0, status RUNNING, idempotent start, stop\u2192pidfile gone, status STOPPED."
+    },
+    {
+      "suite": "elixir-runtime",
+      "command": "cd runtime && mix test",
+      "description": "All Elixir ExUnit tests (lib/esr core, lib/esr/* subsystems, lib/esr_web channels).",
+      "exit_code": 1,
+      "duration_seconds": 9.8,
+      "passed": 151,
+      "failed": 4,
+      "skipped": 0,
+      "failures": [
+        {
+          "test_suite": "EsrWeb.CliChannelTest",
+          "tests": [
+            "cli:run/<name> instantiates a one-node artifact and returns the handle",
+            "cli:stop/<name> deactivates the named topology and returns its stopped peer ids",
+            "cli:deadletter/list returns serialised entries after enqueue",
+            "unknown cli:* topic returns structured error (reviewer C2)"
+          ],
+          "cause": "FLAKY-TIMING: assert_receive default 100ms timeout under parallel max_cases=16. With --max-cases 1 --seed 0, reduces to 2 failures. Running cli_channel_test.exs in isolation passes 19/19. Suggests a test-harness timing bug, not a runtime bug."
+        }
+      ],
+      "notes": "Elixir 1.19.5 / Erlang OTP 28. Compiled cleanly (1 style warning at lib/esr/topology/instantiator.ex:332 \u2014 defp clauses should be grouped)."
+    }
+  ],
+  "known_issues": [
+    {
+      "id": "SCRIPTS-1",
+      "severity": "code-bug",
+      "summary": "test_exactly_one_allowed_file_passes fixture stale after v0.2-channel widened the loopguard allowlist",
+      "fix": "Update scripts/tests/test_loopguard_scenarios_allowlist.py to write BOTH e2e-feishu-cc.yaml and e2e-esr-channel.yaml in the 'allowed' fixture setup."
+    },
+    {
+      "id": "ELIXIR-1",
+      "severity": "flaky-test",
+      "summary": "EsrWeb.CliChannelTest 3-4 tests fail intermittently under parallel execution (max_cases=16 or =1)",
+      "fix": "Increase assert_receive timeout in cli_channel_test.exs, or isolate the tests to async: false, or use ExUnit's describe block with :serial tag."
+    },
+    {
+      "id": "ELIXIR-2",
+      "severity": "style-warning",
+      "summary": "lib/esr/topology/instantiator.ex has two defp issue_init_directive/2 clauses (lines 261, 332) separated by helpers",
+      "fix": "Group the clauses together per Elixir best practice."
+    },
+    {
+      "id": "CC-MCP-1",
+      "severity": "build-config",
+      "summary": "adapters/cc_mcp is not in py/pyproject.toml's [tool.uv.sources] or [dependency-groups.dev]",
+      "fix": "Add esr-adapter-cc-mcp = { path = '../adapters/cc_mcp', editable = true } and include in dev group. Add ../adapters/cc_mcp/tests to pytest testpaths."
+    }
+  ],
+  "environment": {
+    "python": "3.14.3 (brew python@3.14) / py venv uses 3.13",
+    "uv": "0.7.15",
+    "elixir": "1.19.5 (compiled with OTP 28)",
+    "erlang_otp": "28.4.2",
+    "tmux": "3.6a",
+    "zellij": "0.44.1",
+    "asciinema": "2.4.0"
+  }
+}

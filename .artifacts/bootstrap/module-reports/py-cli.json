@@ -1,0 +1,504 @@
+{
+  "module_name": "py-cli",
+  "module_path": "py/src/esr/cli",
+  "description": "Click-based `esr` CLI entry point (PRD 07). Provides operator-facing commands for runtime control (use/status/drain/scenario), adapter + handler + command lifecycle (install/compile/show/run/stop/restart/list), live-actor introspection (actors/trace/telemetry), admin/debug (debug/deadletter), and workspace templates. Communicates with the Elixir Phoenix runtime through a short-lived Phoenix-channel RPC bridge (`runtime_bridge`). Pure offline ops (lint, list, compile) need no runtime; stateful ops require `esr use <host:port>` context.",
+  "files_analyzed": [
+    {
+      "path": "py/src/esr/cli/__init__.py",
+      "lines": 1,
+      "key_symbols": ["package docstring only"]
+    },
+    {
+      "path": "py/src/esr/cli/main.py",
+      "lines": 1420,
+      "key_symbols": [
+        "cli (click.Group) :66",
+        "use :70",
+        "status :95",
+        "scenario (group) :131",
+        "scenario_run :136",
+        "adapters (group) :276",
+        "adapters_list :281",
+        "adapter (group) :303",
+        "adapter_add :308",
+        "_auto_instantiate_feishu_app_session :375",
+        "_parse_config_flags :414",
+        "adapter_install :438",
+        "adapter_list :483",
+        "handler (group) :493",
+        "handler_install :498",
+        "handler_list :536",
+        "cmd (group) :542",
+        "cmd_list :547",
+        "cmd_install :563",
+        "cmd_show :608",
+        "cmd_compile :646",
+        "_response :682",
+        "_submit_cmd_run :692",
+        "_submit_cmd_stop :708",
+        "_parse_param_bindings :723",
+        "_submit_trace :734",
+        "_submit_debug :747",
+        "_submit_drain :755",
+        "_stream_telemetry :765",
+        "_submit_actors :787",
+        "_submit_deadletter :796",
+        "cmd_run :805",
+        "cmd_stop :877",
+        "cmd_restart :919",
+        "drain :983",
+        "debug (group) :1023",
+        "debug_replay :1028",
+        "debug_inject :1036",
+        "debug_pause :1051",
+        "debug_resume :1059",
+        "telemetry (group) :1068",
+        "telemetry_subscribe :1073",
+        "trace :1098",
+        "actors (group) :1132",
+        "actors_list :1137",
+        "actors_tree :1159",
+        "actors_inspect :1177",
+        "actors_logs :1194",
+        "workspace (group) :1211",
+        "workspace_add :1216",
+        "workspace_list :1270",
+        "workspace_remove :1283",
+        "deadletter (group) :1296",
+        "deadletter_list :1301",
+        "deadletter_retry :1315",
+        "deadletter_flush :1323",
+        "lint :1333",
+        "_extract_type_name :1362",
+        "_missing_dependencies :1374",
+        "_print_manifest_names :1409",
+        "_context_path :22",
+        "_load_context :26",
+        "_save_context :38",
+        "_endpoint_from_host_port :48",
+        "_host_port_from_endpoint :52"
+      ]
+    },
+    {
+      "path": "py/src/esr/cli/runtime_bridge.py",
+      "lines": 77,
+      "key_symbols": [
+        "RuntimeUnreachable (RuntimeError) :15",
+        "_call_runtime_async :21",
+        "call_runtime :45"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_actors.py",
+      "lines": 112,
+      "key_symbols": [
+        "test_actors_list_prints_each_actor :22",
+        "test_actors_tree_renders_depends_on_hierarchy :42",
+        "test_actors_inspect_dumps_state :61",
+        "test_actors_logs_emits_recent_entries :78",
+        "test_actors_inspect_prints_chat_ids :93"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_adapter_add.py",
+      "lines": 64,
+      "key_symbols": [
+        "test_adapter_add_writes_instance_config :20",
+        "test_adapter_add_duplicate_instance_errors :43",
+        "test_adapter_add_preserves_existing_instances :57"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_compile.py",
+      "lines": 46,
+      "key_symbols": [
+        "test_compile_writes_compiled_yaml :21",
+        "test_compile_unknown_pattern_fails :39"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_install.py",
+      "lines": 79,
+      "key_symbols": [
+        "test_install_feishu_app_session_writes_compiled_yaml :21",
+        "test_install_fails_with_actionable_message_on_missing_handler :43",
+        "test_install_feishu_thread_session_resolves_all_deps :65"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_restart.py",
+      "lines": 112,
+      "key_symbols": [
+        "test_cmd_restart_calls_stop_then_run :39",
+        "test_cmd_restart_survives_stop_not_running :71",
+        "test_cmd_restart_missing_artifact_errors :97"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_run.py",
+      "lines": 104,
+      "key_symbols": [
+        "test_cmd_run_missing_compiled_artifact :43",
+        "test_cmd_run_submits_artifact_with_params :51",
+        "test_cmd_run_timeout_prints_helpful_error :81",
+        "test_cmd_run_missing_param_errors :96"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_show.py",
+      "lines": 60,
+      "key_symbols": [
+        "test_show_prints_topology_for_installed_pattern :20",
+        "test_show_unknown_pattern_errors :48"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_cmd_stop.py",
+      "lines": 66,
+      "key_symbols": [
+        "test_cmd_stop_submits_deactivate_with_params :22",
+        "test_cmd_stop_timeout_prints_helpful_error :46",
+        "test_cmd_stop_invalid_param_binding_errors :59"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_deadletter.py",
+      "lines": 78,
+      "key_symbols": [
+        "test_deadletter_list_prints_entries :22",
+        "test_deadletter_list_empty_prints_hint :50",
+        "test_deadletter_retry_invokes_with_id :59",
+        "test_deadletter_flush_empties_queue :70"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_debug.py",
+      "lines": 84,
+      "key_symbols": [
+        "test_debug_replay_forwards_msg_id :22",
+        "test_debug_inject_parses_json_event :32",
+        "test_debug_inject_invalid_json_errors :54",
+        "test_debug_pause_forwards_actor_id :66",
+        "test_debug_resume_forwards_actor_id :76"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_drain.py",
+      "lines": 76,
+      "key_symbols": [
+        "test_drain_reports_per_topology_status :22",
+        "test_drain_forwards_timeout_flag :43",
+        "test_drain_reports_timeouts_with_nonzero_exit :54",
+        "test_drain_empty_runtime_exits_clean :69"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_error_ux.py",
+      "lines": 39,
+      "key_symbols": [
+        "test_unknown_subcommand_exits_nonzero :10",
+        "test_help_flag_works_on_every_group :16",
+        "test_use_without_context_suggests_command :23"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_install.py",
+      "lines": 90,
+      "key_symbols": [
+        "test_adapter_install_validates_local_adapter :14",
+        "test_adapter_install_reports_manifest_missing :25",
+        "test_adapter_install_reports_capability_violation :37",
+        "test_handler_install_validates_local_handler :61",
+        "test_handler_install_flags_import_violations :72"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_lint.py",
+      "lines": 50,
+      "key_symbols": [
+        "test_lint_clean_directory_exits_zero :12",
+        "test_lint_disallowed_import_fails :24",
+        "test_lint_missing_path_errors :33",
+        "test_lint_scans_multiple_files :39"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_list.py",
+      "lines": 45,
+      "key_symbols": [
+        "test_adapter_list_shows_installed_types :22",
+        "test_handler_list_shows_installed_handlers :31",
+        "test_cmd_list_shows_pattern_files :39"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_offline.py",
+      "lines": 48,
+      "key_symbols": [
+        "READ_ONLY_OPS :23",
+        "test_read_only_ops_succeed_without_context :31",
+        "test_cmd_compile_is_offline :40"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_scenario.py",
+      "lines": 93,
+      "key_symbols": [
+        "test_scenario_run_missing_scenario_errors :22",
+        "test_scenario_run_empty_scenario_runs_successfully :30",
+        "test_scenario_run_counts_steps :49",
+        "test_scenario_run_malformed_yaml_errors :86"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_scenario_exec.py",
+      "lines": 163,
+      "key_symbols": [
+        "test_scenario_run_executes_command_and_matches_regex :21",
+        "test_scenario_run_fails_when_stdout_does_not_match :48",
+        "test_scenario_run_executes_setup_before_steps :77",
+        "test_scenario_run_setup_failure_aborts_scenario :108",
+        "test_scenario_run_fails_on_wrong_exit_code :139"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_status.py",
+      "lines": 70,
+      "key_symbols": [
+        "test_status_reports_ok_when_runtime_reachable :26",
+        "test_status_reports_unreachable_on_connect_error :46",
+        "test_status_errors_cleanly_with_no_context :64"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_submit_roundtrip.py",
+      "lines": 143,
+      "key_symbols": [
+        "_start_fake_runtime :23",
+        "_with_fake_runtime :55",
+        "test_submit_cmd_run_unwraps_data_nesting :69",
+        "test_submit_cmd_stop_unwraps_data_nesting :103",
+        "test_submit_drain_unwraps_data_nesting :128"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_telemetry.py",
+      "lines": 77,
+      "key_symbols": [
+        "test_telemetry_subscribe_default_table_format :22",
+        "test_telemetry_subscribe_json_format_emits_one_per_line :44",
+        "test_telemetry_subscribe_invalid_format_errors :64",
+        "test_telemetry_subscribe_pattern_required :73"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_trace.py",
+      "lines": 81,
+      "key_symbols": [
+        "test_trace_prints_recent_events :22",
+        "test_trace_forwards_session_filter :40",
+        "test_trace_forwards_last_window :53",
+        "test_trace_forwards_filter_pattern :64",
+        "test_trace_empty_prints_hint :75"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_use.py",
+      "lines": 60,
+      "key_symbols": [
+        "test_use_writes_context_file :22",
+        "test_use_without_args_prints_current :34",
+        "test_use_without_args_no_context_set :44",
+        "test_env_var_overrides_context_file :52"
+      ]
+    },
+    {
+      "path": "py/tests/test_cli_workspace.py",
+      "lines": 33,
+      "key_symbols": [
+        "test_workspace_add_then_list :8",
+        "test_workspace_remove_missing_fails :29"
+      ]
+    },
+    {
+      "path": "py/tests/test_cmd_run_output_format.py",
+      "lines": 51,
+      "key_symbols": [
+        "test_cmd_run_emits_actor_id_lines_per_peer :29"
+      ]
+    },
+    {
+      "path": "py/tests/test_runtime_bridge.py",
+      "lines": 85,
+      "key_symbols": [
+        "_phoenix_echo_handler :13",
+        "fake_phoenix (fixture) :36",
+        "test_call_runtime_end_to_end :49",
+        "test_runtime_unreachable_surfaces_helpful_error :74"
+      ]
+    }
+  ],
+  "interfaces": {
+    "cli_entry_point": {
+      "binary": "esr",
+      "click_root_group": "py/src/esr/cli/main.py:66 cli()"
+    },
+    "cli_commands": [
+      {"command": "esr use [<host:port>]", "prd": "F01", "impl": "py/src/esr/cli/main.py:70 use"},
+      {"command": "esr status", "prd": "F02", "impl": "py/src/esr/cli/main.py:95 status"},
+      {"command": "esr scenario run <name> [--verbose]", "prd": "F20", "impl": "py/src/esr/cli/main.py:136 scenario_run"},
+      {"command": "esr adapters list", "prd": "alias", "impl": "py/src/esr/cli/main.py:281 adapters_list"},
+      {"command": "esr adapter add <instance> --type <T> [--k v ...]", "prd": "F04", "impl": "py/src/esr/cli/main.py:308 adapter_add"},
+      {"command": "esr adapter install <source>", "prd": "F03", "impl": "py/src/esr/cli/main.py:438 adapter_install"},
+      {"command": "esr adapter list", "prd": "F05", "impl": "py/src/esr/cli/main.py:483 adapter_list"},
+      {"command": "esr handler install <source>", "prd": "F06", "impl": "py/src/esr/cli/main.py:498 handler_install"},
+      {"command": "esr handler list", "prd": "F07", "impl": "py/src/esr/cli/main.py:536 handler_list"},
+      {"command": "esr cmd list", "prd": "F09", "impl": "py/src/esr/cli/main.py:547 cmd_list"},
+      {"command": "esr cmd install <source> [--compiled-dir DIR]", "prd": "F08", "impl": "py/src/esr/cli/main.py:563 cmd_install"},
+      {"command": "esr cmd show <name> [--compiled-dir DIR]", "prd": "F10 (PRD 06)", "impl": "py/src/esr/cli/main.py:608 cmd_show"},
+      {"command": "esr cmd compile <name> [-o OUT]", "prd": "F10", "impl": "py/src/esr/cli/main.py:646 cmd_compile"},
+      {"command": "esr cmd run <name> [--param k=v ...] [--compiled-dir DIR]", "prd": "F11", "impl": "py/src/esr/cli/main.py:805 cmd_run"},
+      {"command": "esr cmd stop <name> [--param k=v ...]", "prd": "F12", "impl": "py/src/esr/cli/main.py:877 cmd_stop"},
+      {"command": "esr cmd restart <name> [--param k=v ...]", "prd": "F13", "impl": "py/src/esr/cli/main.py:919 cmd_restart"},
+      {"command": "esr drain [--timeout DUR]", "prd": "F21", "impl": "py/src/esr/cli/main.py:983 drain"},
+      {"command": "esr debug replay <msg_id>", "prd": "F18", "impl": "py/src/esr/cli/main.py:1028 debug_replay"},
+      {"command": "esr debug inject --to <actor> --event <json>", "prd": "F18", "impl": "py/src/esr/cli/main.py:1036 debug_inject"},
+      {"command": "esr debug pause <actor_id>", "prd": "F18", "impl": "py/src/esr/cli/main.py:1051 debug_pause"},
+      {"command": "esr debug resume <actor_id>", "prd": "F18", "impl": "py/src/esr/cli/main.py:1059 debug_resume"},
+      {"command": "esr telemetry subscribe <pattern> [--format json|table]", "prd": "F17", "impl": "py/src/esr/cli/main.py:1073 telemetry_subscribe"},
+      {"command": "esr trace [--session X] [--last W] [--filter RE]", "prd": "F16", "impl": "py/src/esr/cli/main.py:1098 trace"},
+      {"command": "esr actors list", "prd": "F15", "impl": "py/src/esr/cli/main.py:1137 actors_list"},
+      {"command": "esr actors tree", "prd": "F15", "impl": "py/src/esr/cli/main.py:1159 actors_tree"},
+      {"command": "esr actors inspect <actor_id>", "prd": "F15", "impl": "py/src/esr/cli/main.py:1177 actors_inspect"},
+      {"command": "esr actors logs <actor_id> [--follow]", "prd": "F15", "impl": "py/src/esr/cli/main.py:1194 actors_logs"},
+      {"command": "esr workspace add <name> --cwd P --start-cmd C [--role R] [--chat ...] [--env ...]", "prd": "v0.2 3.4", "impl": "py/src/esr/cli/main.py:1216 workspace_add"},
+      {"command": "esr workspace list", "prd": "v0.2 3.4", "impl": "py/src/esr/cli/main.py:1270 workspace_list"},
+      {"command": "esr workspace remove <name>", "prd": "v0.2 3.4", "impl": "py/src/esr/cli/main.py:1283 workspace_remove"},
+      {"command": "esr deadletter list", "prd": "F19", "impl": "py/src/esr/cli/main.py:1301 deadletter_list"},
+      {"command": "esr deadletter retry <id>", "prd": "F19", "impl": "py/src/esr/cli/main.py:1315 deadletter_retry"},
+      {"command": "esr deadletter flush", "prd": "F19", "impl": "py/src/esr/cli/main.py:1323 deadletter_flush"},
+      {"command": "esr lint <path>", "prd": "F14", "impl": "py/src/esr/cli/main.py:1333 lint"}
+    ],
+    "runtime_bridge": {
+      "description": "Synchronous Phoenix-channel RPC — each `cli:<op>` call is one-shot: connect + phx_join + push+phx_reply + close. Wraps async ChannelClient so click commands stay sync. URL discovery: `esr.ipc.url.discover_runtime_url(kind='handler')` — honors `ESR_HANDLER_HUB_URL` override and falls back to context-file ws endpoint.",
+      "public_api": [
+        "call_runtime(*, topic, event='cli_call', payload=None, override_url=None, timeout_sec=30.0) -> dict (py/src/esr/cli/runtime_bridge.py:45)",
+        "RuntimeUnreachable (exception; carries endpoint URL) (py/src/esr/cli/runtime_bridge.py:15)"
+      ],
+      "internal": [
+        "_call_runtime_async(topic, event, payload, url, timeout_sec) -> dict (py/src/esr/cli/runtime_bridge.py:21)"
+      ],
+      "error_semantics": {
+        "connect_failure": "Wrapped as RuntimeUnreachable with URL (runtime_bridge.py:35)",
+        "timeout": "TimeoutError from ChannelClient.call rewritten to RuntimeUnreachable (runtime_bridge.py:70)",
+        "oserror": "Rewrapped as RuntimeUnreachable (runtime_bridge.py:74)"
+      },
+      "reply_envelope": "Phoenix phx_reply of form {status: 'ok'|'error', response: {...}}; the CLI's _response() helper in main.py:682 unwraps 'response' and raises RuntimeError when status != 'ok'. Dispatches that nest results under 'data' (e.g. cmd:run returns {'data': {'peer_ids': [...]}}) are peeled by the _submit_* helpers."
+    },
+    "cli_dispatch_topics": [
+      "cli:run/<name> — _submit_cmd_run (main.py:692) → Elixir Registry.activate",
+      "cli:stop/<name> — _submit_cmd_stop (main.py:708) → Registry.deactivate",
+      "cli:trace — _submit_trace (main.py:734) → Telemetry.Buffer",
+      "cli:debug/<action> — _submit_debug (main.py:747) → DebugOps (replay/inject/pause/resume)",
+      "cli:drain — _submit_drain (main.py:755) → shutdown orchestrator",
+      "cli:telemetry/<pattern> — _stream_telemetry (main.py:765) → Telemetry subscription",
+      "cli:actors/<action> — _submit_actors (main.py:787) → ActorRegistry (list/tree/inspect/logs)",
+      "cli:deadletter/<action> — _submit_deadletter (main.py:796) → DeadLetter (list/retry/flush)",
+      "cli:workspace/register — workspace_add (main.py:1256) → live Workspace registry"
+    ],
+    "config_surface": {
+      "endpoint_context_file": "~/.esr/context (YAML: {endpoint: ws://HOST:PORT/adapter_hub/socket})",
+      "env_override": "ESR_CONTEXT (takes precedence over file)",
+      "runtime_url_env": "ESR_HANDLER_HUB_URL (for cli → handler-hub RPC)",
+      "adapters_yaml": "~/.esrd/default/adapters.yaml (written by adapter_add)",
+      "workspaces_yaml": "~/.esrd/default/workspaces.yaml (written by workspace_add)",
+      "compiled_artifacts": "~/.esrd/default/commands/.compiled/<name>.yaml (cmd_run/cmd_restart default lookup) or patterns/.compiled/<name>.yaml (cmd_install/cmd_compile default output)",
+      "feishu_poll_chat_override": "FEISHU_TEST_CHAT_ID (auto-injected as poll_chat_id for feishu adapter)"
+    }
+  },
+  "dependencies": {
+    "external_python": [
+      "click — CLI framework (group/command decorators)",
+      "PyYAML (yaml) — context/artifact/adapters.yaml/workspaces.yaml parsing + emission",
+      "aiohttp — used by ChannelClient and in tests for fake Phoenix WS",
+      "tomllib (stdlib 3.11+) — adapter/handler esr.toml parsing"
+    ],
+    "internal_esr_modules": [
+      "esr.ipc.channel_client.ChannelClient — WebSocket Phoenix channel client",
+      "esr.ipc.url.discover_runtime_url — resolves handler-hub URL",
+      "esr.verify.capability.scan_adapter — capability allow-list linter (adapter install)",
+      "esr.verify.purity.scan_imports — import allow-list linter (handler install, esr lint)",
+      "esr.command.COMMAND_REGISTRY / compile_topology / compile_to_yaml — pattern → YAML",
+      "esr.workspaces.Workspace / read_workspaces / write_workspace / remove_workspace — workspaces.yaml I/O"
+    ],
+    "target_runtime": "Elixir Phoenix (runtime_ex app) via WebSocket on /handler_hub/socket and /adapter_hub/socket"
+  },
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest tests/test_cli_actors.py tests/test_cli_adapter_add.py tests/test_cli_cmd_compile.py tests/test_cli_cmd_install.py tests/test_cli_cmd_restart.py tests/test_cli_cmd_run.py tests/test_cli_cmd_show.py tests/test_cli_cmd_stop.py tests/test_cli_deadletter.py tests/test_cli_debug.py tests/test_cli_drain.py tests/test_cli_error_ux.py tests/test_cli_install.py tests/test_cli_lint.py tests/test_cli_list.py tests/test_cli_offline.py tests/test_cli_scenario.py tests/test_cli_scenario_exec.py tests/test_cli_status.py tests/test_cli_submit_roundtrip.py tests/test_cli_telemetry.py tests/test_cli_trace.py tests/test_cli_use.py tests/test_cli_workspace.py tests/test_cmd_run_output_format.py tests/test_runtime_bridge.py -q",
+    "exit_code": 0,
+    "passed": 90,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_first_1000": "........................................................................ [ 80%]\n..................                                                       [100%]Unclosed client session\nclient_session: <aiohttp.client.ClientSession object at 0x7df4d24b96d0>\nUnclosed client session\nclient_session: <aiohttp.client.ClientSession object at 0x7df4d24b8e10>\n\n90 passed in 5.48s"
+  },
+  "user_flows": [
+    {
+      "flow": "Operator bootstrap",
+      "steps": [
+        "esr use localhost:4001  (writes ~/.esr/context)",
+        "esr status  (probes ws://localhost:4001/adapter_hub/socket/websocket; exit 0 → OK)"
+      ]
+    },
+    {
+      "flow": "Install + instantiate a pattern",
+      "steps": [
+        "esr adapter install adapters/feishu  (capability-scan)",
+        "esr handler install handlers/feishu_app  (import allow-list)",
+        "esr cmd install patterns/feishu-app-session.py  (resolve deps → compile YAML)",
+        "esr adapter add feishu-prod --type feishu --app-id X --app-secret Y  (writes adapters.yaml; auto-runs feishu-app-session via runtime_bridge when adapter type is 'feishu')",
+        "esr cmd run feishu-app-session --param app_id=X  (RPC: cli:run/<name>; prints peers + actor_id lines)"
+      ]
+    },
+    {
+      "flow": "Debugging a live actor",
+      "steps": [
+        "esr actors list  → find actor_id and pid",
+        "esr actors inspect thread:foo  → state + chat_ids",
+        "esr debug pause thread:foo  → queue inbound events",
+        "esr debug inject --to thread:foo --event '{\"event_type\":\"msg_received\",...}'",
+        "esr debug resume thread:foo  → drains queued events",
+        "esr trace --session thread:foo --last 5m  → Telemetry.Buffer ring"
+      ]
+    },
+    {
+      "flow": "Graceful shutdown",
+      "steps": [
+        "esr drain --timeout 30s  → cli:drain RPC; reports drained / timeouts; exit non-zero if any topology timed out"
+      ]
+    },
+    {
+      "flow": "E2E scenario execution",
+      "steps": [
+        "Author scenarios/<name>.yaml with setup/steps/teardown sections",
+        "esr scenario run <name> [--verbose]  → runs each step as shell subprocess, matches expect_stdout_match regex, exit 0 iff every step passes"
+      ]
+    },
+    {
+      "flow": "Offline development (no runtime)",
+      "steps": [
+        "esr cmd compile feishu-app-session -o /tmp/x.yaml  (no network)",
+        "esr lint handlers/feishu_app/src  (purity import scan)",
+        "esr adapter list / handler list / cmd list  (read-only scans)"
+      ]
+    }
+  ],
+  "notes": [
+    "All 90 tests pass in 5.48s against the current repo (exit 0). Two 'Unclosed client session' warnings surface from aiohttp test fixtures — they are benign warnings, not failures.",
+    "The CLI ↔ runtime bridge is strictly one-shot RPC over Phoenix channels (v2 protocol). The runtime_bridge module is only 77 lines: each call creates a ChannelClient, joins the target topic, issues a phx call, and closes. No persistent connection, no long-lived streams — even `telemetry subscribe` (main.py:1073) is currently a single-call snapshot with the noted comment that live streaming is Phase 8d work.",
+    "The _submit_* helper family in main.py (lines 682–802) consistently unwraps Phoenix phx_reply envelopes: first peel `status == 'ok'` + `response`, then peel `data` where the Elixir dispatcher nests handle bodies. Verified by tests/test_cli_submit_roundtrip.py against a real aiohttp WebSocket fake.",
+    "adapter add has a side effect (main.py:371) specifically for type='feishu' with an app_id: it auto-compiles patterns/feishu-app-session.py if no compiled artifact exists and submits cli:run/<name> via runtime_bridge — intended to auto-bind adapter:feishu/feishu-app:<app_id> so inbound bot-message polling reaches a PeerServer without an extra operator step. If esrd is unreachable, it logs a note instead of failing.",
+    "Two naming overlaps to note: `adapters` (plural group, line 276) lists configured instances from adapters.yaml; `adapter` (singular group, line 303) handles add/install/list of adapter types. Both groups are registered — `esr adapter list` and `esr adapters list` report different data.",
+    "Context file and endpoint URL are distinct concerns: `esr use` stores `ws://HOST:PORT/adapter_hub/socket`, while runtime_bridge talks to `/handler_hub/socket` via discover_runtime_url — adapter hub vs handler hub are two separate Phoenix endpoints on esrd.",
+    "Scenario runner (main.py:136) executes each step's `command` via `subprocess.run(shell=True)`, which is an intentional spec-v2.1 choice for E2E scripting. Teardown is always-run best-effort; setup failure short-circuits without running steps; step failures continue to collect failures and still run teardown."
+  ]
+}

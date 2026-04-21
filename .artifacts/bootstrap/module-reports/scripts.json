@@ -1,0 +1,179 @@
+{
+  "module": "scripts",
+  "path": "scripts/",
+  "role": "Dev-loop governance: mock services (mock_feishu / mock_cc / mock_cc_worker / mock_mcp_ctl), per-iteration loopguard (LG-1..LG-11), verify_* static gates, ledger append helper, and the SHA-pinned external verdict final_gate.sh (v2, 13 checks).",
+  "files_total": 51,
+  "files_read": 51,
+  "entry_points": {
+    "loopguard": "scripts/loopguard.sh:1 — runs LG-1..LG-11 per-iteration",
+    "final_gate": "scripts/final_gate.sh:1 — SHA-pinned external verdict; 13 checks; default --mock or --lark mode",
+    "esrd_mgr": "scripts/esrd.sh:1 — start/stop/status per-instance Phoenix daemon",
+    "ledger_append": "scripts/ledger_append.py:1 — enum-dispatched evidence commands + ledger row append",
+    "mock_feishu_http": "scripts/mock_feishu.py:43 — class MockFeishu (aiohttp server)",
+    "mock_cc_stdio": "scripts/mock_cc.py:26 — echoes [esr-cc] sentinel lines",
+    "mock_cc_worker_ws": "scripts/mock_cc_worker.py:39 — Phoenix ChannelChannel client for final_gate L1/L2/L6",
+    "mock_mcp_ctl": "scripts/mock_mcp_ctl.py:20 — one-shot tool_invoke over ChannelChannel WS"
+  },
+  "final_gate_v2_checks_13": [
+    {"idx": "1/13",  "file": "scripts/final_gate.sh:40",  "check": "make test (full Elixir + Python unit tests)"},
+    {"idx": "2/13",  "file": "scripts/final_gate.sh:45",  "check": "verify_prd_matrix.py — every PRD FR row resolves to a real test file"},
+    {"idx": "3/13",  "file": "scripts/final_gate.sh:50",  "check": "loopguard.sh — LG-1..LG-11 incl. SHA pins on final_gate.sh + loopguard-bundle.sha256"},
+    {"idx": "4/13",  "file": "scripts/final_gate.sh:55",  "check": "esr scenario run e2e-esr-channel (mock scenario, full adapter+handler fan-out)"},
+    {"idx": "5/13",  "file": "scripts/final_gate.sh:60",  "check": "verify_ledger_append_only.py — git-history scan (LG-7)"},
+    {"idx": "6/13",  "file": "scripts/final_gate.sh:65",  "check": "verify_prd_acceptance.py --manifest — every required acceptance row ticked (LG-5)"},
+    {"idx": "6b/13", "file": "scripts/final_gate.sh:71",  "check": "grep docs/ralph-loop-ledger.md for <promise>BLOCKED: (no loop-failure promise left)"},
+    {"idx": "7/13",  "file": "scripts/final_gate.sh:252", "check": "L0 — start esrd without manual adapter add; asserts feishu adapter + feishu-app peer auto-restored from adapters.yaml (P7)"},
+    {"idx": "8/13",  "file": "scripts/final_gate.sh:308", "check": "L0 — esr workspace add esr-dev (role=diagnostic) registers the workspace for /new-session"},
+    {"idx": "9/13",  "file": "scripts/final_gate.sh:318", "check": "L1 — post '/new-session esr-dev tag=$tag'; expect bot reply 'session $tag ready' + esrd log 'actor_id=cc:$tag'"},
+    {"idx": "10/13", "file": "scripts/final_gate.sh:357", "check": "L2 — post 'ECHO-PROBE: $nonce'; expect bot reply containing $nonce + esrd log 'tool_invoke _echo args.nonce=\"$nonce\"'"},
+    {"idx": "11/13", "file": "scripts/final_gate.sh:385", "check": "L5 — esr cmd stop feishu-thread-session; expect esrd log 'session_killed published session_id=$tag' + tmux window gone"},
+    {"idx": "12/13", "file": "scripts/final_gate.sh:420", "check": "L6 — parallel @${tag}-a vs @${tag}-b isolation: sub-nonce visible only in a's mock_cc log, never in b's"},
+    {"idx": "13/13", "file": "scripts/final_gate.sh:504", "check": "verdict — print nonce/round-trip timing; optional courtesy message to real Lark chat"}
+  ],
+  "loopguard_lg_checks_11": [
+    {"id": "LG-1",  "file": "scripts/loopguard.sh:26", "impl": "scripts/loopguard_scenario.py", "what": "scenario YAML well-formed + live-signature (rejects banned keys, defanging patterns, weak regex)"},
+    {"id": "LG-2",  "file": "scripts/loopguard.sh:32", "impl": "scripts/verify_entry_bodies.py",  "what": "AST non-empty-body check on manifest of 14 entry fns (adapter_runner.run, handler_worker.run, cli main _submit_*, runtime_bridge.call_runtime) — rejects pass/NotImplementedError/cheap-log-only bodies"},
+    {"id": "LG-3",  "file": "scripts/loopguard.sh:34", "impl": "scripts/verify_prd_acceptance.py --regex-scan", "what": "scans Acceptance section for banned phrases: defer/manual step/post-install/gated by/live hookup/v0.2+/todo/pending"},
+    {"id": "LG-4",  "file": "scripts/loopguard.sh:37", "impl": "sha256sum -c scripts/final_gate.sh.sha256", "what": "final_gate.sh SHA pin — loop is forbidden to modify"},
+    {"id": "LG-5",  "file": "scripts/loopguard.sh:40", "impl": "scripts/verify_prd_acceptance.py --manifest", "what": "acceptance-manifest.yaml match + ticked"},
+    {"id": "LG-6",  "file": "scripts/loopguard.sh:44", "impl": "scripts/loopguard_scenarios_allowlist.py", "what": "scenarios/ dir contains exactly {e2e-feishu-cc.yaml, e2e-esr-channel.yaml}"},
+    {"id": "LG-7",  "file": "scripts/loopguard.sh:47", "impl": "scripts/verify_ledger_append_only.py", "what": "git-log ledger: rows only appended, evidence-type in enum {unit_tests,prd_matrix,loopguard,scenario_mock,final_gate_mock,prd_acceptance,ledger_check}"},
+    {"id": "LG-8",  "file": "scripts/loopguard.sh:50", "impl": "inline bash git-diff", "what": "no new @pytest.mark.skip / xfail / tag :skip since .ralph-loop-baseline"},
+    {"id": "LG-9",  "file": "scripts/loopguard.sh:60", "impl": "scripts/verify_cli_tests_live.py", "what": "new/modified CLI tests since baseline use esrd_fixture/live_esrd fixture"},
+    {"id": "LG-10", "file": "scripts/loopguard.sh:63", "impl": "scripts/verify_cli_tests_live.py --no-monkeypatch", "what": "no _submit_* monkeypatch in tests (AST walks decorators + Call args/kwargs; catches @patch / mocker.patch.object)"},
+    {"id": "LG-11", "file": "scripts/loopguard.sh:66", "impl": "sha256sum -c scripts/loopguard-bundle.sha256", "what": "SHA pin on loopguard core (loopguard.sh + 7 verify scripts + live_signatures.txt + acceptance-manifest.yaml)"}
+  ],
+  "mock_services": {
+    "mock_feishu.py": {
+      "interface": "HTTP (aiohttp)",
+      "port_default": 8101,
+      "routes": [
+        {"path": "POST /open-apis/im/v1/messages", "file": "scripts/mock_feishu.py:86", "what": "bot→chat send; returns Lark-shaped {code:0,data:{message_id:om_mock_...}} and records to _sent_messages"},
+        {"path": "GET  /open-apis/im/v1/messages", "file": "scripts/mock_feishu.py:87", "what": "newest-first chat history listing (ByCreateTimeDesc)"},
+        {"path": "GET  /ws",                        "file": "scripts/mock_feishu.py:88", "what": "WS upgrade; feishu adapter connects here for inbound events"},
+        {"path": "POST /push_inbound",              "file": "scripts/mock_feishu.py:89", "what": "scenario helper — inject P2ImMessageReceiveV1 envelope to every connected WS client"},
+        {"path": "GET  /sent_messages",             "file": "scripts/mock_feishu.py:90", "what": "scenario helper — JSON of recorded outbound messages for grep-style assertions"}
+      ],
+      "scenarios_enabled": "e2e-esr-channel scenario steps; final_gate.sh v2 checks 9/10/12 (L1/L2/L6); feishu adapter conformance tests via adapters/feishu/tests/fixtures/live-capture/*.json"
+    },
+    "mock_cc.py": {
+      "interface": "stdio",
+      "file": "scripts/mock_cc.py:26",
+      "protocol": "prints '[esr-cc] ready' on start; for each stdin line prints '[esr-cc] echo: <line>'",
+      "scenarios_enabled": "cc_tmux adapter sentinel-parsing round-trip; scenarios/e2e-feishu-cc.yaml tmux_proxy init_directive start_cmd (via scripts/e2e-cc.sh)"
+    },
+    "mock_cc_worker.py": {
+      "interface": "Phoenix Channels v2 WebSocket client → ws://127.0.0.1:4001/channel/socket",
+      "file": "scripts/mock_cc_worker.py:34",
+      "behaviour": "joins cli:channel/<session_id>; envelope session_register; retries 'session <sid> ready' tool_invoke until peer ack; handles ECHO-PROBE notifications → tool_invoke _echo with nonce",
+      "scenarios_enabled": "final_gate.sh L1 (ready reply), L2 (_echo round-trip), L6 (parallel session_a vs session_b isolation)"
+    },
+    "mock_mcp_ctl.py": {
+      "interface": "one-shot Phoenix ChannelChannel WS → tool_invoke → tool_result",
+      "file": "scripts/mock_mcp_ctl.py:20",
+      "scenarios_enabled": "scenarios/e2e-esr-channel.yaml — invokes a named tool with a JSON args blob and prints the tool_result envelope"
+    }
+  },
+  "verify_scripts": {
+    "verify_prd_matrix.py": {
+      "file": "scripts/verify_prd_matrix.py",
+      "validates": "docs/superpowers/prds/0[1-7]-*.md unit-test matrix rows — each |FR|test-file|name| row resolves to an existing file (handles ::testname, 'per-handler...' fallback to test_handlers_cross_cutting.py, '—'/'same' placeholders)",
+      "used_by": "final_gate.sh check 2/13"
+    },
+    "verify_prd_acceptance.py": {
+      "file": "scripts/verify_prd_acceptance.py",
+      "validates": "--manifest: every row in acceptance-manifest.yaml appears as '- [x] ...' in the matching PRD's ## Acceptance section (LG-5). --regex-scan: no banned deferral phrases in Acceptance (LG-3).",
+      "used_by": "final_gate.sh check 6/13, loopguard LG-3 + LG-5"
+    },
+    "verify_ledger_append_only.py": {
+      "file": "scripts/verify_ledger_append_only.py",
+      "validates": "git log of docs/ralph-loop-ledger.md — no commit deletes rows, no commit edits a prior row in place, every new row's evidence-type is in APPROVED_EVIDENCE_TYPES enum",
+      "used_by": "final_gate.sh check 5/13, loopguard LG-7"
+    },
+    "verify_cli_tests_live.py": {
+      "file": "scripts/verify_cli_tests_live.py",
+      "validates": "CLI test files added/modified since .ralph-loop-baseline — each test_* function has esrd_fixture/live_esrd arg; with --no-monkeypatch, no _submit_* string literal or attribute appears in decorator or function-body Call args/kwargs",
+      "used_by": "loopguard LG-9 + LG-10"
+    },
+    "verify_entry_bodies.py": {
+      "file": "scripts/verify_entry_bodies.py",
+      "validates": "DEFAULT_MANIFEST of 14 functions has non-stub bodies — rejects empty/pass, NotImplementedError raise, {'error':'not yet wired'} sentinel, all-cheap-stmt bodies (logger.*/print/getLogger/Constant assigns). AST-based.",
+      "used_by": "loopguard LG-2"
+    }
+  },
+  "loopguard_infra_summary": "scripts/loopguard.sh:1 runs 11 checks sequentially; on first failure prints 'loopguard FAIL — <id>' and the BLOCKED promise tag that downstream final_gate.sh 6b/13 searches for in the ledger. Two SHA pins (final_gate.sh.sha256 at LG-4, loopguard-bundle.sha256 at LG-11) ensure the loop cannot silently mutate governance files. scripts/live_signatures.txt declares 6 approved stdout signatures (sig-A BEAM pid, sig-B actor_id, sig-C ack_ms, sig-D Lark message_id, sig-E PeerRegistry state, sig-F dedup hit) that LG-1 requires as literal substrings inside scenario expect_stdout_match regexes — blocks defanging alternations like '|.*'.",
+  "support_scripts": {
+    "spawn_worker.sh": "scripts/spawn_worker.sh — detach one worker process; print pid; used by Esr.WorkerSupervisor",
+    "spawn_scenario_workers.sh": "scripts/spawn_scenario_workers.sh — per-thread cc_tmux adapter + shared feishu adapter + feishu_thread/cc_session/tmux_proxy handler workers; writes /tmp/esr-worker-*.pid",
+    "kill_scenario_workers.sh": "scripts/kill_scenario_workers.sh — SIGTERM all /tmp/esr-worker-*.pid then SIGKILL pgrep survivors",
+    "esrd.sh": "scripts/esrd.sh — start/stop/status of $ESRD_HOME/<instance>/esrd.pid; ESRD_CMD_OVERRIDE for tests; smoke-* instances get aggressive cleanup of /tmp/esr-worker-* and ~/.esrd/default/adapters.yaml",
+    "e2e-cc.sh": "scripts/e2e-cc.sh — tmux session start_cmd; prints '[esr-cc] session=$name' sentinel then execs mock_cc.py",
+    "esr-cc.sh": "scripts/esr-cc.sh — real CC launcher: reads workspaces.yaml, renders .mcp.json with esr-channel MCP server config, execs claude with --resume + --permission-mode bypassPermissions + --settings roles/<role>/settings.json",
+    "esr-cc.local.sh.example": "scripts/esr-cc.local.sh.example — gitignored local override template (proxy vars, ESR_ESRD_URL)",
+    "ledger_append.py": "scripts/ledger_append.py — enum-dispatched evidence (7 types); runs mapped cmd, takes sha256 prefix of stdout, appends new |iter|date|phase|FR|commit|type|sha| row"
+  },
+  "fixtures_and_data": {
+    "scripts/final_gate.sh.sha256": "pin: cfee3f10... for final_gate.sh (LG-4)",
+    "scripts/loopguard-bundle.sha256": "pins: loopguard.sh + loopguard_scenario.py + loopguard_scenarios_allowlist.py + verify_entry_bodies.py + verify_prd_acceptance.py + verify_cli_tests_live.py + verify_ledger_append_only.py + ledger_append.py + live_signatures.txt + acceptance-manifest.yaml (LG-11)",
+    "scripts/live_signatures.txt": "6 approved regex signatures (sig-A..sig-F) for LG-1 substring match",
+    "scripts/tests/fixtures/signatures.txt": "3 test signatures for loopguard_scenario tests",
+    "scripts/tests/fixtures/manifest.yaml": "2-row acceptance-manifest test fixture",
+    "scripts/tests/fixtures/scenarios/good.yaml": "valid scenario — sig-B substring inside regex",
+    "scripts/tests/fixtures/scenarios/bad_covered_by.yaml": "trips banned-key detector (covered_by)",
+    "scripts/tests/fixtures/scenarios/bad_signature.yaml": "weak regex '^ok$' — no signature substring",
+    "scripts/tests/fixtures/prds/good/01-actor-runtime.md": "valid PRD with both required rows ticked",
+    "scripts/tests/fixtures/prds/bad_deletion/01-actor-runtime.md": "PRD missing a required row",
+    "scripts/tests/fixtures/prds/bad_deferred/01-actor-runtime.md": "PRD with 'deferred' phrase — trips LG-3",
+    "scripts/tests/fixtures/entry_bodies/real_run.py": "TaskGroup body — passes LG-2",
+    "scripts/tests/fixtures/entry_bodies/stub_run.py": "pass body + {'error':'not yet wired'} dict — fails LG-2",
+    "scripts/tests/fixtures/entry_bodies/cheap_log.py": "3-logger-stmt body — fails LG-2 (reviewer C-P2)",
+    "scripts/tests/fixtures/cli_tests/good.py": "uses esrd_fixture; no monkeypatch — passes LG-9/10",
+    "scripts/tests/fixtures/cli_tests/bad_no_fixture.py": "no esrd_fixture — fails LG-9",
+    "scripts/tests/fixtures/cli_tests/bad_monkeypatch.py": "monkeypatch.setattr('_submit_*') — fails LG-10",
+    "scripts/tests/fixtures/cli_tests/bad_decorator_patch.py": "@patch('_submit_cmd_run') — fails LG-10 (C-P3)",
+    "scripts/tests/fixtures/cli_tests/bad_patch_object.py": "mocker.patch.object(_, '_submit_cmd_run') — fails LG-10 (C-P3)"
+  },
+  "test_results": {
+    "pytest": {
+      "command": "uv run --project py pytest scripts/tests/ -q",
+      "exit_code": 1,
+      "passed": 32,
+      "failed": 1,
+      "total": 33,
+      "duration_s": 5.55,
+      "failures": [
+        {
+          "test": "scripts/tests/test_loopguard_scenarios_allowlist.py::test_exactly_one_allowed_file_passes",
+          "reason": "Fixture writes only e2e-feishu-cc.yaml; loopguard_scenarios_allowlist.py ALLOWED now requires both {e2e-feishu-cc.yaml, e2e-esr-channel.yaml}. Test is stale w.r.t. v0.2-channel allowlist expansion at scripts/loopguard_scenarios_allowlist.py:8.",
+          "file": "scripts/tests/test_loopguard_scenarios_allowlist.py:20",
+          "classification": "test-outdated (production code updated for v0.2, test fixture not updated)"
+        }
+      ]
+    },
+    "bash_esrd_sh": {
+      "command": "bash scripts/tests/test_esrd_sh.sh",
+      "exit_code": 0,
+      "passed": 6,
+      "failed": 0,
+      "cases": [
+        "pid file created",
+        "process is running",
+        "status reports running",
+        "still exactly one process (idempotent start)",
+        "pid file removed (stop)",
+        "status reports stopped"
+      ]
+    }
+  },
+  "known_gaps": [
+    "test_loopguard_scenarios_allowlist.py::test_exactly_one_allowed_file_passes asserts single-file allowlist but scripts/loopguard_scenarios_allowlist.py:8 now requires both v0.1 and v0.2-channel scenarios — fixture needs to write both YAMLs.",
+    "verify_cli_tests_live.py._tests_added_since_baseline (scripts/verify_cli_tests_live.py:57) only matches py/tests/test_cli_cmd_*.py glob — tests in py/tests/test_cli_*.py outside that glob are not checked.",
+    "mock_feishu push_inbound does not yet populate parent_id (scripts/tests/test_mock_feishu_conformance.py:115-124 flags this as v0.2 gap)."
+  ],
+  "cross_module_refs": [
+    "scripts/loopguard-bundle.sha256 pins docs/superpowers/prds/acceptance-manifest.yaml — any PRD update invalidates LG-11",
+    "scripts/verify_entry_bodies.py DEFAULT_MANIFEST references py/src/esr/ipc/{adapter_runner,handler_worker}.py + py/src/esr/cli/{main,runtime_bridge}.py",
+    "scripts/final_gate.sh invokes runtime test + esr scenario run + uv run esr commands → runtime/ + py/ + scenarios/",
+    "scripts/spawn_scenario_workers.sh boots py modules esr.ipc.adapter_runner and esr.ipc.handler_worker against ws://127.0.0.1:4001 hubs served by runtime/"
+  ]
+}

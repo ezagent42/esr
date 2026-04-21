@@ -1,0 +1,70 @@
+{
+  "module": "py-verify",
+  "path": "py/src/esr/verify",
+  "role": "CI-time static verification of handler purity and adapter capability declarations; replaces a runtime sandbox with compile-time discipline.",
+  "files_read": [
+    "py/src/esr/verify/__init__.py",
+    "py/src/esr/verify/capability.py",
+    "py/src/esr/verify/purity.py",
+    "py/tests/test_capability.py",
+    "py/tests/test_handlers_cross_cutting.py",
+    "py/tests/test_purity_frozen.py",
+    "py/tests/test_purity_imports.py"
+  ],
+  "public_api": [
+    {"symbol": "Violation", "file": "py/src/esr/verify/purity.py", "lines": "38-44", "desc": "Frozen dataclass (module, lineno, message) surfaced by all scans."},
+    {"symbol": "scan_imports", "file": "py/src/esr/verify/purity.py", "lines": "47-99", "desc": "F16 handler import allow-list scan; accepts extra_allowed set."},
+    {"symbol": "frozen_state_fixture", "file": "py/src/esr/verify/purity.py", "lines": "116-136", "desc": "F17 pytest fixture; refuses non-frozen pydantic models."},
+    {"symbol": "scan_adapter", "file": "py/src/esr/verify/capability.py", "lines": "53-99", "desc": "F18 adapter capability scan; declared allowed_io widens core allow-list."}
+  ],
+  "purity_rules": {
+    "handler_core_allowed": ["esr", "typing", "dataclasses", "pydantic", "enum", "__future__"],
+    "source": "py/src/esr/verify/purity.py:26-35",
+    "widening_mechanism": "extra_allowed set (typically esr.toml allowed_imports) unioned at purity.py:55",
+    "type_checking_escape": "if TYPE_CHECKING: / if typing.TYPE_CHECKING: subtree skipped entirely (purity.py:62-66, 102-108)",
+    "function_body_imports_flagged": "Runtime imports inside a def body still violate (test_purity_imports.py:119-131)",
+    "submodule_matching": "Top-level root matched via split('.',1)[0]; submodules of allowed roots pass, submodules of disallowed roots fail (purity.py:69, 86)",
+    "state_is_frozen_pydantic_model": "frozen_state_fixture checks model_config['frozen']==True or attribute; raises TypeError if absent (purity.py:125-135)"
+  },
+  "adapter_capability_rules": {
+    "author_declaration": "Adapter author writes @esr.adapter(allowed_io={'lark_oapi': '*', ...}); scan_adapter receives that dict.",
+    "core_always_allowed": ["esr", "__future__", "abc", "asyncio", "collections", "contextlib", "dataclasses", "datetime", "enum", "functools", "inspect", "io", "itertools", "json", "logging", "os", "pathlib", "re", "string", "sys", "time", "typing", "uuid", "warnings"],
+    "source": "py/src/esr/verify/capability.py:22-50",
+    "version_pins_ignored_at_ci": "Values of allowed_io dict (e.g. '*' or pin strings) checked only for membership (capability.py:57-61)",
+    "both_import_and_importfrom_checked": "capability.py:67-98"
+  },
+  "cross_cutting_handler_invariants": {
+    "file": "py/tests/test_handlers_cross_cutting.py",
+    "handlers_covered": ["feishu_app", "feishu_thread", "tmux_proxy", "cc_session"],
+    "rules": [
+      {"prd": "F03 frozen state", "test": "test_state_mutation_raises_validation_error", "lines": "38-45", "enforces": "setattr on any field of default-constructed state raises pydantic ValidationError"},
+      {"prd": "F04 purity #1 on_msg", "test": "test_handler_module_import_scan_clean", "lines": "52-65", "enforces": "handlers/<name>/src/esr_handler_<name>/on_msg.py passes scan_imports with extra_allowed={own package}"},
+      {"prd": "F04 purity #1 state", "test": "test_handler_state_module_import_scan_clean", "lines": "68-80", "enforces": "state.py passes scan_imports with NO extra_allowed (core list only)"},
+      {"prd": "F05 purity #2 returned state", "test": "test_handler_returns_state_that_still_rejects_mutation", "lines": "86-105", "enforces": "on_msg(state, probe-Event) returns (new_state, _) where new_state still raises ValidationError on setattr — confirms model_copy preserves frozen contract"}
+    ]
+  },
+  "tests": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest tests/test_capability.py tests/test_handlers_cross_cutting.py tests/test_purity_frozen.py tests/test_purity_imports.py -q",
+    "result": "32 passed in 0.56s",
+    "passed": 32,
+    "failed": 0,
+    "breakdown": {
+      "test_capability.py": 4,
+      "test_handlers_cross_cutting.py": 16,
+      "test_purity_frozen.py": 4,
+      "test_purity_imports.py": 8
+    }
+  },
+  "prd_trace": {
+    "F16": "scan_imports — purity.py:47",
+    "F17": "frozen_state_fixture — purity.py:116",
+    "F18": "scan_adapter — capability.py:53",
+    "PRD05_F03_F04_F05": "test_handlers_cross_cutting.py parametrises over 4 handlers"
+  },
+  "design_observations": [
+    "Two-tier allow-list: tighter for handlers (6 roots) than adapters (24 roots) — handlers are pure, adapters are I/O boundaries.",
+    "TYPE_CHECKING subtree skipped (purity.py:62-66) — reviewer S6 escape hatch for forward refs.",
+    "Single parametrised file replaces 8 per-handler duplicates (test_handlers_cross_cutting.py:1-8 docstring).",
+    "frozen_state_fixture guards against silent mis-config: a non-frozen model would accept mutation and defeat purity (purity.py:131-135)."
+  ]
+}
