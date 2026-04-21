@@ -400,6 +400,111 @@ defmodule Esr.Routing.SessionRouterTest do
     end
   end
 
+  # ------------------------------------------------------------------
+  # Orphan /tmp/esrd-*/ adoption on boot (Task 22, spec §9.2)
+  # ------------------------------------------------------------------
+
+  describe "orphan /tmp/esrd-*/ scan on init" do
+    test "adopts live-pid dir + cleans dead-pid dir", %{runtime: runtime} do
+      # Sandbox the scan dir so we don't touch real /tmp/esrd-*/ entries
+      # — init/1 accepts :orphan_scan_dir for testability. Production
+      # defaults to "/tmp".
+      scan_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "esrd_orphan_scan_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(scan_dir)
+
+      live_branch = "livebranch#{System.unique_integer([:positive])}"
+      dead_branch = "deadbranch#{System.unique_integer([:positive])}"
+
+      live_dir = Path.join(scan_dir, "esrd-#{live_branch}")
+      dead_dir = Path.join(scan_dir, "esrd-#{dead_branch}")
+
+      File.mkdir_p!(Path.join(live_dir, "default"))
+      File.mkdir_p!(Path.join(dead_dir, "default"))
+
+      # --- Live pid: spawn a long-running `sleep` and record its OS pid.
+      # Port spawn is async, but System.cmd is sync — we need an out-of-
+      # process detached sleep. Use :os.cmd with `&` + `echo $!` to
+      # capture the pid.
+      live_pid =
+        :os.cmd(~c"sleep 60 >/dev/null 2>&1 & echo $!")
+        |> to_string()
+        |> String.trim()
+        |> String.to_integer()
+
+      File.write!(Path.join(live_dir, "default/esrd.pid"), Integer.to_string(live_pid))
+      File.write!(Path.join(live_dir, "default/esrd.port"), "54999")
+
+      # --- Dead pid: write a pid that is almost certainly NOT alive
+      # (2^22 ceiling exceeds macOS/Linux default pid_max). `kill -0`
+      # on a non-existent pid returns non-zero — that's the "dead" signal.
+      File.write!(Path.join(dead_dir, "default/esrd.pid"), "4194303")
+      File.write!(Path.join(dead_dir, "default/esrd.port"), "54998")
+
+      # Ensure the sleep is cleaned up regardless of test outcome.
+      on_exit(fn ->
+        _ = System.cmd("kill", ["-KILL", Integer.to_string(live_pid)], stderr_to_stdout: true)
+        File.rm_rf!(scan_dir)
+      end)
+
+      # Seed branches.yaml with the dead branch so we can prove it's
+      # pruned. Live branch is intentionally absent so we prove adoption.
+      File.write!(Path.join(runtime, "branches.yaml"), """
+      branches:
+        #{dead_branch}:
+          port: 54998
+          status: running
+      """)
+
+      {:ok, pid} = SessionRouter.start_link(orphan_scan_dir: scan_dir)
+
+      # Live dir must survive on disk; dead dir must be gone.
+      assert File.dir?(live_dir)
+      refute File.exists?(dead_dir)
+
+      # In-memory state must reflect the on-disk branches.yaml after the
+      # scan: live branch adopted, dead branch dropped.
+      state = :sys.get_state(pid)
+      assert Map.has_key?(state.branches["branches"] || %{}, live_branch)
+      refute Map.has_key?(state.branches["branches"] || %{}, dead_branch)
+
+      # And the on-disk branches.yaml must match (so other components
+      # reading the file directly see the same picture).
+      {:ok, yaml} = YamlElixir.read_from_file(Path.join(runtime, "branches.yaml"))
+      assert Map.has_key?(yaml["branches"] || %{}, live_branch)
+      refute Map.has_key?(yaml["branches"] || %{}, dead_branch)
+
+      # Adopted entry picks up the port from esrd.port.
+      assert yaml["branches"][live_branch]["port"] == 54999
+    end
+
+    test "skips dirs without default/esrd.pid (not-ours signal)" do
+      # A directory matching `esrd-*` but without the pidfile must be
+      # left alone — it's a third-party dir, not ESR-created.
+      scan_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "esrd_orphan_scan_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(scan_dir)
+      thirdparty = Path.join(scan_dir, "esrd-thirdparty-thing")
+      File.mkdir_p!(thirdparty)
+      File.write!(Path.join(thirdparty, "somefile"), "keep me")
+
+      on_exit(fn -> File.rm_rf!(scan_dir) end)
+
+      {:ok, _pid} = SessionRouter.start_link(orphan_scan_dir: scan_dir)
+
+      assert File.dir?(thirdparty)
+      assert File.exists?(Path.join(thirdparty, "somefile"))
+    end
+  end
+
   # Polls a predicate at 50ms granularity until it returns truthy or
   # the budget runs out. Returns true iff the predicate eventually
   # becomes truthy. Mirrors the helper in Capabilities.WatcherTest.

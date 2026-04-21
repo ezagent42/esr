@@ -81,14 +81,21 @@ defmodule Esr.Routing.SessionRouter do
     do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     runtime = Esr.Paths.runtime_home()
+    scan_dir = Keyword.get(opts, :orphan_scan_dir, "/tmp")
 
     # Ensure the dir exists before we subscribe FileSystem to it —
     # fs_watch backends (FSEvents on macOS, inotify on Linux) need a
     # real directory to arm on. Missing = make it; Task 18 expects the
     # Router to self-heal.
     File.mkdir_p!(runtime)
+
+    # Orphan /tmp/esrd-*/ reconciliation (spec §9.2, Task 22): must run
+    # BEFORE fs_watch so branches.yaml mutations from the scan don't
+    # fire spurious :file_event reloads on our still-empty in-memory
+    # state.
+    scan_orphan_esrd_dirs(scan_dir, runtime)
 
     state = %__MODULE__{
       routing: load_yaml(Path.join(runtime, "routing.yaml")),
@@ -336,4 +343,136 @@ defmodule Esr.Routing.SessionRouter do
 
   defp generate_id,
     do: :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
+
+  # ------------------------------------------------------------------
+  # Orphan /tmp/esrd-*/ scan (spec §9.2, Task 22)
+  # ------------------------------------------------------------------
+  #
+  # For each dir matching `<scan_dir>/esrd-*/` that contains a
+  # `default/esrd.pid` file (our "this is ours" marker — third-party
+  # directories without the pidfile are skipped):
+  #
+  #   * pid alive  → ensure entry present in branches.yaml (adopt)
+  #   * pid dead   → `File.rm_rf!` the dir + drop from branches.yaml
+  #   * port file present → use that as `port` when adopting
+  #
+  # Runs synchronously in `init/1` before fs_watch starts so the
+  # branches.yaml writes this performs don't trigger self-fired
+  # :file_event callbacks on an empty in-memory state.
+  defp scan_orphan_esrd_dirs(scan_dir, runtime) do
+    branches_path = Path.join(runtime, "branches.yaml")
+
+    candidates =
+      case File.ls(scan_dir) do
+        {:ok, entries} ->
+          for name <- entries,
+              String.starts_with?(name, "esrd-"),
+              dir = Path.join(scan_dir, name),
+              File.dir?(dir),
+              pidfile = Path.join([dir, "default", "esrd.pid"]),
+              File.regular?(pidfile),
+              do: {name, dir, pidfile}
+
+        _ ->
+          []
+      end
+
+    Enum.each(candidates, fn {name, dir, pidfile} ->
+      branch = String.replace_prefix(name, "esrd-", "")
+
+      case read_pid(pidfile) do
+        {:ok, pid} ->
+          if pid_alive?(pid) do
+            adopt_branch(branches_path, branch, dir)
+          else
+            drop_branch(branches_path, branch, dir)
+          end
+
+        :error ->
+          # Malformed pidfile = treat as dead.
+          drop_branch(branches_path, branch, dir)
+      end
+    end)
+
+    :ok
+  end
+
+  defp read_pid(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        case contents |> String.trim() |> Integer.parse() do
+          {pid, _} when pid > 0 -> {:ok, pid}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  # POSIX `kill -0 <pid>` returns 0 iff the pid is alive and the caller
+  # has permission to signal it. Matches the pattern used in
+  # Esr.WorkerSupervisor.
+  defp pid_alive?(pid) when is_integer(pid) do
+    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_, 0} -> true
+      _ -> false
+    end
+  end
+
+  # Adopt: ensure branches.yaml has an entry for this branch. No-op if
+  # already present (we don't clobber operator-maintained fields).
+  defp adopt_branch(branches_path, branch, esrd_home_dir) do
+    current = load_branches_map(branches_path)
+    branches = Map.get(current, "branches") || %{}
+
+    if Map.has_key?(branches, branch) do
+      :ok
+    else
+      port = read_port(Path.join([esrd_home_dir, "default", "esrd.port"]))
+
+      entry = %{
+        "esrd_home" => esrd_home_dir,
+        "port" => port,
+        "status" => "running",
+        "kind" => "ephemeral",
+        "adopted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+
+      updated = Map.put(current, "branches", Map.put(branches, branch, entry))
+      _ = Esr.Yaml.Writer.write(branches_path, updated)
+      :ok
+    end
+  end
+
+  # Prune: rm_rf the dir and drop branches.<branch> from branches.yaml.
+  defp drop_branch(branches_path, branch, dir) do
+    _ = File.rm_rf!(dir)
+
+    current = load_branches_map(branches_path)
+    branches = Map.get(current, "branches") || %{}
+
+    if Map.has_key?(branches, branch) do
+      updated = Map.put(current, "branches", Map.delete(branches, branch))
+      _ = Esr.Yaml.Writer.write(branches_path, updated)
+    end
+
+    :ok
+  end
+
+  defp load_branches_map(path) do
+    case YamlElixir.read_from_file(path) do
+      {:ok, %{} = m} -> m
+      _ -> %{"branches" => %{}}
+    end
+  end
+
+  defp read_port(path) do
+    with {:ok, contents} <- File.read(path),
+         {port, _} <- contents |> String.trim() |> Integer.parse() do
+      port
+    else
+      _ -> nil
+    end
+  end
 end
