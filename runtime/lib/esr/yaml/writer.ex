@@ -42,6 +42,12 @@ defmodule Esr.Yaml.Writer do
       key = encode_scalar(k)
 
       case v do
+        v when is_map(v) and map_size(v) == 0 ->
+          "#{pad(indent)}#{key}: {}"
+
+        [] ->
+          "#{pad(indent)}#{key}: []"
+
         v when is_map(v) or is_list(v) ->
           "#{pad(indent)}#{key}:\n#{emit(v, indent + 2)}"
 
@@ -50,6 +56,8 @@ defmodule Esr.Yaml.Writer do
       end
     end)
   end
+
+  defp emit([], _indent), do: "[]"
 
   defp emit(l, indent) when is_list(l) do
     Enum.map_join(l, "\n", fn item ->

@@ -77,6 +77,7 @@ defmodule Esr.Admin.Dispatcher do
   # {:error, %{type: "unknown_kind"}} so unsupported kinds fail fast.
   @command_modules %{
     "notify" => Esr.Admin.Commands.Notify,
+    "reload" => Esr.Admin.Commands.Reload,
     "register_adapter" => Esr.Admin.Commands.RegisterAdapter,
     "session_new" => Esr.Admin.Commands.Session.New,
     "session_switch" => Esr.Admin.Commands.Session.Switch,
