@@ -27,8 +27,7 @@ defmodule Esr.Capabilities.Supervisor do
   end
 
   defp default_path do
-    esrd_home = System.get_env("ESRD_HOME") || Path.expand("~/.esrd")
-    Path.join([esrd_home, "default", "capabilities.yaml"])
+    Esr.Paths.capabilities_yaml()
   end
 
   # First-run bootstrap (capabilities spec §9.1): if the capabilities

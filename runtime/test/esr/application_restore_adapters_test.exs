@@ -1,6 +1,14 @@
 defmodule Esr.ApplicationRestoreAdaptersTest do
   use ExUnit.Case, async: false
 
+  setup do
+    prev = System.get_env("ESRD_HOME")
+    on_exit(fn ->
+      if prev, do: System.put_env("ESRD_HOME", prev), else: System.delete_env("ESRD_HOME")
+    end)
+    :ok
+  end
+
   test "adapters.yaml restoration calls spawn_fn per instance" do
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "esr-adapt-test-#{unique}")
@@ -20,6 +28,8 @@ defmodule Esr.ApplicationRestoreAdaptersTest do
 
     parent = self()
 
+    System.put_env("ESRD_HOME", tmp)
+
     :ok =
       Esr.Application.restore_adapters_from_disk(tmp,
         spawn_fn: fn instance, type, config ->
@@ -38,6 +48,8 @@ defmodule Esr.ApplicationRestoreAdaptersTest do
     File.mkdir_p!(tmp)
 
     parent = self()
+
+    System.put_env("ESRD_HOME", tmp)
 
     assert :ok =
              Esr.Application.restore_adapters_from_disk(tmp,
@@ -69,6 +81,8 @@ defmodule Esr.ApplicationRestoreAdaptersTest do
     """)
 
     parent = self()
+
+    System.put_env("ESRD_HOME", tmp)
 
     :ok =
       Esr.Application.restore_adapters_from_disk(tmp,

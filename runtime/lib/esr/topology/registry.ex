@@ -130,7 +130,7 @@ defmodule Esr.Topology.Registry do
   end
 
   defp load_artifacts_from_dir do
-    dir = Path.join([System.user_home!(), ".esrd", "default", "commands", ".compiled"])
+    dir = Esr.Paths.commands_compiled_dir()
 
     if File.dir?(dir) do
       dir

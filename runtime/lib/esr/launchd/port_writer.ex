@@ -7,17 +7,11 @@ defmodule Esr.Launchd.PortWriter do
 
   @impl true
   def init(opts) do
-    # NOTE: `Esr.Paths` does not exist yet (lands in Task 6 of DI-1). Until
-    # then, fall back to direct env reads. When `Esr.Paths` lands, defaults
-    # migrate to `Esr.Paths.esrd_home()` / `Esr.Paths.current_instance()`.
-    esrd_home =
-      Keyword.get(opts, :esrd_home) ||
-        System.get_env("ESRD_HOME") ||
-        Path.expand("~/.esrd")
-
-    instance =
-      Keyword.get(opts, :instance) ||
-        System.get_env("ESR_INSTANCE", "default")
+    # Defaults route through Esr.Paths so ESRD_HOME / ESR_INSTANCE are
+    # honoured identically across the Elixir runtime and the Python CLI.
+    # Explicit keyword opts still win — tests rely on that.
+    esrd_home = Keyword.get(opts, :esrd_home) || Esr.Paths.esrd_home()
+    instance = Keyword.get(opts, :instance) || Esr.Paths.current_instance()
 
     port = Keyword.get(opts, :port) || resolve_bound_port()
 
