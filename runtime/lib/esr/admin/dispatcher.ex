@@ -94,7 +94,35 @@ defmodule Esr.Admin.Dispatcher do
     do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
-  def init(_opts), do: {:ok, %{pending: %{}}}
+  def init(_opts), do: {:ok, %{pending: %{}, pending_cleanups: %{}}}
+
+  @doc """
+  Register the current process as the Task awaiting a `:cleanup_signal`
+  for `session_id`. Called by `Esr.Admin.Commands.Session.End` on its
+  non-force branch (DI-11 Task 25) before it blocks on `receive`.
+
+  Dispatcher stores `session_id → task_pid` in `state.pending_cleanups`
+  so an inbound `{:cleanup_signal, session_id, status, details}` message
+  (delivered by the `session.signal_cleanup` MCP tool — Task 24) can
+  be forwarded to the right Task. Entries are removed on delivery; the
+  caller's 30-s `receive ... after` backs this up if a signal never
+  arrives.
+  """
+  @spec register_cleanup(String.t(), pid()) :: :ok
+  def register_cleanup(session_id, task_pid)
+      when is_binary(session_id) and is_pid(task_pid) do
+    GenServer.cast(__MODULE__, {:register_cleanup, session_id, task_pid})
+  end
+
+  @doc """
+  Deregister a pending cleanup — used by `Session.End` on timeout or
+  after the signal has been consumed, so the Dispatcher doesn't keep
+  a stale `session_id → pid` mapping around.
+  """
+  @spec deregister_cleanup(String.t()) :: :ok
+  def deregister_cleanup(session_id) when is_binary(session_id) do
+    GenServer.cast(__MODULE__, {:deregister_cleanup, session_id})
+  end
 
   # ------------------------------------------------------------------
   # Cast — enqueue a command
@@ -164,6 +192,22 @@ defmodule Esr.Admin.Dispatcher do
     end
   end
 
+  # DI-11 Task 25: track the Task pid that is currently waiting on a
+  # `:cleanup_signal` for a given `session_id` (convention:
+  # `"<submitter>-<branch>"`, same as `cc_session_id` in `routing.yaml`).
+  # The mapping is overwritten on duplicate registrations — if a second
+  # `/end-session` comes in for the same branch while the first is still
+  # blocked, only the latest Task is addressable; the older one will
+  # fall through to its 30-s `after` clause. This mirrors the realistic
+  # UX (only one interactive prompt per branch at a time).
+  def handle_cast({:register_cleanup, session_id, task_pid}, state) do
+    {:noreply, put_in(state.pending_cleanups[session_id], task_pid)}
+  end
+
+  def handle_cast({:deregister_cleanup, session_id}, state) do
+    {:noreply, %{state | pending_cleanups: Map.delete(state.pending_cleanups, session_id)}}
+  end
+
   # ------------------------------------------------------------------
   # Info — Task result
   # ------------------------------------------------------------------
@@ -186,6 +230,36 @@ defmodule Esr.Admin.Dispatcher do
         emit_telemetry(result, command, start_time)
 
         {:noreply, %{state | pending: rest}}
+    end
+  end
+
+  # DI-11 Task 25: route the cleanup signal emitted by the
+  # `session.signal_cleanup` MCP tool (Task 24) back to the Task that
+  # is blocking inside `Session.End.execute/2`. Drops the session_id
+  # entry after delivery — a second signal with no pending waiter
+  # falls through to the catch-all below.
+  def handle_info({:cleanup_signal, session_id, status, details}, state)
+      when is_binary(session_id) and is_binary(status) do
+    case Map.pop(state.pending_cleanups, session_id) do
+      {nil, _} ->
+        Logger.warning(
+          "admin.dispatcher: :cleanup_signal for session_id=#{session_id} " <>
+            "status=#{status} with no pending waiter (race or stray signal)"
+        )
+
+        {:noreply, state}
+
+      {task_pid, rest} when is_pid(task_pid) ->
+        if Process.alive?(task_pid) do
+          send(task_pid, {:cleanup_signal, status, details})
+        else
+          Logger.warning(
+            "admin.dispatcher: :cleanup_signal for session_id=#{session_id} " <>
+              "found dead waiter pid — dropping"
+          )
+        end
+
+        {:noreply, %{state | pending_cleanups: rest}}
     end
   end
 

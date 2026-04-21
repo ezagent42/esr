@@ -83,7 +83,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {args} ->
@@ -142,7 +142,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
@@ -187,7 +187,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
@@ -230,7 +230,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
@@ -268,7 +268,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
     test "missing branches.yaml entirely → no_such_branch" do
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {_args} -> flunk("spawn should not be called") end
@@ -290,7 +290,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo"}
+        "args" => %{"branch" => "feature-foo", "force" => true}
       }
 
       stub = fn {_args} ->
