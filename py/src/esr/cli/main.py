@@ -18,6 +18,7 @@ from esr.cli import paths
 from esr.cli.adapter.feishu import feishu as feishu_group
 from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
+from esr.cli.reload import reload as reload_cmd
 from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
@@ -87,6 +88,11 @@ cli.add_command(cap_group)
 # admin wrappers (`reload`, `notify`, `grant`, `revoke`) compose on top
 # of this single queue-writer entry point.
 cli.add_command(admin_group)
+
+# Phase DI-12: `esr reload` — thin wrapper over `esr admin submit reload`
+# with `--acknowledge-breaking` / `--dry-run` ergonomics for operators
+# completing a merge into dev / prod.
+cli.add_command(reload_cmd)
 
 
 @cli.command("use")
