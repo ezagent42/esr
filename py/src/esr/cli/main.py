@@ -18,6 +18,7 @@ from esr.cli import paths
 from esr.cli.adapter.feishu import feishu as feishu_group
 from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
+from esr.cli.notify import notify as notify_cmd
 from esr.cli.reload import reload as reload_cmd
 from esr.ipc.channel_client import ChannelClient
 
@@ -93,6 +94,11 @@ cli.add_command(admin_group)
 # with `--acknowledge-breaking` / `--dry-run` ergonomics for operators
 # completing a merge into dev / prod.
 cli.add_command(reload_cmd)
+
+# Phase DI-13: `esr notify` — thin wrapper over `esr admin submit notify`
+# invoked by the post-merge git hook to DM the operator about breaking
+# commits before the next reload (spec §7.7, §8.2).
+cli.add_command(notify_cmd)
 
 
 @cli.command("use")
