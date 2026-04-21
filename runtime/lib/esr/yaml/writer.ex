@@ -14,7 +14,7 @@ defmodule Esr.Yaml.Writer do
       `on`/`off`) → quoted
     * contains `:`, `#`, `"`, `\\n`, or `'` → quoted + double-quotes escaped
     * starts with YAML special (`-`, `*`, `&`, `!`, `%`, `@`, `` ` ``,
-      `|`, `>`) → quoted
+      `|`, `>`, `[`, `{`, `?`) → quoted
   """
 
   @spec write(Path.t(), term()) :: :ok | {:error, term()}
@@ -89,7 +89,10 @@ defmodule Esr.Yaml.Writer do
         "\"#{String.replace(s, "\"", "\\\"")}\""
 
       # Quote strings that start with a YAML-significant char
-      String.starts_with?(s, ["-", "*", "&", "!", "%", "@", "`", "|", ">"]) ->
+      # ([ and { open flow collections; leading ? is a mapping-key indicator)
+      String.starts_with?(s, [
+        "-", "*", "&", "!", "%", "@", "`", "|", ">", "[", "{", "?"
+      ]) ->
         "\"#{s}\""
 
       true ->

@@ -37,10 +37,26 @@ defmodule Esr.Admin.Dispatcher do
        file for file-reply targets (`send/2` for pid-reply targets),
        and emit the `:command_executed` / `:command_failed` telemetry.
 
-  Secret redaction and richer telemetry metadata land in Task 14b
-  (DI-7b) — this module intentionally emits the minimal telemetry
-  shape that 14b will extend in-place.
+  Secret redaction (Task 14b / DI-7b): before the completed or failed
+  queue file is written to disk, `args.app_secret`, `args.secret` and
+  `args.token` are overwritten with the string `"[redacted_post_exec]"`
+  so secrets supplied in the submitted command don't leak onto the
+  filesystem after execution. Telemetry (`:command_executed` /
+  `:command_failed`) carries `kind`, `submitted_by`, and `duration_ms`
+  per spec §10.
   """
+
+  # Sentinel value written in place of any secret-ish arg key on the
+  # completed/failed queue file. Listed once so tests and callers can
+  # import a single canonical value.
+  @redacted_post_exec "[redacted_post_exec]"
+  @secret_arg_keys ["app_secret", "secret", "token"]
+
+  @doc "Sentinel string written in place of secret-ish args post-exec."
+  def redacted_post_exec, do: @redacted_post_exec
+
+  @doc "Arg keys whose values are redacted when the queue file is written out."
+  def secret_arg_keys, do: @secret_arg_keys
   use GenServer
   require Logger
 
@@ -280,6 +296,7 @@ defmodule Esr.Admin.Dispatcher do
         "result" => result_to_map(result),
         "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       })
+      |> redact_secrets()
 
     case Esr.Yaml.Writer.write(dest, doc) do
       :ok ->
@@ -312,6 +329,27 @@ defmodule Esr.Admin.Dispatcher do
   defp stringify_keys(map) when is_map(map) do
     for {k, v} <- map, into: %{} do
       {to_string(k), v}
+    end
+  end
+
+  # Overwrite args.{app_secret,secret,token} with the redaction sentinel
+  # so secrets submitted in the queue YAML don't get written back onto
+  # completed/<id>.yaml or failed/<id>.yaml. Accepts both string-keyed
+  # ("args" — the normal on-disk shape) and atom-keyed (:args — possible
+  # in unit tests that bypass YAML) shapes.
+  defp redact_secrets(%{"args" => args} = doc) when is_map(args) do
+    %{doc | "args" => redact_args(args)}
+  end
+
+  defp redact_secrets(%{args: args} = doc) when is_map(args) do
+    %{doc | args: redact_args(args)}
+  end
+
+  defp redact_secrets(doc), do: doc
+
+  defp redact_args(args) do
+    for {k, v} <- args, into: %{} do
+      if to_string(k) in @secret_arg_keys, do: {k, @redacted_post_exec}, else: {k, v}
     end
   end
 
