@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Auto-refresh .artifacts/ after a merge lands on main, so
-# project-discussion-esr skill's index stays aligned with reality.
+# Auto-refresh .artifacts/ (module manifest + test baseline) after a
+# merge lands on main, so project-discussion-esr skill's index and test
+# counts stay aligned with reality.
 #
 # Fires after `git merge` and `git pull` (pull = fetch + merge).
 # Does NOT fire on `git pull --rebase` (rebases trigger post-rewrite).
@@ -22,15 +23,21 @@ repo_root="$(git rev-parse --show-toplevel)"
 refresh="$repo_root/.claude/skills/project-discussion-esr/scripts/refresh-index.sh"
 [ -x "$refresh" ] || exit 0
 
-scanner="$HOME/.claude/plugins/cache/ezagent42/dev-loop-skills/0.1.0/skills/skill-0-project-builder/scripts/scan-project.sh"
-if [ ! -x "$scanner" ]; then
-  echo "[post-merge] dev-loop-skills plugin not installed at $scanner" >&2
-  echo "[post-merge] Skipping .artifacts/ refresh. Install with: claude plugin install ezagent42/dev-loop-skills" >&2
+# Preflight: is the dev-loop-skills plugin (any version) installed?
+# The scanner + full-tests runner live there, and --with-baseline hard-
+# requires them. Glob is version-agnostic so plugin upgrades don't break this.
+plugin_found=false
+for d in ~/.claude/plugins/cache/ezagent42/dev-loop-skills/*/skills/skill-0-project-builder/scripts; do
+  if [ -d "$d" ]; then plugin_found=true; break; fi
+done
+if ! $plugin_found; then
+  echo "[post-merge] dev-loop-skills plugin not installed; skipping .artifacts/ refresh" >&2
+  echo "[post-merge] Install via Claude Code marketplace, then run: bash $refresh --all --with-baseline" >&2
   exit 0
 fi
 
-echo "[post-merge] main received a merge — refreshing .artifacts/ index…"
-if ! bash "$refresh"; then
+echo "[post-merge] main received a merge — refreshing .artifacts/ (index + baseline)…"
+if ! bash "$refresh" --all --with-baseline; then
   echo "[post-merge] refresh-index.sh failed. .artifacts/ may be stale." >&2
   exit 0
 fi

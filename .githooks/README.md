@@ -16,8 +16,15 @@ That's it. Unset with `git config --unset core.hooksPath` to revert to `.git/hoo
 
 Fires after `git merge` and `git pull` (which internally merges). When HEAD
 ends up on `main`, runs
-`.claude/skills/project-discussion-esr/scripts/refresh-index.sh` so the
-`project-discussion-esr` skill's module index stays aligned with the code.
+`.claude/skills/project-discussion-esr/scripts/refresh-index.sh --all --with-baseline`,
+which rescans the module manifest **and** rebuilds
+`.artifacts/bootstrap/test-baseline.json` by running the full test suite
+via the `ezagent42/dev-loop-skills` plugin's `run-full-tests.sh`. This keeps
+both the `project-discussion-esr` skill's module index and its "X passed"
+numbers aligned with reality instead of drifting frozen at bootstrap time.
+
+Expect this to take a few minutes — full test run touches runtime/ (mix
+test), py/ (pytest), scripts/ (bash), adapters, and handlers.
 
 **Silent no-op** when:
 
