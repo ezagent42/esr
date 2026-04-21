@@ -49,6 +49,13 @@ defmodule Esr.Application do
       # FileLoader can cross-check workspace names during validation.
       Esr.Capabilities.Supervisor,
 
+      # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
+      # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
+      # (Dispatcher checks grants during authorization) and AFTER
+      # Workspaces.Registry (register_adapter validates workspace
+      # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
+      Esr.Admin.Supervisor,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,
