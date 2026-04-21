@@ -1,9 +1,9 @@
 """Filesystem path helpers for CLI commands.
 
-Centralised so `esr cap list` and `esr cap show` agree on where
-`capabilities.yaml` (and its sibling `permissions_registry.json`
-snapshot) live. Reads `ESRD_HOME` env var with `~/.esrd` fallback to
-match the runtime's `Esr.Capabilities.Supervisor.default_path/0`.
+Centralised so `esr cap list`, `esr adapter feishu create-app`, the admin
+dispatcher clients, and the Feishu adapter all agree on where the runtime
+state lives. Reads `ESRD_HOME` + `ESR_INSTANCE` env vars; defaults match
+the Elixir runtime's `Esr.Paths` helpers.
 """
 from __future__ import annotations
 
@@ -12,20 +12,33 @@ from pathlib import Path
 
 
 def esrd_home() -> Path:
-    """Return the active esrd home directory.
-
-    Respects `ESRD_HOME` for tests that seed fixtures under `tmp_path`;
-    falls back to `~/.esrd` for production use.
-    """
     raw = os.environ.get("ESRD_HOME") or os.path.expanduser("~/.esrd")
     return Path(raw)
 
 
-def capabilities_yaml_path() -> str:
-    """Absolute path to the capabilities file the runtime watches.
+def current_instance() -> str:
+    return os.environ.get("ESR_INSTANCE", "default")
 
-    Returns a `str` (not `Path`) so callers can pass it verbatim to
-    `yaml.safe_load(Path(p).read_text())` without forcing a
-    `Path → str → Path` round-trip.
-    """
-    return str(esrd_home() / "default" / "capabilities.yaml")
+
+def runtime_home() -> Path:
+    return esrd_home() / current_instance()
+
+
+def capabilities_yaml_path() -> str:
+    return str(runtime_home() / "capabilities.yaml")
+
+
+def adapters_yaml_path() -> Path:
+    return runtime_home() / "adapters.yaml"
+
+
+def workspaces_yaml_path() -> Path:
+    return runtime_home() / "workspaces.yaml"
+
+
+def commands_compiled_dir() -> Path:
+    return runtime_home() / "commands" / ".compiled"
+
+
+def admin_queue_dir() -> Path:
+    return runtime_home() / "admin_queue"
