@@ -1,0 +1,67 @@
+{
+  "module": "handler-tmux-proxy",
+  "path": "handlers/tmux_proxy",
+  "package": "esr_handler_tmux_proxy",
+  "actor_type": "tmux_proxy",
+  "prd_refs": ["PRD 05 F02", "PRD 05 F15", "PRD 05 F16"],
+  "role": "Pass-through bidirectional bridge between feishu_thread_proxy (upstream) and cc_session (downstream), routing send-key requests down to the cc_tmux adapter and cc_output events back up to the bound cc_session actor.",
+  "why_proxy": "It does not own domain logic. It sits between the Feishu thread-proxy actor and the cc_session actor, translating each direction into the right Action (Emit vs Route) without transforming payloads — just re-shaping envelopes so the hop is transparent.",
+  "state": {
+    "class": "TmuxProxyState",
+    "schema_version": 1,
+    "frozen": true,
+    "fields": [
+      {"name": "session_name", "type": "str", "default": "", "purpose": "Binds this proxy instance to a single cc session; used to build the Route target 'cc:{session_name}'."}
+    ]
+  },
+  "handler": {
+    "name": "on_msg",
+    "decorator": "@handler(actor_type='tmux_proxy', name='on_msg')",
+    "events_handled": [
+      {
+        "event_type": "send_keys_request",
+        "origin": "upstream feishu_thread_proxy",
+        "action": "Emit(adapter='cc_tmux', action='send_keys', args=<verbatim>)",
+        "note": "Args forwarded unchanged (session_name, content, ...)."
+      },
+      {
+        "event_type": "cc_output",
+        "origin": "cc_tmux adapter",
+        "action": "Route(target='cc:{session_name}', msg={'event_type':'cc_output','args':<verbatim>})",
+        "note": "Wraps payload with event_type so downstream cc_session.on_msg can dispatch and handler_worker.process_handler_call sees event_type on envelope."
+      }
+    ],
+    "unknown_events": "Return (state, []) — silently ignored.",
+    "state_mutation": "None — state is always returned unchanged."
+  },
+  "actions_emitted": ["Emit(cc_tmux.send_keys)", "Route(cc:<session>)"],
+  "dependencies": {
+    "runtime": ["esr (editable path ../../py)"],
+    "sdk_symbols": ["Action", "Emit", "Event", "Route", "handler", "handler_state"],
+    "allowed_imports_manifest": []
+  },
+  "tests": {
+    "files": [
+      "handlers/tmux_proxy/tests/test_on_msg.py",
+      "handlers/tmux_proxy/tests/test_state.py"
+    ],
+    "cases": [
+      "test_send_keys_request_forwards_to_cc_tmux",
+      "test_cc_output_routed_to_cc_session",
+      "test_unknown_event_ignored",
+      "test_defaults_and_frozen"
+    ],
+    "run_command": "cd /home/yaosh/projects/esr/py && uv run pytest ../handlers/tmux_proxy/tests/ -q",
+    "result": "4 passed in 0.41s",
+    "status": "pass"
+  },
+  "files": [
+    "handlers/tmux_proxy/esr.toml",
+    "handlers/tmux_proxy/pyproject.toml",
+    "handlers/tmux_proxy/src/esr_handler_tmux_proxy/__init__.py",
+    "handlers/tmux_proxy/src/esr_handler_tmux_proxy/on_msg.py",
+    "handlers/tmux_proxy/src/esr_handler_tmux_proxy/state.py",
+    "handlers/tmux_proxy/tests/test_on_msg.py",
+    "handlers/tmux_proxy/tests/test_state.py"
+  ]
+}

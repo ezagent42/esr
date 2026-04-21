@@ -1,0 +1,169 @@
+{
+  "module_name": "py-ipc",
+  "module_path": "py/src/esr/ipc/",
+  "description": "Python<->Elixir IPC layer. Provides (1) an aiohttp-backed Phoenix Channels v2 client with multi-topic multiplexing + auto-reconnect + bounded pending-push queue, (2) a typed envelope schema with builders for event/directive/directive_ack/handler_call/handler_reply (wire invariant: source must be an esr:// URI), (3) adapter_runner and handler_worker subprocess entry points (python -m esr.ipc.adapter_runner / handler_worker) that join topic `adapter:<name>/<instance>` or `handler:<module>/<worker_id>` and dispatch envelopes FIFO, (4) URL discovery that distinguishes the /adapter_hub and /handler_hub Phoenix sockets.",
+  "files_analyzed": [
+    "py/src/esr/ipc/__init__.py",
+    "py/src/esr/ipc/adapter_runner.py",
+    "py/src/esr/ipc/channel_client.py",
+    "py/src/esr/ipc/channel_pusher.py",
+    "py/src/esr/ipc/envelope.py",
+    "py/src/esr/ipc/handler_worker.py",
+    "py/src/esr/ipc/url.py",
+    "py/tests/test_adapter_loader.py",
+    "py/tests/test_adapter_manifest.py",
+    "py/tests/test_adapter_runner.py",
+    "py/tests/test_adapter_runner_main.py",
+    "py/tests/test_adapter_runner_run.py",
+    "py/tests/test_channel_client.py",
+    "py/tests/test_channel_client_call.py",
+    "py/tests/test_channel_pusher.py",
+    "py/tests/test_envelope.py",
+    "py/tests/test_handler_worker.py",
+    "py/tests/test_handler_worker_main.py",
+    "py/tests/test_handler_worker_run.py",
+    "py/tests/test_ipc_integration.py",
+    "py/tests/test_url_discovery.py"
+  ],
+  "interfaces": {
+    "envelope_schema": {
+      "common_fields": {
+        "kind": "duplicate of `type` (legacy; set by builders, e.g. channel_client.py:214 dispatches on it)",
+        "id": "string; event=`e-<uuid4>`, directive=`d-<uuid4>`, handler_call=`h-<uuid4>`. For *_ack/*_reply the id is the ORIGINAL message id (correlation) -- envelope.py:8-10, 89-91, 115-116",
+        "ts": "RFC 3339 UTC (isoformat), envelope.py:41-43",
+        "type": "one of TYPE_EVENT|TYPE_DIRECTIVE|TYPE_DIRECTIVE_ACK|TYPE_HANDLER_CALL|TYPE_HANDLER_REPLY (envelope.py:30-34)",
+        "source": "REQUIRED `esr://...` URI; enforced by _check_source (envelope.py:50-53) -- wire invariant per spec 7.5",
+        "payload": "type-specific dict"
+      },
+      "payloads": {
+        "event": "{event_type: str, args: dict} -- make_event envelope.py:59-74",
+        "directive": "{action: str, args: dict} -- consumed by process_directive adapter_runner.py:43-64",
+        "directive_ack": "{ok: bool, result?: dict, error?: {type, message}} -- make_directive_ack envelope.py:77-104",
+        "handler_call": "{handler: str, state: dict (with _schema_version), event: {source, event_type, args}} -- process_handler_call handler_worker.py:35-100",
+        "handler_reply": "{new_state: dict (stamped with _schema_version), actions: [serialised Action dict]} | {error: {type, message}} -- make_handler_reply envelope.py:107-129"
+      },
+      "action_discriminators": {
+        "emit": "{type: emit, adapter, action, args} -- envelope.py:142-148",
+        "route": "{type: route, target, msg} -- envelope.py:149-150",
+        "invoke_command": "{type: invoke_command, name, params} -- envelope.py:151-156"
+      }
+    },
+    "phoenix_channel_client": {
+      "class": "ChannelClient(url, auto_reconnect=False, backoff_schedule=DEFAULT) -- channel_client.py:56",
+      "wire_format": "Phoenix v2 array frame `[join_ref, ref, topic, event, payload]` (channel_client.py:193-197; parsed at 209)",
+      "methods": {
+        "connect()": "opens aiohttp WS, starts _read_loop task (channel_client.py:94-99)",
+        "join(topic, on_msg)": "sends phx_join, awaits phx_reply status=ok; raises RuntimeError if rejected (channel_client.py:120-144)",
+        "push(topic, event, payload)": "sends on joined topic; queues into bounded deque (PENDING_PUSH_CAP=1000) while disconnected, dropping oldest on overflow (channel_client.py:146-165)",
+        "call(topic, event, payload, timeout=30)": "push+await phx_reply correlated via ref (channel_client.py:167-189)",
+        "close()": "cancels tasks, closes WS/session, disables reconnect (channel_client.py:101-116)"
+      },
+      "reconnect": "on auto_reconnect=True: exponential backoff (1,2,4,8,16,30s) -- channel_client.py:52, 237-293; re-joins topics with fresh refs and flushes pending deque in FIFO order"
+    },
+    "channel_pusher": {
+      "class": "ChannelPusher(client, topic, source_uri) -- channel_pusher.py:22-42",
+      "role": "adapts ChannelClient.push to the AdapterPusher protocol (`source_uri: str` + `async push_envelope(env)`) used by adapter_runner.directive_loop/event_loop; always pushes with phoenix event name `envelope` (channel_pusher.py:42)"
+    },
+    "adapter_runner": {
+      "process_directive(adapter, payload)": "calls adapter.on_directive(action, args); wraps success/exc (adapter_runner.py:43-64). KeyError on missing action propagates.",
+      "directive_loop(adapter, queue, pusher)": "drains queue FIFO; None=sentinel; pushes directive_ack via make_directive_ack reusing envelope['id'] (adapter_runner.py:67-89)",
+      "event_loop(adapter, pusher)": "iterates adapter.emit_events() async gen, wraps each {event_type, args} as event envelope (adapter_runner.py:92-108)",
+      "run_with_client(adapter, client, topic)": "connects, joins topic with _on_frame that filters envelopes with kind='directive' onto a queue; runs directive_loop + event_loop in TaskGroup (adapter_runner.py:111-152). source_uri derived as `esr://localhost/<topic>` (line 145).",
+      "run(adapter_name, instance_id, config, url)": "loads factory via esr.adapters.load_adapter_factory, wraps config in AdapterConfig, joins topic `adapter:<name>/<instance>` (adapter_runner.py:155-180)",
+      "main/CLI": "python -m esr.ipc.adapter_runner --adapter <name> --instance-id <id> --url <ws_url> --config-json <json> (adapter_runner.py:183-231)"
+    },
+    "handler_worker": {
+      "process_handler_call(payload)": "pure dispatcher -- resolves HANDLER_REGISTRY[payload.handler], validates STATE_REGISTRY[actor_type], enforces _schema_version match (returns SchemaVersionMismatch error on drift), reconstructs pydantic state and Event, invokes handler_entry.fn(state, event), serialises actions; NEVER raises -- all failures become {error:{type,message}} (handler_worker.py:35-100)",
+      "_dump_state": "serialises pydantic model and coerces frozenset/set/tuple to JSON-native lists (handler_worker.py:107-134)",
+      "run_with_client(client, topic)": "connects, joins topic with _on_frame filtering kind='handler_call' onto queue; for each call, pushes handler_reply envelope `{kind:handler_reply, id:<call_id>, source:esr://localhost/<topic>, payload:reply_payload}` back on same topic (handler_worker.py:137-174)",
+      "run(handler_module, worker_id, url)": "importlib.import_module(`esr_handler_<pkg>.on_msg`) then falls back to raw dotted module; joins topic `handler:<module>/<worker_id>` (handler_worker.py:177-198)",
+      "main/CLI": "python -m esr.ipc.handler_worker --module <dotted> --worker-id <id> --url <ws_url> (handler_worker.py:201-233)"
+    },
+    "url_discovery": {
+      "discover_runtime_url(override, kind='adapter'|'handler'|None)": "priority: override > ESR_{ADAPTER|HANDLER}_HUB_URL > ESR_RUNTIME_URL (legacy adapter alias) > DEFAULT_{ADAPTER|HANDLER}_HUB_URL (url.py:42-80)",
+      "defaults": "ws://localhost:4001/adapter_hub/socket/websocket?vsn=2.0.0 and ws://localhost:4001/handler_hub/socket/websocket?vsn=2.0.0 (url.py:28-34)"
+    },
+    "topic_naming": {
+      "adapter": "`adapter:<adapter_name>/<instance_id>` -- adapter_runner.py:178",
+      "handler": "`handler:<handler_module>/<worker_id>` -- handler_worker.py:196",
+      "source_uri_convention": "`esr://localhost/<topic>` for outgoing envelopes (adapter_runner.py:145, handler_worker.py:170)",
+      "phoenix_event_name": "All envelopes are pushed under Phoenix event name `envelope` (channel_pusher.py:42, handler_worker.py:167)"
+    },
+    "subprocess_launch": {
+      "adapter_runner": "Invoked as `uv run --project py python -m esr.ipc.adapter_runner --adapter <name> --instance-id <id> --url <adapter_hub_ws_url> --config-json '<json>'`. Args parsed by _parse_main_args (adapter_runner.py:183-201). Config-JSON loaded via json.loads (line 200). stdin is unused. Env inherits ESR_ADAPTER_HUB_URL/ESR_RUNTIME_URL but CLI --url overrides. asyncio.run(run(...)) runs indefinitely until SIGINT/cancellation; KeyboardInterrupt -> exit 0, any other BaseException -> exit 1 with traceback to stderr (lines 215-226). Test evidence: test_adapter_runner_main.py:25-79.",
+      "handler_worker": "Invoked as `python -m esr.ipc.handler_worker --module <dotted> --worker-id <id> --url <handler_hub_ws_url>`. Args parsed by _parse_main_args (handler_worker.py:201-212). On startup imports `esr_handler_<pkg>.on_msg` to trigger @handler decorator registration (lines 190-195). stdin is unused. Test evidence: test_handler_worker_main.py:16-55."
+    }
+  },
+  "dependencies": {
+    "external": [
+      "aiohttp (WebSocket client; channel_client.py:43)",
+      "pydantic (handler state models; handler_worker.py and tests)"
+    ],
+    "internal": [
+      "esr.actions (Action/Emit/Route/InvokeCommand ADT -- envelope.py:26)",
+      "esr.events (Event dataclass -- handler_worker.py:30)",
+      "esr.handler (HANDLER_REGISTRY, STATE_REGISTRY -- handler_worker.py:31)",
+      "esr.adapter (AdapterConfig -- adapter_runner.py:165)",
+      "esr.adapters (load_adapter_factory -- adapter_runner.py:166)"
+    ],
+    "elixir_counterparts": [
+      "runtime/lib/esr/ipc/envelope.ex (PRD 01 F09-F12; constants kept in lock-step per envelope.py:16-17)",
+      "Phoenix channels AdapterHub/HandlerHub (routes /adapter_hub/socket, /handler_hub/socket)"
+    ]
+  },
+  "test_results": {
+    "command": "cd py && uv run pytest tests/test_adapter_loader.py tests/test_adapter_manifest.py tests/test_adapter_runner.py tests/test_adapter_runner_main.py tests/test_adapter_runner_run.py tests/test_channel_client.py tests/test_channel_client_call.py tests/test_channel_pusher.py tests/test_envelope.py tests/test_handler_worker.py tests/test_handler_worker_main.py tests/test_handler_worker_run.py tests/test_ipc_integration.py tests/test_url_discovery.py -q",
+    "passed": 75,
+    "skipped": 1,
+    "failed": 0,
+    "duration_s": 1.90,
+    "notes": "1 skip is test_ipc_integration.py live-runtime round-trip gated behind ESR_E2E_RUNTIME=1 (test_ipc_integration.py:31-34)."
+  },
+  "user_flows": [
+    {
+      "name": "adapter directive round-trip (runtime -> adapter)",
+      "steps": [
+        "Elixir runtime pushes envelope {kind:directive, id:d-..., source:esr://..., payload:{action,args}} on topic adapter:<name>/<instance>",
+        "adapter_runner._on_frame filters kind=directive and enqueues (adapter_runner.py:129-138)",
+        "directive_loop dequeues FIFO, calls adapter.on_directive(action,args), builds make_directive_ack(id_=original) (lines 77-89)",
+        "ChannelPusher.push_envelope -> ChannelClient.push(topic, 'envelope', ack) (channel_pusher.py:40-42)"
+      ]
+    },
+    {
+      "name": "adapter event emission (adapter -> runtime)",
+      "steps": [
+        "Adapter implements async generator emit_events() yielding {event_type, args}",
+        "event_loop wraps each in make_event envelope and pushes on topic (adapter_runner.py:92-108)"
+      ]
+    },
+    {
+      "name": "handler call round-trip (runtime -> handler worker)",
+      "steps": [
+        "HandlerRouter pushes envelope {kind:handler_call, id:h-..., payload:{handler, state, event}} on handler:<module>/<worker>",
+        "handler_worker._on_frame filters kind=handler_call and enqueues (handler_worker.py:148-156)",
+        "process_handler_call resolves registries, checks _schema_version, invokes handler_entry.fn, serialises actions (lines 35-100)",
+        "run_with_client pushes handler_reply envelope on same topic with original id (lines 160-172)"
+      ]
+    },
+    {
+      "name": "disconnect/reconnect with pending push preservation",
+      "steps": [
+        "WS closes; _read_loop sets _is_disconnected=True and schedules _reconnect_loop (channel_client.py:232-235)",
+        "push() during window appends to bounded deque PENDING_PUSH_CAP=1000, drops oldest on overflow (lines 156-163)",
+        "_reconnect_loop retries with backoff 1/2/4/8/16/30s, re-joins topics with fresh refs, flushes pending pushes FIFO (lines 237-293)"
+      ]
+    }
+  ],
+  "notes": [
+    "Envelope has both `kind` and `type` set to the same discriminator -- the `kind` field is what _on_frame dispatches on (adapter_runner.py:136, handler_worker.py:154); presumably legacy/redundant but tests assert both.",
+    "The Phoenix event name for all application envelopes is the literal string `envelope`; phx_reply / phx_join are reserved for protocol frames (channel_client.py:214, 137).",
+    "Reviewer C1 fix: split adapter_hub vs handler_hub URLs; legacy ESR_RUNTIME_URL remains an adapter-only alias (url.py documentation + test_url_discovery.py).",
+    "Reviewer S7 fix: _read_loop wraps frame JSON decode + arity unpack in try/except so one bad frame does not tear down the socket (channel_client.py:207-212; covered by test_channel_client_tolerates_malformed_frames).",
+    "Reviewer S3 fix: process_handler_call catches KeyError/TypeError/AttributeError on envelope access and surfaces MalformedEnvelope instead of raising (handler_worker.py:43-51).",
+    "PRD 02 F05 / Reviewer C2 fix: state dicts carry `_schema_version`; mismatch returns SchemaVersionMismatch error; replies stamp the registered version on new_state (handler_worker.py:64-95).",
+    "Frozenset/set values in pydantic state are coerced to sorted lists before JSON serialisation (handler_worker.py:124-134) -- Phoenix JSON encoder does not accept sets.",
+    "adapter_runner.run imports esr.adapters at runtime to avoid circular imports and to defer optional adapter loading.",
+    "handler_worker.run module-import heuristic: tries `esr_handler_<first_segment>.on_msg` first, falls back to raw dotted path for test shims (handler_worker.py:190-195).",
+    "The live-runtime integration test (test_ipc_integration.py) is the only skipped test; gated on ESR_E2E_RUNTIME=1 with a running Phoenix server on ws://localhost:4001."
+  ]
+}

@@ -1,0 +1,2120 @@
+{
+  "project_root": "/home/yaosh/projects/esr",
+  "files": [
+    {
+      "path": ".gitignore",
+      "size_bytes": 428,
+      "lines": 39,
+      "extension": ""
+    },
+    {
+      "path": ".ralph-loop-baseline",
+      "size_bytes": 41,
+      "lines": 1,
+      "extension": ""
+    },
+    {
+      "path": "CHECKLIST.md",
+      "size_bytes": 4755,
+      "lines": 83,
+      "extension": ".md"
+    },
+    {
+      "path": "Makefile",
+      "size_bytes": 435,
+      "lines": 24,
+      "extension": ""
+    },
+    {
+      "path": "PHASE7_GAP.md",
+      "size_bytes": 3286,
+      "lines": 59,
+      "extension": ".md"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 2332,
+      "lines": 55,
+      "extension": ".md"
+    },
+    {
+      "path": "REVIEW_FOLLOWUPS.md",
+      "size_bytes": 1223,
+      "lines": 14,
+      "extension": ".md"
+    },
+    {
+      "path": "REVIEW_PHASE1.md",
+      "size_bytes": 4131,
+      "lines": 65,
+      "extension": ".md"
+    },
+    {
+      "path": "REVIEW_PHASE2.md",
+      "size_bytes": 3411,
+      "lines": 58,
+      "extension": ".md"
+    },
+    {
+      "path": "adapters/cc_mcp/esr.toml",
+      "size_bytes": 181,
+      "lines": 5,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/cc_mcp/pyproject.toml",
+      "size_bytes": 354,
+      "lines": 20,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/__init__.py",
+      "size_bytes": 82,
+      "lines": 2,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/channel.py",
+      "size_bytes": 6072,
+      "lines": 180,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/tools.py",
+      "size_bytes": 2830,
+      "lines": 83,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/src/esr_cc_mcp/ws_client.py",
+      "size_bytes": 4330,
+      "lines": 120,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/tests/__init__.py",
+      "size_bytes": 0,
+      "lines": 0,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_channel_main.py",
+      "size_bytes": 521,
+      "lines": 15,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_notification_inject.py",
+      "size_bytes": 721,
+      "lines": 24,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_tools.py",
+      "size_bytes": 728,
+      "lines": 22,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_mcp/tests/test_ws_client.py",
+      "size_bytes": 759,
+      "lines": 21,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/esr.toml",
+      "size_bytes": 162,
+      "lines": 8,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/cc_tmux/pyproject.toml",
+      "size_bytes": 478,
+      "lines": 22,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/cc_tmux/src/esr_cc_tmux/__init__.py",
+      "size_bytes": 552,
+      "lines": 16,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/src/esr_cc_tmux/adapter.py",
+      "size_bytes": 9383,
+      "lines": 234,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_capability.py",
+      "size_bytes": 593,
+      "lines": 20,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_directives.py",
+      "size_bytes": 9202,
+      "lines": 274,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_env.py",
+      "size_bytes": 2021,
+      "lines": 64,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_events.py",
+      "size_bytes": 1818,
+      "lines": 48,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_factory_purity.py",
+      "size_bytes": 720,
+      "lines": 24,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/cc_tmux/tests/test_registration.py",
+      "size_bytes": 932,
+      "lines": 30,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/esr.toml",
+      "size_bytes": 230,
+      "lines": 11,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/feishu/pyproject.toml",
+      "size_bytes": 495,
+      "lines": 24,
+      "extension": ".toml"
+    },
+    {
+      "path": "adapters/feishu/src/esr_feishu/__init__.py",
+      "size_bytes": 385,
+      "lines": 13,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/src/esr_feishu/adapter.py",
+      "size_bytes": 26450,
+      "lines": 643,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/src/esr_feishu/parsers.py",
+      "size_bytes": 8451,
+      "lines": 241,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/fixtures/live-capture/card_interaction.json",
+      "size_bytes": 1375,
+      "lines": 1,
+      "extension": ".json"
+    },
+    {
+      "path": "adapters/feishu/tests/fixtures/live-capture/text_message.json",
+      "size_bytes": 967,
+      "lines": 1,
+      "extension": ".json"
+    },
+    {
+      "path": "adapters/feishu/tests/fixtures/live-capture/thread_reply.json",
+      "size_bytes": 1070,
+      "lines": 1,
+      "extension": ".json"
+    },
+    {
+      "path": "adapters/feishu/tests/test_capability.py",
+      "size_bytes": 692,
+      "lines": 21,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_client.py",
+      "size_bytes": 1380,
+      "lines": 45,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_directives.py",
+      "size_bytes": 7289,
+      "lines": 230,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_download.py",
+      "size_bytes": 3946,
+      "lines": 147,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_emit_events.py",
+      "size_bytes": 2884,
+      "lines": 81,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_events.py",
+      "size_bytes": 4596,
+      "lines": 151,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_factory_purity.py",
+      "size_bytes": 822,
+      "lines": 26,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_ratelimit.py",
+      "size_bytes": 4075,
+      "lines": 141,
+      "extension": ".py"
+    },
+    {
+      "path": "adapters/feishu/tests/test_registration.py",
+      "size_bytes": 1237,
+      "lines": 34,
+      "extension": ".py"
+    },
+    {
+      "path": "docs/archive/2026-04-18-e2e-platform-validation.yaml",
+      "size_bytes": 4379,
+      "lines": 111,
+      "extension": ".yaml"
+    },
+    {
+      "path": "docs/cookbook.md",
+      "size_bytes": 2277,
+      "lines": 75,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Governance-Guide-v0.3-zh.md",
+      "size_bytes": 20117,
+      "lines": 736,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Governance-Guide-v0.3.md",
+      "size_bytes": 23040,
+      "lines": 740,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Protocol-v0.3-zh.md",
+      "size_bytes": 13263,
+      "lines": 406,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Protocol-v0.3.md",
+      "size_bytes": 15728,
+      "lines": 406,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Reposition-v0.3-Final-zh.md",
+      "size_bytes": 16702,
+      "lines": 325,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/ESR-Reposition-v0.3-Final.md",
+      "size_bytes": 19352,
+      "lines": 337,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/Socialware-Packaging-Spec-v0.3-zh.md",
+      "size_bytes": 15111,
+      "lines": 581,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/Socialware-Packaging-Spec-v0.3.md",
+      "size_bytes": 17290,
+      "lines": 592,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/esr-playground-v0.3-zh.html",
+      "size_bytes": 38671,
+      "lines": 863,
+      "extension": ".html"
+    },
+    {
+      "path": "docs/design/esr-playground-v0.3.html",
+      "size_bytes": 38765,
+      "lines": 863,
+      "extension": ".html"
+    },
+    {
+      "path": "docs/design/esrd-reference-implementation-v0.3-zh.md",
+      "size_bytes": 25744,
+      "lines": 692,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/design/esrd-reference-implementation-v0.3.md",
+      "size_bytes": 27672,
+      "lines": 701,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/dev-guide.md",
+      "size_bytes": 4342,
+      "lines": 121,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/ralph-loop-ledger.md",
+      "size_bytes": 5000,
+      "lines": 57,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/glossary.md",
+      "size_bytes": 10267,
+      "lines": 167,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-18-esr-v0.1-implementation.md",
+      "size_bytes": 94551,
+      "lines": 3236,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-19-ralph-loop-prompt-v2-implementation.md",
+      "size_bytes": 116766,
+      "lines": 3240,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-20-esr-v0.2-channel-implementation.md",
+      "size_bytes": 125816,
+      "lines": 4082,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/01-actor-runtime.md",
+      "size_bytes": 15359,
+      "lines": 156,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/02-python-sdk.md",
+      "size_bytes": 11423,
+      "lines": 130,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/03-ipc.md",
+      "size_bytes": 7348,
+      "lines": 110,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/04-adapters.md",
+      "size_bytes": 9433,
+      "lines": 148,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/05-handlers.md",
+      "size_bytes": 8707,
+      "lines": 175,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/06-patterns.md",
+      "size_bytes": 7471,
+      "lines": 141,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/07-cli.md",
+      "size_bytes": 9880,
+      "lines": 151,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/prds/acceptance-manifest.yaml",
+      "size_bytes": 1684,
+      "lines": 32,
+      "extension": ".yaml"
+    },
+    {
+      "path": "docs/superpowers/ralph-loop-prompt-v2.md",
+      "size_bytes": 8453,
+      "lines": 191,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/ralph-loop-prompt.md",
+      "size_bytes": 23831,
+      "lines": 440,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-18-esr-extraction-design.md",
+      "size_bytes": 63378,
+      "lines": 1247,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-18-esr-extraction-design.review.md",
+      "size_bytes": 14780,
+      "lines": 97,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-19-ralph-loop-prompt-v2-design.md",
+      "size_bytes": 31032,
+      "lines": 575,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-20-esr-v0.2-channel-design.md",
+      "size_bytes": 38723,
+      "lines": 854,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/tests/e2e-platform-validation.md",
+      "size_bytes": 23903,
+      "lines": 525,
+      "extension": ".md"
+    },
+    {
+      "path": "docs/superpowers/traceability.md",
+      "size_bytes": 7429,
+      "lines": 121,
+      "extension": ".md"
+    },
+    {
+      "path": "esr-cc.local.sh.example",
+      "size_bytes": 408,
+      "lines": 11,
+      "extension": ".example"
+    },
+    {
+      "path": "esr-cc.sh",
+      "size_bytes": 760,
+      "lines": 24,
+      "extension": ".sh"
+    },
+    {
+      "path": "handlers/cc_session/esr.toml",
+      "size_bytes": 177,
+      "lines": 7,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/cc_session/pyproject.toml",
+      "size_bytes": 473,
+      "lines": 20,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/cc_session/src/esr_handler_cc_session/__init__.py",
+      "size_bytes": 66,
+      "lines": 3,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/cc_session/src/esr_handler_cc_session/on_msg.py",
+      "size_bytes": 921,
+      "lines": 30,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/cc_session/src/esr_handler_cc_session/state.py",
+      "size_bytes": 449,
+      "lines": 18,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/cc_session/tests/test_on_msg.py",
+      "size_bytes": 1598,
+      "lines": 45,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/cc_session/tests/test_state.py",
+      "size_bytes": 447,
+      "lines": 17,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_app/esr.toml",
+      "size_bytes": 185,
+      "lines": 7,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/feishu_app/pyproject.toml",
+      "size_bytes": 455,
+      "lines": 20,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/__init__.py",
+      "size_bytes": 66,
+      "lines": 3,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py",
+      "size_bytes": 4451,
+      "lines": 120,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/state.py",
+      "size_bytes": 981,
+      "lines": 30,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_app/tests/test_on_msg.py",
+      "size_bytes": 4584,
+      "lines": 138,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_app/tests/test_state.py",
+      "size_bytes": 1239,
+      "lines": 42,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_thread/esr.toml",
+      "size_bytes": 194,
+      "lines": 7,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/feishu_thread/pyproject.toml",
+      "size_bytes": 461,
+      "lines": 20,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/__init__.py",
+      "size_bytes": 69,
+      "lines": 3,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/on_msg.py",
+      "size_bytes": 2236,
+      "lines": 70,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/state.py",
+      "size_bytes": 1942,
+      "lines": 54,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_thread/tests/test_on_msg.py",
+      "size_bytes": 3530,
+      "lines": 106,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/feishu_thread/tests/test_state.py",
+      "size_bytes": 1551,
+      "lines": 56,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/tmux_proxy/esr.toml",
+      "size_bytes": 179,
+      "lines": 7,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/tmux_proxy/pyproject.toml",
+      "size_bytes": 476,
+      "lines": 20,
+      "extension": ".toml"
+    },
+    {
+      "path": "handlers/tmux_proxy/src/esr_handler_tmux_proxy/__init__.py",
+      "size_bytes": 66,
+      "lines": 3,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/tmux_proxy/src/esr_handler_tmux_proxy/on_msg.py",
+      "size_bytes": 1396,
+      "lines": 39,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/tmux_proxy/src/esr_handler_tmux_proxy/state.py",
+      "size_bytes": 372,
+      "lines": 16,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/tmux_proxy/tests/test_on_msg.py",
+      "size_bytes": 1814,
+      "lines": 53,
+      "extension": ".py"
+    },
+    {
+      "path": "handlers/tmux_proxy/tests/test_state.py",
+      "size_bytes": 379,
+      "lines": 15,
+      "extension": ".py"
+    },
+    {
+      "path": "patterns/feishu-app-session.py",
+      "size_bytes": 611,
+      "lines": 20,
+      "extension": ".py"
+    },
+    {
+      "path": "patterns/feishu-thread-session.py",
+      "size_bytes": 1949,
+      "lines": 61,
+      "extension": ".py"
+    },
+    {
+      "path": "py/pyproject.toml",
+      "size_bytes": 2057,
+      "lines": 79,
+      "extension": ".toml"
+    },
+    {
+      "path": "py/src/esr/__init__.py",
+      "size_bytes": 977,
+      "lines": 40,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/actions.py",
+      "size_bytes": 1959,
+      "lines": 63,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/adapter.py",
+      "size_bytes": 3366,
+      "lines": 91,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/adapters.py",
+      "size_bytes": 1987,
+      "lines": 52,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/cli/__init__.py",
+      "size_bytes": 30,
+      "lines": 1,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/cli/main.py",
+      "size_bytes": 51186,
+      "lines": 1420,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/cli/runtime_bridge.py",
+      "size_bytes": 2353,
+      "lines": 77,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/command.py",
+      "size_bytes": 17979,
+      "lines": 533,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/events.py",
+      "size_bytes": 1749,
+      "lines": 56,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/handler.py",
+      "size_bytes": 3369,
+      "lines": 103,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/__init__.py",
+      "size_bytes": 78,
+      "lines": 1,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/adapter_runner.py",
+      "size_bytes": 8522,
+      "lines": 231,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/channel_client.py",
+      "size_bytes": 11962,
+      "lines": 293,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/channel_pusher.py",
+      "size_bytes": 1672,
+      "lines": 42,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/envelope.py",
+      "size_bytes": 5271,
+      "lines": 169,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/handler_worker.py",
+      "size_bytes": 8954,
+      "lines": 233,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/ipc/url.py",
+      "size_bytes": 2738,
+      "lines": 80,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/uri.py",
+      "size_bytes": 4295,
+      "lines": 150,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/verify/__init__.py",
+      "size_bytes": 73,
+      "lines": 1,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/verify/capability.py",
+      "size_bytes": 3231,
+      "lines": 99,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/verify/purity.py",
+      "size_bytes": 4524,
+      "lines": 136,
+      "extension": ".py"
+    },
+    {
+      "path": "py/src/esr/workspaces.py",
+      "size_bytes": 2511,
+      "lines": 92,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/__init__.py",
+      "size_bytes": 0,
+      "lines": 0,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/conftest.py",
+      "size_bytes": 718,
+      "lines": 27,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_actions.py",
+      "size_bytes": 2308,
+      "lines": 68,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter.py",
+      "size_bytes": 3552,
+      "lines": 111,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_layout.py",
+      "size_bytes": 1424,
+      "lines": 48,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_loader.py",
+      "size_bytes": 1993,
+      "lines": 57,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_manifest.py",
+      "size_bytes": 2172,
+      "lines": 61,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_runner.py",
+      "size_bytes": 5510,
+      "lines": 156,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_runner_main.py",
+      "size_bytes": 2803,
+      "lines": 79,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_adapter_runner_run.py",
+      "size_bytes": 3735,
+      "lines": 116,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_capability.py",
+      "size_bytes": 1992,
+      "lines": 67,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_channel_client.py",
+      "size_bytes": 13981,
+      "lines": 374,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_channel_client_call.py",
+      "size_bytes": 2100,
+      "lines": 67,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_channel_pusher.py",
+      "size_bytes": 1263,
+      "lines": 35,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_actors.py",
+      "size_bytes": 4279,
+      "lines": 112,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_adapter_add.py",
+      "size_bytes": 1951,
+      "lines": 64,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_compile.py",
+      "size_bytes": 1383,
+      "lines": 46,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_install.py",
+      "size_bytes": 2357,
+      "lines": 79,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_restart.py",
+      "size_bytes": 3692,
+      "lines": 112,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_run.py",
+      "size_bytes": 3514,
+      "lines": 104,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_show.py",
+      "size_bytes": 1785,
+      "lines": 60,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_cmd_stop.py",
+      "size_bytes": 2349,
+      "lines": 66,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_deadletter.py",
+      "size_bytes": 2835,
+      "lines": 78,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_debug.py",
+      "size_bytes": 3104,
+      "lines": 84,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_drain.py",
+      "size_bytes": 2844,
+      "lines": 76,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_error_ux.py",
+      "size_bytes": 1271,
+      "lines": 39,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_install.py",
+      "size_bytes": 3187,
+      "lines": 90,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_lint.py",
+      "size_bytes": 1686,
+      "lines": 50,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_list.py",
+      "size_bytes": 1498,
+      "lines": 45,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_offline.py",
+      "size_bytes": 1326,
+      "lines": 48,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_scenario.py",
+      "size_bytes": 2807,
+      "lines": 93,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_scenario_exec.py",
+      "size_bytes": 5071,
+      "lines": 163,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_status.py",
+      "size_bytes": 2183,
+      "lines": 70,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_submit_roundtrip.py",
+      "size_bytes": 4547,
+      "lines": 143,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_telemetry.py",
+      "size_bytes": 2687,
+      "lines": 77,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_trace.py",
+      "size_bytes": 2993,
+      "lines": 81,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_use.py",
+      "size_bytes": 1998,
+      "lines": 60,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cli_workspace.py",
+      "size_bytes": 978,
+      "lines": 33,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_cmd_run_output_format.py",
+      "size_bytes": 1672,
+      "lines": 51,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_command.py",
+      "size_bytes": 9054,
+      "lines": 285,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_command_compose.py",
+      "size_bytes": 3255,
+      "lines": 90,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_command_yaml.py",
+      "size_bytes": 2967,
+      "lines": 103,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_envelope.py",
+      "size_bytes": 6785,
+      "lines": 190,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_events.py",
+      "size_bytes": 1513,
+      "lines": 50,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handler.py",
+      "size_bytes": 4962,
+      "lines": 151,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handler_layout.py",
+      "size_bytes": 1849,
+      "lines": 60,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handler_worker.py",
+      "size_bytes": 6543,
+      "lines": 197,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handler_worker_main.py",
+      "size_bytes": 1876,
+      "lines": 55,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handler_worker_run.py",
+      "size_bytes": 3584,
+      "lines": 110,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_handlers_cross_cutting.py",
+      "size_bytes": 3650,
+      "lines": 105,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_ipc_integration.py",
+      "size_bytes": 3830,
+      "lines": 116,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_optimizer_cse.py",
+      "size_bytes": 1700,
+      "lines": 60,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_optimizer_dead_node.py",
+      "size_bytes": 1622,
+      "lines": 55,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_package.py",
+      "size_bytes": 447,
+      "lines": 17,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_pattern_compile_yaml.py",
+      "size_bytes": 3130,
+      "lines": 91,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_pattern_cycle_rejected.py",
+      "size_bytes": 1067,
+      "lines": 36,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_pattern_feishu_app_session.py",
+      "size_bytes": 1798,
+      "lines": 51,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_pattern_feishu_thread_session.py",
+      "size_bytes": 2503,
+      "lines": 76,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_pattern_param_lint.py",
+      "size_bytes": 2303,
+      "lines": 71,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_public_api.py",
+      "size_bytes": 1444,
+      "lines": 57,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_purity_frozen.py",
+      "size_bytes": 1394,
+      "lines": 46,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_purity_imports.py",
+      "size_bytes": 3794,
+      "lines": 131,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_runtime_bridge.py",
+      "size_bytes": 3178,
+      "lines": 85,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_uri.py",
+      "size_bytes": 3373,
+      "lines": 113,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_url_discovery.py",
+      "size_bytes": 3191,
+      "lines": 78,
+      "extension": ".py"
+    },
+    {
+      "path": "py/tests/test_workspaces.py",
+      "size_bytes": 1137,
+      "lines": 36,
+      "extension": ".py"
+    },
+    {
+      "path": "py/uv.lock",
+      "size_bytes": 369949,
+      "lines": 1636,
+      "extension": ".lock"
+    },
+    {
+      "path": "roles/dev/CLAUDE.md",
+      "size_bytes": 166,
+      "lines": 4,
+      "extension": ".md"
+    },
+    {
+      "path": "roles/dev/settings.json",
+      "size_bytes": 166,
+      "lines": 10,
+      "extension": ".json"
+    },
+    {
+      "path": "roles/diagnostic/CLAUDE.md",
+      "size_bytes": 837,
+      "lines": 20,
+      "extension": ".md"
+    },
+    {
+      "path": "roles/diagnostic/settings.json",
+      "size_bytes": 199,
+      "lines": 11,
+      "extension": ".json"
+    },
+    {
+      "path": "run-ralph.sh",
+      "size_bytes": 1581,
+      "lines": 49,
+      "extension": ".sh"
+    },
+    {
+      "path": "runtime/.formatter.exs",
+      "size_bytes": 91,
+      "lines": 4,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/.gitignore",
+      "size_bytes": 624,
+      "lines": 27,
+      "extension": ""
+    },
+    {
+      "path": "runtime/AGENTS.md",
+      "size_bytes": 5266,
+      "lines": 83,
+      "extension": ".md"
+    },
+    {
+      "path": "runtime/README.md",
+      "size_bytes": 630,
+      "lines": 18,
+      "extension": ".md"
+    },
+    {
+      "path": "runtime/config/config.exs",
+      "size_bytes": 1095,
+      "lines": 37,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/config/dev.exs",
+      "size_bytes": 1737,
+      "lines": 53,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/config/prod.exs",
+      "size_bytes": 202,
+      "lines": 7,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/config/runtime.exs",
+      "size_bytes": 3202,
+      "lines": 84,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/config/test.exs",
+      "size_bytes": 672,
+      "lines": 19,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/lib/esr.ex",
+      "size_bytes": 243,
+      "lines": 9,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/adapter_hub/registry.ex",
+      "size_bytes": 4508,
+      "lines": 146,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/adapter_hub/supervisor.ex",
+      "size_bytes": 517,
+      "lines": 19,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/application.ex",
+      "size_bytes": 6119,
+      "lines": 182,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/dead_letter.ex",
+      "size_bytes": 3596,
+      "lines": 120,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/handler_router.ex",
+      "size_bytes": 2678,
+      "lines": 76,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/handler_router/supervisor.ex",
+      "size_bytes": 465,
+      "lines": 15,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/peer_registry.ex",
+      "size_bytes": 1894,
+      "lines": 55,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/peer_server.ex",
+      "size_bytes": 25458,
+      "lines": 811,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/peer_supervisor.ex",
+      "size_bytes": 1564,
+      "lines": 52,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/persistence/ets.ex",
+      "size_bytes": 3400,
+      "lines": 108,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/persistence/supervisor.ex",
+      "size_bytes": 707,
+      "lines": 21,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/session_registry.ex",
+      "size_bytes": 2877,
+      "lines": 88,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/attach.ex",
+      "size_bytes": 2184,
+      "lines": 72,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/buffer.ex",
+      "size_bytes": 3093,
+      "lines": 105,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/supervisor.ex",
+      "size_bytes": 1294,
+      "lines": 39,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/topology/instantiator.ex",
+      "size_bytes": 15929,
+      "lines": 469,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/topology/registry.ex",
+      "size_bytes": 5238,
+      "lines": 158,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/topology/supervisor.ex",
+      "size_bytes": 491,
+      "lines": 19,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/uri.ex",
+      "size_bytes": 3149,
+      "lines": 114,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/worker_supervisor.ex",
+      "size_bytes": 9585,
+      "lines": 317,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr/workspaces/registry.ex",
+      "size_bytes": 2078,
+      "lines": 75,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web.ex",
+      "size_bytes": 1427,
+      "lines": 63,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/adapter_channel.ex",
+      "size_bytes": 3386,
+      "lines": 92,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/adapter_socket.ex",
+      "size_bytes": 610,
+      "lines": 21,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/channel_channel.ex",
+      "size_bytes": 2816,
+      "lines": 103,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/channel_socket.ex",
+      "size_bytes": 583,
+      "lines": 19,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/cli_channel.ex",
+      "size_bytes": 10586,
+      "lines": 355,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/controllers/error_json.ex",
+      "size_bytes": 619,
+      "lines": 21,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/endpoint.ex",
+      "size_bytes": 2025,
+      "lines": 65,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/handler_channel.ex",
+      "size_bytes": 1837,
+      "lines": 60,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/handler_socket.ex",
+      "size_bytes": 538,
+      "lines": 20,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/router.ex",
+      "size_bytes": 194,
+      "lines": 6,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/lib/esr_web/telemetry.ex",
+      "size_bytes": 2109,
+      "lines": 70,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/mix.exs",
+      "size_bytes": 1723,
+      "lines": 68,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/mix.lock",
+      "size_bytes": 7143,
+      "lines": 25,
+      "extension": ".lock"
+    },
+    {
+      "path": "runtime/priv/static/favicon.ico",
+      "size_bytes": 152,
+      "lines": 5,
+      "extension": ".ico"
+    },
+    {
+      "path": "runtime/priv/static/robots.txt",
+      "size_bytes": 203,
+      "lines": 5,
+      "extension": ".txt"
+    },
+    {
+      "path": "runtime/test/esr/adapter_hub/channel_test.exs",
+      "size_bytes": 4892,
+      "lines": 143,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/adapter_hub/registry_test.exs",
+      "size_bytes": 3631,
+      "lines": 113,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/application_restore_adapters_test.exs",
+      "size_bytes": 2188,
+      "lines": 86,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/application_restore_test.exs",
+      "size_bytes": 1126,
+      "lines": 40,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/application_test.exs",
+      "size_bytes": 1113,
+      "lines": 34,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/dead_letter_test.exs",
+      "size_bytes": 2260,
+      "lines": 77,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/handler_router/call_test.exs",
+      "size_bytes": 2449,
+      "lines": 68,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/handler_router/channel_test.exs",
+      "size_bytes": 2899,
+      "lines": 88,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_registry_test.exs",
+      "size_bytes": 2547,
+      "lines": 84,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_action_dispatch_test.exs",
+      "size_bytes": 6865,
+      "lines": 246,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_emit_ack_test.exs",
+      "size_bytes": 5327,
+      "lines": 190,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_esr_channel_test.exs",
+      "size_bytes": 1573,
+      "lines": 65,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_event_handling_test.exs",
+      "size_bytes": 4189,
+      "lines": 142,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_invoke_command_test.exs",
+      "size_bytes": 4840,
+      "lines": 175,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_pause_test.exs",
+      "size_bytes": 2972,
+      "lines": 107,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_persist_test.exs",
+      "size_bytes": 4593,
+      "lines": 156,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_retry_test.exs",
+      "size_bytes": 3729,
+      "lines": 126,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_test.exs",
+      "size_bytes": 5309,
+      "lines": 189,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_server_tool_invoke_test.exs",
+      "size_bytes": 2095,
+      "lines": 72,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/peer_supervisor_test.exs",
+      "size_bytes": 3592,
+      "lines": 114,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/persistence/ets_test.exs",
+      "size_bytes": 2634,
+      "lines": 76,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/session_registry_test.exs",
+      "size_bytes": 2852,
+      "lines": 81,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/telemetry/attach_test.exs",
+      "size_bytes": 1278,
+      "lines": 39,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/telemetry/buffer_test.exs",
+      "size_bytes": 1538,
+      "lines": 49,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/topology/init_directive_test.exs",
+      "size_bytes": 4973,
+      "lines": 160,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/topology/instantiator_test.exs",
+      "size_bytes": 4916,
+      "lines": 161,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/topology/registry_test.exs",
+      "size_bytes": 2762,
+      "lines": 86,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/topology/stop_cascade_test.exs",
+      "size_bytes": 3256,
+      "lines": 115,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/topology/workspace_validation_test.exs",
+      "size_bytes": 1801,
+      "lines": 61,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/uri_test.exs",
+      "size_bytes": 2082,
+      "lines": 68,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/worker_supervisor_test.exs",
+      "size_bytes": 3715,
+      "lines": 96,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr/workspaces_registry_test.exs",
+      "size_bytes": 1019,
+      "lines": 37,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr_web/channel_channel_test.exs",
+      "size_bytes": 1495,
+      "lines": 53,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr_web/channel_integration_test.exs",
+      "size_bytes": 4218,
+      "lines": 121,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr_web/cli_channel_test.exs",
+      "size_bytes": 14271,
+      "lines": 458,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/esr_web/controllers/error_json_test.exs",
+      "size_bytes": 338,
+      "lines": 12,
+      "extension": ".exs"
+    },
+    {
+      "path": "runtime/test/support/channel_case.ex",
+      "size_bytes": 669,
+      "lines": 23,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/test/support/conn_case.ex",
+      "size_bytes": 1045,
+      "lines": 37,
+      "extension": ".ex"
+    },
+    {
+      "path": "runtime/test/test_helper.exs",
+      "size_bytes": 15,
+      "lines": 1,
+      "extension": ".exs"
+    },
+    {
+      "path": "scenarios/e2e-esr-channel.yaml",
+      "size_bytes": 12039,
+      "lines": 263,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scenarios/e2e-feishu-cc.yaml",
+      "size_bytes": 6915,
+      "lines": 169,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scripts/e2e-cc.sh",
+      "size_bytes": 891,
+      "lines": 18,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/esr-cc.local.sh.example",
+      "size_bytes": 479,
+      "lines": 13,
+      "extension": ".example"
+    },
+    {
+      "path": "scripts/esr-cc.sh",
+      "size_bytes": 3251,
+      "lines": 100,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/esrd.sh",
+      "size_bytes": 4546,
+      "lines": 136,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/final_gate.sh",
+      "size_bytes": 21211,
+      "lines": 543,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/final_gate.sh.sha256",
+      "size_bytes": 88,
+      "lines": 1,
+      "extension": ".sha256"
+    },
+    {
+      "path": "scripts/kill_scenario_workers.sh",
+      "size_bytes": 733,
+      "lines": 24,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/ledger_append.py",
+      "size_bytes": 3038,
+      "lines": 86,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/live_signatures.txt",
+      "size_bytes": 446,
+      "lines": 13,
+      "extension": ".txt"
+    },
+    {
+      "path": "scripts/loopguard-bundle.sha256",
+      "size_bytes": 986,
+      "lines": 10,
+      "extension": ".sha256"
+    },
+    {
+      "path": "scripts/loopguard.sh",
+      "size_bytes": 2326,
+      "lines": 69,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/loopguard_scenario.py",
+      "size_bytes": 3698,
+      "lines": 110,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/loopguard_scenarios_allowlist.py",
+      "size_bytes": 1342,
+      "lines": 46,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/mock_cc.py",
+      "size_bytes": 1160,
+      "lines": 39,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/mock_cc_worker.py",
+      "size_bytes": 9969,
+      "lines": 251,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/mock_feishu.py",
+      "size_bytes": 9210,
+      "lines": 257,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/mock_mcp_ctl.py",
+      "size_bytes": 3322,
+      "lines": 93,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/spawn_scenario_workers.sh",
+      "size_bytes": 4529,
+      "lines": 138,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/spawn_worker.sh",
+      "size_bytes": 1087,
+      "lines": 36,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/tests/fixtures/cli_tests/bad_decorator_patch.py",
+      "size_bytes": 129,
+      "lines": 6,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/cli_tests/bad_monkeypatch.py",
+      "size_bytes": 132,
+      "lines": 2,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/cli_tests/bad_no_fixture.py",
+      "size_bytes": 35,
+      "lines": 2,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/cli_tests/bad_patch_object.py",
+      "size_bytes": 160,
+      "lines": 5,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/cli_tests/good.py",
+      "size_bytes": 127,
+      "lines": 3,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/entry_bodies/cheap_log.py",
+      "size_bytes": 255,
+      "lines": 8,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/entry_bodies/real_run.py",
+      "size_bytes": 562,
+      "lines": 19,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/entry_bodies/stub_run.py",
+      "size_bytes": 192,
+      "lines": 7,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/fixtures/manifest.yaml",
+      "size_bytes": 124,
+      "lines": 3,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scripts/tests/fixtures/prds/bad_deferred/01-actor-runtime.md",
+      "size_bytes": 101,
+      "lines": 6,
+      "extension": ".md"
+    },
+    {
+      "path": "scripts/tests/fixtures/prds/bad_deletion/01-actor-runtime.md",
+      "size_bytes": 53,
+      "lines": 5,
+      "extension": ".md"
+    },
+    {
+      "path": "scripts/tests/fixtures/prds/good/01-actor-runtime.md",
+      "size_bytes": 141,
+      "lines": 6,
+      "extension": ".md"
+    },
+    {
+      "path": "scripts/tests/fixtures/scenarios/bad_covered_by.yaml",
+      "size_bytes": 170,
+      "lines": 10,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scripts/tests/fixtures/scenarios/bad_signature.yaml",
+      "size_bytes": 215,
+      "lines": 12,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scripts/tests/fixtures/scenarios/good.yaml",
+      "size_bytes": 335,
+      "lines": 15,
+      "extension": ".yaml"
+    },
+    {
+      "path": "scripts/tests/fixtures/signatures.txt",
+      "size_bytes": 128,
+      "lines": 4,
+      "extension": ".txt"
+    },
+    {
+      "path": "scripts/tests/test_esrd_sh.sh",
+      "size_bytes": 1541,
+      "lines": 55,
+      "extension": ".sh"
+    },
+    {
+      "path": "scripts/tests/test_ledger_append.py",
+      "size_bytes": 1484,
+      "lines": 47,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_loopguard_scenario.py",
+      "size_bytes": 2228,
+      "lines": 64,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_loopguard_scenarios_allowlist.py",
+      "size_bytes": 1563,
+      "lines": 47,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_mock_cc.py",
+      "size_bytes": 1488,
+      "lines": 45,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_mock_feishu.py",
+      "size_bytes": 4797,
+      "lines": 136,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_mock_feishu_conformance.py",
+      "size_bytes": 5072,
+      "lines": 124,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_verify_cli_tests_live.py",
+      "size_bytes": 1600,
+      "lines": 47,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_verify_entry_bodies.py",
+      "size_bytes": 1436,
+      "lines": 42,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_verify_ledger_append_only.py",
+      "size_bytes": 2635,
+      "lines": 66,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/tests/test_verify_prd_acceptance.py",
+      "size_bytes": 1227,
+      "lines": 37,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/verify_cli_tests_live.py",
+      "size_bytes": 3912,
+      "lines": 108,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/verify_entry_bodies.py",
+      "size_bytes": 5028,
+      "lines": 132,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/verify_ledger_append_only.py",
+      "size_bytes": 2485,
+      "lines": 73,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/verify_prd_acceptance.py",
+      "size_bytes": 3587,
+      "lines": 108,
+      "extension": ".py"
+    },
+    {
+      "path": "scripts/verify_prd_matrix.py",
+      "size_bytes": 3294,
+      "lines": 83,
+      "extension": ".py"
+    }
+  ],
+  "summary": {
+    "total_files": 349,
+    "total_lines": 51618,
+    "by_extension": {
+      ".py": 169,
+      ".md": 45,
+      ".exs": 44,
+      ".ex": 36,
+      ".toml": 15,
+      ".sh": 11,
+      ".yaml": 8,
+      ".json": 5,
+      "(no ext)": 4,
+      ".txt": 3,
+      ".example": 2,
+      ".sha256": 2,
+      ".lock": 2,
+      ".html": 2,
+      ".ico": 1
+    }
+  }
+}

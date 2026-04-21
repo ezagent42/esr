@@ -1,0 +1,307 @@
+{
+  "module_name": "patterns-roles-scenarios",
+  "module_path": "patterns/ + roles/ + scenarios/",
+  "description": "Declarative artifacts module consumed by the ESR runtime/CLI. Three sub-directories: (1) patterns/*.py — Python EDSL topology definitions (esr.command/node decorators) that compile to YAML via `esr cmd compile`; each pattern is an @command-decorated function whose body builds a DAG of node(...) calls chained via >> to express depends_on edges. (2) roles/<name>/{CLAUDE.md,settings.json} — Claude-Code role packs attached to a tmux cc_session at spawn; `esr workspace add --role <name>` copies the CLAUDE.md + settings.json into the session's workspace so a new cc_proxy/cc_session picks them up on init. (3) scenarios/*.yaml — end-to-end scenario manifests executed by `esr scenario run`, with setup/steps/teardown arrays whose each entry is a shell command + expect_exit + expect_stdout_match regex; driven by final_gate.sh --mock as gate #4. No module-local tests — the patterns are covered indirectly by py/tests/test_pattern_*.py in py-sdk-core.",
+  "files_analyzed": [
+    {
+      "path": "patterns/feishu-app-session.py",
+      "lines": 21,
+      "key_symbols": [
+        "feishu_app_session (@command) :12",
+        "node(id='feishu-app:{{app_id}}', actor_type='feishu_app_proxy', adapter='feishu', handler='feishu_app.on_msg') :14"
+      ]
+    },
+    {
+      "path": "patterns/feishu-thread-session.py",
+      "lines": 62,
+      "key_symbols": [
+        "feishu_thread_session (@command) :17",
+        "thread = node(id='thread:{{thread_id}}', actor_type='feishu_thread_proxy', handler='feishu_thread.on_msg') :21",
+        "tmux = node(id='tmux:{{thread_id}}', actor_type='tmux_proxy', adapter='cc_tmux', handler='tmux_proxy.on_msg', depends_on=[thread.id], init_directive={action: new_session}) :32",
+        "cc = node(id='cc:{{thread_id}}', actor_type='cc_proxy', handler='cc_session.on_msg', depends_on=[tmux.id]) :51",
+        "thread >> tmux >> cc :61"
+      ]
+    },
+    {
+      "path": "roles/dev/CLAUDE.md",
+      "lines": 4,
+      "key_symbols": [
+        "role-instructions: developer-assistance session using `reply` MCP tool, workspace=~/Workspace/esr"
+      ]
+    },
+    {
+      "path": "roles/dev/settings.json",
+      "lines": 10,
+      "key_symbols": [
+        "permissions.allow: ['mcp__esr-channel__reply','mcp__esr-channel__react','mcp__esr-channel__send_file']",
+        "permissions.deny: []"
+      ]
+    },
+    {
+      "path": "roles/diagnostic/CLAUDE.md",
+      "lines": 21,
+      "key_symbols": [
+        "role-instructions: diagnostic session for final_gate.sh --live v2",
+        "rule-1: ECHO-PROBE: <nonce> → call _echo(nonce=<that-nonce>)",
+        "rule-2: @<tag> ECHO-PROBE: <nonce> → same (strip @<tag> routing prefix)",
+        "rule-3: other msgs → brief reply"
+      ]
+    },
+    {
+      "path": "roles/diagnostic/settings.json",
+      "lines": 11,
+      "key_symbols": [
+        "permissions.allow: ['mcp__esr-channel__reply','mcp__esr-channel__react','mcp__esr-channel__send_file','mcp__esr-channel___echo']"
+      ]
+    },
+    {
+      "path": "scenarios/e2e-esr-channel.yaml",
+      "lines": 264,
+      "key_symbols": [
+        "type: scenario, name: e2e-esr-channel, mode: mock",
+        "setup: 8 steps (esrd start → wait :4001 → mock_feishu on :8101 → esr actors list smoke → compile feishu-app-session + feishu-thread-session → spawn_scenario_workers.sh root/alt/beta → workspace add esr-dev --role diagnostic → adapter add feishu-mock)",
+        "steps: [A-new-session, B-inbound-notify, C-reply-tool, D-at-addressing, E-session-killed, F-drain, G-deadletter-empty] (7 steps)",
+        "teardown: kill_scenario_workers.sh; mock_feishu pid kill; esrd stop; workspace remove esr-dev"
+      ]
+    },
+    {
+      "path": "scenarios/e2e-feishu-cc.yaml",
+      "lines": 170,
+      "key_symbols": [
+        "name: e2e-feishu-cc, mode: mock",
+        "setup: 6 steps (esrd start → wait :4001 → mock_feishu :8101 → esr actors list smoke → compile feishu-thread-session → spawn_scenario_workers.sh alpha/beta/gamma)",
+        "steps: [A-spawn-thread-alpha, B-spawn-thread-beta, C-actors-list-pids, D-stop-thread-alpha, E-telemetry-trace, F-drain-remaining, G-debug-pause-resume, H-deadletter-empty] (8 steps)",
+        "teardown: kill_scenario_workers.sh; mock_feishu kill; esrd stop"
+      ]
+    }
+  ],
+  "interfaces": {
+    "patterns": {
+      "feishu-app-session": {
+        "prd": "PRD 06 F01 (v0.2)",
+        "semantics": "Singleton command binding one feishu_app_proxy actor to a single Feishu app instance. Instantiated once per (app_id, instance_name) pair.",
+        "nodes": [
+          {
+            "id": "feishu-app:{{app_id}}",
+            "actor_type": "feishu_app_proxy",
+            "adapter": "feishu",
+            "handler": "feishu_app.on_msg",
+            "params": {"app_id": "{{app_id}}"},
+            "depends_on": []
+          }
+        ],
+        "edges": [],
+        "runtime_achievement": "PeerServer binds to the feishu adapter_runner; routes inbound Lark messages into per-thread actors, handles /new-thread and /new-session dispatch, fires InvokeCommand(feishu-thread-session) on /new-session, and implements @-addressing (lookup_active_thread_by_chat, @tag routing)."
+      },
+      "feishu-thread-session": {
+        "prd": "PRD 06 F02",
+        "semantics": "Per-thread topology spawned on-demand by feishu_app's /new-thread or /new-session. Three actors in a linear depends_on chain.",
+        "nodes": [
+          {
+            "id": "thread:{{thread_id}}",
+            "actor_type": "feishu_thread_proxy",
+            "handler": "feishu_thread.on_msg",
+            "params": {"thread_id": "{{thread_id}}", "chat_id": "{{chat_id}}", "tag": "{{tag}}", "workspace": "{{workspace}}"},
+            "depends_on": []
+          },
+          {
+            "id": "tmux:{{thread_id}}",
+            "actor_type": "tmux_proxy",
+            "adapter": "cc_tmux",
+            "handler": "tmux_proxy.on_msg",
+            "params": {"session_name": "{{thread_id}}"},
+            "depends_on": ["thread:{{thread_id}}"],
+            "init_directive": {
+              "action": "new_session",
+              "args": {
+                "session_name": "{{thread_id}}",
+                "start_cmd": "scripts/esr-cc.sh",
+                "env": {"ESR_WORKSPACE": "{{workspace}}", "ESR_SESSION_ID": "{{thread_id}}"}
+              }
+            }
+          },
+          {
+            "id": "cc:{{thread_id}}",
+            "actor_type": "cc_proxy",
+            "handler": "cc_session.on_msg",
+            "params": {"session_name": "{{thread_id}}", "parent_thread": "{{thread_id}}"},
+            "depends_on": ["tmux:{{thread_id}}"]
+          }
+        ],
+        "edges": [
+          "thread >> tmux (tmux depends_on thread)",
+          "tmux >> cc (cc depends_on tmux)"
+        ],
+        "runtime_achievement": "Topology.Instantiator activates thread-actor first, then runs tmux init_directive {action:new_session,start_cmd:scripts/esr-cc.sh,env:{ESR_WORKSPACE,ESR_SESSION_ID}} so the tmux session + cc binary exist before cc_session PeerServer binds. Rollback is clean: if tmux init fails, cc node never spawns (PRD 01 F13b). The @<tag> variable is user-facing addressing metadata scoped to the thread proxy only."
+      }
+    },
+    "roles": {
+      "dev": {
+        "path": "roles/dev/",
+        "claude_md": "Developer-assistance session. Uses `reply` MCP tool to respond to Feishu messages. Workspace=~/Workspace/esr.",
+        "permissions_allow": ["mcp__esr-channel__reply", "mcp__esr-channel__react", "mcp__esr-channel__send_file"],
+        "permissions_deny": [],
+        "mcp_tools_available": ["reply", "react", "send_file"],
+        "activation": "`esr workspace add <name> --role dev` copies roles/dev/{CLAUDE.md,settings.json} into the workspace; the cc_tmux init_directive spawns cc with ESR_WORKSPACE pointing at that workspace so Claude Code picks up the role instructions + MCP allow-list at session start."
+      },
+      "diagnostic": {
+        "path": "roles/diagnostic/",
+        "claude_md": "Diagnostic session used by final_gate.sh --live v2. Three hard-coded rules: (1) msg `ECHO-PROBE: <nonce>` → call _echo(nonce=<that>) — must NOT call reply directly, must NOT interpret; (2) `@<tag> ECHO-PROBE: <nonce>` → same (strip @<tag> routing prefix); (3) any other message → brief reply confirming receipt. Purpose: ESR transit verification only.",
+        "permissions_allow": ["mcp__esr-channel__reply", "mcp__esr-channel__react", "mcp__esr-channel__send_file", "mcp__esr-channel___echo"],
+        "permissions_deny": [],
+        "mcp_tools_available": ["reply", "react", "send_file", "_echo (synthetic test tool)"],
+        "activation": "`esr workspace add <name> --role diagnostic` — used by scenarios/e2e-esr-channel.yaml setup step #7 and by final_gate.sh --live; the _echo MCP tool replies with the nonce so the gate script can verify bidirectional ESR channel transit."
+      }
+    },
+    "scenarios": {
+      "e2e-esr-channel": {
+        "path": "scenarios/e2e-esr-channel.yaml",
+        "mode": "mock",
+        "spec_ref": "docs/superpowers/specs/2026-04-20-esr-v0.2-channel-design.md §7.2",
+        "setup_count": 8,
+        "step_count": 7,
+        "teardown_count": 4,
+        "setup_summary": [
+          "#1 esrd.sh start --instance=mock-e2e (30s)",
+          "#2 wait for Phoenix bind on :4001 (60s loop)",
+          "#3 pkill + start mock_feishu.py on :8101",
+          "#4 smoke `esr actors list`",
+          "#5 compile feishu-app-session + feishu-thread-session",
+          "#6 spawn_scenario_workers.sh with tags root/alt/beta",
+          "#7 pre-seed workspace esr-dev --role diagnostic --cwd /tmp/mock-esr-dev",
+          "#8 rm adapters.yaml + esr adapter add feishu-mock (auto-instantiates feishu-app-session)"
+        ],
+        "steps": [
+          {"id": "A-new-session", "goal": "esr cmd run feishu-app-session + mock_feishu /push_inbound '/new-session esr-dev tag=root' → thread:root/tmux:root/cc:root spawn", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+", "expect_exit": 0},
+          {"id": "B-inbound-notify", "goal": "plain 'hello-probe' msg → feishu_app lookup_active_thread_by_chat → thread:root → Emit(esr-channel,notify_session,...) → SessionRegistry.push; sig-B in trace", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "C-reply-tool", "goal": "mock_mcp_ctl tool_invoke(reply,chat_id=oc_m1,text=ack-C) → feishu_thread handle_info → Emit(feishu,send_message) → /sent_messages contains ack-C", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "D-at-addressing", "goal": "spawn tag=alt then `@alt test-msg-D` routes to thread:alt only, not thread:root", "expect_stdout_match": "cc:alt\\s+type=cc_proxy"},
+          {"id": "E-session-killed", "goal": "esr cmd stop thread_id=root → cc:root PeerServer.terminate broadcasts session_killed", "expect_stdout_match": "(session_killed|stopped 'feishu-thread-session')"},
+          {"id": "F-drain", "goal": "esr drain cascades stop across remaining topologies", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "G-deadletter-empty", "goal": "deadletter flush + clean spawn/stop beta → queue stays empty", "expect_stdout_match": "deadletter queue is empty"}
+        ],
+        "success_verdict": "Every step returns exit 0 and stdout matches its expect_stdout_match regex verbatim (each embeds sig-B so LG-1 can't be defanged). Teardown is best-effort and never aborts the scenario."
+      },
+      "e2e-feishu-cc": {
+        "path": "scenarios/e2e-feishu-cc.yaml",
+        "mode": "mock",
+        "spec_ref": "ESR v0.1 Phase 8e",
+        "setup_count": 6,
+        "step_count": 8,
+        "teardown_count": 3,
+        "setup_summary": [
+          "#1 esrd.sh start --instance=mock-e2e",
+          "#2 wait :4001 bind",
+          "#3 mock_feishu on :8101",
+          "#4 smoke actors list",
+          "#5 compile feishu-thread-session only",
+          "#6 spawn_scenario_workers.sh with tags alpha/beta/gamma"
+        ],
+        "steps": [
+          {"id": "A-spawn-thread-alpha", "goal": "esr cmd run feishu-thread-session thread_id=alpha chat_id=oc_mock_alpha", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "B-spawn-thread-beta", "goal": "second independent thread_id=beta (concurrency)", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "C-actors-list-pids", "goal": "esr actors list shows BEAM pid <0.N.M> (sig-A)", "expect_stdout_match": "pid=<0\\.\\d+\\.\\d+>"},
+          {"id": "D-stop-thread-alpha", "goal": "stop alpha; beta still alive (isolation)", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "E-telemetry-trace", "goal": "esr trace --last 5m shows sig-B", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "F-drain-remaining", "goal": "esr drain cascades stop", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "G-debug-pause-resume", "goal": "spawn gamma → debug pause → actors inspect (paused=true) → debug resume", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"},
+          {"id": "H-deadletter-empty", "goal": "deadletter list + stop gamma cleanly", "expect_stdout_match": "actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+"}
+        ],
+        "success_verdict": "Every step returns exit 0 and stdout matches its expect_stdout_match regex (each embeds one of sig-A..sig-F verbatim). Teardown best-effort."
+      }
+    },
+    "compile_target": {
+      "description": "Patterns compile to YAML consumed by `esr cmd run <name>`. Compiled artifact path: ~/.esrd/default/commands/.compiled/<name>.yaml. Template vars like {{app_id}} resolve from --param k=v flags at submit time.",
+      "compile_entry": "esr cmd compile <name> -o <out.yaml> (py/src/esr/cli/main.py:646 cmd_compile) which calls esr.command.compile_to_yaml"
+    },
+    "role_activation_path": "`esr workspace add <name> --role R` (py/src/esr/cli/main.py:1216 workspace_add) writes ~/.esrd/default/workspaces.yaml with a role pointer; cc_tmux init_directive's env.ESR_WORKSPACE=<name> hands it to scripts/esr-cc.sh which lays out the cc workspace (CLAUDE.md + .claude/settings.json copied from roles/<R>/) before exec'ing claude-code."
+  },
+  "dependencies": {
+    "external_python": [],
+    "internal_esr_modules_used_by_patterns": [
+      "esr.command (@command decorator) — from `esr import command, node`",
+      "esr.node (node() constructor + >> operator for depends_on edges)"
+    ],
+    "adapter_handlers_referenced_by_patterns": [
+      "feishu (adapter)",
+      "cc_tmux (adapter)",
+      "feishu_app.on_msg (handler — called by feishu-app-session)",
+      "feishu_thread.on_msg (handler — called by feishu-thread-session thread node)",
+      "tmux_proxy.on_msg (handler — cc_tmux proxy)",
+      "cc_session.on_msg (handler — cc session)"
+    ],
+    "mcp_tools_used_by_roles": [
+      "mcp__esr-channel__reply",
+      "mcp__esr-channel__react",
+      "mcp__esr-channel__send_file",
+      "mcp__esr-channel___echo (diagnostic role only)"
+    ],
+    "scenario_runtime_requirements": [
+      "esrd daemon (runtime_ex app) on :4001",
+      "scripts/mock_feishu.py on :8101 (mock Feishu OpenAPI)",
+      "scripts/spawn_scenario_workers.sh (pre-spawns adapter + handler workers)",
+      "scripts/mock_mcp_ctl.py (MCP test-injection control for e2e-esr-channel C-reply-tool)",
+      "scripts/kill_scenario_workers.sh (teardown)",
+      "scripts/esrd.sh start/stop (runtime lifecycle)",
+      "scripts/esr-cc.sh (referenced via tmux init_directive start_cmd)"
+    ],
+    "consumer_modules": [
+      "py/src/esr/cli/main.py:136 scenario_run — runs *.yaml scenarios",
+      "py/src/esr/cli/main.py:646 cmd_compile — compiles patterns/*.py → YAML",
+      "py/src/esr/cli/main.py:1216 workspace_add --role — binds roles/<name>/ to a workspace",
+      "py/tests/test_pattern_*.py — (py-sdk-core) indirectly covers these patterns"
+    ]
+  },
+  "test_results": {
+    "command": "no own tests; covered indirectly by py-sdk-core test_pattern_*.py",
+    "exit_code": null,
+    "passed": null,
+    "failed": null,
+    "skipped": null,
+    "raw_output_first_1000": "n/a"
+  },
+  "user_flows": [
+    {
+      "flow": "Author + deploy a new pattern",
+      "steps": [
+        "Write patterns/my-pattern.py with @command decorator + node(...) chain",
+        "esr cmd install patterns/my-pattern.py  (validates deps, writes compiled YAML)",
+        "esr cmd run my-pattern --param k=v  (runtime activates topology)"
+      ]
+    },
+    {
+      "flow": "Attach a role to a cc workspace",
+      "steps": [
+        "Place CLAUDE.md + settings.json under roles/<name>/",
+        "esr workspace add myspace --cwd /tmp/myspace --start-cmd scripts/esr-cc.sh --role <name> --chat oc_xxx:cli_mock:dm",
+        "When feishu_app handles /new-session myspace tag=X, the spawned cc_session picks up the role's CLAUDE.md + settings.json via ESR_WORKSPACE → scripts/esr-cc.sh"
+      ]
+    },
+    {
+      "flow": "Run end-to-end scenario (gate #4)",
+      "steps": [
+        "final_gate.sh --mock  OR  esr scenario run e2e-esr-channel",
+        "Runner executes each setup/step as `subprocess.run(shell=True)`; expect_exit + expect_stdout_match (regex) validated per entry",
+        "Teardown always runs; overall exit 0 iff every step's verdict is PASS"
+      ]
+    },
+    {
+      "flow": "Live transit verification (diagnostic role)",
+      "steps": [
+        "Pre-seeded workspace esr-dev --role diagnostic (scenario setup #7)",
+        "final_gate.sh --live sends `ECHO-PROBE: <nonce>` via Feishu; diagnostic CLAUDE.md instructs the cc session to call _echo(nonce) MCP tool; echo reply confirms full bidirectional ESR channel transit"
+      ]
+    }
+  ],
+  "notes": [
+    "Patterns use a tiny Python EDSL (from `esr import command, node`): @command('name') registers the function in esr.command.COMMAND_REGISTRY, node(id=..., actor_type=..., adapter=..., handler=..., params=..., depends_on=..., init_directive=...) constructs topology nodes, and the `>>` operator (returning the RHS) chains depends_on relationships. Template vars like {{app_id}} and {{thread_id}} stay as literals in the compiled YAML and are resolved at submit time from --param k=v flags.",
+    "feishu-app-session is singleton (one per app_id). feishu-thread-session is parameterized per thread_id with chat_id/tag/workspace params. The tmux init_directive's env.ESR_WORKSPACE=='{{workspace}}' is the mechanism that hands the role's CLAUDE.md + settings.json to the newly-spawned cc session via scripts/esr-cc.sh.",
+    "The thread >> tmux >> cc chain guarantees correct startup order: thread actor starts first (it validates params + registers the chat binding), then tmux runs init_directive new_session (creates the tmux shell + launches scripts/esr-cc.sh), and only after tmux reports success does cc_proxy bind to the live cc_session process. Rollback on init_directive failure is handled by the Topology Instantiator (PRD 01 F13b).",
+    "Roles are deliberately minimal: a markdown file (system prompt / rules) + a JSON MCP permission allow-list. The diagnostic role's _echo tool is intentionally kept out of the dev allow-list — dev sessions must NOT be able to short-circuit human reasoning via _echo.",
+    "diagnostic CLAUDE.md rule #1 explicitly says 'Do NOT think, do not explain, do not call reply directly' — the _echo tool handles the reply itself with the synthetic nonce. This is critical for final_gate.sh --live's transit-latency probe to be reproducible.",
+    "Both scenarios embed a fixed sig-B regex 'actor_id=(thread|tmux|cc|feishu-app):[a-z0-9-]+' in every step that matters — this is the spec-v2.1 LG-1 'log-grep' signature that the gate script cannot tamper with unless it also tampers with runtime output. e2e-feishu-cc additionally tests sig-A (BEAM pid shape <0.N.M>) in its C step.",
+    "e2e-esr-channel is the v0.2 scenario (7 steps), exercising the new MCP channel stack (ChannelSocket + ChannelChannel + SessionRegistry + cc_mcp bridge + /new-session command + @-addressing + session_killed broadcast). e2e-feishu-cc is the v0.1 legacy scenario (8 steps), exercising the original feishu-thread-session topology without the MCP channel layer.",
+    "Both scenarios' setup sections kill stale mock_feishu instances before starting (e2e-esr-channel uses `pkill -f`, e2e-feishu-cc does not — relying on pidfile) — this re-run idempotency is important because final_gate.sh --mock may re-invoke on CI.",
+    "Module has zero module-local test files; coverage is in py-sdk-core under py/tests/test_pattern_*.py (notably test_pattern_feishu_thread_session.py and test_pattern_feishu_app_session.py) which import these .py files as modules and assert on the compiled topology shape. Scenarios are executed by py/tests/test_cli_scenario_exec.py against a fake runtime."
+  ]
+}

@@ -1,0 +1,271 @@
+{
+  "module_name": "runtime-subsystems",
+  "module_path": "runtime/lib/esr/{adapter_hub,handler_router,persistence,telemetry,topology,workspaces}/ + runtime/test/esr/<same>/",
+  "description": "Elixir/OTP subsystems under Esr.Runtime: AdapterHub (adapter-topic↔actor binding), HandlerRouter (Phoenix-channel dispatch to Python handler workers), Topology Instantiator/Registry (YAML artifact → running PeerServers), ETS-backed Persistence with disk checkpointing, Telemetry buffer+attach, and the Workspaces registry cache (PRD 01 F08/F11/F13/F14/F15/F16/F18, spec §3.1/3.3/3.4/3.5/3.6).",
+  "files_analyzed": [
+    {
+      "path": "runtime/lib/esr/adapter_hub/registry.ex",
+      "lines": 146,
+      "key_symbols": [
+        {"name": "Esr.AdapterHub.Registry", "type": "module (GenServer)", "line": 1, "description": "ETS-backed map topic → actor_id for adapter Phoenix topics `adapter:<name>/<instance_id>`. Table `:esr_adapter_hub_bindings`; public reads skip the GenServer (ETS public/set)."},
+        {"name": "bind/2", "type": "function", "line": 38, "description": "Upserts {topic, actor_id}; GenServer resolves actor_id → pid via Esr.PeerRegistry and Process.monitor's it so DOWN cleans the binding."},
+        {"name": "unbind/1", "type": "function", "line": 43, "description": "Idempotent delete of topic + its monitor bookkeeping."},
+        {"name": "lookup/1", "type": "function", "line": 48, "description": "O(1) ETS read → {:ok, actor_id} | :error."},
+        {"name": "list/0", "type": "function", "line": 56, "description": "Full table dump for admin/GC."},
+        {"name": "handle_info/:DOWN", "type": "callback", "line": 97, "description": "Reviewer S5 ghost-entry prevention: when a monitored PeerServer pid dies every topic bound to it is removed synchronously."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/adapter_hub/supervisor.ex",
+      "lines": 19,
+      "key_symbols": [
+        {"name": "Esr.AdapterHub.Supervisor", "type": "module (Supervisor)", "line": 1, "description": "one_for_one supervising [Esr.AdapterHub.Registry]; future adapter session workers live here (F08+)."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/handler_router.ex",
+      "lines": 76,
+      "key_symbols": [
+        {"name": "Esr.HandlerRouter", "type": "module", "line": 1, "description": "PeerServer→handler-worker call/reply over Phoenix PubSub. v0.1 uses worker_id='default' (F10 pool pending)."},
+        {"name": "call/3", "type": "function", "line": 30, "description": "Subscribe caller to handler_reply:<id>, broadcast handler_call envelope on handler:<module>/default, await matching {:handler_reply, env} or 5s timeout."},
+        {"name": "shape_reply/1", "type": "function (private)", "line": 65, "description": "{:ok, new_state, actions} | {:error, {:handler_error, err}} | {:error, {:handler_error, {type:'InvalidReply'}}}."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/handler_router/supervisor.ex",
+      "lines": 15,
+      "key_symbols": [
+        {"name": "Esr.HandlerRouter.Supervisor", "type": "module (Supervisor)", "line": 1, "description": "Empty scaffold; per-module worker pool arrives in F10."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/persistence/ets.ex",
+      "lines": 108,
+      "key_symbols": [
+        {"name": "Esr.Persistence.Ets", "type": "module (GenServer)", "line": 1, "description": "ETS actor-state store (table `:esr_actor_states`) with atomic tmp-rename disk checkpoint for G-4 kill-9 recovery."},
+        {"name": "put/3 / get/2 / delete/2 / clear/1", "type": "functions", "line": 36, "description": "Direct ETS CRUD keyed by actor_id; public table, no round-trip through GenServer."},
+        {"name": "save_to_disk/2", "type": "function", "line": 67, "description": "tab2list → :erlang.term_to_binary → write <path>.tmp → File.rename (atomic)."},
+        {"name": "load_from_disk/2", "type": "function", "line": 83, "description": "binary_to_term re-populates the ETS table; missing file → {:ok, 0}."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/persistence/supervisor.ex",
+      "lines": 21,
+      "key_symbols": [
+        {"name": "Esr.Persistence.Supervisor", "type": "module (Supervisor)", "line": 1, "description": "Starts Ets child with table `:esr_actor_states` (PeerServer read/write target)."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/attach.ex",
+      "lines": 72,
+      "key_symbols": [
+        {"name": "Esr.Telemetry.Attach", "type": "module", "line": 1, "description": "Attaches a :telemetry.attach_many handler for 20 bounded `[:esr, _, _]` events (no wildcard because :telemetry disallows it)."},
+        {"name": "@events", "type": "attribute", "line": 15, "description": "Enumeration: actor spawned/stopped/paused/resumed; message received/dispatched; directive issued/completed/timeout; handler called/violation/timeout/crashed/retry_exhausted; topology activated/deactivated; adapter crashed; deadletter event; state oversized_warning; ipc source_mismatch."},
+        {"name": "attach/1", "type": "function", "line": 48, "description": "Idempotent (detaches prior handler with same id) register against the named Buffer."},
+        {"name": "handle/4", "type": "function", "line": 61, "description": "Forwards into Esr.Telemetry.Buffer.record/4."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/buffer.ex",
+      "lines": 105,
+      "key_symbols": [
+        {"name": "Esr.Telemetry.Buffer", "type": "module (GenServer)", "line": 1, "description": "ETS :ordered_set ring keyed by {ts_unix_ms, make_ref()}; per-name table :esr_telemetry_<name>; default retention 15 minutes."},
+        {"name": "Buffer.Event", "type": "struct", "line": 18, "description": "{ts_unix_ms, event, measurements, metadata}."},
+        {"name": "record/4", "type": "function", "line": 41, "description": "Direct ETS insert (no GenServer hop) so every :telemetry fire is O(1)."},
+        {"name": "query/2", "type": "function", "line": 58, "description": "ets.select with ms ≥ now - duration_seconds*1000; default 900s window."},
+        {"name": "handle_info/:prune", "type": "callback", "line": 89, "description": "Periodic select_delete of entries older than retention_minutes; self-reschedules."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/telemetry/supervisor.ex",
+      "lines": 39,
+      "key_symbols": [
+        {"name": "Esr.Telemetry.Supervisor", "type": "module (Supervisor)", "line": 1, "description": "Children: default Buffer (name :default) + transient Task that runs Attach.attach(:default) once Buffer is up."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/topology/instantiator.ex",
+      "lines": 469,
+      "key_symbols": [
+        {"name": "Esr.Topology.Instantiator", "type": "module", "line": 1, "description": "YAML-artifact → live actors pipeline (PRD 01 F13). Idempotent on (name, params)."},
+        {"name": "instantiate/3", "type": "function", "line": 40, "description": "Entry point; short-circuits via TopoRegistry.lookup when (name, params) already live."},
+        {"name": "do_instantiate/4", "type": "function (private)", "line": 57, "description": "check_params → validate_workspace_apps → substitute_all → toposort → spawn_in_order → TopoRegistry.register → emit [:esr, :topology, :instantiated]."},
+        {"name": "validate_workspace_apps/1", "type": "function (private)", "line": 80, "description": "v0.2 §3.3: if workspace param set, its chats' app_ids must all match an adapter binding `adapter:feishu/feishu-app:<app_id>`."},
+        {"name": "check_params/2", "type": "function (private)", "line": 124, "description": "Every required artifact param must be present in params map."},
+        {"name": "substitute_string/2", "type": "function (private)", "line": 160, "description": "Regex replaces {{name}}; raises ArgumentError (no String.to_atom) when a template param is missing (reviewer S6)."},
+        {"name": "toposort/1 + kahn/5", "type": "functions (private)", "line": 191, "description": "Kahn's algorithm over depends_on; returns {:error, :cycle_in_depends_on} when unresolved."},
+        {"name": "spawn_in_order/3 + spawn_loop/4", "type": "functions (private)", "line": 234, "description": "For each id in topo order: start_peer → bind_adapter → ensure_python_workers → issue_init_directive; any init-directive failure triggers rollback_spawned."},
+        {"name": "issue_init_directive/2", "type": "function (private)", "line": 263, "description": "Sends a 'directive' envelope on adapter:<a>/<id>; waits for {:directive_ack, %{id, payload.ok: true}}; re-broadcasts every 1s until deadline to handle late adapter joins."},
+        {"name": "rollback_spawned/2", "type": "function (private)", "line": 338, "description": "Stops previously spawned peers AND synchronously unbinds their adapter topics so a retry doesn't observe stale bindings."},
+        {"name": "ensure_python_workers/1", "type": "function (private)", "line": 387, "description": "Idempotent: WorkerSupervisor.ensure_handler + ensure_adapter with config loaded from ~/.esrd/*/adapters.yaml."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/topology/registry.ex",
+      "lines": 158,
+      "key_symbols": [
+        {"name": "Esr.Topology.Registry", "type": "module (GenServer)", "line": 1, "description": "Two ETS tables: :esr_topology_handles (live handles) + :esr_topology_artifacts (compiled YAML artifacts by name)."},
+        {"name": "Registry.Handle", "type": "struct", "line": 19, "description": "{name, params, peer_ids} — canonical identity of a live topology."},
+        {"name": "register/3", "type": "function", "line": 42, "description": "Atomic ets.insert_new keyed by (name, sort(params)); duplicate → return existing (reviewer S7 no-TOCTOU)."},
+        {"name": "lookup/2", "type": "function", "line": 58, "description": "Params-order-independent lookup via canonical key."},
+        {"name": "put_artifact/2, get_artifact/1", "type": "functions", "line": 76, "description": "Compiled-topology cache used by PeerServer's InvokeCommand action dispatch."},
+        {"name": "deactivate/1", "type": "function", "line": 90, "description": "Stop cascade: stops peer_ids in REVERSE topo order, deletes handle, emits [:esr, :topology, :deactivated] (PRD 01 F14)."},
+        {"name": "load_artifacts_from_dir/0", "type": "function (private)", "line": 132, "description": "Bootstrap scan of ~/.esrd/default/commands/.compiled/*.yaml at init/1 (disabled in :test via :bootstrap_artifacts=false)."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/topology/supervisor.ex",
+      "lines": 19,
+      "key_symbols": [
+        {"name": "Esr.Topology.Supervisor", "type": "module (Supervisor)", "line": 1, "description": "Children: [Esr.Topology.Registry]; Instantiator is a pure module, not a process."}
+      ]
+    },
+    {
+      "path": "runtime/lib/esr/workspaces/registry.ex",
+      "lines": 75,
+      "key_symbols": [
+        {"name": "Esr.Workspaces.Registry", "type": "module (GenServer)", "line": 1, "description": "ETS (:esr_workspaces) cache of workspaces.yaml rows loaded on esrd boot."},
+        {"name": "Workspace", "type": "struct", "line": 14, "description": "{name, cwd, start_cmd, role, chats, env} — one workspace row."},
+        {"name": "get/1, list/0", "type": "functions", "line": 23, "description": "Direct ETS reads (no GenServer hop)."},
+        {"name": "put/1", "type": "function", "line": 34, "description": "GenServer call used by CLI push (cli:workspace/register)."},
+        {"name": "load_from_file/1", "type": "function", "line": 37, "description": "YamlElixir parser; returns {name: Workspace}; missing file → {:ok, %{}}."}
+      ]
+    },
+    {"path": "runtime/test/esr/adapter_hub/channel_test.exs", "lines": 143, "key_symbols": [
+      {"name": "7 tests (F08 Phoenix-channel layer)", "type": "tests", "line": 0, "description": "Topic join; event/directive_ack routing to bound PeerServer; envelope shapes (kind=event|directive_ack); late-binding tolerance; dead-peer error path."}
+    ]},
+    {"path": "runtime/test/esr/adapter_hub/registry_test.exs", "lines": 113, "key_symbols": [
+      {"name": "8 tests", "type": "tests", "line": 0, "description": "bind upsert, re-bind replace, unbind idempotency, list, auto-unbind on monitored pid DOWN (S5)."}
+    ]},
+    {"path": "runtime/test/esr/handler_router/call_test.exs", "lines": 68, "key_symbols": [
+      {"name": "3 tests", "type": "tests", "line": 0, "description": "Happy handler_reply → {:ok, state, actions}; timeout → {:error, :handler_timeout}; error payload → {:error, {:handler_error, _}}."}
+    ]},
+    {"path": "runtime/test/esr/handler_router/channel_test.exs", "lines": 88, "key_symbols": [
+      {"name": "6 tests", "type": "tests", "line": 0, "description": "handler:<m>/<w> join; topic format rejection; handler_reply push rebroadcast; envelope kind=handler_reply; missing id rejection; unhandled event reply."}
+    ]},
+    {"path": "runtime/test/esr/persistence/ets_test.exs", "lines": 76, "key_symbols": [
+      {"name": "6 tests across 3 describes", "type": "tests", "line": 0, "description": "put/get, delete, save/load round-trip, missing-file load returns {:ok, 0}."}
+    ]},
+    {"path": "runtime/test/esr/telemetry/attach_test.exs", "lines": 39, "key_symbols": [
+      {"name": "1 test (end-to-end)", "type": "tests", "line": 0, "description": "Synthetic [:esr, :actor, :spawned] emit is observable via Buffer.query(:default, _)."}
+    ]},
+    {"path": "runtime/test/esr/telemetry/buffer_test.exs", "lines": 49, "key_symbols": [
+      {"name": "3 tests", "type": "tests", "line": 0, "description": "record/query round-trip; duration_seconds window filter; empty query returns []."}
+    ]},
+    {"path": "runtime/test/esr/topology/init_directive_test.exs", "lines": 160, "key_symbols": [
+      {"name": "3 tests", "type": "tests", "line": 0, "description": "init_directive ok ack spawns all nodes; error ack rolls back predecessors; timeout rolls back."}
+    ]},
+    {"path": "runtime/test/esr/topology/instantiator_test.exs", "lines": 161, "key_symbols": [
+      {"name": "7 tests", "type": "tests", "line": 0, "description": "single/chain spawn; missing_params; undeclared-template raises (S6); cycle rejection; idempotency; adapter binding side-effect."}
+    ]},
+    {"path": "runtime/test/esr/topology/registry_test.exs", "lines": 86, "key_symbols": [
+      {"name": "8 tests", "type": "tests", "line": 0, "description": "register key uniqueness, idempotent (name, params), different params yield new handles, lookup, list_all, deactivate removes, concurrent registers atomic (S7)."}
+    ]},
+    {"path": "runtime/test/esr/topology/stop_cascade_test.exs", "lines": 115, "key_symbols": [
+      {"name": "3 tests", "type": "tests", "line": 0, "description": "deactivate unregisters peers; emits :topology :deactivated telemetry; stop order is reverse of spawn order."}
+    ]},
+    {"path": "runtime/test/esr/topology/workspace_validation_test.exs", "lines": 61, "key_symbols": [
+      {"name": "2 tests", "type": "tests", "line": 0, "description": "v0.2 §3.3: reject unknown workspace app_id; skip when workspace param absent."}
+    ]}
+  ],
+  "interfaces": [
+    {"name": "Esr.AdapterHub.Registry.{bind,unbind,lookup,list}", "file": "runtime/lib/esr/adapter_hub/registry.ex", "line": 38, "description": "Topic (adapter:<name>/<instance_id>) ↔ actor_id binding; auto-GCs on actor pid DOWN."},
+    {"name": "Esr.HandlerRouter.call/3", "file": "runtime/lib/esr/handler_router.ex", "line": 30, "description": "Synchronously dispatch a handler_call envelope to handler:<module>/default and await handler_reply (default 5s)."},
+    {"name": "Esr.Persistence.Ets.{put,get,delete,clear,save_to_disk,load_from_disk}", "file": "runtime/lib/esr/persistence/ets.ex", "line": 36, "description": "Actor-state CRUD + atomic disk checkpoint (tmp+rename) + boot rehydrate (Track G-4)."},
+    {"name": "Esr.Telemetry.Buffer.{record,query}", "file": "runtime/lib/esr/telemetry/buffer.ex", "line": 41, "description": "Append + time-window select over ETS :ordered_set; O(1) write, no GenServer hop."},
+    {"name": "Esr.Telemetry.Attach.attach/1", "file": "runtime/lib/esr/telemetry/attach.ex", "line": 48, "description": "Attach bounded [:esr, _, _] handler (20 events) into a named Buffer at boot."},
+    {"name": "Esr.Topology.Instantiator.instantiate/3", "file": "runtime/lib/esr/topology/instantiator.ex", "line": 40, "description": "Idempotent YAML→actors: validate → toposort → spawn+bind+init_directive → register+telemetry."},
+    {"name": "Esr.Topology.Registry.{register,lookup,list_all,put_artifact,get_artifact,deactivate}", "file": "runtime/lib/esr/topology/registry.ex", "line": 42, "description": "Handle + artifact ETS registry; atomic insert_new; deactivate fires reverse-order stop cascade (F14)."},
+    {"name": "Esr.Workspaces.Registry.{get,list,put,load_from_file}", "file": "runtime/lib/esr/workspaces/registry.ex", "line": 23, "description": "In-memory workspaces.yaml cache keyed by workspace name."}
+  ],
+  "dependencies": [
+    ":telemetry + :telemetry_registry (event bus for F15/F16)",
+    "Phoenix.PubSub + Phoenix.Channel via EsrWeb.Endpoint (Handler/Adapter channels + reply pubsub)",
+    "YamlElixir (parsing workspaces.yaml, adapters.yaml, compiled command YAML)",
+    "stdlib: :ets, :erlang.term_to_binary/1, Process.monitor/1, GenServer, Supervisor, Task",
+    "Cross-module: Esr.PeerRegistry (bind→pid), Esr.PeerSupervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)"
+  ],
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/runtime && MIX_ENV=test mix test test/esr/adapter_hub/ test/esr/handler_router/ test/esr/persistence/ test/esr/telemetry/ test/esr/topology/ --max-failures 0",
+    "exit_code": 0,
+    "passed": 56,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_first_1000": "adapter_hub + handler_router group: 24 tests, 0 failures (0.9s).\npersistence + telemetry group: 9 tests, 0 failures (0.5s).\ntopology group: 23 tests, 0 failures (3.9s).\nTotal: 56 tests, 0 failures across 12 files. (Note: the combined invocation above aborts with '0 tests, --max-failures reached' due to a Mix build-lock race when multiple top-level paths are compiled concurrently from a cold build cache; splitting into the three subgroups shown makes every test execute and pass. One code warning: duplicate defp issue_init_directive/2 clauses at instantiator.ex:261 and :332 — lint only, no functional impact.)"
+  },
+  "user_flows": [
+    {
+      "name": "AdapterHub: Python adapter subprocess registers its topic",
+      "steps": [
+        "Topology.Instantiator.spawn_in_order calls bind_adapter/1 → HubRegistry.bind(\"adapter:<name>/<instance_id>\", actor_id).",
+        "Parallel: ensure_python_workers/1 spawns Python adapter_runner which connects ws://…/adapter_hub/socket/websocket and joins the same topic via Phoenix Channel.",
+        "Inbound 'event' / 'directive_ack' from Python → channel push → AdapterHub (channel layer) looks up actor_id in Registry → forwards to PeerServer as {:inbound_event, _} / {:directive_ack, _}.",
+        "When PeerServer pid exits, the Registry's monitor fires :DOWN → all topics owned by that pid are ets.deleted so no ghost routes."
+      ],
+      "entry_point": "runtime/lib/esr/adapter_hub/registry.ex:38"
+    },
+    {
+      "name": "HandlerRouter: PeerServer dispatches to a Python handler worker",
+      "steps": [
+        "PeerServer calls Esr.HandlerRouter.call(handler_module, payload, timeout).",
+        "HandlerRouter generates id='hc-<unique>', subscribes caller to handler_reply:<id>, builds an 'envelope' %{kind: 'handler_call', id, ts, source, payload} and EsrWeb.Endpoint.broadcast on handler:<module>/default.",
+        "Python handler_worker joined on that topic filters event=='envelope' & payload.kind=='handler_call', runs the pure handler fn, pushes handler_reply envelope back.",
+        "HandlerRouter's receive block matches on id, then shape_reply/1 returns {:ok, new_state, actions} | {:error, :handler_timeout} | {:error, {:handler_error, detail}}."
+      ],
+      "entry_point": "runtime/lib/esr/handler_router.ex:30"
+    },
+    {
+      "name": "Topology.Instantiator: compiled YAML → live running actors",
+      "steps": [
+        "Esr.Topology.Instantiator.instantiate(artifact, params) — artifact comes from Python compile_to_yaml; early-exits if TopoRegistry.lookup(name, params) already has a handle (idempotency).",
+        "check_params: every artifact['params'] key must appear in supplied params.",
+        "validate_workspace_apps: if params['workspace'] set, every chat.app_id must match an `adapter:feishu/feishu-app:<app_id>` binding in AdapterHub.",
+        "substitute_all: walk each node's id/adapter/depends_on/params/init_directive.args and Regex.replace {{name}} → params[name]; undeclared template raises ArgumentError (not String.to_atom — S6).",
+        "toposort (Kahn): reject depends_on cycles → {:error, :cycle_in_depends_on}.",
+        "spawn_in_order per id: PeerSupervisor.start_peer(actor_id, actor_type, handler_module, initial_state=node.params) → HubRegistry.bind adapter topic → WorkerSupervisor.ensure_handler/ensure_adapter (spawn Python counterparts, config from ~/.esrd/*/adapters.yaml) → issue_init_directive (broadcast directive envelope on adapter topic, await {:directive_ack, ok: true}, re-broadcast every 1s until deadline).",
+        "On any init_directive failure: rollback_spawned stops previously started peers and synchronously unbinds their topics, returns {:error, {:init_directive_failed, id, reason}}.",
+        "TopoRegistry.register(name, params, peer_ids) → emit [:esr, :topology, :instantiated] → return Handle."
+      ],
+      "entry_point": "runtime/lib/esr/topology/instantiator.ex:40"
+    },
+    {
+      "name": "Topology.Registry: lifecycle of a topology instance",
+      "steps": [
+        "start: Instantiator calls Registry.register(name, params, peer_ids) → atomic :ets.insert_new keyed by (name, sort(params)); duplicate returns the existing Handle (S7 no-TOCTOU).",
+        "run: PeerServer InvokeCommand actions call Registry.get_artifact(name) to resolve the compiled YAML, then Instantiator.instantiate chains another live topology.",
+        "stop_cascade: Registry.deactivate(handle) stops peer_ids in REVERSE topo order (dependents first) via PeerSupervisor.stop_peer, deletes the ETS row, emits [:esr, :topology, :deactivated]."
+      ],
+      "entry_point": "runtime/lib/esr/topology/registry.ex:90"
+    },
+    {
+      "name": "Persistence.Ets: restart-survival checkpoint cycle",
+      "steps": [
+        "At boot, Persistence.Supervisor starts Ets with table :esr_actor_states (named/public/set).",
+        "Application startup calls Ets.load_from_disk(table, path) — File.read → :erlang.binary_to_term → ets.insert per {actor_id, state}; missing file = {:ok, 0}.",
+        "PeerServer put/get/delete during normal operation — all direct ETS (no GenServer hop).",
+        "Checkpoint: Ets.save_to_disk(table, path) writes <path>.tmp then File.rename (atomic) so a BEAM kill -9 never corrupts the previous snapshot (Track G-4)."
+      ],
+      "entry_point": "runtime/lib/esr/persistence/ets.ex:67"
+    },
+    {
+      "name": "Telemetry: boot-time attach + event capture",
+      "steps": [
+        "Esr.Telemetry.Supervisor starts Buffer name=:default (retention_minutes from :esr config, default 15) — creates :esr_telemetry_default ordered_set ETS.",
+        "Transient Task runs Attach.attach(:default) → :telemetry.attach_many for the 20 fixed [:esr, _, _] events.",
+        "Any module firing :telemetry.execute([:esr, …], measurements, metadata) hits Attach.handle/4 → Buffer.record (direct ETS insert keyed by {now_ms, ref}).",
+        "Consumers call Buffer.query(:default, duration_seconds: N) for the last N seconds; periodic :prune evicts entries older than retention_minutes."
+      ],
+      "entry_point": "runtime/lib/esr/telemetry/supervisor.ex:20"
+    },
+    {
+      "name": "Workspaces.Registry at runtime",
+      "steps": [
+        "On esrd boot, load_from_file(\"~/.esrd/<instance>/workspaces.yaml\") parses into {name: Workspace{cwd, start_cmd, role, chats, env}} and each row is put into the :esr_workspaces ETS.",
+        "Handlers and Instantiator.validate_workspace_apps read via Workspaces.Registry.get(name) (pure ETS, no GenServer hop).",
+        "CLI `esr workspace register` pushes new rows via put/1 (GenServer call) — single-writer funnel keeps the table consistent."
+      ],
+      "entry_point": "runtime/lib/esr/workspaces/registry.ex:37"
+    }
+  ],
+  "notes": "Subsystem one-liners — (1) AdapterHub.Registry: maps `adapter:<name>/<instance_id>` topic → actor_id in ETS, monitors each actor pid so DOWN auto-evicts its bindings (S5); Python adapter subprocess registration is indirect — the Instantiator calls bind_adapter and WorkerSupervisor.ensure_adapter in lockstep, then the Python adapter_runner joins the Phoenix channel, inbound pushes look up the bound actor_id and forward to PeerServer. (2) HandlerRouter.call: Phoenix.PubSub.subscribe on handler_reply:<id> → broadcast handler_call envelope on handler:<module>/default → receive matching :handler_reply or time out (5 s default) — v0.1 is a singleton worker per module; F10 pool adds round-robin without changing this contract. (3) Instantiator steps: check_params → validate_workspace_apps → substitute_all ({{name}} → params[name], missing raises ArgumentError — no String.to_atom DoS) → Kahn toposort (cycle → {:error, :cycle_in_depends_on}) → per-node start_peer + bind_adapter + ensure_python_workers + issue_init_directive (re-broadcast every 1 s to tolerate late adapter joins) → TopoRegistry.register (atomic insert_new, S7) → emit [:esr, :topology, :instantiated]. Any init_directive failure triggers rollback_spawned (stops peers AND synchronously unbinds topics). (4) Topology.Registry lifecycle: register is O(1) atomic ets.insert_new keyed by (name, sort(params)) — idempotent by construction; stop_cascade (deactivate) iterates peer_ids in REVERSE topo order via PeerSupervisor.stop_peer, deletes the handle row, fires :topology :deactivated telemetry. A parallel :esr_topology_artifacts ETS caches compiled YAML; it's bootstrap-loaded at init/1 from ~/.esrd/default/commands/.compiled/*.yaml (disabled via :esr :bootstrap_artifacts=false in config/test.exs so per-test expectations still hold). (5) Persistence.Ets + restoration: named/public ETS `:esr_actor_states` holds {actor_id, state}; put/get/delete bypass the GenServer for speed; save_to_disk writes tmp+rename atomically; load_from_disk is called from the Application boot to rehydrate after a BEAM kill -9 (Track G-4). (6) Telemetry attach + buffer: Attach.@events enumerates exactly 20 prefixes (no wildcard — :telemetry disallows it) covering actor spawn/stop/pause/resume, message recv/dispatch, directive issue/complete/timeout, handler called/violation/timeout/crashed/retry_exhausted, topology activated/deactivated, adapter crashed, deadletter event, state oversized_warning, ipc source_mismatch. Buffer uses an ETS :ordered_set keyed by {ts_ms, make_ref()} so inserts are O(1), queries are range scans, and the prune task select_deletes by timestamp floor. (7) Workspaces.Registry: a workspace at runtime is a struct %Workspace{name, cwd, start_cmd, role, chats, env} cached in ETS `:esr_workspaces`; `chats` is the list driving validate_workspace_apps. Known lint: instantiator.ex has two defp issue_init_directive/2 clauses at :261 and :332 separated by helper defs — functionally equivalent (catch-all vs. specific shape) but the compiler warns 'clauses with the same name and arity should be grouped together'. Build-lock quirk: running the combined 5-subdir mix test command from a cold _build can hit a 'Waiting for lock on the build directory' race that aborts with '0 tests, --max-failures reached'; running the three subgroups separately (adapter_hub+handler_router, persistence+telemetry, topology) works and yields 24+9+23=56 tests passing."
+}

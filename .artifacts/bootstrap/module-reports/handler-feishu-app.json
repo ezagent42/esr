@@ -1,0 +1,132 @@
+{
+  "module_name": "handler-feishu-app",
+  "module_path": "handlers/feishu_app/ (pure-python handler package)",
+  "description": "Pure-Python handler package `esr_handler_feishu_app` for actor_type=feishu_app_proxy. Receives feishu adapter msg_received events from the Elixir runtime, maintains a frozen pydantic FeishuAppState, and returns (new_state, [Action]) — routing chat messages to bound threads, instantiating new thread sub-topologies via InvokeCommand, or dropping non-msg events. PRD 05 F06/F07/F08/F09, spec v0.2 §3.3.",
+  "files_analyzed": [
+    {
+      "path": "handlers/feishu_app/esr.toml",
+      "lines": 8,
+      "key_symbols": [
+        {"name": "manifest", "type": "config", "line": 1, "description": "ESR handler manifest (PRD 05 F02): name=feishu_app, version=0.1.0, module=esr_handler_feishu_app.on_msg, entry=on_msg, actor_type=feishu_app_proxy, allowed_imports=[]."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/pyproject.toml",
+      "lines": 21,
+      "key_symbols": [
+        {"name": "project", "type": "config", "line": 1, "description": "esr-handler-feishu-app v0.1.0, requires-python>=3.11, depends on esr (editable path ../../py). pytest asyncio_mode=auto, --import-mode=importlib."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/__init__.py",
+      "lines": 3,
+      "key_symbols": [
+        {"name": "__version__", "type": "constant", "line": 3, "description": "Package version '0.1.0'."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/state.py",
+      "lines": 31,
+      "key_symbols": [
+        {"name": "FeishuAppState", "type": "class", "line": 9, "description": "Frozen pydantic BaseModel decorated with @handler_state(actor_type='feishu_app_proxy', schema_version=1). model_config={'frozen': True}. Fields: app_id:str='', bound_threads:frozenset[str]=frozenset(), active_thread_by_chat:dict[str,str]={}, last_chat_id:str=''."},
+        {"name": "FeishuAppState.with_added_thread", "type": "method", "line": 19, "description": "Return new state with thread_id added to bound_threads (set union via model_copy)."},
+        {"name": "FeishuAppState.with_active_thread", "type": "method", "line": 24, "description": "Return new state with active_thread_by_chat[chat_id]=thread_id (copy-then-update)."},
+        {"name": "FeishuAppState.with_last_chat_id", "type": "method", "line": 29, "description": "Return new state with last_chat_id replaced."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py",
+      "lines": 121,
+      "key_symbols": [
+        {"name": "_NEW_SESSION_PREFIX", "type": "constant", "line": 14, "description": "'/new-session ' — v0.2 slash-command prefix."},
+        {"name": "_NEW_THREAD_PREFIX", "type": "constant", "line": 15, "description": "'/new-thread ' — v0.1 backward-compat alias (removed in P9)."},
+        {"name": "_AT_PREFIX", "type": "constant", "line": 16, "description": "'@' — at-address routing prefix."},
+        {"name": "on_msg", "type": "function", "line": 20, "description": "@handler(actor_type='feishu_app_proxy', name='on_msg'). Signature (state: FeishuAppState, event: Event) -> (FeishuAppState, list[Action]). Ignores non msg_received events; captures last_chat_id on first inbound; dispatches to /new-session, /new-thread (legacy), @-routed, or active_thread_by_chat fallback."},
+        {"name": "_handle_new_session", "type": "function", "line": 60, "description": "Parse '/new-session <workspace> tag=<tag>' (v0.2) or '/new-thread <tag>' (v0.1 legacy, default_workspace='legacy'). Default tag = slug of message_id[:12] if absent. Returns state.with_added_thread(tag).with_active_thread(chat_id, tag) and emits InvokeCommand(name='feishu-thread-session', params={thread_id, chat_id, workspace, tag})."},
+        {"name": "_handle_at_routed", "type": "function", "line": 106, "description": "Parse '@<tag> <body>' — if tag in bound_threads, emit Route(target=f'thread:{tag}', msg={event_type:'msg_received', args: event.args with content=body}). Unknown tag → no-op."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/tests/test_state.py",
+      "lines": 43,
+      "key_symbols": [
+        {"name": "test_state_has_defaults", "type": "function", "line": 9, "description": "FeishuAppState() has app_id='' and bound_threads=frozenset()."},
+        {"name": "test_state_equality_by_value", "type": "function", "line": 17, "description": "Two states with identical fields compare equal."},
+        {"name": "test_state_is_frozen", "type": "function", "line": 25, "description": "Direct attribute assignment raises pydantic.ValidationError (frozen=True)."},
+        {"name": "test_with_added_thread_returns_new_state", "type": "function", "line": 33, "description": "with_added_thread is immutable and fluent/stackable."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_app/tests/test_on_msg.py",
+      "lines": 139,
+      "key_symbols": [
+        {"name": "test_new_session_triggers_invoke_command", "type": "function", "line": 28, "description": "'/new-session esr-dev tag=dev-root' → bound_threads={dev-root}, active_thread_by_chat={oc_abc:dev-root}, InvokeCommand('feishu-thread-session', {thread_id, chat_id, workspace, tag})."},
+        {"name": "test_new_thread_legacy_alias_still_works", "type": "function", "line": 50, "description": "'/new-thread alpha' → InvokeCommand with workspace='legacy', thread_id='alpha'."},
+        {"name": "test_at_prefix_addressing_routes_to_named_thread", "type": "function", "line": 66, "description": "'@beta hello there' with beta in bound_threads → Route(target='thread:beta', content='hello there')."},
+        {"name": "test_non_command_msg_routes_to_active_thread_by_chat", "type": "function", "line": 81, "description": "Plain text falls back to active_thread_by_chat lookup → Route(target='thread:alpha')."},
+        {"name": "test_reaction_event_ignored", "type": "function", "line": 97, "description": "event_type='reaction_added' → (state, []); state identity preserved."},
+        {"name": "test_arbitrary_event_ignored", "type": "function", "line": 112, "description": "Unknown event_type → no-op."},
+        {"name": "test_state_tracks_active_thread_per_chat", "type": "function", "line": 123, "description": "with_active_thread is immutable per-chat map update."},
+        {"name": "test_state_tracks_last_chat_id", "type": "function", "line": 133, "description": "with_last_chat_id sets last_chat_id."}
+      ]
+    }
+  ],
+  "interfaces": [
+    {"name": "FeishuAppState (handler state model)", "file": "handlers/feishu_app/src/esr_handler_feishu_app/state.py", "line": 9, "description": "Frozen pydantic BaseModel registered via @handler_state(actor_type='feishu_app_proxy', schema_version=1). Persisted per-actor state; fluent with_* methods return new instances."},
+    {"name": "on_msg (handler entrypoint)", "file": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py", "line": 20, "description": "@handler(actor_type='feishu_app_proxy', name='on_msg'). Pure function (FeishuAppState, Event) -> (FeishuAppState, list[Action]). Returned actions are Route (to thread:<tag>) or InvokeCommand (feishu-thread-session) — Emit is NOT used in this handler."}
+  ],
+  "dependencies": [
+    "esr (editable path to py/) — imports Action, Event, InvokeCommand, Route, handler, handler_state",
+    "pydantic (BaseModel with model_config frozen=True) — provided transitively via esr",
+    "stdlib only (no I/O, no network, no filesystem, no os, no subprocess, no time, no random)"
+  ],
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest ../handlers/feishu_app/tests/ -q",
+    "exit_code": 0,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_first_1000": "............                                                             [100%]\n12 passed in 0.42s"
+  },
+  "user_flows": [
+    {
+      "name": "User starts a new thread session via /new-session",
+      "steps": [
+        "Feishu user sends '/new-session <workspace> tag=<tag>' in a chat (or legacy '/new-thread <tag>').",
+        "Feishu adapter forwards msg_received event (args: content, chat_id, message_id) to the feishu_app_proxy actor.",
+        "on_msg captures last_chat_id if new, parses the prefix, derives tag (default = slug of message_id[:12]).",
+        "Returns new state with tag added to bound_threads and registered as the chat's active thread.",
+        "Emits InvokeCommand(name='feishu-thread-session', params={thread_id, chat_id, workspace, tag}) — Elixir Instantiator validates workspace.app_id and spawns the thread sub-topology (v0.2 §3.3)."
+      ],
+      "entry_point": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py:60"
+    },
+    {
+      "name": "User addresses a specific thread via @<tag>",
+      "steps": [
+        "User sends '@<tag> <body>' in the chat.",
+        "on_msg strips the '@' prefix, splits at first space.",
+        "If tag is in bound_threads, emits Route(target='thread:<tag>', msg={event_type:'msg_received', args with content=body}).",
+        "Unknown tag → no-op (silent drop)."
+      ],
+      "entry_point": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py:106"
+    },
+    {
+      "name": "Plain chat message routed to the active thread",
+      "steps": [
+        "User sends a message without a prefix.",
+        "on_msg looks up active_thread_by_chat[chat_id].",
+        "If the thread_id exists in bound_threads, emits Route(target='thread:<thread_id>', msg=event copy).",
+        "Otherwise no-op."
+      ],
+      "entry_point": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py:52"
+    },
+    {
+      "name": "Non-msg events are dropped",
+      "steps": [
+        "Events with event_type != 'msg_received' (e.g. reaction_added, card_action) return (state, []) with identity-preserved state."
+      ],
+      "entry_point": "handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py:23"
+    }
+  ],
+  "notes": "PURITY: verified — on_msg.py imports only `from __future__ import annotations`, `from esr import Action, Event, InvokeCommand, Route, handler` and its own state module; state.py imports only pydantic.BaseModel + esr.handler_state. No os/io/subprocess/socket/time/random/requests imports; no side effects; all state mutations go through pydantic model_copy (frozen=True enforced). manifest declares allowed_imports=[] consistent with the empty import surface. ACTION SHAPES EMITTED: (1) InvokeCommand('feishu-thread-session', {thread_id, chat_id, workspace, tag}) for /new-session and legacy /new-thread; (2) Route(target='thread:<tag>', msg={event_type, args}) for @-addressed and fallback routes; (3) Emit is NEVER returned by this handler — outbound feishu messages are the Elixir/thread handler's responsibility. EVENT TYPES: only msg_received is acted on; all other event_types return (state, []) unchanged. STATE SEMANTICS: app_id (reserved, currently unused by on_msg — set at instantiation time by Elixir); bound_threads (all thread tags ever spawned in this chat scope); active_thread_by_chat (per chat_id → latest thread_id for fallback routing); last_chat_id (captured on first inbound — consumed by the /new-session default-tag branch and potentially by later out-of-band flows). V0.2 QUIRK: workspace app_id validation is done in the Elixir Instantiator (P6-3) because the pure-Python sandbox cannot see AdapterHub.Registry; unregistered workspace → {:error, :app_not_registered} surfaced back through the feishu_app Route-to-error path (TODO v0.3). LEGACY: /new-thread alias uses default_workspace='legacy' and takes the first token as the tag — will be removed in P9 together with the scenario YAML rewrite."
+}
