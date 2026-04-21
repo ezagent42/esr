@@ -144,7 +144,8 @@ Code checkouts:
           ▼                              ▼                               ▼
   Esr.Routing.SessionRouter     Esr.Admin.CommandQueue.Watcher      (direct call)
   parses command →              fs_watch admin_queue/pending →
-  GenServer.call(Dispatcher)    GenServer.cast(Dispatcher)
+  GenServer.cast(Dispatcher,    GenServer.cast(Dispatcher,
+    reply_to: {:pid, ref})          reply_to: {:file, path})
 
                            │ │ │
                            ▼ ▼ ▼
@@ -348,28 +349,50 @@ def cli(instance, esrd_home):
 
 No per-subcommand changes needed — existing subcommands access paths via `paths.runtime_home()` which reads the env.
 
-### 5.1.2 Elixir-side `"default"` removal
+### 5.1.2 Elixir-side `"default"` removal — full sweep
 
-`runtime/lib/esr/application.ex` currently hardcodes `"default"` at lines 78 and 113 (e.g., `Path.join([esrd_home, "default", "workspaces.yaml"])`). Replace both with:
+Introduce `Esr.Paths` module (the Elixir mirror of `py/src/esr/cli/paths.py`):
 
 ```elixir
-instance = System.get_env("ESR_INSTANCE", "default")
-path = Path.join([esrd_home, instance, "workspaces.yaml"])
+defmodule Esr.Paths do
+  def esrd_home, do: System.get_env("ESRD_HOME") || Path.expand("~/.esrd")
+  def current_instance, do: System.get_env("ESR_INSTANCE", "default")
+  def runtime_home, do: Path.join(esrd_home(), current_instance())
+  def capabilities_yaml, do: Path.join(runtime_home(), "capabilities.yaml")
+  def adapters_yaml, do: Path.join(runtime_home(), "adapters.yaml")
+  def workspaces_yaml, do: Path.join(runtime_home(), "workspaces.yaml")
+  def commands_compiled_dir, do: Path.join([runtime_home(), "commands", ".compiled"])
+  def admin_queue_dir, do: Path.join(runtime_home(), "admin_queue")
+end
 ```
 
-A single `instance/0` helper in `Esr.Application` (or a new `Esr.Paths` module) avoids duplicating the `System.get_env` call. This matches the Python `current_instance()` semantic exactly — both default to `"default"` when the env is unset.
+**All three** Elixir sites that hardcode `"default"` are migrated to call `Esr.Paths.*` (single definition, no drift with Python):
 
-Refactor the 7 real code sites (docstring references at lines 289, 325, 455, 514, 823 are unchanged):
+| File | Line | Current | Becomes |
+|---|---|---|---|
+| `runtime/lib/esr/application.ex` | 84 | `Path.join([esrd_home, "default", "workspaces.yaml"])` | `Esr.Paths.workspaces_yaml()` |
+| `runtime/lib/esr/application.ex` | 119 | `Path.join([esrd_home, "default", "adapters.yaml"])` | `Esr.Paths.adapters_yaml()` |
+| `runtime/lib/esr/capabilities/supervisor.ex` | 31 | `Path.join([esrd_home, "default", "capabilities.yaml"])` (`default_path/0`) | `Esr.Paths.capabilities_yaml()` |
+| `runtime/lib/esr/topology/registry.ex` | 133 | `Path.join([..., ".esrd", "default", "commands", ".compiled"])` | `Esr.Paths.commands_compiled_dir()` |
+
+Under `ESR_INSTANCE=dev`, all four sites route to `$ESRD_HOME/dev/…` consistently. Under default (env unset), behavior is identical to today.
+
+**Adapter-side**: `adapters/feishu/src/esr_feishu/adapter.py:205-208` also hardcodes `Path(esrd_home) / "default" / "capabilities.yaml"`. Migrate it to import and call `esr.cli.paths.capabilities_yaml_path()` (or move those helpers into a shared `esr.paths` module accessible from adapters — either works; the migration is one line).
+
+Refactor the 8 real code sites (docstring references at lines 289, 325, 455, 514, 823 are unchanged):
 
 | Line | Current | Becomes |
 |---|---|---|
 | 290 | `Path(...) / ".esrd" / "default" / "adapters.yaml"` | `paths.adapters_yaml_path()` |
 | 343 | same | `paths.adapters_yaml_path()` |
+| 389-390 | `Path(...) / ".esrd" / "default" / "commands" / ".compiled" / "feishu-app-session.yaml"` | `paths.commands_compiled_dir() / "feishu-app-session.yaml"` |
 | 834 | `... / "commands" / ".compiled"` | `paths.commands_compiled_dir()` |
 | 947 | same | `paths.commands_compiled_dir()` |
 | 1251 | `... / "workspaces.yaml"` | `paths.workspaces_yaml_path()` |
 | 1281 | same | `paths.workspaces_yaml_path()` |
 | 1295 | same | `paths.workspaces_yaml_path()` |
+
+**Ordering note**: the new helpers (`current_instance`, `runtime_home`, `adapters_yaml_path`, etc.) MUST be defined **above** the existing `capabilities_yaml_path` in `paths.py` so that the rewritten `capabilities_yaml_path` can reference `runtime_home()`. Otherwise Python's name-resolution-at-call-time is fine, but linting / type-checkers may complain.
 
 ### 5.2 `esr admin submit` — the core primitive
 
@@ -521,22 +544,6 @@ end
 
 These do not clash with handler-declared permissions of the same name (e.g., handlers/feishu_app declares `session.create` for Feishu-originated use); the Permissions.Registry merges duplicate declarations idempotently.
 
-Required-permission map:
-
-| Command kind | Required permission |
-|---|---|
-| `notify` | `notify.send` |
-| `reload` | `runtime.reload` |
-| `register_adapter` | `adapter.register` |
-| `session_new` | `session.create` |
-| `session_switch` | `session.switch` |
-| `session_end` | `session.end` |
-| `session_list` | `session.list` |
-| `grant` | `cap.manage` |
-| `revoke` | `cap.manage` |
-
-These are added to `Esr.Admin.permissions/0` (the behaviour callback introduced in the capabilities work is already optional — no behaviour change needed).
-
 ### 6.3 `Esr.Admin.CommandQueue.Watcher`
 
 GenServer. On init, subscribes `FileSystem` watcher on `paths.admin_queue_dir() / "pending"`.
@@ -564,7 +571,7 @@ Sketch of each:
 
 - **`Notify`**: read the running feishu adapter's state (or post to its channel) → emit `reply` directive with `receive_id` + `text`. Result: `{:ok, %{delivered_at: ts}}`.
 - **`Reload`**: read `last_reload.yaml`, run `git log` to find breaking commits. If unacknowledged → return `{:error, %{reason: "unacknowledged_breaking", commits: [...]}}`. Otherwise `Task.start(fn -> System.cmd("launchctl", ["kickstart", "-k", "gui/#{uid}/com.ezagent.esrd-dev"]) end)`, update `last_reload.yaml`, return `{:ok, %{reloaded: true}}`.
-- **`RegisterAdapter`**: append entry to `adapters.yaml` via `Esr.Yaml.Writer`, write secret to `.env.local`, call `Esr.AdapterHub.Supervisor.start_adapter_instance/1` (new function, NOT a one-liner — the existing AdapterHub reads `adapters.yaml` at boot only; enabling post-boot dynamic starts requires migrating `Esr.AdapterHub.Supervisor` to use a `DynamicSupervisor` for adapter child processes; see §11.2 for scope). Result: `{:ok, %{adapter_id: ..., running: true}}`.
+- **`RegisterAdapter`**: append entry to `adapters.yaml` via `Esr.Yaml.Writer`, write secret to `.env.local`, call `Esr.WorkerSupervisor.ensure_adapter/4` (existing API — idempotent, on-demand adapter subprocess start; already used by `Esr.Topology.Instantiator` at runtime so post-boot dynamic starts already work). If `type=feishu`, also call the equivalent of `restore_feishu_app_session/1` to bootstrap the proxy binding. Result: `{:ok, %{adapter_id: ..., running: true}}`. **Scope**: this is a few-line wiring on top of existing `Esr.WorkerSupervisor` infrastructure — no Supervisor migration needed (earlier v2 draft incorrectly proposed `AdapterHub.Supervisor` DynamicSupervisor migration; removed).
 - **`Session.New`**: shell out to `esr-branch.sh new <branch>` (via Task — Dispatcher is not blocked), parse JSON, append to `branches.yaml`, update `routing.yaml` for the submitter. Result: `{:ok, %{branch, port, worktree_path}}`.
 - **`Session.Switch`**: update `routing.yaml`. Result: `{:ok, %{active_branch}}`.
 - **`Session.End`**: send cleanup-check to CC via `session.signal_cleanup` tool (30s soft timeout → interactive prompt), on success shell out to `esr-branch.sh end <branch>`, remove from `branches.yaml` + `routing.yaml`. Result: `{:ok, %{branch, cleaned: true}}` or `{:error, %{reason: "worktree_dirty", details: [...]}}`.
@@ -585,7 +592,7 @@ defstruct routing: %{},   # principal_id → %{active: branch, targets: %{branch
 Responsibilities:
 
 1. **Non-command messages**: look up `routing[principal_id].active` → forward the envelope to the target esrd (or to the current esrd's `feishu_thread_proxy` if active is local).
-2. **Slash commands**: parse into `%Command{kind, args, submitted_by}` and `GenServer.call(Esr.Admin.Dispatcher, {:execute, command})`. On success, emit a `reply` directive summarizing the result; on failure, emit an error reply.
+2. **Slash commands**: parse into `%Command{kind, args, submitted_by}`, allocate a `ref = make_ref()`, store `{ref, envelope}` in Router state (for knowing where to reply), and `GenServer.cast(Esr.Admin.Dispatcher, {:execute, command, {:reply_to, {:pid, self_pid, ref}}})`. When `{:command_result, ref, result}` arrives in `handle_info/2`, emit a Feishu `reply` directive summarizing the result. No `GenServer.call` — long-running commands would time out and reload would kill the caller mid-call.
 3. **`p2p_chat_create` event**: for new users, auto-submit a `session_new` command (see §7.2).
 4. **`routing.yaml` fs_watch**: reload on change (Dispatcher writes, Router reads — separation of read/write).
 5. **`branches.yaml` fs_watch**: same.
@@ -735,7 +742,7 @@ New user ou_alice creates P2P chat with ESR 开发助手
       → no: return unauthorized
     → Commands.Session.New:
         updates routing.yaml: ou_alice.active = dev, targets.dev = {...}
-    → returns result to Router via GenServer.call reply
+    → sends {:command_result, ref, result} to Router via send(router_pid, …)
   → Router emits a reply directive: "欢迎。已连接 dev 环境的 ou_alice-dev session。"
 ```
 
@@ -743,7 +750,7 @@ New user ou_alice creates P2P chat with ESR 开发助手
 
 ```
 User ou_linyilun sends /new-session feature/foo --new-worktree
-  → Esr.Routing.SessionRouter parses → GenServer.call(Dispatcher, {:execute, session_new_cmd})
+  → Esr.Routing.SessionRouter parses → ref=make_ref(), GenServer.cast(Dispatcher, {:execute, session_new_cmd, {:reply_to, {:pid, self, ref}}})
   → Dispatcher authorize (session.create) → spawn Task with Commands.Session.New.execute/1
     → Task: System.cmd("scripts/esr-branch.sh", ["new", "feature/foo", ...])
     → parses JSON: port=54399, worktree_path=...
@@ -861,9 +868,8 @@ esr cap grant ou_alice workspace:dev/msg.send --via-admin
       kind: grant, args: {principal: ou_alice, permission: "workspace:dev/msg.send"}
   → Dispatcher → Commands.Cap.Grant
     - capability check: cap.manage
-    - call Esr.Capabilities.Grants.add_grant(...)
-    - write capabilities.yaml (via Esr.Yaml.Writer, preserves comments)
-  → Watcher on capabilities.yaml detects change → reloads into Grants ETS
+    - write capabilities.yaml (via Esr.Yaml.Writer; comments NOT preserved)
+  → existing Esr.Capabilities.Watcher fs_event fires → reloads into Grants ETS
   → CLI --wait completes
 ```
 
@@ -1037,7 +1043,7 @@ If `/new-session feature/foo --new-worktree` and `feature/foo` already has a wor
 
 **Docs**:
 - `docs/operations/dev-prod-isolation.md` (operator guide, post-implementation)
-- `docs/futures/docker-isolation.md` (placeholder, to be filled)
+- `docs/futures/docker-isolation.md` (stub authored during DI-14 capturing why this is deferred + sketch)
 
 ### 11.2 Modified files
 
@@ -1048,10 +1054,14 @@ If `/new-session feature/foo --new-worktree` and `feature/foo` already has a wor
 - `py/src/esr/ipc/adapter_runner.py` — audit + fix reconnect + port-file re-read
 - `py/src/esr/ipc/handler_worker.py` — same
 - `adapters/cc_mcp/src/esr_cc_mcp/channel.py:141` — read port from port file + reconnect loop
-- `adapters/feishu/src/esr_feishu/adapter.py` — add `register_p2_im_chat_access_event_bot_p2p_chat_create_v1` handler near line 663; emit `inbound_event` with `event_type="p2p_chat_create"`
+- `adapters/feishu/src/esr_feishu/adapter.py` — (a) lines 205-208: replace `Path(esrd_home) / "default" / "capabilities.yaml"` with `esr.cli.paths.capabilities_yaml_path()` (or equivalent shared-SDK helper); (b) near line 663: add `register_p2_im_chat_access_event_bot_p2p_chat_create_v1` handler; emit `inbound_event` with `event_type="p2p_chat_create"`
 - `runtime/lib/esr/peer_server.ex` — register `session.signal_cleanup` MCP tool at lines 762-825 (the `build_emit_for_tool/3` region)
-- `runtime/lib/esr/adapter_hub/registry.ex` — unchanged API; the Registry remains an actor-topic map (no adapter-process ownership).
-- `runtime/lib/esr/adapter_hub/supervisor.ex` — **migrate to `DynamicSupervisor` model**. Today this Supervisor reads `adapters.yaml` once at boot and starts fixed children (see the existing code). To support `Commands.RegisterAdapter` adding adapters post-boot, introduce `start_adapter_instance/1` (new function; ~40 lines) that validates config, starts a new adapter child under a DynamicSupervisor, and adds the Registry binding. This is a non-trivial refactor — phase DI-8 must include this migration as a prerequisite step (not "one-line add"). Existing boot-time reads continue to work; new dynamic starts are additive.
+- `runtime/lib/esr/adapter_hub/registry.ex` — unchanged.
+- `runtime/lib/esr/adapter_hub/supervisor.ex` — unchanged (earlier v2 draft mistakenly proposed a DynamicSupervisor migration here; removed).
+- `runtime/lib/esr/worker_supervisor.ex` — `Commands.RegisterAdapter` calls the existing `ensure_adapter/4` (already idempotent, already used by `Esr.Topology.Instantiator` for runtime starts). Minor wiring only.
+- `runtime/lib/esr/capabilities/supervisor.ex:31` — `default_path/0` hardcodes `"default"`; replace with `Esr.Paths.capabilities_yaml()`.
+- `runtime/lib/esr/topology/registry.ex:133` — hardcodes `"default"` in commands compiled dir path; replace with `Esr.Paths.commands_compiled_dir()`.
+- `runtime/lib/esr/paths.ex` — **new** (introduced under Modified because it lives in runtime/lib/esr/, adding a small module to existing namespace). Full module defined in §5.1.2.
 
 ### 11.3 Dependencies
 
@@ -1084,7 +1094,7 @@ Phases DI-1 through DI-7 produce a working prod esrd + dev esrd pair with admin 
 
 - **`Esr.Reload.BlueGreen`** (separate spec): true zero-downtime reload via double-binding, connection migration, atomic cutover. Target when the 10–30s reconnect gap becomes a product problem.
 - **Migrate existing `esr cap grant/revoke`** CLI to admin-queue path (remove `--via-admin` flag, make queue the only path). Clean rollout after DI-8 stabilizes.
-- **v0.3 CLI instance awareness**: `esr --instance=<name>` flag across all commands; retires `ESR_INSTANCE` env var approach.
+- **`esr --instance` ergonomics polish**: this spec already ships `--instance` / `--esrd-home` global flags. Future work is purely UX — better help text, tab-completion, per-shell wrappers. The env var `$ESR_INSTANCE` remains a first-class surface; it is NOT retired.
 - **Docker isolation**: `docs/futures/docker-isolation.md` — for users running completely different ESR code versions in parallel.
 - **Branch esrd auto-sleep**: idle >N minutes → pause the esrd.
 - **Explicit capability delegation**: tracked in `docs/futures/explicit-capability-delegation.md`. Relevant here because per-session capability restriction strengthens the multi-user story.
