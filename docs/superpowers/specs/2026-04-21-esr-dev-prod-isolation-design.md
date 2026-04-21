@@ -43,7 +43,7 @@ Six artifact categories delivered together:
 
 ### 1.3 Out of scope
 
-- **v0.3 multi-instance CLI awareness**: CLI keeps hardcoding instance name `default`; env var switches the `ESRD_HOME` root only. Proper `--instance=<name>` flag support deferred.
+- **Same-root multi-instance topology**: running two beam.smp processes simultaneously under *one* `ESRD_HOME` root at different instance names (e.g. `~/.esrd/prod/` + `~/.esrd/dev/`). This requires cross-instance port discovery and shared-config-boundary rules. This design uses **different ESRD_HOME roots** for isolation instead (`~/.esrd/` + `~/.esrd-dev/`, each with `instance=default`), which sidesteps the complexity. Proper same-root multi-instance remains future work.
 - **True blue-green zero-downtime reload**: reload has a 10–30s reconnection window. See §13 for the follow-up target (`Esr.Reload.BlueGreen`).
 - **Automated Feishu app lifecycle**: Feishu has no public API for creating/deleting OpenPlatform apps. We ship an interactive paste-based wizard, not full automation.
 - **Docker isolation**: separate future spec. Current reason to defer: cc_tmux adapter spawns host tmux, MCP bridge launch order, macOS fsnotify across bind mounts.
@@ -294,15 +294,19 @@ Branch name sanitization: replace `/` with `-` for directory paths.
 
 All admin commands follow the same pattern: **local UX + submit to admin queue**. CLI never writes to `adapters.yaml`, `capabilities.yaml`, `routing.yaml`, `branches.yaml`, or `last_reload.yaml` directly. The one exception is `esr adapter feishu create-app`'s interactive UX (URL print + paste prompt), which stays in the CLI; the state mutation still flows through the Dispatcher.
 
-### 5.1 `paths.py` extension
+### 5.1 `paths.py` extension — remove the `"default"` hardcode
 
-`py/src/esr/cli/paths.py` **already exists** with `esrd_home()` + `capabilities_yaml_path()`. Add:
+`py/src/esr/cli/paths.py` **already exists** with `esrd_home()` + `capabilities_yaml_path()`. The core fix: **instance name is no longer hardcoded `"default"` — it becomes env-var-driven**. `capabilities_yaml_path()` currently hardcodes `/ "default" /`; this is changed to use `current_instance()`.
+
+Add:
 
 ```python
 def current_instance() -> str:
+    """Runtime instance name. Honors $ESR_INSTANCE; defaults to 'default'."""
     return os.environ.get("ESR_INSTANCE", "default")
 
 def runtime_home() -> Path:
+    """$ESRD_HOME/$ESR_INSTANCE (e.g. ~/.esrd-dev/default)."""
     return esrd_home() / current_instance()
 
 def adapters_yaml_path() -> Path:
@@ -315,8 +319,45 @@ def commands_compiled_dir() -> Path:
     return runtime_home() / "commands" / ".compiled"
 
 def admin_queue_dir() -> Path:
-    return runtime_home() / "admin_queue"   # with pending/processing/completed/failed/ subdirs
+    return runtime_home() / "admin_queue"
 ```
+
+And **modify** the existing `capabilities_yaml_path()` to drop its hardcoded `"default"` segment:
+
+```python
+def capabilities_yaml_path() -> str:
+    return str(runtime_home() / "capabilities.yaml")
+```
+
+### 5.1.1 Top-level CLI flags — sugar for env vars
+
+Add `--instance` and `--esrd-home` as global flags on the `cli` group in `py/src/esr/cli/main.py`. They forward into env vars so all subsequent `paths.*` lookups benefit automatically:
+
+```python
+@click.group()
+@click.option("--instance", default=None, envvar="ESR_INSTANCE",
+              help="Runtime instance name (default: 'default').")
+@click.option("--esrd-home", default=None, envvar="ESRD_HOME",
+              help="Override ESRD_HOME root (default: ~/.esrd).")
+def cli(instance, esrd_home):
+    if instance:
+        os.environ["ESR_INSTANCE"] = instance
+    if esrd_home:
+        os.environ["ESRD_HOME"] = esrd_home
+```
+
+No per-subcommand changes needed — existing subcommands access paths via `paths.runtime_home()` which reads the env.
+
+### 5.1.2 Elixir-side `"default"` removal
+
+`runtime/lib/esr/application.ex` currently hardcodes `"default"` at lines 78 and 113 (e.g., `Path.join([esrd_home, "default", "workspaces.yaml"])`). Replace both with:
+
+```elixir
+instance = System.get_env("ESR_INSTANCE", "default")
+path = Path.join([esrd_home, instance, "workspaces.yaml"])
+```
+
+A single `instance/0` helper in `Esr.Application` (or a new `Esr.Paths` module) avoids duplicating the `System.get_env` call. This matches the Python `current_instance()` semantic exactly — both default to `"default"` when the env is unset.
 
 Refactor the 7 real code sites (docstring references at lines 289, 325, 455, 514, 823 are unchanged):
 
@@ -1001,13 +1042,13 @@ If `/new-session feature/foo --new-worktree` and `feature/foo` already has a wor
 ### 11.2 Modified files
 
 - `scripts/esrd.sh` — add `--port` + port pre-selection fallback
-- `py/src/esr/cli/main.py` — register new command groups (`admin`, `reload`, `notify`, `adapter`); refactor 7 hardcoded paths to `paths.*` helpers
-- `py/src/esr/cli/paths.py` — add `current_instance()`, `runtime_home()`, `adapters_yaml_path()`, `workspaces_yaml_path()`, `commands_compiled_dir()`, `admin_queue_dir()`
+- `py/src/esr/cli/main.py` — add `--instance` + `--esrd-home` global options on the `cli` group; register new command groups (`admin`, `reload`, `notify`, `adapter`); refactor 7 hardcoded paths to `paths.*` helpers
+- `py/src/esr/cli/paths.py` — remove hardcoded `"default"` segment from `capabilities_yaml_path()`; add `current_instance()`, `runtime_home()`, `adapters_yaml_path()`, `workspaces_yaml_path()`, `commands_compiled_dir()`, `admin_queue_dir()`
+- `runtime/lib/esr/application.ex` — replace hardcoded `"default"` at lines 78 and 113 with `System.get_env("ESR_INSTANCE", "default")`; add `Esr.Launchd.PortWriter`, `Esr.Routing.Supervisor`, `Esr.Admin.Supervisor` to supervision tree (in that order AFTER Capabilities + Workspaces)
 - `py/src/esr/ipc/adapter_runner.py` — audit + fix reconnect + port-file re-read
 - `py/src/esr/ipc/handler_worker.py` — same
 - `adapters/cc_mcp/src/esr_cc_mcp/channel.py:141` — read port from port file + reconnect loop
 - `adapters/feishu/src/esr_feishu/adapter.py` — add `register_p2_im_chat_access_event_bot_p2p_chat_create_v1` handler near line 663; emit `inbound_event` with `event_type="p2p_chat_create"`
-- `runtime/lib/esr/application.ex` — add `Esr.Launchd.PortWriter`, `Esr.Routing.Supervisor`, `Esr.Admin.Supervisor` to supervision tree (in that order AFTER Capabilities + Workspaces)
 - `runtime/lib/esr/peer_server.ex` — register `session.signal_cleanup` MCP tool at lines 762-825 (the `build_emit_for_tool/3` region)
 - `runtime/lib/esr/adapter_hub/registry.ex` — unchanged API; the Registry remains an actor-topic map (no adapter-process ownership).
 - `runtime/lib/esr/adapter_hub/supervisor.ex` — **migrate to `DynamicSupervisor` model**. Today this Supervisor reads `adapters.yaml` once at boot and starts fixed children (see the existing code). To support `Commands.RegisterAdapter` adding adapters post-boot, introduce `start_adapter_instance/1` (new function; ~40 lines) that validates config, starts a new adapter child under a DynamicSupervisor, and adds the Registry binding. This is a non-trivial refactor — phase DI-8 must include this migration as a prerequisite step (not "one-line add"). Existing boot-time reads continue to work; new dynamic starts are additive.
