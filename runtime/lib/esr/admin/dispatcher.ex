@@ -79,7 +79,8 @@ defmodule Esr.Admin.Dispatcher do
     "notify" => Esr.Admin.Commands.Notify,
     "register_adapter" => Esr.Admin.Commands.RegisterAdapter,
     "session_new" => Esr.Admin.Commands.Session.New,
-    "session_switch" => Esr.Admin.Commands.Session.Switch
+    "session_switch" => Esr.Admin.Commands.Session.Switch,
+    "session_list" => Esr.Admin.Commands.Session.List
   }
 
   # ------------------------------------------------------------------
