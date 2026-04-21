@@ -7,7 +7,8 @@ created_at: "2026-04-21"
 mode: verify
 feature: "YAML declarative state vs runtime reconciliation (orphan Python workers)"
 submitter: Sy Yao
-related: [coverage-matrix-001]
+related: [coverage-matrix-001, issue-001]
+github_issue: "https://github.com/ezagent42/esr/issues/7"
 ---
 
 # Eval: YAML 声明式状态 vs 运行时对账（孤儿 Python worker）
@@ -153,7 +154,7 @@ $ ls /tmp/esr-worker-*.pid | wc -l
 ## 后续行动
 
 - [x] eval-doc 已创建
-- [ ] eval-doc 注册到 artifact registry
-- [ ] GitHub issue 已创建
+- [x] eval-doc 注册到 artifact registry (id: `eval-doc-002`)
+- [x] GitHub issue 已创建 (https://github.com/ezagent42/esr/issues/7, labels: bug, architecture, v0.2, P0)
 - [ ] 用户确认 testcase 表格 (status: draft → confirmed)
 - [ ] coverage-matrix 补录反向场景
