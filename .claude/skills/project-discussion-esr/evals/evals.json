@@ -1,0 +1,42 @@
+{
+  "skill": "project-discussion-esr",
+  "type": "reference",
+  "success_criteria": [
+    "reply cites at least one file_path:line_number",
+    "reply shows actual test-runner command output (not a remembered baseline)",
+    "reply does not invent function/file names — unverified claims are marked [unverified]"
+  ],
+  "evals": [
+    {
+      "id": "eval-01-retrieval",
+      "kind": "project knowledge Q&A",
+      "prompt": "How is Feishu msg_received routed to a CC MCP session in v0.2? Walk me through the chain from adapter to CC, naming each module + one key file:line per hop. Also run the relevant test-runner to show the critical path is green.",
+      "expects": [
+        "names adapter-feishu -> handler-feishu-app (or -thread) -> esr-channel synthetic adapter -> ChannelChannel -> adapter-cc-mcp",
+        "includes at least 3 file:line references",
+        "includes live test output (not remembered baseline)"
+      ]
+    },
+    {
+      "id": "eval-02-triage",
+      "kind": "bug triage discussion",
+      "prompt": "I opened an eval-doc saying: 'test_exactly_one_allowed_file_passes fails on main — regression introduced by v0.2.' Please triage: is this a bug in v0.2-channel or is it a test-fixture issue? Show your reasoning with evidence and run the relevant test-runner. End with a confirm-request for your conclusion.",
+      "expects": [
+        "identifies SCRIPTS-1 / stale fixture, not a v0.2 regression",
+        "cites scripts/loopguard_scenarios_allowlist.py:8 as the widened allowlist and the fixture file in scripts/tests/test_loopguard_scenarios_allowlist.py",
+        "ends with 'not a bug; close the issue' + asks for confirmation (Step 6)"
+      ]
+    },
+    {
+      "id": "eval-03-pipeline",
+      "kind": "pipeline info query",
+      "prompt": "I want to write a new pytest E2E case for a bug in handler-feishu-thread. Tell me exactly: where do I put the test file, which fixtures can I reuse, what naming convention, what evidence-collection tools to run, and what command will pick it up. Reference concrete paths from this project (no generic pytest advice).",
+      "expects": [
+        "says handlers/feishu_thread/tests/test_<scenario>.py, importlib import-mode",
+        "references py/pyproject.toml testpaths + asyncio_mode=auto",
+        "names conftest.py locations and lark fixtures in adapters/feishu/tests/fixtures/live-capture/",
+        "gives the uv run pytest command (not bare python)"
+      ]
+    }
+  ]
+}
