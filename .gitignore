@@ -37,3 +37,9 @@ esr-cc.local.sh
 # Tool state
 .claude/.ralph-loop.local.md
 .claude/ralph-loop.local.md
+.claude/scheduled_tasks.lock
+
+# cc_mcp uv.lock is a side-effect of the CC-MCP-1 workaround
+# (out-of-tree `uv run --with ...`). Do not track until cc_mcp
+# is properly added to py/pyproject.toml uv.sources.
+adapters/cc_mcp/uv.lock
