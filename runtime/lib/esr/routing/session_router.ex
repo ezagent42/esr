@@ -46,6 +46,16 @@ defmodule Esr.Routing.SessionRouter do
   pending). Subscribing eagerly now means the Router is ready the
   moment the publisher is wired up.
 
+  ## Hot-reload (Task 18)
+
+  `init/1` also starts a `FileSystem` watch on
+  `Esr.Paths.runtime_home()` and subscribes to `:file_event`. Whenever
+  `routing.yaml` or `branches.yaml` in that directory change,
+  `handle_info/2` reloads the corresponding state field in place. The
+  watched directory is shared with `Esr.Capabilities.Watcher`
+  (capabilities.yaml), so both watchers receive cross-fires for every
+  write — we filter on `Path.basename/1` to stay scoped.
+
   ## ID generation
 
   `generate_id/0` uses 12 bytes of crypto-strong randomness encoded as
@@ -72,12 +82,29 @@ defmodule Esr.Routing.SessionRouter do
 
   @impl true
   def init(_opts) do
+    runtime = Esr.Paths.runtime_home()
+
+    # Ensure the dir exists before we subscribe FileSystem to it —
+    # fs_watch backends (FSEvents on macOS, inotify on Linux) need a
+    # real directory to arm on. Missing = make it; Task 18 expects the
+    # Router to self-heal.
+    File.mkdir_p!(runtime)
+
     state = %__MODULE__{
-      routing: load_yaml(Path.join(Esr.Paths.runtime_home(), "routing.yaml")),
-      branches: load_yaml(Path.join(Esr.Paths.runtime_home(), "branches.yaml"))
+      routing: load_yaml(Path.join(runtime, "routing.yaml")),
+      branches: load_yaml(Path.join(runtime, "branches.yaml"))
     }
 
     _ = Phoenix.PubSub.subscribe(@pubsub, @msg_topic)
+
+    # fs_watch the runtime_home dir so writes to routing.yaml /
+    # branches.yaml are hot-reloaded into state. Note that
+    # `Esr.Capabilities.Watcher` also watches this same directory
+    # (for capabilities.yaml); both will receive :file_event for every
+    # file in the dir — basename filtering in handle_info/2 keeps
+    # each watcher scoped to its own files.
+    {:ok, fs_pid} = FileSystem.start_link(dirs: [runtime])
+    FileSystem.subscribe(fs_pid)
 
     {:ok, state}
   end
@@ -117,6 +144,26 @@ defmodule Esr.Routing.SessionRouter do
         {:noreply, %{state | pending_refs: rest}}
     end
   end
+
+  # fs_watch hot-reload: either YAML changed on disk (e.g. Admin
+  # Dispatcher writing a new session, an operator editing the file, a
+  # post-merge hook syncing state) → refresh the in-memory copy. Cross-
+  # fires from other files in the same dir (capabilities.yaml,
+  # adapters.yaml, etc.) are ignored via basename filter.
+  @impl true
+  def handle_info({:file_event, _fs_pid, {path, _events}}, state) do
+    state =
+      case Path.basename(path) do
+        "routing.yaml" -> %{state | routing: load_yaml(path)}
+        "branches.yaml" -> %{state | branches: load_yaml(path)}
+        _ -> state
+      end
+
+    {:noreply, state}
+  end
+
+  # FileSystem emits `:stop` when the watched dir disappears. No-op.
+  def handle_info({:file_event, _fs_pid, :stop}, state), do: {:noreply, state}
 
   # Swallow unknown infos (e.g. late Phoenix.Socket.Broadcast frames
   # if anyone re-uses the topic for a different payload shape).

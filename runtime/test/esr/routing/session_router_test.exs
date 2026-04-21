@@ -308,6 +308,113 @@ defmodule Esr.Routing.SessionRouterTest do
   end
 
   # ------------------------------------------------------------------
+  # fs_watch hot-reload (Task 18)
+  # ------------------------------------------------------------------
+
+  describe "fs_watch hot-reload" do
+    test "reloads routing.yaml on change", %{runtime: runtime} do
+      File.write!(Path.join(runtime, "routing.yaml"), """
+      principals:
+        ou_a:
+          active: dev
+      """)
+
+      {:ok, pid} = SessionRouter.start_link([])
+
+      # Initial load visible in state.
+      assert :sys.get_state(pid).routing["principals"]["ou_a"]["active"] == "dev"
+
+      # Give mac_listener / inotify backend a moment to fully arm the
+      # watch before we write. Mirrors Esr.Capabilities.WatcherTest.
+      Process.sleep(300)
+
+      File.write!(Path.join(runtime, "routing.yaml"), """
+      principals:
+        ou_a:
+          active: prod
+      """)
+
+      # fs_system debounce + our handler: poll up to ~10s to ride out
+      # mac FSEvents latency jitter under full-suite load.
+      assert eventually(
+               fn ->
+                 :sys.get_state(pid).routing["principals"]["ou_a"]["active"] == "prod"
+               end,
+               10_000
+             )
+    end
+
+    test "reloads branches.yaml on change", %{runtime: runtime} do
+      File.write!(Path.join(runtime, "branches.yaml"), """
+      branches:
+        dev:
+          port: 4011
+      """)
+
+      {:ok, pid} = SessionRouter.start_link([])
+
+      assert :sys.get_state(pid).branches["branches"]["dev"]["port"] == 4011
+
+      Process.sleep(300)
+
+      File.write!(Path.join(runtime, "branches.yaml"), """
+      branches:
+        dev:
+          port: 4099
+      """)
+
+      assert eventually(
+               fn ->
+                 :sys.get_state(pid).branches["branches"]["dev"]["port"] == 4099
+               end,
+               10_000
+             )
+    end
+
+    test "ignores unrelated files in runtime_home (e.g. capabilities.yaml)",
+         %{runtime: runtime} do
+      File.write!(Path.join(runtime, "routing.yaml"), """
+      principals:
+        ou_a:
+          active: dev
+      """)
+
+      {:ok, pid} = SessionRouter.start_link([])
+
+      Process.sleep(300)
+
+      # Writing to a file the Router does not care about must not
+      # clobber either routing or branches state. This is the cross-
+      # fire case: Capabilities.Watcher watches the same dir.
+      File.write!(Path.join(runtime, "capabilities.yaml"), """
+      principals: []
+      """)
+
+      # Give any spurious :file_event a chance to land.
+      Process.sleep(300)
+
+      state = :sys.get_state(pid)
+      assert state.routing["principals"]["ou_a"]["active"] == "dev"
+      assert state.branches == %{}
+      assert Process.alive?(pid)
+    end
+  end
+
+  # Polls a predicate at 50ms granularity until it returns truthy or
+  # the budget runs out. Returns true iff the predicate eventually
+  # becomes truthy. Mirrors the helper in Capabilities.WatcherTest.
+  defp eventually(_fun, remaining_ms) when remaining_ms <= 0, do: false
+
+  defp eventually(fun, remaining_ms) do
+    if fun.() do
+      true
+    else
+      Process.sleep(50)
+      eventually(fun, remaining_ms - 50)
+    end
+  end
+
+  # ------------------------------------------------------------------
   # helpers
   # ------------------------------------------------------------------
 
