@@ -2,7 +2,16 @@
   "enableAllProjectMcpServers": true,
   "channelsEnabled": true,
   "enabledPlugins": {
-    "agent-setup@agent-setup": true
+    "agent-setup@agent-setup": true,
+    "dev-loop-skills@ezagent42": true
+  },
+  "extraKnownMarketplaces": {
+    "ezagent42": {
+      "source": {
+        "source": "github",
+        "repo": "ezagent42/ezagent42"
+      }
+    }
   },
   "permissions": {
     "allow": [
