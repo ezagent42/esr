@@ -4,13 +4,14 @@
 **Created:** 2026-04-20
 **Owner:** Brainstorming session — Allen Woods
 
-## TL;DR
+## TL;DR (v2 — full merger)
 
-1. **ESR will absorb a focused subset of [`claude-zchat-channel` refactor/v4](https://github.com/ezagent42/claude-zchat-channel/tree/refactor/v4)** capabilities: the `routing.toml` schema, the channel-mode plugin (copilot/takeover), audit / SLA / CSAT plugins, the zellij multiplexer launch model, and a magic-link auth module.
-2. **IRC-as-fabric is *not* absorbed.** ESR keeps Phoenix.PubSub for inter-actor messaging. User-facing chat stays on Feishu (and a future simple web IM) without an IRC layer in between.
+1. **ESR will fully absorb [`ezagent42/zchat`](https://github.com/ezagent42/zchat) umbrella** — not just the channel server. zchat will be retired after migration; no compatibility constraints. Scope expanded based on dev's pointer that significant business code lives in `zchat-protocol` (refactor/v4 branch) + the top-level `zchat/cli/` package + Rust `zchat-hub-plugin/` + WeeChat plugin.
+2. **IRC-as-fabric is *not* absorbed.** ESR keeps Phoenix.PubSub for inter-actor messaging. User-facing chat stays on Feishu (and a future simple web IM) without an IRC layer in between. WeeChat plugin's *user-facing functionality* is absorbed via the per-adapter CLI pattern.
 3. **The Python SDK gains a smaller, more orthogonal primitive set** — `@adapter` + `projection_table` + `transform` + `react`. The current `@handler(actor_type=...)` discipline retires from the Python layer in favor of state-via-projections; per-actor mailbox supervision continues inside the Elixir runtime, invisible to Python authors.
-4. **Migration follows the *A3 phased plan*** — five mandatory phases (P1–P5) and two optional ones (P6–P7), each independently shippable. The migration can stop after any phase if priorities change.
-5. **No external coordination required for v0.3.** The zchat repository is referenced for inspiration and for verbatim borrowing where useful, but no PR or issue lands there as part of this work.
+4. **Migration follows a 6-phase plan** — P1 schema → P2 zellij adapter → P3 per-adapter CLI + doctor → P4 primitives → P5 plugin port + agent_manager + edit/side → P6 E2E parity. P7 (hub plugin) and P8 (distribution) are optional.
+5. **Security via CBAC + Feishu identity** (recently landed in ESR) — no auth phase in v0.3. zchat's OIDC device flow (`auth.py`) is informative reference but not absorbed.
+6. **No external coordination required for v0.3.** The zchat repository is referenced for inspiration and for verbatim borrowing where useful (e.g., `zellij.py` wrapper), but no PR or issue lands there as part of this work.
 
 ## Files in this directory
 
@@ -58,11 +59,18 @@
 | Date | Decision | Reason |
 |---|---|---|
 | 2026-04-20 | Approach **A** (absorb into ESR), not A2 (coexist) or A3 (extract shared lib) | Simplest single-runtime story; zchat's IRC fabric isn't load-bearing for ESR |
-| 2026-04-20 | Phased rollout (the *A3 plan* within Approach A) | Risk minimization; each phase independently valuable; can stop mid-way |
+| 2026-04-20 | Phased rollout | Risk minimization; each phase independently valuable; can stop mid-way |
 | 2026-04-20 | New Python primitive: `transform` + `react` + `projection_table` | Lowers cognitive load while preserving OTP guarantees; aligns with CQRS read-model + Plug pipeline idioms |
 | 2026-04-20 | IRC-as-fabric *not* absorbed | Inter-actor uses Phoenix.PubSub (already in ESR); user-facing IM uses Feishu / future web adapter |
 | 2026-04-20 | `workflow=` parameter in `react` deferred to v0.4+ | Existing Layer 4 Topology + `InvokeCommand` + completion-event chain covers complex flows without new primitives |
 | 2026-04-20 | `transform` and `react` as separate verbs (not unified `subscribe`) | Distinguishes by function return type: `transform` returns `event` (message domain); `react` returns `list[Action]` (effect domain) |
+| 2026-04-21 | **Scope: full merger** of zchat umbrella into ESR (not selective absorption) | Dev pointer revealed significant business code in `zchat-protocol` (refactor/v4) + top-level `zchat/cli/` + Rust `zchat-hub-plugin/`. Targeting complete absorption; zchat retires after migration |
+| 2026-04-21 | workspace stays (no rename to project) — decision ①C | Minimal disruption; project becomes optional aggregation view in routing.toml, not v0.3 critical path |
+| 2026-04-21 | zellij in-pane UI deferred — decision ②C | CLI-first for v0.3 via `esr adapter cc_zellij list`; in-zellij Rust plugin re-evaluated v0.4 (web UI is an alternative) |
+| 2026-04-21 | Distribution / install / update deferred — decision ③b | Independent workstream; should align with ESR project's broader release roadmap, not zchat-driven |
+| 2026-04-21 | **Auth removed entirely from v0.3** | ESR uses CBAC (already landed) + Feishu identity as the security model; zchat's OIDC device flow is informative reference but not absorbed |
+| 2026-04-21 | Message *kind* concept *not* introduced in ESR Event | kind is a zchat protocol artifact (forced by IRC PRIVMSG); edit/side are business semantics handled at handler/adapter level |
+| 2026-04-21 | Per-adapter CLI (`esr adapter <name> ...`) instead of unified `esr agent ...` | ESR actors are heterogeneous (feishu_app_proxy / cc_zellij session / audit / ...); per-adapter CLI surfaces adapter-specific verbs cleanly |
 
 ## How to read these documents
 
