@@ -78,7 +78,8 @@ defmodule Esr.Admin.Dispatcher do
   @command_modules %{
     "notify" => Esr.Admin.Commands.Notify,
     "register_adapter" => Esr.Admin.Commands.RegisterAdapter,
-    "session_new" => Esr.Admin.Commands.Session.New
+    "session_new" => Esr.Admin.Commands.Session.New,
+    "session_switch" => Esr.Admin.Commands.Session.Switch
   }
 
   # ------------------------------------------------------------------
