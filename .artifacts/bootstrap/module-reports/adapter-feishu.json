@@ -1,0 +1,185 @@
+{
+  "module_name": "adapter-feishu",
+  "module_path": "adapters/feishu",
+  "description": "ESR v0.1 Feishu (Lark) adapter. Integrates Feishu for messaging — registers a FeishuAdapter in the ESR adapter registry at import time, accepts directives for message posting / reactions / pins / card sending / file download, and emits inbound messages as msg_received events. Supports a dual live/mock path: when AdapterConfig.base_url points at 127.0.0.1/localhost the adapter talks to mock_feishu over HTTP + WS; otherwise it uses lark_oapi's REST client and a WebSocket listener with a poll-fallback for bot-self messages. Factory is pure (PRD 04 F02) — no network I/O until first client() call. Includes exponential-backoff rate-limit retry (F15), per-msg_type content parsers (F13), and WS-event shape normalization for handler consumption.",
+  "files_analyzed": [
+    "adapters/feishu/esr.toml",
+    "adapters/feishu/pyproject.toml",
+    "adapters/feishu/src/esr_feishu/__init__.py",
+    "adapters/feishu/src/esr_feishu/adapter.py",
+    "adapters/feishu/src/esr_feishu/parsers.py",
+    "adapters/feishu/tests/fixtures/live-capture/card_interaction.json",
+    "adapters/feishu/tests/fixtures/live-capture/text_message.json",
+    "adapters/feishu/tests/fixtures/live-capture/thread_reply.json",
+    "adapters/feishu/tests/test_capability.py",
+    "adapters/feishu/tests/test_client.py",
+    "adapters/feishu/tests/test_directives.py",
+    "adapters/feishu/tests/test_download.py",
+    "adapters/feishu/tests/test_emit_events.py",
+    "adapters/feishu/tests/test_events.py",
+    "adapters/feishu/tests/test_factory_purity.py",
+    "adapters/feishu/tests/test_ratelimit.py",
+    "adapters/feishu/tests/test_registration.py"
+  ],
+  "interfaces": {
+    "manifest": {
+      "name": "feishu",
+      "version": "0.1.0",
+      "module": "esr_feishu.adapter",
+      "entry": "FeishuAdapter",
+      "allowed_io": {
+        "lark_oapi": "*",
+        "aiohttp": "*",
+        "http": ["open.feishu.cn"],
+        "urllib": ["127.0.0.1", "localhost"]
+      }
+    },
+    "public_class": {
+      "FeishuAdapter": {
+        "path": "esr_feishu.adapter",
+        "constructor": "__init__(actor_id: str, config: AdapterConfig)",
+        "factory": "FeishuAdapter.factory(actor_id, config) -> FeishuAdapter (pure, no I/O)",
+        "methods": [
+          "client() -> lark_oapi.Client (lazy cached)",
+          "on_directive(action: str, args: dict) -> {ok, result?, error?} (async)",
+          "emit_events() -> async generator yielding msg_received envelopes"
+        ]
+      }
+    },
+    "directives_accepted": [
+      {
+        "action": "send_message",
+        "args": ["chat_id", "content"],
+        "impl": "_send_message — text msg via im.v1.message.create; mock POST when base_url is local",
+        "retry_on_429": true
+      },
+      {
+        "action": "react",
+        "args": ["msg_id", "emoji_type"],
+        "impl": "_react — im.v1.message.reaction.create",
+        "retry_on_429": true
+      },
+      {
+        "action": "send_card",
+        "args": ["chat_id", "card"],
+        "impl": "_send_card — im.v1.message.create with msg_type=interactive",
+        "retry_on_429": true
+      },
+      {
+        "action": "pin",
+        "args": ["msg_id"],
+        "impl": "_pin — im.v1.pin.create",
+        "retry_on_429": true
+      },
+      {
+        "action": "unpin",
+        "args": ["msg_id"],
+        "impl": "_unpin — im.v1.pin.delete",
+        "retry_on_429": true
+      },
+      {
+        "action": "download_file",
+        "args": ["msg_id", "file_key", "file_name", "msg_type", "chat_id"],
+        "impl": "_download_file — im.v1.message_resource.get; writes to <uploads_dir>/<chat_id>/<file_name>",
+        "retry_on_429": false
+      }
+    ],
+    "events_emitted": [
+      {
+        "event_type": "msg_received",
+        "source": "lark_oapi WS p2_im_message_receive_v1 handler + mock /ws relay + bot-self poller on im.v1.message.list",
+        "args": ["chat_id", "message_id", "content", "raw_content", "msg_type", "sender_id", "sender_type", "thread_id", "root_id"]
+      },
+      {
+        "event_type": "reaction_added",
+        "source": "parse_ws_event('P2ImMessageReactionCreatedV1', …) (parser exposes shape; runtime WS hookup not wired in adapter.emit_events yet)",
+        "args": ["msg_id", "emoji_type", "operator_id"]
+      }
+    ],
+    "parsers": {
+      "module": "esr_feishu.parsers",
+      "parse_content_supports": ["text", "post", "image", "file", "audio", "media", "sticker", "share_chat", "share_user", "location", "interactive"],
+      "fallback": "[<msg_type> message]",
+      "parse_ws_event_supports": ["P2ImMessageReceiveV1 -> msg_received", "P2ImMessageReactionCreatedV1 -> reaction_added"]
+    },
+    "rate_limit": {
+      "backoff_schedule_seconds": [1.0, 2.0, 4.0, 8.0, 16.0, 30.0],
+      "retry_deadline_seconds": 30.0,
+      "trigger": "lark response code == 429",
+      "on_deadline": "{ok: false, error: 'timeout'}"
+    }
+  },
+  "dependencies": {
+    "python_version": ">=3.11",
+    "runtime": [
+      "esr (editable, ../../py)",
+      "lark-oapi>=1.0",
+      "aiohttp>=3.9"
+    ],
+    "esr_symbols_used": [
+      "esr.adapter.adapter (decorator)",
+      "esr.adapter.AdapterConfig",
+      "esr.adapter.ADAPTER_REGISTRY",
+      "esr.verify.capability.scan_adapter"
+    ],
+    "test_only": [
+      "pytest (asyncio_mode=auto)",
+      "scripts/mock_feishu.MockFeishu"
+    ]
+  },
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest ../adapters/feishu/tests/ -q",
+    "passed": 40,
+    "failed": 0,
+    "warnings": 4,
+    "duration_seconds": 90.64,
+    "status": "all_pass",
+    "warning_summary": "DeprecationWarnings from lark_oapi/websockets internals (datetime.utcfromtimestamp, asyncio.get_event_loop, websockets.InvalidStatusCode, websockets.legacy). All upstream — not adapter code."
+  },
+  "user_flows": [
+    {
+      "name": "Registration at import",
+      "flow": "import esr_feishu -> import esr_feishu.adapter -> @adapter decorator registers 'feishu' in ADAPTER_REGISTRY with cls, allowed_io, factory. No I/O."
+    },
+    {
+      "name": "Outbound send_message (live)",
+      "flow": "handler calls adapter.on_directive('send_message', {chat_id, content}) -> _with_ratelimit_retry wraps _send_message -> lazy client() builds lark_oapi.Client on first call -> im.v1.message.create -> returns {ok, result: {message_id}} or {ok: false, error, code}."
+    },
+    {
+      "name": "Outbound send_message (mock/scenario)",
+      "flow": "base_url starts with http://127.0.0.1 or http://localhost -> _send_message_mock POSTs JSON {receive_id, msg_type, content} to <base_url>/open-apis/im/v1/messages?receive_id_type=chat_id via urllib."
+    },
+    {
+      "name": "Inbound event streaming (live)",
+      "flow": "emit_events() -> _emit_events_lark -> creates asyncio.Queue + lark_oapi.ws.Client with p2_im_message_receive_v1 handler -> runs ws_client.start() in executor thread with patched lark_oapi.ws.client.loop -> callback flattens P2ImMessageReceiveV1 -> msg_received envelope -> queue.put_nowait -> async generator yields envelopes. Additionally, an optional _poll_chat_messages task polls im.v1.message.list every 2s on FEISHU_TEST_CHAT_ID/config.poll_chat_id to surface bot-self posts (Lark's receive_v1 does not fire for bot's own messages)."
+    },
+    {
+      "name": "Inbound event streaming (mock)",
+      "flow": "emit_events() -> _emit_events_mock -> aiohttp.ws_connect(<base_url>/ws) -> reads mock_feishu P2ImMessageReceiveV1 JSON envelopes -> flattens to same msg_received shape -> yields. Reconnects with 1s backoff on ClientError/TimeoutError."
+    },
+    {
+      "name": "File download",
+      "flow": "on_directive('download_file', {msg_id, file_key, file_name, msg_type, chat_id}) -> im.v1.message_resource.get -> resp.file.read() bytes written to <uploads_dir>/<chat_id>/<file_name> (uploads_dir from AdapterConfig, default ~/.esrd/default/uploads) -> returns {ok: true, result: {path}}."
+    },
+    {
+      "name": "Rate-limit retry",
+      "flow": "any retryable directive -> _with_ratelimit_retry runs fn(); if ack.code==429 sleeps per backoff [1,2,4,8,16,30]s, re-invokes fn; on cumulative sleep > 30s returns {ok: false, error: 'timeout'}; non-429 surfaces immediately."
+    },
+    {
+      "name": "Capability scan",
+      "flow": "esr.verify.capability.scan_adapter(adapter.py, allowed_io) walks the adapter source AST and asserts all imports/http hosts fall within the allowed_io declaration (test_capability: empty violations expected)."
+    }
+  ],
+  "notes": [
+    "esr.toml manifest: allows lark_oapi (*), aiohttp (*), http -> open.feishu.cn, urllib -> 127.0.0.1+localhost. Matches the @adapter decorator's allowed_io in code.",
+    "Factory purity is a hard contract (PRD 04 F02) — FeishuAdapter.factory stores config only; lark_oapi.Client is built on first client() call inside directive/event paths. test_factory_purity monkeypatches socket.create_connection to assert no I/O happens.",
+    "Directive set (6 total): send_message, react, send_card, pin, unpin (all under _with_ratelimit_retry) + download_file (no retry wrapper — synchronous, failure is surfaced directly). Unknown actions return {ok: false, error: 'unknown action: <name>'} instead of raising.",
+    "Event emission set (2 shapes): msg_received (live WS + mock WS + bot-self poll, adapter-symmetric across paths) and reaction_added (shape is defined by parse_ws_event but live emit_events currently only wires p2_im_message_receive_v1 — reaction events are not yet emitted from the WS loop).",
+    "Content-text unwrapping happens at the adapter boundary: raw {\"text\": \"...\"} JSON is parsed into plain text for args.content; the raw JSON string is preserved on args.raw_content for diagnostics. Handlers can thus pattern-match on literal prefixes like '/new-thread'.",
+    "Fixtures (live-capture/*.json) are real Feishu wire frames, all event_type=im.message.receive_v1 under schema 2.0, app_id cli_a9564804f1789cc9. Three variants: text_message (message_type=text), thread_reply (text with root_id+parent_id set), card_interaction (message_type=interactive carrying the Tool Activity card JSON).",
+    "Two WS paths exist because Lark's im.message.receive_v1 does NOT fire for messages the bot itself posts via REST. The _poll_chat_messages fallback bridges that gap for final_gate.sh --live, polling im.v1.message.list every 2s and deduping by message_id with a bootstrap pass that marks historical messages as seen.",
+    "lark_oapi.ws.Client.start() is synchronous and grabs the asyncio event loop at import time; the adapter patches lark_oapi.ws.client.loop to a fresh thread-local loop in the executor so it doesn't collide with the caller's running loop.",
+    "Parsers are pure functions (no runtime fetches, in contrast with the ported cc-openclaw version) — parser exceptions are caught and return '[<msg_type> message — parse failed]' so a malformed payload can't kill the event stream.",
+    "Tests use stub lark response objects rather than hitting live Lark; test_emit_events spins up scripts/mock_feishu.MockFeishu to exercise the mock-WS path end-to-end. test_client is the only suite that exercises the real lark_oapi.Client.builder() (accounting for the 90s test-suite duration — the build path is slow)."
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "module_name": "handler-feishu-thread",
+  "module_path": "handlers/feishu_thread/",
+  "description": "ESR v0.2 thread-scoped Feishu handler. One actor per Feishu thread bound to a CC session: dedups inbound msg_ids, captures chat_id on first inbound, notifies the esr-channel session on msg_received (replacing the v0.1 tmux send-keys path), and relays cc_output back to Feishu as send_message. Pure function — no on_spawn lifecycle hook (PRD 05 F14).",
+  "files_analyzed": [
+    {
+      "path": "handlers/feishu_thread/esr.toml",
+      "lines": 7,
+      "key_symbols": [
+        {"name": "name", "type": "manifest_field", "line": 2, "description": "Handler package name 'feishu_thread'."},
+        {"name": "module", "type": "manifest_field", "line": 4, "description": "Python import path 'esr_handler_feishu_thread.on_msg'."},
+        {"name": "entry", "type": "manifest_field", "line": 5, "description": "Entry function 'on_msg'."},
+        {"name": "actor_type", "type": "manifest_field", "line": 6, "description": "Registered actor_type 'feishu_thread_proxy'."},
+        {"name": "allowed_imports", "type": "manifest_field", "line": 7, "description": "Empty list — enforces pure handler contract (PRD 05 F02)."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/pyproject.toml",
+      "lines": 20,
+      "key_symbols": [
+        {"name": "project.name", "type": "manifest_field", "line": 2, "description": "Distribution name 'esr-handler-feishu-thread' v0.1.0."},
+        {"name": "project.dependencies", "type": "manifest_field", "line": 6, "description": "Depends only on 'esr' (core SDK)."},
+        {"name": "tool.uv.sources", "type": "manifest_field", "line": 15, "description": "esr resolved editable from ../../py."},
+        {"name": "tool.pytest.ini_options", "type": "manifest_field", "line": 18, "description": "asyncio_mode=auto, --import-mode=importlib."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/__init__.py",
+      "lines": 3,
+      "key_symbols": [
+        {"name": "__version__", "type": "constant", "line": 3, "description": "Package version '0.1.0'."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/on_msg.py",
+      "lines": 71,
+      "key_symbols": [
+        {"name": "on_msg", "type": "function", "line": 20, "description": "@handler(actor_type='feishu_thread_proxy', name='on_msg') — dispatches on event.event_type to _handle_inbound / _handle_outbound; unknown events return (state, [])."},
+        {"name": "_handle_inbound", "type": "function", "line": 30, "description": "Handles 'msg_received': dedup check on message_id, captures chat_id on first inbound, emits Emit(adapter='esr-channel', action='notify_session', args={session_id=thread_id, source='feishu', chat_id, message_id, user, content})."},
+        {"name": "_handle_outbound", "type": "function", "line": 58, "description": "Handles 'cc_output': if chat_id is set, emits Emit(adapter='feishu', action='send_message', args={chat_id, content=text}); silently drops if chat_id is unset (orphan cc_output before first inbound)."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/src/esr_handler_feishu_thread/state.py",
+      "lines": 55,
+      "key_symbols": [
+        {"name": "_DEDUP_CAP", "type": "constant", "line": 23, "description": "Hard cap of 1000 on dedup set size (PRD 05 F11)."},
+        {"name": "FeishuThreadState", "type": "class", "line": 27, "description": "@handler_state(actor_type='feishu_thread_proxy', schema_version=1); frozen pydantic BaseModel. Fields: thread_id:str='' (set at spawn via pattern init_directive), chat_id:str='' (captured on first inbound), dedup:frozenset[str]=frozenset(), dedup_order:tuple[str,...]=() (insertion order for FIFO eviction), ack_msg_id:str|None=None."},
+        {"name": "with_added_dedup", "type": "method", "line": 38, "description": "Return new state with msg_id appended to dedup + dedup_order; evicts the oldest entry once len exceeds _DEDUP_CAP (=1000)."},
+        {"name": "with_chat_id", "type": "method", "line": 50, "description": "Return new state with chat_id field updated — only called on first inbound."},
+        {"name": "with_ack", "type": "method", "line": 53, "description": "Return new state with ack_msg_id set (informational, currently unused by on_msg)."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/tests/test_on_msg.py",
+      "lines": 107,
+      "key_symbols": [
+        {"name": "_inbound", "type": "function", "line": 8, "description": "Test helper building msg_received Event from adapter/feishu with message_id/chat_id/content/sender_id."},
+        {"name": "_cc_output", "type": "function", "line": 17, "description": "Test helper building cc_output Event from adapter/cc_tmux."},
+        {"name": "test_inbound_emits_notify_session", "type": "function", "line": 28, "description": "PRD 05 F12 — inbound msg_received emits a single Emit to adapter='esr-channel' action='notify_session' with session_id=thread_id; state gets dedup entry and captured chat_id."},
+        {"name": "test_duplicate_inbound_produces_no_actions", "type": "function", "line": 47, "description": "PRD 05 F11 — re-delivered msg_id (already in dedup) yields actions==[] and state dedup unchanged."},
+        {"name": "test_cc_output_emits_send_message_to_feishu", "type": "function", "line": 61, "description": "PRD 05 F13 — cc_output with chat_id emits Emit(adapter='feishu', action='send_message', chat_id=..., content=text)."},
+        {"name": "test_cc_output_without_chat_id_is_silent", "type": "function", "line": 77, "description": "Orphan cc_output before any inbound (no chat_id) returns (state, []) without error."},
+        {"name": "test_no_on_spawn_symbol_exported", "type": "function", "line": 90, "description": "PRD 05 F14 — pure-function model has no lifecycle callback; module has no on_spawn attr."},
+        {"name": "test_arbitrary_event_ignored", "type": "function", "line": 100, "description": "Unknown event_type returns (state, []) — default dispatch branch."}
+      ]
+    },
+    {
+      "path": "handlers/feishu_thread/tests/test_state.py",
+      "lines": 57,
+      "key_symbols": [
+        {"name": "test_state_has_defaults", "type": "function", "line": 9, "description": "Default FeishuThreadState has thread_id='', dedup=frozenset(), ack_msg_id=None, chat_id=''."},
+        {"name": "test_state_is_frozen", "type": "function", "line": 19, "description": "Mutating thread_id raises pydantic ValidationError (frozen=True)."},
+        {"name": "test_with_added_dedup_adds", "type": "function", "line": 27, "description": "with_added_dedup returns new instance containing msg_id; original unchanged."},
+        {"name": "test_dedup_bounded_to_1000", "type": "function", "line": 36, "description": "PRD 05 F11 — after inserting 1001 distinct msg_ids, len(dedup)==1000, oldest ('m0') dropped, newest ('m1000') retained."},
+        {"name": "test_with_chat_id", "type": "function", "line": 50, "description": "with_chat_id returns new instance with chat_id set; original unchanged."}
+      ]
+    }
+  ],
+  "interfaces": [
+    {"name": "on_msg(state: FeishuThreadState, event: Event) -> (FeishuThreadState, list[Action])", "file": "handlers/feishu_thread/src/esr_handler_feishu_thread/on_msg.py", "line": 20, "description": "Registered handler for actor_type='feishu_thread_proxy'. Handled event_types: 'msg_received' (from feishu adapter), 'cc_output' (from cc_tmux adapter). Emitted actions: Emit(adapter='esr-channel', action='notify_session') on inbound; Emit(adapter='feishu', action='send_message') on outbound."},
+    {"name": "FeishuThreadState", "file": "handlers/feishu_thread/src/esr_handler_feishu_thread/state.py", "line": 27, "description": "Frozen pydantic state model for a feishu_thread_proxy actor. Fields: thread_id, chat_id, dedup (frozenset capped at 1000), dedup_order (FIFO tuple for eviction), ack_msg_id. Immutable-update helpers: with_added_dedup, with_chat_id, with_ack."}
+  ],
+  "dependencies": [
+    "esr (core SDK: @handler, @handler_state, Event, Action, Emit)",
+    "pydantic (frozen BaseModel for state)",
+    "stdlib: __future__.annotations"
+  ],
+  "test_results": {
+    "command": "cd /home/yaosh/projects/esr/py && uv run pytest ../handlers/feishu_thread/tests/ -q",
+    "exit_code": 0,
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "raw_output_first_1000": "...........                                                              [100%]\n11 passed in 1.01s"
+  },
+  "user_flows": [
+    {
+      "name": "Inbound Feishu message → notify CC session (v0.2 §3.3 primary path)",
+      "steps": [
+        "Feishu adapter receives a webhook and emits Event(event_type='msg_received', args={message_id, chat_id, sender_id, content}).",
+        "on_msg dedup-checks message_id against state.dedup; if already seen returns (state, []).",
+        "New msg_id: adds it to dedup (FIFO eviction at 1000); if chat_id was empty, captures it.",
+        "Emits Emit(adapter='esr-channel', action='notify_session', args={session_id=thread_id, source='feishu', chat_id, message_id, user=sender_id, content}) — PeerServer short-circuits this via SessionRegistry to the bound CC session."
+      ],
+      "entry_point": "handlers/feishu_thread/src/esr_handler_feishu_thread/on_msg.py:30"
+    },
+    {
+      "name": "CC output → relay to Feishu chat (PRD 05 F13)",
+      "steps": [
+        "cc_tmux adapter captures CC stdout and emits Event(event_type='cc_output', args={text, session}).",
+        "on_msg: if state.chat_id is unset (no prior inbound), returns (state, []) silently.",
+        "Otherwise emits Emit(adapter='feishu', action='send_message', args={chat_id=state.chat_id, content=text})."
+      ],
+      "entry_point": "handlers/feishu_thread/src/esr_handler_feishu_thread/on_msg.py:58"
+    }
+  ],
+  "notes": "v0.2 rewrite (commit context, on_msg.py docstring): v0.1 matched a non-existent 'feishu_msg_received' event and emitted tmux send-keys; both were dead code because the adapter actually emits 'msg_received'. The rewrite aligns the event name and switches the primary inbound path to the synthetic 'esr-channel' adapter + notify_session action that PeerServer resolves via SessionRegistry. The outbound cc_output→send_message branch is retained for the scenario mock path. Difference from handler-feishu-app (app-scoped): feishu_app handles whole-app lifecycle events (bot-join, app-level routing, spawning thread actors) while feishu_thread handles exactly one bound (thread_id ↔ chat_id ↔ CC session) conversation — it owns per-thread dedup and the chat_id learned at first inbound, and never spawns more actors. thread_id is set at spawn time by the pattern's init_directive (per feishu-thread-session pattern, see py/tests/test_pattern_feishu_thread_session.py) and never mutates thereafter; chat_id is write-once via with_chat_id on first inbound. State is fully frozen; all updates go through model_copy helpers. ack_msg_id field and with_ack helper exist on state but are not currently wired into on_msg — reserved for a future ack branch. Handler is pure (no on_spawn, empty allowed_imports in esr.toml) and covered by 11 passing unit tests."
+}
