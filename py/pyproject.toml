@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml>=6.0",
     "anyio>=4.0",
     "ruamel.yaml>=0.18",
+    "python-ulid>=3.0",
 ]
 
 [project.scripts]

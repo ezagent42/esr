@@ -15,6 +15,7 @@ import click
 import yaml
 
 from esr.cli import paths
+from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
 from esr.ipc.channel_client import ChannelClient
 
@@ -80,6 +81,11 @@ def cli(instance: str | None, esrd_home: str | None) -> None:
 # Capability-based access control CLI lives in its own module so
 # Phase CAP-7 (grant/revoke) can extend it without bloating main.py.
 cli.add_command(cap_group)
+
+# Admin-queue CLI primitive (`esr admin submit`) — Phase DI-7. Future
+# admin wrappers (`reload`, `notify`, `grant`, `revoke`) compose on top
+# of this single queue-writer entry point.
+cli.add_command(admin_group)
 
 
 @cli.command("use")
