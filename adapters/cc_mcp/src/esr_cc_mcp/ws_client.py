@@ -7,6 +7,11 @@ MCP tool protocol. It exposes:
   for each inbound 'envelope' frame; terminate only when the enclosing
   task group cancels (CC stdio EOF).
 - push(envelope) — send an envelope frame.
+
+``url`` may be a ``str`` (frozen at construction) or a zero-arg
+``Callable[[], str]`` — the latter is re-invoked on every reconnect
+so the client follows ``launchctl kickstart`` onto a fresh port
+(Task 8 DI-3).
 """
 from __future__ import annotations
 
@@ -20,6 +25,8 @@ from typing import Any
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+UrlSource = str | Callable[[], str]
 
 
 def compute_backoff(attempt: int, *, rng: Callable[[], float] = random.random) -> float:
@@ -36,9 +43,9 @@ def compute_backoff(attempt: int, *, rng: Callable[[], float] = random.random) -
 
 
 class EsrWSClient:
-    def __init__(self, *, url: str, session_id: str, workspace: str,
+    def __init__(self, *, url: UrlSource, session_id: str, workspace: str,
                  chats: list[dict[str, Any]]) -> None:
-        self._url = url
+        self._url_source: UrlSource = url
         self._session_id = session_id
         self._workspace = workspace
         self._chats = chats
@@ -47,6 +54,13 @@ class EsrWSClient:
         self._join_ref = "cli-channel-join"
         self._attempt = 0
         self._topic = f"cli:channel/{session_id}"
+
+    def _current_url(self) -> str:
+        """Resolve the WS URL for this reconnect iteration — string
+        sources are returned as-is, callables are invoked fresh so
+        port-file changes are picked up after every dropped session."""
+        src = self._url_source
+        return src() if callable(src) else src
 
     def _next_ref(self) -> str:
         self._ref += 1
@@ -86,7 +100,7 @@ class EsrWSClient:
         session: aiohttp.ClientSession,
         on_envelope: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
-        url = self._url.rstrip("/") + "/channel/socket/websocket?vsn=2.0.0"
+        url = self._current_url().rstrip("/") + "/channel/socket/websocket?vsn=2.0.0"
         async with session.ws_connect(url, heartbeat=30) as ws:
             self._ws = ws
             self._attempt = 0

@@ -49,6 +49,7 @@ testpaths = [
     "tests",
     "../adapters/feishu/tests",
     "../adapters/cc_tmux/tests",
+    "../adapters/cc_mcp/tests",
     "../handlers/feishu_app/tests",
     "../handlers/feishu_thread/tests",
     "../handlers/tmux_proxy/tests",
@@ -62,6 +63,7 @@ esr-handler-feishu-app = { path = "../handlers/feishu_app", editable = true }
 esr-handler-feishu-thread = { path = "../handlers/feishu_thread", editable = true }
 esr-handler-tmux-proxy = { path = "../handlers/tmux_proxy", editable = true }
 esr-handler-cc-session = { path = "../handlers/cc_session", editable = true }
+esr-cc-mcp = { path = "../adapters/cc_mcp", editable = true }
 
 [dependency-groups]
 dev = [
@@ -77,4 +79,5 @@ dev = [
     "esr-handler-feishu-thread",
     "esr-handler-tmux-proxy",
     "esr-handler-cc-session",
+    "esr-cc-mcp",
 ]
