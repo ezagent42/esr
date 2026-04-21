@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Auto-refresh .artifacts/ after a merge lands on main, so
+# project-discussion-esr skill's index stays aligned with reality.
+#
+# Fires after `git merge` and `git pull` (pull = fetch + merge).
+# Does NOT fire on `git pull --rebase` (rebases trigger post-rewrite).
+#
+# One-time setup per clone:
+#   git config core.hooksPath .githooks
+#
+# Silent no-op when:
+#   - HEAD is not on main
+#   - skill not present in this checkout
+#   - dev-loop-skills plugin not installed locally
+
+set -euo pipefail
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+[ "$branch" = "main" ] || exit 0
+
+repo_root="$(git rev-parse --show-toplevel)"
+refresh="$repo_root/.claude/skills/project-discussion-esr/scripts/refresh-index.sh"
+[ -x "$refresh" ] || exit 0
+
+scanner="$HOME/.claude/plugins/cache/ezagent42/dev-loop-skills/0.1.0/skills/skill-0-project-builder/scripts/scan-project.sh"
+if [ ! -x "$scanner" ]; then
+  echo "[post-merge] dev-loop-skills plugin not installed at $scanner" >&2
+  echo "[post-merge] Skipping .artifacts/ refresh. Install with: claude plugin install ezagent42/dev-loop-skills" >&2
+  exit 0
+fi
+
+echo "[post-merge] main received a merge — refreshing .artifacts/ index…"
+if ! bash "$refresh"; then
+  echo "[post-merge] refresh-index.sh failed. .artifacts/ may be stale." >&2
+  exit 0
+fi
+
+# Report drift; never auto-commit (keeps the dev's working tree predictable).
+if ! git diff --quiet -- .artifacts/; then
+  echo
+  echo "[post-merge] .artifacts/ drifted — review and commit when ready:"
+  git diff --stat -- .artifacts/
+  echo
+  echo "    git add .artifacts/ && git commit -m 'artifact: refresh after main merge'"
+fi
