@@ -76,7 +76,8 @@ defmodule Esr.Admin.Dispatcher do
   # Map kind → Commands.<Module>. Missing entries surface as
   # {:error, %{type: "unknown_kind"}} so unsupported kinds fail fast.
   @command_modules %{
-    "notify" => Esr.Admin.Commands.Notify
+    "notify" => Esr.Admin.Commands.Notify,
+    "register_adapter" => Esr.Admin.Commands.RegisterAdapter
   }
 
   # ------------------------------------------------------------------
