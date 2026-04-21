@@ -21,7 +21,7 @@ defmodule Esr.Admin.Commands.Session.End do
            for `session_id = "<submitter>-<branch>"` (same convention
            as `routing.yaml`'s `cc_session_id`).
         2. Dispatch a cleanup-check request to CC (via `:sender_fn`
-           opt; see **CC-side stub** below).
+           opt; see **CC-side application-layer requirement** below).
         3. `receive` a `{:cleanup_signal, status, details}` forwarded
            by Dispatcher's `handle_info/2` clause; timeout after
            `opts[:cleanup_timeout_ms]` (default 30_000).
@@ -37,16 +37,24 @@ defmodule Esr.Admin.Commands.Session.End do
           with a hint suggesting `--force` or retry; routing/branches
           state is left untouched.
 
-  ## CC-side stub (DI-11 gap)
+  ## CC-side application-layer requirement
 
-  The actual CC inspection tool (`git status / log / stash` via the
-  CC MCP server) is out of scope for spec §6.9 in DI-11 — what exists
-  today is only the ESR-side receiver (`session.signal_cleanup`). The
-  default `:sender_fn` therefore emits a `:telemetry` event and logs,
-  but does **not** actually reach a CC session. Tests inject a stub
-  `:sender_fn` and directly poke the Dispatcher with a signal to
-  simulate CC's response. Wiring the real CC-side `cleanup_check`
-  tool is tracked as a v2 gap (see `PHASE7_GAP.md` / spec §13).
+  The default `:sender_fn` broadcasts a `cleanup_check_requested`
+  notification on `cli:channel/<cc_session_id>` (looked up from
+  `routing.yaml` under `principals[submitter].targets[branch].cc_session_id`,
+  with a fallback to the deterministic `"<submitter>-<branch>"`
+  convention when the entry is absent). `EsrWeb.ChannelChannel`
+  handles the PubSub tuple in `handle_info/2` and pushes the envelope
+  over the CC session's MCP socket.
+
+  **CC-side responsibility**: a prompt or skill on the CC session
+  must react to the `cleanup_check_requested` notification by running
+  `git status --porcelain`, `git log @{u}..`, and `git stash list`,
+  then invoking the `session.signal_cleanup` MCP tool with one of the
+  statuses (`CLEANED | DIRTY | UNPUSHED | STASHED`) so the blocked
+  Session.End Task receives `{:cleanup_signal, ...}` and unblocks.
+  When the CC session ignores the notification, the 30-s timeout
+  branch fires and the user is told to retry or add `--force`.
 
   ## Flow (non-force path)
 
@@ -81,8 +89,12 @@ defmodule Esr.Admin.Commands.Session.End do
       timeout so tests can exercise the timeout branch in under a
       second.
     * `:sender_fn` — 2-arity `(session_id, worktree_path) -> :ok`
-      stub standing in for the (stubbed) CC-side cleanup_check
-      dispatch. Defaults to a `:telemetry.execute/3` + log-only impl.
+      hook for dispatching the cleanup-check request to CC. Defaults
+      to a `Phoenix.PubSub.broadcast/3` on the CC session's
+      `cli:channel/<cc_session_id>` topic with a `cleanup_check_requested`
+      envelope + a `:telemetry` event. Tests inject this to capture
+      or synthesise the CC side without booting a real PubSub
+      subscriber.
   """
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -132,10 +144,11 @@ defmodule Esr.Admin.Commands.Session.End do
     session_id = submitter <> "-" <> branch
     timeout_ms = Keyword.get(opts, :cleanup_timeout_ms, @default_cleanup_timeout_ms)
     worktree_path = lookup_worktree_path(branch)
+    cc_session_id = lookup_cc_session_id(submitter, branch) || session_id
 
     sender_fn =
       Keyword.get(opts, :sender_fn, fn sid, wpath ->
-        default_cleanup_sender(sid, wpath)
+        default_cleanup_sender(sid, wpath, cc_session_id, branch)
       end)
 
     :ok = Esr.Admin.Dispatcher.register_cleanup(session_id, self())
@@ -186,22 +199,48 @@ defmodule Esr.Admin.Commands.Session.End do
     end
   end
 
-  # The default sender_fn. Today there's no CC-side `cleanup_check`
-  # tool the ESR can invoke — spec §6.9 only defines the reverse
-  # direction (CC → ESR via `session.signal_cleanup`). We therefore
-  # log + emit a telemetry event and rely on the CC operator (or a
-  # future CC-side tool) to eventually send the signal back. The
-  # `cleanup_timeout` branch is the working fallback for this gap.
-  defp default_cleanup_sender(session_id, worktree_path) do
+  # The default sender_fn. Broadcasts a `cleanup_check_requested`
+  # notification on `cli:channel/<cc_session_id>` so `EsrWeb.ChannelChannel`
+  # can push the envelope over the CC session's MCP socket. The
+  # CC-side prompt/skill reacts by running git status/log/stash and
+  # invoking the `session.signal_cleanup` MCP tool, which loops back
+  # into the Dispatcher as `{:cleanup_signal, ...}`.
+  #
+  # If the CC side never reacts (no prompt installed, session dead),
+  # the `receive`'s `after` clause in `run_cleanup_handshake/3` fires
+  # at `cleanup_timeout_ms` and the user is told to retry or add
+  # `--force`.
+  defp default_cleanup_sender(session_id, worktree_path, cc_session_id, branch) do
+    topic = "cli:channel/" <> cc_session_id
+
+    notification = %{
+      "kind" => "cleanup_check_requested",
+      "session_id" => cc_session_id,
+      "worktree_path" => worktree_path,
+      "branch" => branch,
+      "instructions" =>
+        "Run git status --porcelain, git log @{u}.., git stash list. " <>
+          "Then call MCP tool session.signal_cleanup with " <>
+          "{session_id, worktree_path, status: CLEANED|DIRTY|UNPUSHED|STASHED, details}"
+    }
+
     Logger.info(
-      "admin.session_end: cleanup_check STUB — no CC-side tool wired yet " <>
-        "(session_id=#{session_id} worktree=#{worktree_path || "?"})"
+      "admin.session_end: broadcasting cleanup_check_requested " <>
+        "(session_id=#{session_id} cc_session_id=#{cc_session_id} " <>
+        "worktree=#{worktree_path || "?"} topic=#{topic})"
     )
+
+    :ok = Phoenix.PubSub.broadcast(EsrWeb.PubSub, topic, {:notification, notification})
 
     :telemetry.execute(
       [:esr, :admin, :session_end_cleanup_check_requested],
       %{count: 1},
-      %{session_id: session_id, worktree_path: worktree_path}
+      %{
+        session_id: session_id,
+        cc_session_id: cc_session_id,
+        worktree_path: worktree_path,
+        branch: branch
+      }
     )
 
     :ok
@@ -217,6 +256,24 @@ defmodule Esr.Admin.Commands.Session.End do
 
       _ ->
         nil
+    end
+  end
+
+  # Resolve `cc_session_id` for the (submitter, branch) pair from
+  # `routing.yaml`. `Session.New` writes this when the session is
+  # registered (always `"<submitter>-<branch>"` today, but we read
+  # the yaml so a future hand-edited routing stays authoritative).
+  # Returns `nil` when the file or the entry is missing — callers
+  # fall back to the `"<submitter>-<branch>"` convention.
+  defp lookup_cc_session_id(submitter, branch) do
+    with {:ok, %{"principals" => %{} = principals}} <-
+           YamlElixir.read_from_file(routing_yaml_path()),
+         %{"targets" => %{} = targets} <- Map.get(principals, submitter),
+         %{"cc_session_id" => cc_sid} when is_binary(cc_sid) and cc_sid != "" <-
+           Map.get(targets, branch) do
+      cc_sid
+    else
+      _ -> nil
     end
   end
 

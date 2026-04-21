@@ -358,6 +358,99 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
     end
   end
 
+  describe "default sender_fn (PubSub broadcast)" do
+    test "broadcasts cleanup_check_requested on cli:channel/<cc_session_id>", %{tmp: tmp} do
+      {_, _} = write_single_branch_yaml(tmp, "feature-broadcast")
+
+      # routing.yaml written above has cc_session_id=ou_alice-feature-broadcast.
+      expected_topic = "cli:channel/ou_alice-feature-broadcast"
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, expected_topic)
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"branch" => "feature-broadcast"}
+      }
+
+      spawn_guard = fn {_args} -> flunk("spawn must not be called on timeout") end
+
+      # Omit :sender_fn so the default (PubSub broadcast) is exercised.
+      # Short timeout — we only want to capture the broadcast, not the signal.
+      t0 = System.monotonic_time(:millisecond)
+
+      assert {:error, %{"type" => "cleanup_timeout"}} =
+               SessionEnd.execute(cmd,
+                 spawn_fn: spawn_guard,
+                 cleanup_timeout_ms: 120
+               )
+
+      elapsed = System.monotonic_time(:millisecond) - t0
+      assert elapsed >= 120
+      assert elapsed < 5_000
+
+      # The default sender_fn fires BEFORE the receive block, so the
+      # broadcast is already in our mailbox by the time the timeout
+      # resolves. A tiny assert_received window is fine.
+      assert_receive {:notification, notification}, 200
+
+      assert notification["kind"] == "cleanup_check_requested"
+      assert notification["session_id"] == "ou_alice-feature-broadcast"
+      assert notification["branch"] == "feature-broadcast"
+      assert notification["worktree_path"] == "/tmp/worktree-feature-broadcast"
+      assert is_binary(notification["instructions"])
+      assert notification["instructions"] =~ "session.signal_cleanup"
+      assert notification["instructions"] =~ "CLEANED"
+      assert notification["instructions"] =~ "DIRTY"
+
+      :ok = Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, expected_topic)
+    end
+
+    test "falls back to <submitter>-<branch> when routing.yaml lacks cc_session_id",
+         %{tmp: tmp} do
+      # branches.yaml with a registered branch, but routing.yaml written
+      # WITHOUT a cc_session_id key — simulating either a hand-edited
+      # routing.yaml or a pre-Task-23 routing record.
+      branches_path = Path.join([tmp, "default", "branches.yaml"])
+      routing_path = Path.join([tmp, "default", "routing.yaml"])
+
+      File.write!(branches_path, """
+      branches:
+        feature-noroute:
+          esrd_home: /tmp/esrd-feature-noroute
+          worktree_path: /tmp/worktree-feature-noroute
+          port: 54400
+          status: running
+      """)
+
+      File.write!(routing_path, """
+      principals:
+        ou_alice:
+          active: feature-noroute
+          targets:
+            feature-noroute:
+              esrd_url: ws://127.0.0.1:54400/adapter_hub/socket/websocket?vsn=2.0.0
+      """)
+
+      expected_topic = "cli:channel/ou_alice-feature-noroute"
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, expected_topic)
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"branch" => "feature-noroute"}
+      }
+
+      assert {:error, %{"type" => "cleanup_timeout"}} =
+               SessionEnd.execute(cmd,
+                 spawn_fn: fn {_} -> flunk("unreachable") end,
+                 cleanup_timeout_ms: 80
+               )
+
+      assert_receive {:notification, notification}, 200
+      assert notification["session_id"] == "ou_alice-feature-noroute"
+
+      :ok = Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, expected_topic)
+    end
+  end
+
   describe "dispatcher state tracking" do
     test "register_cleanup + deregister_cleanup round-trip is a no-op on the task side" do
       # Directly exercising the Dispatcher API to confirm the casts
