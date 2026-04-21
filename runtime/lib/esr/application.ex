@@ -56,6 +56,14 @@ defmodule Esr.Application do
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
       Esr.Admin.Supervisor,
 
+      # 4h. Routing subsystem — SessionRouter parses Feishu slash
+      # commands and forwards them to Esr.Admin.Dispatcher
+      # (dev-prod-isolation spec §6.5). Sits AFTER Esr.Admin.Supervisor
+      # because every slash-command cast targets the Dispatcher by its
+      # registered name — the Router must never start ahead of its
+      # downstream.
+      Esr.Routing.Supervisor,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,
