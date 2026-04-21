@@ -15,6 +15,7 @@ import click
 import yaml
 
 from esr.cli import paths
+from esr.cli.adapter.feishu import feishu as feishu_group
 from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
 from esr.ipc.channel_client import ChannelClient
@@ -324,6 +325,12 @@ def adapters_list() -> None:
 @cli.group()
 def adapter() -> None:
     """Adapter install / instance / list operations."""
+
+
+# Per-adapter-type subgroups live under ``esr.cli.adapter`` — attach
+# them here so ``esr adapter feishu create-app`` (DI-8 Task 15) surfaces
+# under the same ``adapter`` parent as ``add`` / ``install`` / ``list``.
+adapter.add_command(feishu_group)
 
 
 @adapter.command("add", context_settings={"ignore_unknown_options": True})
