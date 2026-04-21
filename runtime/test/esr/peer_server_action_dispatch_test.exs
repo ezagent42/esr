@@ -7,6 +7,16 @@ defmodule Esr.PeerServerActionDispatchTest do
   use ExUnit.Case, async: false
 
   alias Esr.PeerServer
+  alias Esr.TestSupport.AuthContext
+
+  setup do
+    # CAP-4: Lane B enforcement requires principal_id + grant on
+    # every inbound_event. These tests care about action dispatch, not
+    # capability enforcement — admin-grant the test principal so the
+    # check always passes.
+    AuthContext.load_admin("test_admin")
+    :ok
+  end
 
   defp start_fake_worker(handler_module, reply_shaper) do
     topic = "handler:" <> handler_module <> "/default"
@@ -60,6 +70,8 @@ defmodule Esr.PeerServerActionDispatchTest do
       "id" => id,
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "msg_received", "args" => %{}}
     }})
   end

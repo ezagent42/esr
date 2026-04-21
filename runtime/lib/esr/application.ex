@@ -43,6 +43,12 @@ defmodule Esr.Application do
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,
 
+      # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
+      # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
+      # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
+      # FileLoader can cross-check workspace names during validation.
+      Esr.Capabilities.Supervisor,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,

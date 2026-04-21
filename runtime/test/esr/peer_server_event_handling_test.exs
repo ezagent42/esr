@@ -8,6 +8,7 @@ defmodule Esr.PeerServerEventHandlingTest do
   use ExUnit.Case, async: false
 
   alias Esr.PeerServer
+  alias Esr.TestSupport.AuthContext
 
   # Simulates a Python handler worker by subscribing to the handler
   # channel's PubSub topic and broadcasting a reply for every inbound
@@ -44,6 +45,9 @@ defmodule Esr.PeerServerEventHandlingTest do
   end
 
   setup do
+    # CAP-4 Lane B: every inbound_event needs a grant.
+    AuthContext.load_admin("test_admin")
+
     actor_id = "test-peer-#{System.unique_integer([:positive])}"
     {:ok, peer} =
       start_supervised(
@@ -76,6 +80,8 @@ defmodule Esr.PeerServerEventHandlingTest do
       "id" => "e-1",
       "type" => "event",
       "source" => "esr://localhost/adapter/feishu",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "msg_received", "args" => %{}}
     }
 
@@ -104,6 +110,8 @@ defmodule Esr.PeerServerEventHandlingTest do
       "id" => "e-dup",
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{
         "event_type" => "msg_received",
         "args" => %{"idempotency_key" => "oc_abc:m_1"}
@@ -127,6 +135,8 @@ defmodule Esr.PeerServerEventHandlingTest do
       "id" => "e-timeout",
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "msg_received", "args" => %{}}
     }
 

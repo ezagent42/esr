@@ -9,11 +9,17 @@ defmodule Esr.PeerServerPauseTest do
   use ExUnit.Case, async: false
 
   alias Esr.PeerServer
+  alias Esr.TestSupport.AuthContext
 
   setup do
     for {actor_id, _pid} <- Esr.PeerRegistry.list_all() do
       Registry.unregister(Esr.PeerRegistry, actor_id)
     end
+
+    # CAP-4 Lane B: drained events need a grant or the deny path fires
+    # instead of retry_exhausted. Admin wildcard keeps the drain-order
+    # assertion focused on FIFO behaviour, not permissions.
+    AuthContext.load_admin("test_admin")
 
     :ok
   end
@@ -84,9 +90,15 @@ defmodule Esr.PeerServerPauseTest do
 
     :ok = PeerServer.pause("pause:3")
 
-    # Inject three events into the mailbox while paused.
+    # Inject three events into the mailbox while paused. principal_id +
+    # workspace_name satisfy the Lane B check — drained events are
+    # expected to fail later at handler_timeout, not deny.
     for id <- ["e1", "e2", "e3"] do
-      send(pid, {:inbound_event, %{"id" => id, "payload" => %{}}})
+      send(pid, {:inbound_event,
+                 %{"id" => id,
+                   "principal_id" => "test_admin",
+                   "workspace_name" => "test-ws",
+                   "payload" => %{}}})
     end
 
     # Pending queue holds them in FIFO order.

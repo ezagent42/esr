@@ -28,8 +28,8 @@ Each adapter lives at `adapters/<name>/` with `pyproject.toml`, `src/esr_<name>/
 #### F02 — Factory purity
 The `@adapter` class's `factory(actor_id, config)` method does not perform I/O: no network connection, no subprocess, no file write. Lazy initialisation allowed inside the instance (first `on_directive` or `emit_events` call). **Unit test (per adapter):** pass a monkeypatched `socket.socket` that raises → factory still returns an instance.
 
-#### F03 — Capability declaration
-Every adapter declares `allowed_io` in `@adapter(name=..., allowed_io=...)`. CI capability scan (PRD 02 F18) passes. **Unit test:** `tests/test_capability.py` — scan passes.
+#### F03 — I/O-permission declaration
+Every adapter declares `allowed_io` in `@adapter(name=..., allowed_io=...)`. CI I/O-permission scan (PRD 02 F18) passes. **Unit test:** `tests/test_io_permission.py` — scan passes.
 
 #### F04 — Manifest
 `adapters/<name>/esr.toml` contains:
@@ -104,7 +104,7 @@ On factory call, do NOT check for tmux (keeps factory pure). On first directive,
 
 - **feishu adapter:** directive round-trip p95 < 200 ms excluding Lark API latency; WS reconnect within 10s on network blip
 - **cc_tmux adapter:** `send_keys` completes < 50 ms; `capture_pane` < 100 ms
-- Both adapters import only modules declared in `allowed_io`; capability scan is green
+- Both adapters import only modules declared in `allowed_io`; I/O-permission scan is green
 
 ## Dependencies
 
@@ -140,7 +140,7 @@ On factory call, do NOT check for tmux (keeps factory pure). On first directive,
 - [x] All 22 FRs have passing unit tests — feishu + cc_tmux matrix complete
 - [x] `esr adapter install ./adapters/feishu/` + `list` tested via test_adapter_runner.py + test_adapter_manifest.py
 - [x] Same for `cc_tmux` (test_cli_install.py covers both)
-- [x] Capability scan clean — test_capability.py per-adapter
+- [x] I/O-permission scan clean — test_io_permission.py per-adapter
 - [ ] Integration: feishu + cc_tmux round-trip exercised via scripts/final_gate.sh --mock (Track C)
 
 ---

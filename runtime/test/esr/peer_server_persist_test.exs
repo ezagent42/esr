@@ -10,11 +10,13 @@ defmodule Esr.PeerServerPersistTest do
 
   alias Esr.PeerServer
   alias Esr.Persistence.Ets, as: PersistStore
+  alias Esr.TestSupport.AuthContext
 
   @table :esr_actor_states
 
   setup do
     PersistStore.clear(@table)
+    AuthContext.load_admin("test_admin")
     :ok
   end
 
@@ -70,6 +72,8 @@ defmodule Esr.PeerServerPersistTest do
       "id" => id,
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "tick", "args" => %{}}
     }})
   end

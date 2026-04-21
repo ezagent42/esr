@@ -39,7 +39,7 @@ Provide the Python-side authoring surface: `@handler`, `@adapter`, `@command` de
 `esr.handler.HANDLER_REGISTRY` is a `dict[str, HandlerEntry]` and can be cleared in tests. `HandlerEntry(actor_type, name, fn)` is a frozen dataclass. Similar for `STATE_REGISTRY` / `StateEntry`. **Unit test:** `tests/test_handler.py`.
 
 ### F07 — `@adapter` decorator
-`esr.adapter.adapter(*, name, allowed_io)` decorator registers a class under `name` in `ADAPTER_REGISTRY`. Enforces that the class has a static `factory(actor_id, config)` method — raises `TypeError` otherwise. `allowed_io: dict[str, Any]` is stored and later used by CI capability scan (PRD 02 F14). **Unit test:** `tests/test_adapter.py` covers register, factory-missing rejection, duplicate rejection.
+`esr.adapter.adapter(*, name, allowed_io)` decorator registers a class under `name` in `ADAPTER_REGISTRY`. Enforces that the class has a static `factory(actor_id, config)` method — raises `TypeError` otherwise. `allowed_io: dict[str, Any]` is stored and later used by CI I/O-permission scan (PRD 02 F14). **Unit test:** `tests/test_adapter.py` covers register, factory-missing rejection, duplicate rejection.
 
 ### F08 — `AdapterConfig`
 `esr.adapter.AdapterConfig` wraps a `dict` and exposes read-only attribute access (`.app_id` resolves via `_data["app_id"]`, `AttributeError` if absent). Setting an attribute raises. **Unit test:** `tests/test_adapter.py` — attr access, unknown-attr raises, setattr raises.
@@ -75,8 +75,8 @@ The `init_directive` argument, when provided, is a dict `{"action": <str>, "args
 ### F17 — Purity enforcement (Check 2: frozen-state harness)
 `esr.verify.purity.frozen_state_fixture(state_cls)` pytest fixture produces a frozen instance of a pydantic model. Any mutation attempt on the instance raises `pydantic.ValidationError` (pydantic's own enforcement of `frozen=True`). Every handler in `handlers/` has at least one unit test using this fixture. **Unit test:** meta-test that asserts the fixture raises on mutation.
 
-### F18 — Capability scan for adapters
-`esr.verify.capability.scan_adapter(module_path) -> list[Violation]` walks an adapter module and verifies every import matches a prefix in `allowed_io` (the dict passed to `@adapter`). Violations include the offending import and the allowed prefixes for reference. **Unit test:** `tests/test_capability.py` — adapter using `requests` without declaring it fails; adapter using `lark_oapi.api.im.v1` when `lark_oapi="*"` declared passes.
+### F18 — I/O-permission scan for adapters
+`esr.verify.io_permission.scan_adapter(module_path) -> list[Violation]` walks an adapter module and verifies every import matches a prefix in `allowed_io` (the dict passed to `@adapter`). Violations include the offending import and the allowed prefixes for reference. **Unit test:** `tests/test_io_permission.py` — adapter using `requests` without declaring it fails; adapter using `lark_oapi.api.im.v1` when `lark_oapi="*"` declared passes.
 
 ### F19 — Package entry points
 `esr/__init__.py` re-exports the public API: `handler`, `handler_state`, `adapter`, `AdapterConfig`, `command`, `node`, `port`, `compose`, `Emit`, `Route`, `InvokeCommand`, `Event`, `Directive`, `EsrURI`. Users import from `esr` directly, not submodules. **Unit test:** `tests/test_public_api.py` — asserts every name imports.
@@ -114,7 +114,7 @@ The `init_directive` argument, when provided, is a dict `{"action": <str>, "args
 | F15 | `py/tests/test_uri.py` | parse / build / errors |
 | F16 | `py/tests/test_purity_imports.py` | scan imports |
 | F17 | `py/tests/test_purity_frozen.py` | frozen fixture raises |
-| F18 | `py/tests/test_capability.py` | adapter capability scan |
+| F18 | `py/tests/test_io_permission.py` | adapter I/O-permission scan |
 | F19 | `py/tests/test_public_api.py` | public API imports |
 
 ## Acceptance

@@ -13,7 +13,9 @@ from esr import Action, Event, Route, handler
 from esr_handler_cc_session.state import CcSessionState
 
 
-@handler(actor_type="cc_proxy", name="on_msg")
+# Pure internal bridge (reverse-routing cc_output → feishu_thread) —
+# no user-facing actions; declare empty permissions explicitly.
+@handler(actor_type="cc_proxy", name="on_msg", permissions=[])
 def on_msg(
     state: CcSessionState, event: Event
 ) -> tuple[CcSessionState, list[Action]]:

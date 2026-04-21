@@ -1,10 +1,10 @@
-"""PRD 02 F18 — capability scan for adapters."""
+"""PRD 02 F18 — I/O-permission scan for adapters."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from esr.verify.capability import scan_adapter
+from esr.verify.io_permission import scan_adapter
 
 
 def _make_adapter(tmp_path: Path, body: str) -> Path:

@@ -12,7 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_adapter_install_validates_local_adapter(tmp_path: Path) -> None:
-    """`esr adapter install adapters/feishu` reads manifest + runs capability scan."""
+    """`esr adapter install adapters/feishu` reads manifest + runs I/O-permission scan."""
     runner = CliRunner()
     result = runner.invoke(
         cli,
@@ -34,10 +34,10 @@ def test_adapter_install_reports_manifest_missing(tmp_path: Path) -> None:
     assert "esr.toml" in result.output
 
 
-def test_adapter_install_reports_capability_violation(tmp_path: Path) -> None:
+def test_adapter_install_reports_io_permission_violation(tmp_path: Path) -> None:
     """An adapter whose imports exceed allowed_io fails install."""
     # Build a synthetic adapter that declares allowed_io={"esr": "*"} only
-    # but imports `requests`. Capability scan must catch it.
+    # but imports `requests`. I/O-permission scan must catch it.
     root = tmp_path / "bad-adapter"
     (root / "src" / "esr_bad_adapter").mkdir(parents=True)
     (root / "src" / "esr_bad_adapter" / "__init__.py").write_text("")

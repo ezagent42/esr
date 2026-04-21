@@ -16,7 +16,11 @@ from esr import Action, Emit, Event, handler
 from esr_handler_feishu_thread.state import FeishuThreadState
 
 
-@handler(actor_type="feishu_thread_proxy", name="on_msg")
+@handler(
+    actor_type="feishu_thread_proxy",
+    name="on_msg",
+    permissions=["msg.send", "session.switch"],
+)
 def on_msg(
     state: FeishuThreadState, event: Event
 ) -> tuple[FeishuThreadState, list[Action]]:

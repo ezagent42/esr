@@ -10,10 +10,14 @@ defmodule Esr.PeerServerTest do
 
   use ExUnit.Case, async: false
 
+  alias Esr.TestSupport.AuthContext
+
   setup do
     for {actor_id, _pid} <- Esr.PeerRegistry.list_all() do
       Registry.unregister(Esr.PeerRegistry, actor_id)
     end
+
+    AuthContext.load_admin("test_admin")
 
     :ok
   end
@@ -130,12 +134,15 @@ defmodule Esr.PeerServerTest do
           handler_timeout: 500
         )
 
-      # Inject 1002 events with unique idempotency keys.
+      # Inject 1002 events with unique idempotency keys. principal_id
+      # satisfies CAP-4 Lane B so the event reaches dedup bookkeeping.
       for n <- 1..1002 do
         key = "k-#{n}"
 
         send(pid, {:inbound_event, %{
           "id" => "e-#{n}",
+          "principal_id" => "test_admin",
+          "workspace_name" => "test-ws",
           "payload" => %{"args" => %{"idempotency_key" => key}}
         }})
       end

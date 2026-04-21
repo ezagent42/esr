@@ -14,6 +14,7 @@ from typing import Any
 import click
 import yaml
 
+from esr.cli.cap import cap as cap_group
 from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
@@ -65,6 +66,11 @@ def _host_port_from_endpoint(endpoint: str) -> str:
 @click.group()
 def cli() -> None:
     """``esr`` — command-line entry to a running esrd."""
+
+
+# Capability-based access control CLI lives in its own module so
+# Phase CAP-7 (grant/revoke) can extend it without bloating main.py.
+cli.add_command(cap_group)
 
 
 @cli.command("use")
@@ -444,12 +450,12 @@ def adapter_install(source: Path) -> None:
     """Validate a local adapter package (PRD 07 F03).
 
     v0.1 scope: parse ``esr.toml``, verify the source package exists,
-    and run ``esr.verify.capability.scan_adapter`` against the
+    and run ``esr.verify.io_permission.scan_adapter`` against the
     adapter module. Full fetch-and-register into
     ``~/.esrd/<instance>/adapters.yaml`` lands with runtime wiring
     (Phase 8). This command is offline.
     """
-    from esr.verify.capability import scan_adapter
+    from esr.verify.io_permission import scan_adapter
 
     manifest = source / "esr.toml"
     if not manifest.exists():
@@ -470,7 +476,7 @@ def adapter_install(source: Path) -> None:
             violations = scan_adapter(src_path, allowed_io)
             if violations:
                 click.echo(
-                    f"{name}: capability violations against declared allowed_io:",
+                    f"{name}: I/O-permission violations against declared allowed_io:",
                     err=True,
                 )
                 for v in violations:
