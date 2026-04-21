@@ -1,17 +1,71 @@
 defmodule Esr.Admin.Dispatcher do
   @moduledoc """
-  Stub Dispatcher for the Admin subsystem (spec §6.2).
+  Admin subsystem brain (spec §6.2).
 
-  The full execution flow — capability check → pending→processing
-  move → Task.start → `{:command_result, id, result}` handling →
-  processing→completed/failed move — arrives in Tasks 14 / 14b of the
-  dev-prod-isolation plan. For DI-5 Task 10 the Dispatcher is only
-  wired into the supervision tree so downstream callers
-  (CommandQueue.Watcher, SessionRouter) can cast into a registered
-  name. All received commands are logged and dropped.
+  Receives commands via two async paths — both `GenServer.cast` —
+  from `Esr.Admin.CommandQueue.Watcher` (file-based CLI queue) and
+  `Esr.Routing.SessionRouter` (Feishu slash-command path). Both paths
+  supply `{:execute, command, {:reply_to, target}}` where `target` is
+  one of:
+
+    * `{:file, completed_path}` — the CLI queue case. Dispatcher
+      writes the result onto the queue file (already moved to
+      `completed/` or `failed/`) so the CLI's `--wait` polling loop
+      sees it.
+    * `{:pid, router_pid, ref}` — the Feishu case. Dispatcher `send`s
+      `{:command_result, ref, result}` back to the router, which emits
+      a Feishu reply at that point.
+
+  Execution flow (§6.2):
+
+    1. Parse `kind` / `submitted_by` / `id` / `args` from the command.
+    2. Capability-check via `Esr.Capabilities.has?/2` using the
+       `required_permission(kind)` map below. On `false`: move the
+       queue file `pending/<id>.yaml` → `failed/<id>.yaml` synchronously,
+       emit telemetry, and deliver `{:error, %{type: "unauthorized"}}`
+       to the reply target. No `Task.start`.
+    3. Move the queue file `pending/<id>.yaml` → `processing/<id>.yaml`
+       synchronously so restart recovery sees a consistent in-flight
+       view.
+    4. `Task.start(fn -> run_and_report(...) end)` runs the command's
+       `Esr.Admin.Commands.<Kind>.execute/1` outside the Dispatcher
+       process (commands can block for seconds — `reload` up to 30s)
+       and sends `{:command_result, id, result}` back.
+    5. On `{:command_result, id, result}`: move the queue file
+       `processing/<id>.yaml` → `completed/<id>.yaml` or
+       `failed/<id>.yaml`, serialize the result onto the destination
+       file for file-reply targets (`send/2` for pid-reply targets),
+       and emit the `:command_executed` / `:command_failed` telemetry.
+
+  Secret redaction and richer telemetry metadata land in Task 14b
+  (DI-7b) — this module intentionally emits the minimal telemetry
+  shape that 14b will extend in-place.
   """
   use GenServer
   require Logger
+
+  # kind → required permission (spec §6.2 table).
+  @required_permissions %{
+    "notify" => "notify.send",
+    "reload" => "runtime.reload",
+    "register_adapter" => "adapter.register",
+    "session_new" => "session.create",
+    "session_switch" => "session.switch",
+    "session_end" => "session.end",
+    "session_list" => "session.list",
+    "grant" => "cap.manage",
+    "revoke" => "cap.manage"
+  }
+
+  # Map kind → Commands.<Module>. Missing entries surface as
+  # {:error, %{type: "unknown_kind"}} so unsupported kinds fail fast.
+  @command_modules %{
+    "notify" => Esr.Admin.Commands.Notify
+  }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
 
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -19,12 +73,261 @@ defmodule Esr.Admin.Dispatcher do
   @impl true
   def init(_opts), do: {:ok, %{pending: %{}}}
 
-  @impl true
-  def handle_cast({:execute, command, _reply_to}, state) do
-    Logger.warning(
-      "admin.dispatcher: stub — ignoring command #{inspect(command)}"
-    )
+  # ------------------------------------------------------------------
+  # Cast — enqueue a command
+  # ------------------------------------------------------------------
 
+  @impl true
+  def handle_cast({:execute, command, reply_to}, state) when is_map(command) do
+    id = command["id"] || "no-id-#{System.unique_integer([:positive])}"
+    kind = command["kind"]
+    submitted_by = command["submitted_by"] || "ou_unknown"
+
+    required = @required_permissions[kind]
+
+    cond do
+      is_nil(kind) or not is_binary(kind) ->
+        unauthorized_or_error(id, command, reply_to, {:error, %{"type" => "invalid_kind"}}, state)
+
+      is_nil(required) ->
+        unauthorized_or_error(
+          id,
+          command,
+          reply_to,
+          {:error, %{"type" => "unknown_kind", "kind" => kind}},
+          state
+        )
+
+      not Esr.Capabilities.has?(submitted_by, required) ->
+        unauthorized_or_error(
+          id,
+          command,
+          reply_to,
+          {:error, %{"type" => "unauthorized", "kind" => kind, "required" => required}},
+          state
+        )
+
+      true ->
+        # Happy path: move pending → processing, spawn the Task.
+        case move_pending_to_processing(id) do
+          :ok ->
+            start_time = System.monotonic_time(:millisecond)
+            self_pid = self()
+
+            _ =
+              Task.start(fn ->
+                result = run_command(kind, command)
+                send(self_pid, {:command_result, id, result})
+              end)
+
+            state =
+              put_in(state.pending[id], %{
+                command: command,
+                reply_to: reply_to,
+                start_time: start_time
+              })
+
+            {:noreply, state}
+
+          {:error, reason} ->
+            # Queue file missing — synthesize an immediate failure so the
+            # reply_to target still gets a result. This keeps Dispatcher
+            # usable from tests that bypass the on-disk queue.
+            err = {:error, %{"type" => "queue_file_missing", "detail" => inspect(reason)}}
+
+            deliver_immediate(id, command, reply_to, err)
+            {:noreply, state}
+        end
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # Info — Task result
+  # ------------------------------------------------------------------
+
+  @impl true
+  def handle_info({:command_result, id, result}, state) do
+    case Map.pop(state.pending, id) do
+      {nil, _pending} ->
+        Logger.warning("admin.dispatcher: stray command_result id=#{id}")
+        {:noreply, state}
+
+      {pending, rest} ->
+        %{command: command, reply_to: reply_to, start_time: start_time} = pending
+
+        dest_dir = if match?({:ok, _}, result), do: "completed", else: "failed"
+        move_processing_to(dest_dir, id)
+        write_result_to_file_target(reply_to, dest_dir, id, command, result)
+        reply_to_pid_target(reply_to, id, result)
+
+        emit_telemetry(result, command, start_time)
+
+        {:noreply, %{state | pending: rest}}
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  # Shared no-Task failure path: cap-check failure or malformed command.
+  # Moves pending → failed (best-effort; tests that bypass the queue
+  # have no pending file and that's fine), delivers the error to the
+  # reply target, and emits the failure telemetry.
+  defp unauthorized_or_error(id, command, reply_to, {:error, _} = result, state) do
+    move_pending_to(id, "failed")
+    write_result_to_file_target(reply_to, "failed", id, command, result)
+    reply_to_pid_target(reply_to, id, result)
+    emit_telemetry(result, command, System.monotonic_time(:millisecond))
     {:noreply, state}
+  end
+
+  # When the queue file is missing (test / programmatic cast), there's
+  # nothing to move. Deliver the result inline and emit telemetry.
+  defp deliver_immediate(id, command, reply_to, result) do
+    write_result_to_file_target(reply_to, "failed", id, command, result)
+    reply_to_pid_target(reply_to, id, result)
+    emit_telemetry(result, command, System.monotonic_time(:millisecond))
+  end
+
+  defp run_command(kind, command) do
+    case Map.fetch(@command_modules, kind) do
+      {:ok, mod} ->
+        try do
+          mod.execute(command)
+        rescue
+          exc ->
+            {:error,
+             %{
+               "type" => "command_crashed",
+               "kind" => kind,
+               "message" => Exception.message(exc)
+             }}
+        end
+
+      :error ->
+        {:error, %{"type" => "unknown_kind", "kind" => kind}}
+    end
+  end
+
+  # pending/<id>.yaml → processing/<id>.yaml
+  defp move_pending_to_processing(id) do
+    base = Esr.Paths.admin_queue_dir()
+    src = Path.join([base, "pending", "#{id}.yaml"])
+    dst = Path.join([base, "processing", "#{id}.yaml"])
+
+    cond do
+      File.exists?(src) ->
+        _ = File.mkdir_p(Path.dirname(dst))
+        File.rename(src, dst)
+
+      File.exists?(dst) ->
+        # Already moved (e.g. watcher re-fired) — treat as success.
+        :ok
+
+      true ->
+        # Not on disk — tests may cast directly.
+        :ok
+    end
+  end
+
+  # pending/<id>.yaml → <dest_dir>/<id>.yaml (cap-check failure path).
+  defp move_pending_to(id, dest_dir) do
+    base = Esr.Paths.admin_queue_dir()
+    src = Path.join([base, "pending", "#{id}.yaml"])
+    dst = Path.join([base, dest_dir, "#{id}.yaml"])
+
+    if File.exists?(src) do
+      _ = File.mkdir_p(Path.dirname(dst))
+      _ = File.rename(src, dst)
+    end
+
+    :ok
+  end
+
+  # processing/<id>.yaml → <dest_dir>/<id>.yaml.
+  defp move_processing_to(dest_dir, id) do
+    base = Esr.Paths.admin_queue_dir()
+    src = Path.join([base, "processing", "#{id}.yaml"])
+    dst = Path.join([base, dest_dir, "#{id}.yaml"])
+
+    if File.exists?(src) do
+      _ = File.mkdir_p(Path.dirname(dst))
+      _ = File.rename(src, dst)
+    end
+
+    :ok
+  end
+
+  # For `{:file, _path}` reply targets — serialize the command doc +
+  # result + completed_at stamp and write it on top of the destination
+  # file (which was already moved into completed/ or failed/).
+  defp write_result_to_file_target(
+         {:reply_to, {:file, _completed_path}},
+         dest_dir,
+         id,
+         command,
+         result
+       ) do
+    base = Esr.Paths.admin_queue_dir()
+    dest = Path.join([base, dest_dir, "#{id}.yaml"])
+
+    doc =
+      command
+      |> Map.merge(%{
+        "result" => result_to_map(result),
+        "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    case Esr.Yaml.Writer.write(dest, doc) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("admin.dispatcher: write result failed id=#{id}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp write_result_to_file_target(_other, _dest_dir, _id, _command, _result), do: :ok
+
+  # For `{:pid, pid, ref}` reply targets — send back to the router.
+  defp reply_to_pid_target({:reply_to, {:pid, pid, ref}}, _id, result)
+       when is_pid(pid) and is_reference(ref) do
+    send(pid, {:command_result, ref, result})
+    :ok
+  end
+
+  defp reply_to_pid_target(_other, _id, _result), do: :ok
+
+  # {:ok | :error, map} → plain map the Yaml writer can serialize.
+  defp result_to_map({:ok, %{} = m}), do: Map.merge(%{"ok" => true}, stringify_keys(m))
+  defp result_to_map({:error, %{} = m}), do: Map.merge(%{"ok" => false}, stringify_keys(m))
+  defp result_to_map({:ok, other}), do: %{"ok" => true, "value" => inspect(other)}
+  defp result_to_map({:error, other}), do: %{"ok" => false, "error" => inspect(other)}
+  defp result_to_map(other), do: %{"ok" => false, "error" => inspect(other)}
+
+  defp stringify_keys(map) when is_map(map) do
+    for {k, v} <- map, into: %{} do
+      {to_string(k), v}
+    end
+  end
+
+  defp emit_telemetry(result, command, start_time) do
+    event =
+      case result do
+        {:ok, _} -> :command_executed
+        _ -> :command_failed
+      end
+
+    duration_ms = System.monotonic_time(:millisecond) - start_time
+
+    :telemetry.execute(
+      [:esr, :admin, event],
+      %{count: 1, duration_ms: duration_ms},
+      %{kind: command["kind"], submitted_by: command["submitted_by"]}
+    )
   end
 end
