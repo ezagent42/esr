@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ezagent.esrd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO_DIR__/scripts/esrd-launchd.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>WorkingDirectory</key>
+  <string>__REPO_DIR__</string>
+  <key>StandardOutPath</key>
+  <string>__ESRD_HOME__/default/logs/launchd-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ESRD_HOME__/default/logs/launchd-stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ESRD_HOME</key><string>__ESRD_HOME__</string>
+    <key>ESR_REPO_DIR</key><string>__REPO_DIR__</string>
+    <key>MIX_ENV</key><string>prod</string>
+    <key>ESR_BOOTSTRAP_PRINCIPAL_ID</key>
+    <string>ou_6b11faf8e93aedfb9d3857b9cc23b9e7</string>
+  </dict>
+</dict>
+</plist>
