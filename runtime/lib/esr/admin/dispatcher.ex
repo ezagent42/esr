@@ -81,7 +81,9 @@ defmodule Esr.Admin.Dispatcher do
     "session_new" => Esr.Admin.Commands.Session.New,
     "session_switch" => Esr.Admin.Commands.Session.Switch,
     "session_end" => Esr.Admin.Commands.Session.End,
-    "session_list" => Esr.Admin.Commands.Session.List
+    "session_list" => Esr.Admin.Commands.Session.List,
+    "grant" => Esr.Admin.Commands.Cap.Grant,
+    "revoke" => Esr.Admin.Commands.Cap.Revoke
   }
 
   # ------------------------------------------------------------------
