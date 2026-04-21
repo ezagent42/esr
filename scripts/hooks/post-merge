@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Post-merge hook (spec §8.2, plan DI-13 Task 28).
+#
+# Installed into the dev worktree's .git/hooks/post-merge by
+# scripts/launchd/install.sh. Scans the just-merged commit range for
+# Conventional-Commits breaking markers (`<type>!:` subject or a
+# `BREAKING CHANGE:` body footer) and pokes ``esr notify --type=breaking``
+# so the admin dispatcher DMs the operator before the next ``esr reload``.
+#
+# Design notes:
+#   - ``set -u`` only: a spurious error here must not abort the merge.
+#   - Guard on ``/esr`` in the repo path so the hook is inert if the
+#     dev worktree gets copy-pasted elsewhere.
+#   - ``HEAD@{1}`` is the pre-merge ref via the reflog; unavailable for
+#     a fresh clone → exit 0.
+#   - ``esr notify`` failure is swallowed (``|| true``) — the merge has
+#     already succeeded at this point, and the operator's shell is not
+#     the place to surface queue-writer errors.
+set -u
+repo_root="$(git rev-parse --show-toplevel)"
+[[ "$repo_root" != *"/esr"* ]] && exit 0
+prev_head="$(git rev-parse HEAD@{1} 2>/dev/null || echo '')"
+[[ -z "$prev_head" ]] && exit 0
+breaking="$(git log "$prev_head"..HEAD --grep='^[^:]*!:' --grep='^BREAKING CHANGE:' --format='%h %s')"
+if [[ -n "$breaking" ]]; then
+  esr notify --type=breaking --since="$prev_head" --details="$breaking" || true
+fi
