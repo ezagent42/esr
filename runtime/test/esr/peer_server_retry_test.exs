@@ -9,9 +9,11 @@ defmodule Esr.PeerServerRetryTest do
   use ExUnit.Case, async: false
 
   alias Esr.PeerServer
+  alias Esr.TestSupport.AuthContext
 
   setup do
     Esr.DeadLetter.clear(Esr.DeadLetter)
+    AuthContext.load_admin("test_admin")
     :ok
   end
 
@@ -36,6 +38,8 @@ defmodule Esr.PeerServerRetryTest do
       "id" => event_id,
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "msg", "args" => %{}}
     }})
   end

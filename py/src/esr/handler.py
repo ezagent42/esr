@@ -28,11 +28,17 @@ HandlerFn = Callable[..., Any]
 
 @dataclass(frozen=True)
 class HandlerEntry:
-    """A registered handler. See PRD 02 F04 / F06."""
+    """A registered handler. See PRD 02 F04 / F06.
+
+    ``permissions`` is the set of action-name strings this handler
+    implements (capabilities spec §3.1). Declared via the optional
+    ``permissions=[...]`` kwarg on ``@handler``; default is empty.
+    """
 
     actor_type: str
     name: str
     fn: HandlerFn
+    permissions: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -51,21 +57,47 @@ STATE_REGISTRY: dict[str, StateEntry] = {}
 """Global state-model registry — key is ``actor_type``."""
 
 
-def handler(*, actor_type: str, name: str) -> Callable[[HandlerFn], HandlerFn]:
+def handler(
+    *,
+    actor_type: str,
+    name: str,
+    permissions: list[str] | None = None,
+) -> Callable[[HandlerFn], HandlerFn]:
     """Register a handler function under ``actor_type.name``.
 
     Returns the original callable so the decorated function remains
     usable directly. Duplicate registration raises ``ValueError``.
+
+    ``permissions`` lists the action-name strings this handler
+    implements (capabilities spec §3.1). Stored on the HandlerEntry
+    as a frozenset; aggregated across the registry by
+    :func:`all_permissions` and shipped to the Elixir runtime in the
+    ``handler_hello`` IPC envelope at worker startup (spec §4.1).
     """
 
     def decorate(fn: HandlerFn) -> HandlerFn:
         key = f"{actor_type}.{name}"
         if key in HANDLER_REGISTRY:
             raise ValueError(f"handler {key} already registered")
-        HANDLER_REGISTRY[key] = HandlerEntry(actor_type=actor_type, name=name, fn=fn)
+        HANDLER_REGISTRY[key] = HandlerEntry(
+            actor_type=actor_type,
+            name=name,
+            fn=fn,
+            permissions=frozenset(permissions or []),
+        )
         return fn
 
     return decorate
+
+
+def all_permissions() -> frozenset[str]:
+    """Union of every registered handler's permissions (spec §3.1).
+
+    Used by ``esr.ipc.adapter_runner`` / ``handler_worker`` to emit
+    the ``handler_hello`` envelope payload that tells the Elixir
+    runtime which permission strings this Python process declares.
+    """
+    return frozenset().union(*(e.permissions for e in HANDLER_REGISTRY.values()))
 
 
 def handler_state(

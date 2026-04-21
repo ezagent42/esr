@@ -18,11 +18,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
+from esr.capabilities import CapabilitiesChecker
+from esr.workspaces import read_workspaces
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,16 @@ _BACKOFF_SCHEDULE: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
 
 _RETRY_DEADLINE_S: float = 30.0
 """Wall-clock ceiling for all combined retry delays (spec §7.3)."""
+
+_DENY_WINDOW_S: float = 600.0
+"""Minimum seconds between deny DMs to the same principal (Lane A, spec §7.1).
+
+Prevents an unauthorized user from being spammed if they send many
+messages — one warning per 10-minute window, further messages dropped
+silently."""
+
+_DENY_DM_TEXT: str = "你无权使用此 bot，请联系管理员授权。"
+"""Plain-text reply sent once per ``_DENY_WINDOW_S`` to a denied principal."""
 
 
 def _lark_error(response: Any) -> str:
@@ -100,6 +114,194 @@ class FeishuAdapter:
         self.actor_id = actor_id
         self._config = config
         self._lark_client: Any | None = None
+        # Capabilities spec §6.2/§6.3: every msg_received envelope
+        # carries `principal_id` (sender.open_id) and `workspace_name`
+        # (reverse-lookup from the (chat_id, app_id) tuple against
+        # workspaces.yaml). Load the reverse-lookup map at startup;
+        # missing file → empty map → every envelope emits
+        # `workspace_name=None` and Lane A / Lane B treat that as the
+        # "chat not bound to any workspace" case.
+        self._workspace_of: dict[tuple[str, str], str] = (
+            self._load_workspace_map()
+        )
+        # Lane A (spec §7.1): adapter enforces msg.send before emitting
+        # msg_received into the runtime. Unauthorized principals get one
+        # rate-limited deny DM per 10 min; their messages are dropped.
+        # CapabilitiesChecker reloads lazily by mtime, so an admin
+        # editing capabilities.yaml is picked up within one message.
+        self._caps: CapabilitiesChecker = self._load_capabilities_checker()
+        # {open_id → last deny DM monotonic ts}. Mutated only inside
+        # the asyncio loop (the async emit paths enter directly; the
+        # sync WS callback dispatches via run_coroutine_threadsafe), so
+        # no lock is needed — the coroutine runs serially on the loop.
+        self._last_deny_ts: dict[str, float] = {}
+
+    @property
+    def app_id(self) -> str:
+        """The Feishu app_id this adapter is bound to (one-liner for
+        call sites that need it for the (chat_id, app_id) lookup)."""
+        return self._config.app_id
+
+    def _load_workspace_map(self) -> dict[tuple[str, str], str]:
+        """Build the ``(chat_id, app_id) → workspace_name`` dict from
+        the workspaces.yaml at ``${ESRD_HOME:-~/.esrd}/default/workspaces.yaml``.
+
+        Config override: if ``AdapterConfig`` carries a
+        ``workspaces_path`` key (used by tests), prefer that. Missing
+        file returns an empty dict — callers get
+        ``workspace_name=None`` on every envelope, which Lane A treats
+        as "deny unless bootstrap".
+        """
+        configured = (
+            getattr(self._config, "workspaces_path", None)
+            if hasattr(self._config, "workspaces_path")
+            else None
+        )
+        if configured:
+            path = Path(configured)
+        else:
+            esrd_home = os.environ.get("ESRD_HOME") or str(
+                Path.home() / ".esrd"
+            )
+            path = Path(esrd_home) / "default" / "workspaces.yaml"
+
+        try:
+            workspaces = read_workspaces(path)
+        except Exception as exc:  # noqa: BLE001 — startup boundary
+            logger.warning(
+                "feishu adapter: workspaces.yaml load failed (%s); "
+                "envelopes will carry workspace_name=None",
+                exc,
+            )
+            return {}
+
+        out: dict[tuple[str, str], str] = {}
+        for ws in workspaces.values():
+            for chat in ws.chats:
+                chat_id = chat.get("chat_id")
+                app_id = chat.get("app_id")
+                if isinstance(chat_id, str) and isinstance(app_id, str):
+                    out[(chat_id, app_id)] = ws.name
+        return out
+
+    def _load_capabilities_checker(self) -> CapabilitiesChecker:
+        """Construct a ``CapabilitiesChecker`` bound to
+        ``${ESRD_HOME:-~/.esrd}/default/capabilities.yaml``.
+
+        Config override: ``AdapterConfig.capabilities_path`` (used by
+        tests). Missing file is fine — the checker treats it as an
+        empty snapshot, i.e. default-deny for everyone. The checker
+        itself is mtime-gated so later edits are picked up without a
+        restart.
+        """
+        configured = (
+            getattr(self._config, "capabilities_path", None)
+            if hasattr(self._config, "capabilities_path")
+            else None
+        )
+        if configured:
+            path = Path(configured)
+        else:
+            esrd_home = os.environ.get("ESRD_HOME") or str(
+                Path.home() / ".esrd"
+            )
+            path = Path(esrd_home) / "default" / "capabilities.yaml"
+        return CapabilitiesChecker(path)
+
+    # --- Lane A gate (spec §7.1) -------------------------------------
+
+    def _is_authorized(self, open_id: str, chat_id: str) -> bool:
+        """True if ``open_id`` may send a ``msg_received`` for ``chat_id``.
+
+        Checks the CapabilitiesChecker for ``workspace:<name>/msg.send``.
+        Unbound chats (no workspace in workspaces.yaml) are denied —
+        a chat not attached to a workspace cannot be authorized against
+        a workspace-scoped permission.
+        """
+        if not open_id:
+            return False
+        workspace = self._workspace_of.get((chat_id, self.app_id))
+        if workspace is None:
+            return False
+        return self._caps.has(
+            principal_id=open_id,
+            permission=f"workspace:{workspace}/msg.send",
+        )
+
+    def _should_send_deny(self, open_id: str) -> bool:
+        """Rate-limit bookkeeping: True iff we should send a deny DM now.
+
+        Called only from inside ``_deny_rate_limited`` which runs on
+        the asyncio loop — no cross-thread synchronization needed
+        because the three inbound paths all converge through that
+        coroutine (the sync WS callback dispatches via
+        ``run_coroutine_threadsafe``).
+
+        When True, records ``time.monotonic()`` as the new last-send ts
+        so the next message within ``_DENY_WINDOW_S`` stays silent.
+        """
+        now = time.monotonic()
+        last = self._last_deny_ts.get(open_id, 0.0)
+        if now - last < _DENY_WINDOW_S:
+            return False
+        self._last_deny_ts[open_id] = now
+        return True
+
+    async def _deny_rate_limited(self, open_id: str, chat_id: str) -> None:
+        """Send the deny DM to ``chat_id`` if the rate-limit window
+        permits. Async so the async emit paths can ``await`` it.
+
+        Best-effort: failures (no network, lark 5xx, etc.) are logged
+        but never raised — a bad deny DM shouldn't crash the adapter
+        loop. The actual send reuses ``_send_message`` so the mock and
+        live paths stay symmetric; since that helper is sync (urllib
+        for the mock, lark_oapi for live), we dispatch it to the
+        default executor so an in-process mock (aiohttp on the same
+        loop) can actually answer.
+        """
+        if not self._should_send_deny(open_id):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._send_message,
+                {"chat_id": chat_id, "content": _DENY_DM_TEXT},
+            )
+            if not result.get("ok"):
+                logger.debug(
+                    "feishu Lane A: deny DM to %s on %s failed: %s",
+                    open_id,
+                    chat_id,
+                    result.get("error", ""),
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort boundary
+            logger.debug(
+                "feishu Lane A: deny DM raised (non-fatal): %s", exc
+            )
+
+    def _build_msg_received_envelope(
+        self,
+        args: dict[str, Any],
+        sender_open_id: str,
+    ) -> dict[str, Any]:
+        """Construct the canonical ``msg_received`` envelope dict.
+
+        Factored helper called from all three inbound paths (WS live,
+        polling fallback, mock). Sets ``principal_id`` to the sender's
+        open_id and ``workspace_name`` from the reverse-lookup map
+        (None if the (chat_id, app_id) tuple isn't bound to any
+        workspace).
+        """
+        chat_id = args.get("chat_id") or ""
+        return {
+            "event_type": "msg_received",
+            "args": args,
+            "principal_id": sender_open_id or None,
+            "workspace_name": self._workspace_of.get(
+                (chat_id, self.app_id)
+            ),
+        }
 
     @staticmethod
     def factory(actor_id: str, config: AdapterConfig) -> FeishuAdapter:
@@ -423,22 +625,35 @@ class FeishuAdapter:
                 # so unwrap once at the adapter boundary and keep raw under
                 # a separate key for debugging.
                 extracted = _extract_text(raw_content, msg_type)
-                payload = {
-                    "event_type": "msg_received",
-                    "args": {
-                        "chat_id": getattr(message, "chat_id", "") or "",
+                sender_open_id = getattr(
+                    getattr(sender, "sender_id", None), "open_id", ""
+                ) or ""
+                chat_id = getattr(message, "chat_id", "") or ""
+                # Lane A (spec §7.1): check msg.send before enqueueing.
+                # This callback fires from a lark_oapi executor thread,
+                # so an unauthorised denial schedules the deny DM on the
+                # main loop via run_coroutine_threadsafe — the network
+                # call must happen on an asyncio loop, not this thread.
+                if not self._is_authorized(sender_open_id, chat_id):
+                    asyncio.run_coroutine_threadsafe(
+                        self._deny_rate_limited(sender_open_id, chat_id),
+                        loop,
+                    )
+                    return
+                payload = self._build_msg_received_envelope(
+                    args={
+                        "chat_id": chat_id,
                         "message_id": getattr(message, "message_id", "") or "",
                         "content": extracted,
                         "raw_content": raw_content,
                         "msg_type": msg_type,
-                        "sender_id": getattr(
-                            getattr(sender, "sender_id", None), "open_id", ""
-                        ) or "",
+                        "sender_id": sender_open_id,
                         "sender_type": getattr(sender, "sender_type", "") or "",
                         "thread_id": getattr(message, "thread_id", "") or "",
                         "root_id": getattr(message, "root_id", "") or "",
                     },
-                }
+                    sender_open_id=sender_open_id,
+                )
                 # Schedule enqueue on the loop — callback fires from the
                 # WSClient thread so we cross-thread via call_soon_threadsafe.
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
@@ -557,8 +772,20 @@ class FeishuAdapter:
                             fresh.append(m)
                     for m in reversed(fresh):  # oldest → newest within batch
                         envelope = self._message_to_envelope(m, chat_id)
-                        if envelope is not None:
-                            await queue.put(envelope)
+                        if envelope is None:
+                            continue
+                        # Lane A (spec §7.1): gate before enqueueing. The
+                        # polling path sees bot-self messages too; those
+                        # use open_id="ou_mock_bot" or similar app-
+                        # identity and will be denied unless an admin
+                        # has granted that principal msg.send.
+                        sender_open_id = envelope.get("principal_id") or ""
+                        if not self._is_authorized(sender_open_id, chat_id):
+                            await self._deny_rate_limited(
+                                sender_open_id, chat_id
+                            )
+                            continue
+                        await queue.put(envelope)
                     bootstrap = False
             except Exception as exc:  # noqa: BLE001 — poller boundary
                 logger.debug("feishu poll error (non-fatal): %s", exc)
@@ -575,22 +802,23 @@ class FeishuAdapter:
         msg_type = getattr(m, "msg_type", "") or ""
         extracted = _extract_text(raw_content, msg_type)
         sender = getattr(m, "sender", None)
-        return {
-            "event_type": "msg_received",
-            "args": {
+        sender_open_id = (
+            getattr(getattr(sender, "id", None), "open_id", "") if sender else ""
+        ) or ""
+        return self._build_msg_received_envelope(
+            args={
                 "chat_id": chat_id,
                 "message_id": getattr(m, "message_id", "") or "",
                 "content": extracted,
                 "raw_content": raw_content,
                 "msg_type": msg_type,
-                "sender_id": getattr(
-                    getattr(sender, "id", None), "open_id", ""
-                ) if sender else "",
+                "sender_id": sender_open_id,
                 "sender_type": getattr(sender, "sender_type", "") if sender else "",
                 "thread_id": getattr(m, "thread_id", "") or "",
                 "root_id": getattr(m, "root_id", "") or "",
             },
-        }
+            sender_open_id=sender_open_id,
+        )
 
     async def _emit_events_mock(
         self, base_url: str
@@ -624,20 +852,31 @@ class FeishuAdapter:
                             sender_id = sender.get("sender_id") or {}
                             raw_content = message.get("content", "")
                             msg_type = message.get("message_type", "")
-                            yield {
-                                "event_type": "msg_received",
-                                "args": {
-                                    "chat_id": message.get("chat_id", ""),
+                            sender_open_id = sender_id.get("open_id", "") or ""
+                            chat_id = message.get("chat_id", "") or ""
+                            # Lane A (spec §7.1): principal must hold
+                            # workspace:<name>/msg.send for the chat's
+                            # workspace. Unauthorized → one rate-limited
+                            # deny DM per 10 min, no event emitted.
+                            if not self._is_authorized(sender_open_id, chat_id):
+                                await self._deny_rate_limited(
+                                    sender_open_id, chat_id
+                                )
+                                continue
+                            yield self._build_msg_received_envelope(
+                                args={
+                                    "chat_id": chat_id,
                                     "message_id": message.get("message_id", ""),
                                     "content": _extract_text(raw_content, msg_type),
                                     "raw_content": raw_content,
                                     "msg_type": msg_type,
-                                    "sender_id": sender_id.get("open_id", ""),
+                                    "sender_id": sender_open_id,
                                     "sender_type": sender.get("sender_type", ""),
                                     "thread_id": message.get("thread_id", ""),
                                     "root_id": message.get("root_id", ""),
                                 },
-                            }
+                                sender_open_id=sender_open_id,
+                            )
                 except (aiohttp.ClientError, TimeoutError):
                     # mock_feishu restart-tolerance: back off and retry.
                     await asyncio.sleep(1)

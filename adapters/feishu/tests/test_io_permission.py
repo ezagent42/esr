@@ -1,15 +1,15 @@
-"""PRD 04 F03 — feishu adapter capability scan."""
+"""PRD 04 F03 — feishu adapter I/O-permission scan."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from esr.verify.capability import scan_adapter
+from esr.verify.io_permission import scan_adapter
 
 _ADAPTER_DIR = Path(__file__).resolve().parents[1]
 
 
-def test_feishu_adapter_capability_scan_clean() -> None:
+def test_feishu_adapter_io_permission_scan_clean() -> None:
     """Scanning esr_feishu.adapter against its declared allowed_io is clean."""
     import esr_feishu.adapter  # noqa: F401 — ensure registration
 

@@ -1,0 +1,11 @@
+principals:
+  - id: ou_admin
+    kind: feishu_user
+    note: admin
+    capabilities: ["*"]
+  - id: ou_alice
+    kind: feishu_user
+    note: Alice
+    capabilities:
+      - "workspace:proj-a/msg.send"
+      - "workspace:proj-a/session.create"

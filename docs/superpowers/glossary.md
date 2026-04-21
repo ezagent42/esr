@@ -16,7 +16,7 @@ The Elixir GenServer that hosts one live actor. State + handler_module + adapter
 A **pure Python function** of the signature `(state, event) -> (new_state, [Action])` registered via `@handler(actor_type, name)`. Handlers decide; they do not do I/O. Purity is CI-enforced (import allow-list + frozen-state fixture).
 
 ### Adapter
-A **Python class bridging ESR to one external system** (Feishu, tmux, LLM API, etc.). Registered via `@adapter(name, allowed_io=...)`. Provides a `factory(actor_id, config)` that is pure and returns an instance whose `on_directive(d)` and `emit_events()` methods are the I/O paths. The `allowed_io` declaration bounds which modules/hosts the adapter may call; enforced via CI capability scan.
+A **Python class bridging ESR to one external system** (Feishu, tmux, LLM API, etc.). Registered via `@adapter(name, allowed_io=...)`. Provides a `factory(actor_id, config)` that is pure and returns an instance whose `on_directive(d)` and `emit_events()` methods are the I/O paths. The `allowed_io` declaration bounds which modules/hosts the adapter may call; enforced via CI I/O-permission scan.
 
 ### Decision rule: handler vs adapter
 > Can this code run in an environment without network, without filesystem, without subprocess? → **Handler**. Otherwise → **Adapter**.
@@ -156,7 +156,7 @@ Static scan of a handler module's top-level `import` statements. Only modules in
 ### Purity check 2 — frozen-state fixture
 Every handler has a unit test invoking it with a `frozen=True` pydantic state. Mutation raises `ValidationError`. Catches handlers trying to mutate state in place.
 
-### Capability scan (adapters)
+### I/O-permission scan (adapters)
 Like purity check 1 but for adapters: scanned imports must match a prefix in the adapter's declared `allowed_io`. Catches adapters exceeding their stated surface.
 
 ### E2E gate

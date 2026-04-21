@@ -17,12 +17,23 @@ defmodule Esr.PeerServer do
   """
 
   use GenServer
+  @behaviour Esr.Handler
   require Logger
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
   alias Esr.Topology.Instantiator, as: TopoInstantiator
   alias Esr.Topology.Registry, as: TopoRegistry
+
+  @doc """
+  Built-in MCP tool names exposed by `build_emit_for_tool/3`
+  (see `lib/esr/peer_server.ex` §"build_emit_for_tool" clauses).
+  CAP-4 derives required permissions as `workspace:<ws>/<tool_name>`,
+  so these four names must be registered in `Esr.Permissions.Registry`
+  at boot or every tool_invoke would be denied.
+  """
+  @impl Esr.Handler
+  def permissions, do: ["reply", "react", "send_file", "_echo"]
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
@@ -214,52 +225,123 @@ defmodule Esr.PeerServer do
   end
 
   def handle_info({:inbound_event, envelope}, %__MODULE__{} = state) do
-    idempotency_key = extract_idempotency_key(envelope)
+    # Capabilities spec §7.2 (CAP-4) — Lane B inbound enforcement.
+    # AdapterChannel.handle_in("event", ...) has already rejected
+    # envelopes missing principal_id, so a well-formed ingress path
+    # always has one. For direct test/route sends that bypass the
+    # adapter channel (e.g. route action at peer_server.ex:618), a
+    # missing or non-binary principal_id means "no grant" → deny.
+    principal_id = envelope["principal_id"]
+    workspace = envelope["workspace_name"]
+    event_type = get_in(envelope, ["payload", "event_type"])
+    required = "workspace:#{workspace || "*"}/#{permission_for_event(event_type)}"
 
-    if idempotency_key && MapSet.member?(state.dedup_keys, idempotency_key) do
-      :telemetry.execute([:esr, :handler, :dedup_drop], %{}, %{
-        actor_id: state.actor_id,
-        idempotency_key: idempotency_key
-      })
-      {:noreply, state}
+    if capability_granted?(principal_id, required) do
+      idempotency_key = extract_idempotency_key(envelope)
+
+      if idempotency_key && MapSet.member?(state.dedup_keys, idempotency_key) do
+        :telemetry.execute([:esr, :handler, :dedup_drop], %{}, %{
+          actor_id: state.actor_id,
+          idempotency_key: idempotency_key
+        })
+        {:noreply, state}
+      else
+        {:noreply, invoke_handler(state, envelope, idempotency_key)}
+      end
     else
-      {:noreply, invoke_handler(state, envelope, idempotency_key)}
+      :telemetry.execute(
+        [:esr, :capabilities, :denied],
+        %{count: 1},
+        %{
+          principal_id: principal_id,
+          required_perm: required,
+          lane: :B_inbound,
+          actor_id: state.actor_id
+        }
+      )
+
+      # Drop silently — Lane A handles the user-facing deny response.
+      {:noreply, state}
     end
   end
 
   # v0.2 §3.2 — tool_invoke arrives from ChannelChannel, we emit to the
   # real adapter and WAIT for directive_ack before replying tool_result.
+  #
+  # Capabilities spec §6.3 / §7.3 (CAP-4): arity 6 carries ``principal_id``
+  # (the identity that invoked the tool, as captured by ChannelChannel on
+  # ``session_register``). Lane B enforces ``workspace:<ws>/<tool>`` here —
+  # denied calls emit ``[:esr, :capabilities, :denied]`` telemetry and
+  # reply ``{:tool_result, req_id, %{"ok" => false, "error" =>
+  # %{"type" => "unauthorized", ...}}}`` to the CC-side channel. No
+  # directive is broadcast to the adapter.
   def handle_info(
-        {:tool_invoke, req_id, tool, args, reply_pid},
+        {:tool_invoke, req_id, tool, args, reply_pid, principal_id},
         %__MODULE__{} = state
       ) do
-    # Emit a structured log line for _echo so the gate's L2 grep can match
-    # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
-    if tool == "_echo" do
-      nonce = Map.get(args, "nonce", "")
-      Logger.info("tool_invoke _echo req_id=#{req_id} args.nonce=\"#{nonce}\" actor_id=#{state.actor_id}")
-    end
+    workspace = Map.get(args, "workspace_name")
+    required = "workspace:#{workspace || "*"}/#{tool}"
 
-    case build_emit_for_tool(tool, args, state) do
-      {:ok, emit} ->
-        {:ok, directive_id, new_state} = emit_and_track(emit, state)
+    if capability_granted?(principal_id, required) do
+      # Emit a structured log line for _echo so the gate's L2 grep can match
+      # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
+      if tool == "_echo" do
+        nonce = Map.get(args, "nonce", "")
+        Logger.info("tool_invoke _echo req_id=#{req_id} args.nonce=\"#{nonce}\" actor_id=#{state.actor_id}")
+      end
 
-        pending_tool_reqs =
-          Map.put(new_state.pending_tool_reqs, directive_id, {req_id, reply_pid})
+      case build_emit_for_tool(tool, args, state) do
+        {:ok, emit} ->
+          {:ok, directive_id, new_state} = emit_and_track(emit, state)
 
-        {:noreply, %__MODULE__{new_state | pending_tool_reqs: pending_tool_reqs}}
+          pending_tool_reqs =
+            Map.put(new_state.pending_tool_reqs, directive_id, {req_id, reply_pid})
 
-      {:error, reason} ->
-        send(
-          reply_pid,
-          {:tool_result, req_id,
-           %{
-             "ok" => false,
-             "error" => %{"type" => "invalid_args", "message" => reason}
-           }}
-        )
+          {:noreply, %__MODULE__{new_state | pending_tool_reqs: pending_tool_reqs}}
 
-        {:noreply, state}
+        {:error, reason} ->
+          send(
+            reply_pid,
+            {:tool_result, req_id,
+             %{
+               "ok" => false,
+               "error" => %{"type" => "invalid_args", "message" => reason}
+             }}
+          )
+
+          {:noreply, state}
+      end
+    else
+      :telemetry.execute(
+        [:esr, :capabilities, :denied],
+        %{count: 1},
+        %{
+          principal_id: principal_id,
+          required_perm: required,
+          lane: :B_tool_invoke,
+          actor_id: state.actor_id,
+          tool: tool
+        }
+      )
+
+      # Match the real :tool_result reply shape (see the ack clause at
+      # peer_server.ex and the build_emit_for_tool invalid_args branch
+      # above) — CC reads the "error.type" field. "❌ 无权限..." user-
+      # facing surfacing happens in Lane A (CAP-5); the CC-side MCP
+      # bridge forwards this JSON verbatim to the caller.
+      send(
+        reply_pid,
+        {:tool_result, req_id,
+         %{
+           "ok" => false,
+           "error" => %{
+             "type" => "unauthorized",
+             "required_perm" => required
+           }
+         }}
+      )
+
+      {:noreply, state}
     end
   end
 
@@ -789,6 +871,32 @@ defmodule Esr.PeerServer do
       nil -> prefix <> fallback_actor
     end
   end
+
+  # --------------------------------------------------------------
+  # Lane B capability check helpers (CAP-4)
+  # --------------------------------------------------------------
+
+  # Esr.Capabilities.has?/2 guards on is_binary(principal_id). Tests
+  # and internal routes (`route` action at peer_server.ex line ~618)
+  # can legitimately omit principal_id — treat anything non-binary as
+  # "no grant" so the check always returns a boolean and the deny
+  # path records the absent principal clearly.
+  defp capability_granted?(principal_id, required)
+       when is_binary(principal_id) and is_binary(required) do
+    Esr.Capabilities.has?(principal_id, required)
+  end
+
+  defp capability_granted?(_principal_id, _required), do: false
+
+  # Event-type → permission-name mapping for Lane B inbound enforcement.
+  # `msg_received` maps to `msg.send` because receiving an inbound
+  # message implies the principal may produce a handler-driven
+  # response (spec §7.2). Unknown event types fall through to a
+  # literal permission name so future event types default-deny unless
+  # an operator explicitly grants them.
+  defp permission_for_event("msg_received"), do: "msg.send"
+  defp permission_for_event(other) when is_binary(other), do: other
+  defp permission_for_event(_), do: "unknown"
 
   if Mix.env() == :test do
     @doc false

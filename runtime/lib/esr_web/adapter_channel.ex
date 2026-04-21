@@ -29,9 +29,32 @@ defmodule EsrWeb.AdapterChannel do
     {:ok, assign(socket, :topic, topic)}
   end
 
+  # Capabilities spec §6.2/§6.3 — inbound event envelopes MUST carry
+  # ``principal_id``. ``workspace_name`` may be nil (the "chat not
+  # bound to any workspace" case; Lane A/B decide policy). A missing
+  # ``principal_id`` means the adapter wasn't migrated to set it —
+  # reject so the migration gap surfaces loudly instead of downstream
+  # lanes silently denying every event.
   @impl Phoenix.Channel
-  def handle_in("event", envelope, socket) do
-    forward(socket, {:inbound_event, envelope})
+  def handle_in("event", envelope, socket) when is_map(envelope) do
+    case envelope["principal_id"] do
+      pid when is_binary(pid) and pid != "" ->
+        forward(socket, {:inbound_event, envelope})
+
+      _ ->
+        require Logger
+
+        Logger.error(
+          "adapter_channel: inbound event missing principal_id " <>
+            "(topic=#{inspect(socket.assigns[:topic])} " <>
+            "envelope_id=#{inspect(envelope["id"])}); rejecting"
+        )
+
+        {:reply,
+         {:error,
+          %{reason: "principal_id required on inbound event (capabilities §6.2)"}},
+         socket}
+    end
   end
 
   # Envelope dispatch — the Python adapter_runner pushes everything as a
@@ -43,6 +66,22 @@ defmodule EsrWeb.AdapterChannel do
 
   def handle_in("envelope", %{"kind" => "directive_ack"} = envelope, socket) do
     handle_in("directive_ack", envelope, socket)
+  end
+
+  # Boot handshake (capabilities spec §3.1, §4.1) — the Python adapter
+  # process announces the union of permissions any handler modules it
+  # happens to have loaded declared. Adapters typically load no handler
+  # modules, so the list is usually empty — but when non-empty (tests,
+  # future colocated workers) the names get registered in the same
+  # Esr.Permissions.Registry the handler channel uses.
+  def handle_in("envelope", %{"kind" => "handler_hello"} = envelope, socket) do
+    perms =
+      envelope
+      |> Map.get("payload", %{})
+      |> Map.get("permissions", [])
+
+    register_permissions(perms, {:adapter, socket.assigns[:topic]})
+    {:reply, :ok, socket}
   end
 
   def handle_in("envelope", _envelope, socket) do
@@ -70,6 +109,16 @@ defmodule EsrWeb.AdapterChannel do
   def handle_in(event, _payload, socket) do
     {:reply, {:error, %{reason: "unhandled event: #{event}"}}, socket}
   end
+
+  defp register_permissions(perms, declared_by) when is_list(perms) do
+    for perm <- perms, is_binary(perm) do
+      Esr.Permissions.Registry.register(perm, declared_by: declared_by)
+    end
+
+    :ok
+  end
+
+  defp register_permissions(_other, _declared_by), do: :ok
 
   # Resolve topic → actor_id → pid → send the tagged message. Replies
   # :ok on success, :error with a reason when the binding or pid is

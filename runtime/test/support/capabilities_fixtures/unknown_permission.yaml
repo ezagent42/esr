@@ -1,0 +1,5 @@
+principals:
+  - id: ou_typo
+    kind: feishu_user
+    capabilities:
+      - "workspace:proj-a/msg.sned"   # typo: declared as msg.send

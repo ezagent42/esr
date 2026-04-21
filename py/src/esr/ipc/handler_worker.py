@@ -28,8 +28,8 @@ from __future__ import annotations
 from typing import Any
 
 from esr.events import Event
-from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY
-from esr.ipc.envelope import serialise_action
+from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY, all_permissions
+from esr.ipc.envelope import make_handler_hello, serialise_action
 
 
 def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +156,17 @@ async def run_with_client(client: Any, *, topic: str) -> None:
         queue.put_nowait(payload)
 
     await client.join(topic, _on_frame)
+
+    # Emit the capabilities handler_hello so the Elixir runtime can
+    # register the permissions this process declares into
+    # Esr.Permissions.Registry (spec §3.1, §4.1). Sorted for wire
+    # determinism; absent/empty is fine — registry tolerates reruns.
+    hello = make_handler_hello(
+        source="esr://localhost/" + topic,
+        permissions=sorted(all_permissions()),
+    )
+    await client.push(topic, "envelope", hello)
+
     try:
         while True:
             envelope = await queue.get()

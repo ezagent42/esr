@@ -29,7 +29,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Protocol
 
-from esr.ipc.envelope import make_directive_ack, make_event
+from esr.handler import all_permissions
+from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 
 
 class AdapterPusher(Protocol):
@@ -100,10 +101,17 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
     if emit is None:
         return
     async for event_dict in emit():
+        # Adapters may set principal_id / workspace_name at the top
+        # level of the yielded dict (capabilities spec §6.2/§6.3). For
+        # adapters that don't, the fields default to None — Lane A and
+        # Lane B in the Elixir runtime treat that as "deny unless
+        # bootstrap principal".
         env = make_event(
             source=pusher.source_uri,
             event_type=event_dict["event_type"],
             args=dict(event_dict.get("args", {})),
+            principal_id=event_dict.get("principal_id"),
+            workspace_name=event_dict.get("workspace_name"),
         )
         await pusher.push_envelope(env)
 
@@ -144,6 +152,17 @@ async def run_with_client(
     # carry a provenance string that parses.
     source_uri = "esr://localhost/" + topic
     pusher = ChannelPusher(client=client, topic=topic, source_uri=source_uri)
+
+    # Announce this process's permission declarations (capabilities
+    # spec §3.1, §4.1). Adapter processes rarely import handler modules
+    # (handler workers do), so all_permissions() is usually empty — but
+    # registering an empty set is a no-op, so emitting unconditionally
+    # keeps the handshake shape symmetric across worker types.
+    hello = make_handler_hello(
+        source=source_uri,
+        permissions=sorted(all_permissions()),
+    )
+    await client.push(topic, "envelope", hello)
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(directive_loop(adapter, queue, pusher))

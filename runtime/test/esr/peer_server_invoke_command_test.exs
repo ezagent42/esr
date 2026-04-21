@@ -10,6 +10,7 @@ defmodule Esr.PeerServerInvokeCommandTest do
   use ExUnit.Case, async: false
 
   alias Esr.PeerServer
+  alias Esr.TestSupport.AuthContext
   alias Esr.Topology.Registry, as: TopoRegistry
 
   setup do
@@ -18,6 +19,8 @@ defmodule Esr.PeerServerInvokeCommandTest do
     for {_id, pid, _type, _mods} <- DynamicSupervisor.which_children(Esr.PeerSupervisor) do
       DynamicSupervisor.terminate_child(Esr.PeerSupervisor, pid)
     end
+
+    AuthContext.load_admin("test_admin")
 
     :ok
   end
@@ -74,6 +77,8 @@ defmodule Esr.PeerServerInvokeCommandTest do
       "id" => "e-ic",
       "type" => "event",
       "source" => "esr://localhost/adapter/x",
+      "principal_id" => "test_admin",
+      "workspace_name" => "test-ws",
       "payload" => %{"event_type" => "tick", "args" => %{}}
     }})
   end

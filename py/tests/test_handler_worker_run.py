@@ -87,9 +87,14 @@ async def test_handler_worker_filters_handler_call_envelopes() -> None:
                                      "state": {},
                                      "event": {"event_type": "x", "args": {}}}}])
 
-    # give the inner worker loop ticks to process
+    # give the inner worker loop ticks to process — we wait for the
+    # handler_reply specifically because run_with_client also pushes a
+    # handler_hello on join (capabilities spec §3.1), which lands in
+    # client.pushes before the reply.
+    replies = []
     for _ in range(200):
-        if client.pushes:
+        replies = [p for p in client.pushes if p[2].get("kind") == "handler_reply"]
+        if replies:
             break
         await asyncio.sleep(0.001)
 
@@ -99,8 +104,15 @@ async def test_handler_worker_filters_handler_call_envelopes() -> None:
     except (asyncio.CancelledError, BaseExceptionGroup):
         pass
 
-    assert len(client.pushes) == 1
-    t, event, payload = client.pushes[0]
+    # The first push is the boot handler_hello handshake; the second is
+    # the reply produced by routing through process_handler_call.
+    assert len(client.pushes) == 2
+    hello_t, hello_event, hello_payload = client.pushes[0]
+    assert hello_event == "envelope"
+    assert hello_payload["kind"] == "handler_hello"
+    assert "permissions" in hello_payload["payload"]
+
+    t, event, payload = client.pushes[1]
     assert t == topic
     assert event == "envelope"
     assert payload["kind"] == "handler_reply"

@@ -16,7 +16,17 @@ _NEW_THREAD_PREFIX = "/new-thread "   # v0.2 backward-compat alias (P9 removes)
 _AT_PREFIX = "@"
 
 
-@handler(actor_type="feishu_app_proxy", name="on_msg")
+@handler(
+    actor_type="feishu_app_proxy",
+    name="on_msg",
+    permissions=[
+        "msg.send",
+        "session.create",
+        "session.switch",
+        "workspace.read",
+        "workspace.list",
+    ],
+)
 def on_msg(
     state: FeishuAppState, event: Event
 ) -> tuple[FeishuAppState, list[Action]]:

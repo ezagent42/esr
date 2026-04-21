@@ -495,7 +495,7 @@ class FeishuAdapter:
                         args=parse_args(raw))
 ```
 
-### 5.2 Capability Declaration
+### 5.2 I/O-Permission Declaration
 
 `allowed_io` declares every network host, every library used for I/O. CI scans the adapter module's actual imports and network calls; anything outside `allowed_io` fails the build. This replaces runtime sandboxing — the escape surface is narrowed to declared I/O, not zero I/O.
 
@@ -568,7 +568,7 @@ Install flow:
 
 1. Fetch / copy source into `adapters/`
 2. Import module and validate `@adapter(...)` registration
-3. Verify capability declaration (`allowed_io`) passes the CI scan (import-prefix matching: `allowed_io` keys are matched against module import paths, e.g. `lark_oapi` matches `lark_oapi.api.im.v1`; `http` matches any stdlib HTTP client module and is paired with a host allow-list)
+3. Verify I/O-permission declaration (`allowed_io`) passes the CI scan (import-prefix matching: `allowed_io` keys are matched against module import paths, e.g. `lark_oapi` matches `lark_oapi.api.im.v1`; `http` matches any stdlib HTTP client module and is paired with a host allow-list)
 4. Register type in the project registry
 
 After install, configure instances with `esr adapter add <instance_name> --type <module> <config>` (§5.4). Instance names are unique per installed-type — two `feishu` adapter instances named differently are fine; two instances with the same name under the same type is an error.
@@ -1006,7 +1006,7 @@ esr/
 │   │   ├── command.py             # @command, EDSL, compiler
 │   │   ├── ipc/                   # Phoenix channels client
 │   │   ├── cli/                   # `esr` command
-│   │   └── verify/                # CI purity / capability checks
+│   │   └── verify/                # CI purity / I/O-permission checks
 │   ├── tests/
 │   └── examples/
 │

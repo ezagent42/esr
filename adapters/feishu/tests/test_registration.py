@@ -16,7 +16,7 @@ def test_feishu_adapter_registered_on_import() -> None:
 
 
 def test_feishu_adapter_declares_allowed_io() -> None:
-    """allowed_io must list lark_oapi + http scope so capability scan passes."""
+    """allowed_io must list lark_oapi + http scope so I/O-permission scan passes."""
     import esr_feishu.adapter  # noqa: F401
 
     entry = ADAPTER_REGISTRY["feishu"]
