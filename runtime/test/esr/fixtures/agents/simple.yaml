@@ -1,0 +1,23 @@
+agents:
+  cc:
+    description: "Claude Code"
+    capabilities_required:
+      - cap.session.create
+      - cap.tmux.spawn
+    pipeline:
+      inbound:
+        - name: feishu_chat_proxy
+          impl: Esr.Peers.FeishuChatProxy
+        - name: cc_process
+          impl: Esr.Peers.CCProcess
+      outbound:
+        - cc_process
+        - feishu_chat_proxy
+    proxies:
+      - name: feishu_app_proxy
+        impl: Esr.Peers.FeishuAppProxy
+        target: "admin::feishu_app_adapter_${app_id}"
+    params:
+      - name: dir
+        required: true
+        type: path
