@@ -161,6 +161,115 @@ end
 
 Authz mechanism for v1 (single-host) leans toward "declaration-set membership is sufficient proof" — `AdapterAuthz.verify/3` checks that `(name, id)` is present in the current `Esr.Topology.Registry` / `adapters.yaml` snapshot, and trusts that the WS socket + YAML are already gatekept by OS file permissions. A shared-secret token mechanism is available as a later hardening step but not needed for v1.
 
+### Graceful cleanup ordering for adapters that hold external resources
+
+The `cc_tmux` adapter (and any future adapter that holds tmux sessions, remote WebSocket connections, or other external handles) exposes a subtlety that MuonTrap alone does NOT close:
+
+**The Python adapter process and the external resource have independent lifetimes.** A tmux session is a child of the tmux server daemon — not of our Python adapter, not of our BEAM. `MuonTrap.terminate_child/2` kills the Python process; the tmux session keeps running under tmux server. Analogously, a Feishu WebSocket session ID held by `lark_oapi` outlives the adapter process that registered it.
+
+This means the system has three distinct layers of lifecycle management, each requiring a different tool:
+
+```
+┌─ Process lifecycle (processes WE spawn) ──→ MuonTrap / OTP Supervisor
+│   Examples: Python adapter_runner, handler_worker
+│
+├─ External resource state monitoring (NOT spawned by us) ──→ regular Elixir GenServer
+│   Examples: tmux session, Feishu WS session ID, any remote handle
+│
+└─ External resource cleanup (imposed by declarative state) ──→ explicit directive + Adapter on_teardown + boot-time reconciliation
+    Examples: kill-session on deactivate
+```
+
+Forcing layer 2 or 3 into MuonTrap yields anti-patterns. E.g., wrapping a `bash -c "while tmux has-session -t <name>; do sleep 5; done"` watchdog in `MuonTrap.Daemon` makes the supervision tree _look_ richer but provides zero control — `terminate_child` kills the watchdog, not the session; `PR_SET_PDEATHSIG` takes down the watchdog, not the session. The right fix is to recognize that layer 2 doesn't belong in `MuonTrap`.
+
+#### Layer 2: event-driven monitoring via `tmux -C attach` Control Mode
+
+For tmux specifically, the lifecycle-observation mechanism is **tmux Control Mode** (`tmux -C attach`) — a text-protocol long-lived connection designed exactly for external programs that need to observe and control tmux. iTerm2's tmux integration uses this in production; it is mature and well-documented.
+
+Control Mode flips the client-server model inside out: from the single `tmux -C attach` connection we both issue commands and receive asynchronous notifications on the same channel. Notifications arrive with a `%`-prefix:
+
+- `%session-changed`, `%sessions-changed`
+- `%window-add`, `%window-close`, `%window-renamed`
+- `%output <pane_id> <data>` — real-time pane output streamed as events
+
+Recommended shape:
+
+```elixir
+defmodule Esr.TmuxSessionMonitor do
+  use GenServer
+
+  # On init: Port.open("tmux", ["-C", "attach"]) — a single long-lived connection
+  # Parse stdout lines by "%" prefix; dispatch notifications to interested peers
+  # %session-closed → notify peer + trigger business-level recovery or degradation
+  # %output pane_id data → replace the cc_tmux adapter's 500ms capture-pane polling
+end
+```
+
+Wins over a polling GenServer:
+- **Zero observation latency.** Session death is known the moment tmux server emits the event, not up to 5s later.
+- **Zero poll overhead.** One long connection serves all sessions under all tmux instances on the host.
+- **Eliminates `emit_events` polling in `cc_tmux`.** The adapter's 500ms `capture-pane` loop (see `adapters/cc_tmux/src/esr_cc_tmux/adapter.py` around `emit_events/0`) becomes a consumer of `%output` notifications pushed from `TmuxSessionMonitor`, removing one of the noisier hot loops in the codebase.
+
+#### Layer 3: adapter-driven cleanup
+
+Two mechanisms are required to guarantee external resources don't outlive their declaration, regardless of how the adapter exited:
+
+1. **`Registry.deactivate/1` ordering contract.** When an adapter holds external resources, deactivation must issue a cleanup directive to the adapter FIRST (e.g., emit `kill_session` for every tmux session bound to the deactivating peer), wait for acknowledgment or a bounded timeout, and THEN call `Esr.WorkerSupervisor.stop_adapter/2`. If ordering is reversed, the adapter dies before it can run its cleanup logic, and external resources orphan. The spec should make this ordering explicit in every adapter that declares `holds_external_resources: true` in its manifest.
+
+2. **`on_teardown` callback + boot-time reconciliation.** The adapter SDK should expose an `on_teardown` callback invoked on graceful SIGTERM (within the `delay_to_sigkill` grace window — likely tuned up from MuonTrap's 500ms default to ~5s for adapters with external resource cleanup). But graceful termination covers only one path. For the crash / `kill -9 esrd` path, the adapter cannot run any code. The answer is **boot-time reconciliation**: on adapter start, enumerate the external resources matching its naming scheme (e.g., `tmux list-sessions | grep <prefix>`), diff against the declared peer set that just restored from YAML, and kill anything orphaned. This runs exactly once per adapter boot, not periodically — so it is not a `ReconcileLoop` (that pattern was rejected), it is a startup-reconcile.
+
+Closure matrix:
+
+| Termination path | `on_teardown` runs? | Orphan cleaned by |
+|---|---|---|
+| `Registry.deactivate/1` → SIGTERM | ✓ | `on_teardown` + preceding cleanup directive |
+| Adapter crash (Python segfault, OOM) | ✗ | boot-time reconcile on next adapter start |
+| `kill -9 esrd` (BEAM death → `PR_SET_PDEATHSIG` cascades) | ✗ | boot-time reconcile on next adapter start |
+
+Together, the ordering contract + `on_teardown` + boot-time reconcile cover all three paths.
+
+## Why tmux Control Mode (not zellij, not a polling GenServer)
+
+[Zellij](https://github.com/zellij-org/zellij) is a more modern terminal multiplexer (written in Rust, WASM plugin system, cleaner programmatic API). Evaluated as an alternative to tmux and rejected for ESR's v1 needs.
+
+Capability comparison for the lifecycle-observation problem:
+
+| Capability | tmux Control Mode | Zellij |
+|---|---|---|
+| Event stream | `tmux -C attach` stdout lines, `%`-prefixed | `zellij subscribe --pane-id X`, optional NDJSON output |
+| Wait for command completion | parse `%exit` / signal reverse-engineering | native `zellij action new-pane --block-until-exit-success -- cmd` |
+| Headless / background sessions | `tmux new-session -d` | `zellij --session X action ...` + explicit headless mode |
+| Plugin system | custom scripts | first-class WASM plugin system |
+| Maturity | 15+ years production, iTerm2 builds on Control Mode | newer, API still evolving between releases |
+| User install base | near-universal on dev machines and servers | much smaller |
+| ESR migration cost | zero (we already use tmux) | rewrite all `cc_tmux` adapter logic; users must install zellij |
+
+Zellij has legitimately nicer ergonomics on a few specific axes — the `subscribe` + NDJSON output is cleaner than parsing Control Mode's ad-hoc text protocol; `--block-until-exit` is more civilized than signal-based exit tracking. But:
+
+1. **tmux Control Mode is sufficient.** Event-driven session lifecycle + real-time pane output are both native capabilities. Nothing ESR needs is absent.
+2. **Migration cost dominates.** Every `subprocess.run(["tmux", ...])` in the cc_tmux adapter would need rewriting. Operators and developers who have tmux baked into their muscle memory would face a retraining tax. No current ESR pain point justifies this.
+3. **Maturity asymmetry.** Zellij's API is evolving. tmux's wire format has been stable for over a decade.
+
+### When to revisit zellij
+
+Trigger conditions for re-evaluation:
+
+1. **Rich multi-pane CC TUI interactions** where tmux's Control Mode text protocol becomes the bottleneck (e.g., synchronized scrolling across panes, complex layout directives)
+2. **Plugin ecosystem** requirements that would benefit from WASM-based extensibility per adapter
+3. **Zellij 1.0 API stabilization** with a documented commitment not to break programmatic interfaces
+
+None present today. Control Mode stays.
+
+### Why not the polling GenServer I initially sketched
+
+Earlier in the brainstorming transcript a polling approach (`Process.send_after(self(), :tick, 5_000)` + `tmux has-session`) was proposed. It works, but it is strictly worse than Control Mode on the dimensions that matter:
+
+- Latency: 0–5s vs 0ms
+- Overhead: one `tmux` CLI fork per session per tick vs one long-lived stdio connection total
+- Operability: two competing monitoring paths (Control Mode for `%output` events in `cc_tmux`, polling for session existence) would be two code paths to maintain
+
+The polling design is retained here only as a documentation of the rejected path so future readers don't re-propose it.
+
 ## Why not erlexec
 
 [saleyn/erlexec](https://github.com/saleyn/erlexec) is a mature, feature-rich alternative (battle-tested in finance and telecom Erlang systems for 15+ years). It is strictly more capable than MuonTrap on several axes: run-as-user (setuid/setgid), cross-platform `setrlimit` resource caps, PTY allocation, bidirectional stdin streaming, and explicit process-group kill semantics. It was evaluated and rejected for ESR's v1 needs.
