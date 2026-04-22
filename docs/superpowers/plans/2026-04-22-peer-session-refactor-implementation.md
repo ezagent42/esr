@@ -22,6 +22,39 @@ This plan uses **progressive expansion**:
 
 **Execution:** Use `superpowers:subagent-driven-development` with a fresh subagent per task and two-stage review between tasks. Work lives in the `feature/peer-session-refactor` worktree at `/Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor/`.
 
+## Progress Tracking & User Notifications
+
+Two persistent mechanisms prevent drift across the multi-week execution:
+
+### Per-PR Progress Snapshot
+
+Every PR's **last task** writes `docs/superpowers/progress/<YYYY-MM-DD>-pr<N>-snapshot.md` containing:
+- Tip commit SHA of the merged branch
+- List of new public API surfaces (module + function signature + file:line)
+- Decisions locked in during this PR (that future PRs must respect)
+- Tests added (names + what they verify)
+- Known tech debt / scaffolds introduced and where they get cleaned up
+- Expansion inputs for the next PR (what the next PR's plan expansion session needs to know)
+
+Next-PR expansion sessions load **only**: `spec`, `plan`, and the most recent `pr<N-1>-snapshot.md`. They do NOT re-read all prior PR diffs — the snapshot is the authoritative handoff.
+
+### Feishu Progress Notifications (mandatory)
+
+The user (linyilun) reads Feishu, not terminal output. The execution runner **must** send Feishu messages at these points using `mcp__openclaw-channel__reply` to chat_id `oc_d9b47511b085e9d5b66c4595b3ef9bb9`:
+
+| Trigger | Message shape |
+|---|---|
+| **PR start** | "开始 PR-N (goal 一句话描述)。预计 N 天。" |
+| **Blocker encountered** | "PR-N 被卡住：<具体原因>。需要你的决策：<选项 A/B/C>" — halt execution until user replies |
+| **Milestone (every 3-5 tasks, or major surface complete)** | "PR-N 进度：完成 P<X>-<Y>..<Z>。<一句话成果>。继续 P<X>-<W>" |
+| **Draft PR opened** | "PR-N draft 已开：<GitHub URL>。等你 review。" |
+| **Merged** | "PR-N 已合。进入 PR-(N+1) expansion 流程。" |
+| **Spec/plan update needed mid-execution** | "PR-N 执行中发现 <issue>，建议 <fix>。采纳吗？" |
+
+These notifications are **part of the plan**, not optional courtesy. A subagent that finishes a task without notifying (when the task requires one per the table above) has not completed the task.
+
+**Anti-spam guardrail:** do NOT send a Feishu message per every bite-sized TDD step — that's what plan checkboxes are for. The notification table above is the allowed frequency.
+
 ---
 
 ## File Structure (full refactor)
@@ -122,11 +155,13 @@ main
      │
      ├── PR-4b (adapter_runner split, 2-3d) — parallel to PR-3/PR-4a after PR-2
      │
-     └── PR-5 (cleanup + docs, 2-3d) — depends on everything above
+     ├── PR-5 (cleanup + docs, 2-3d) — depends on everything above
+     │
+     └── PR-6 (simplify pass, 2-4d) — depends on PR-5
 ```
 
-Total critical path: PR-1 → PR-2 → PR-3 → PR-5 ≈ 14 days.
-Full calendar (with PR-4a/b parallel to PR-3): 14-18 days.
+Total critical path: PR-1 → PR-2 → PR-3 → PR-5 → PR-6 ≈ 16-18 days.
+Full calendar (with PR-4a/b parallel to PR-3): 16-22 days.
 
 ---
 
@@ -1931,6 +1966,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task P1-13: Self-review + PR open
 
+**Feishu notification required** at Step 4 (draft PR opened).
+
 - [ ] **Step 1: run all PR-1 acceptance gates**
 
 ```bash
@@ -1988,7 +2025,139 @@ EOF
 
 Verify the PR description matches what's in the diff.
 
+- [ ] **Step 6: Feishu notification — draft PR opened**
+
+Use `mcp__openclaw-channel__reply` to `oc_d9b47511b085e9d5b66c4595b3ef9bb9`:
+> "PR-1 draft 已开：<paste GitHub URL from `gh pr create` output>。等你 review。主要交付：Peer behaviours + OSProcess底座 + MuonTrap + PeerFactory + PeerPool(128) + SessionRegistry 重命名+新建。全部 additive，没有替换 production code。"
+
 **PR-1 ready for review.**
+
+### Task P1-14: Write PR-1 Progress Snapshot
+
+**Files:**
+- Create: `docs/superpowers/progress/2026-04-23-pr1-snapshot.md` (date = actual merge date)
+
+- [ ] **Step 1: wait for PR-1 to be merged**
+
+After user review + merge of PR-1, proceed. If merge takes days, this task waits.
+
+- [ ] **Step 2: gather data**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor
+git log origin/main..HEAD --oneline   # commits this PR contributed
+git diff origin/main..HEAD --stat     # file-level changes
+```
+
+- [ ] **Step 3: write the snapshot**
+
+Create `docs/superpowers/progress/<YYYY-MM-DD>-pr1-snapshot.md` with this structure:
+
+```markdown
+# PR-1 Progress Snapshot
+
+**Date**: <actual merge date>
+**Branch**: feature/peer-session-refactor (merged)
+**Tip commit**: <sha>
+**Status**: merged ✅
+
+## New public API surfaces
+
+### `Esr.Peer`
+- `peer_kind/0 :: :proxy | :stateful` — see `runtime/lib/esr/peer.ex:<actual line>`
+
+### `Esr.Peer.Proxy`
+- `@callback forward(msg, ctx) :: :ok | {:drop, reason}` — see `runtime/lib/esr/peer/proxy.ex:<actual line>`
+- Compile-time ban on `handle_call/3`, `handle_cast/2`
+
+### `Esr.Peer.Stateful`
+- `@callback init(args) :: {:ok, state}` — see `runtime/lib/esr/peer/stateful.ex:<actual line>`
+- `@callback handle_upstream(msg, state) :: ...`
+- `@callback handle_downstream(msg, state) :: ...`
+
+### `Esr.OSProcess`
+- `@callback os_cmd(state)`, `os_env(state)`, `on_os_exit(status, state)` — see `runtime/lib/esr/os_process.ex:<line>`
+- Worker exposes `os_pid/1`, `write_stdin/2`
+
+### `Esr.TmuxProcess`
+- `start_link(args)`, `send_command(pid, cmd)` — see `runtime/lib/esr/tmux_process.ex:<line>`
+- Parses tmux control-protocol: `{:tmux_event, {:begin, _, _, _}}` etc.
+
+### `Esr.PyProcess`
+- `start_link(args)`, `send_request(pid, %{id:, payload:})` — see `runtime/lib/esr/py_process.ex:<line>`
+- Emits `{:py_reply, parsed_map}` to subscribers
+
+### `Esr.PeerFactory`
+- `spawn_peer(session_id, mod, args, neighbors, ctx) :: {:ok, pid}` — see `runtime/lib/esr/peer_factory.ex:<line>`
+- Temporary `:peer_factory_sup_override` process-dict scaffold for testing (PR-2 removes)
+
+### `Esr.PeerPool`
+- `default_max_workers() == 128`
+- `acquire(pool, opts)`, `release(pool, pid)` — see `runtime/lib/esr/peer_pool.ex:<line>`
+
+### `Esr.SessionRegistry` (new)
+- `load_agents/1`, `agent_def/1`, `register_session/3`, `lookup_by_chat_thread/2`, `unregister_session/1`
+- Logs WARN on reserved fields (`rate_limits`, `timeout_ms`, `allowed_principals`)
+
+### `Esr.SessionSocketRegistry` (renamed)
+- Same functions as old `Esr.SessionRegistry`; only module name changed
+
+## Decisions locked in during PR-1
+
+- D1-PR1-a: `OSProcess` worker uses `Port` with `muontrap` binary wrapper, NOT `MuonTrap.Daemon`. Daemon has no stdin API. Wrapper binary is at `Path.join(:code.priv_dir(:muontrap), "muontrap")`.
+- D1-PR1-b: `Peer.Proxy` capability-check wrapper deferred to P2-4 (macro extension). Current proxy has no `@required_cap`.
+- D1-PR1-c: `PeerFactory` uses `:peer_factory_sup_override` process-dict for test-time supervisor override. P2-6 introduces `Esr.Session.supervisor_name/1` and removes the override.
+
+## Tests added (N total)
+
+- `peer_test.exs` — peer_kind/0 exposed
+- `peer/proxy_compile_test.exs` — handle_call/cast banned at compile time
+- `peer/stateful_test.exs` — callback dispatch
+- `os_process_test.exs` — cleanup ≤10s after Process.exit(:kill)
+- `tmux_process_test.exs` — control-mode %begin/%end events
+- `py_process_test.exs` — JSON-line round-trip
+- `peer_factory_test.exs` — spawn + reject unknown + surface stability
+- `peer_pool_test.exs` — acquire/release/exhaustion
+- `session_registry_test.exs` — agents.yaml parse + reserved-field WARN
+
+## Tech debt introduced
+
+- **Deferred: PeerProxy capability-check wrapper** — P2-4 (macro extension). PR-1 proxies have no cap enforcement.
+- **Deferred: Session supervisor resolution** — P2-6. PR-1 uses process-dict scaffold for tests.
+- **Deferred: AdminSession bootstrap mechanism** — P2-1. PR-1's PeerFactory cannot spawn admin-scope peers; tests only.
+
+## Next PR (PR-2) expansion inputs
+
+Expansion session needs:
+- This snapshot (load first)
+- Spec v3.1 (`2026-04-22-peer-session-refactor-design.md`) §3.4, §3.5, §4.1 (peer cards)
+- Plan's PR-2 outline
+- `runtime/lib/esr/peer.ex`, `peer/proxy.ex`, `peer/stateful.ex` (to match Peer.Proxy macro shape when extending with capability-check)
+- `runtime/lib/esr/peer_factory.ex` (to replace the process-dict scaffold)
+- `runtime/lib/esr/session_registry.ex` (to understand agent_def shape)
+
+Key questions for PR-2 expansion:
+1. FeishuAppAdapter — does it own the `MsgBotClient` WS or create its own? (Current code: `MsgBotClient` is used in multiple places; decide single-ownership.)
+2. Capability check wrapper in Peer.Proxy macro — extends P1-3 or new `Peer.Proxy.Cap` variant? (Spec §3.6 implies extension.)
+3. How does `Esr.Session.supervisor_name/1` resolve `admin` vs `<ulid>`? (Simple: hardcoded atom for admin, Registry-backed for user sessions.)
+```
+
+- [ ] **Step 4: commit the snapshot**
+
+```bash
+git add docs/superpowers/progress/
+git commit -m "docs(progress): PR-1 snapshot for next-PR expansion
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+git push origin feature/peer-session-refactor
+```
+
+- [ ] **Step 5: Feishu notification — PR-1 complete**
+
+Use `mcp__openclaw-channel__reply` to the chat:
+> "PR-1 已合。Progress snapshot: `docs/superpowers/progress/<date>-pr1-snapshot.md`。下一步：PR-2 expansion（把 P2-1..P2-18 outline 展开为 bite-sized steps）。新会话进行。"
+
+**PR-1 complete.**
 
 ---
 
@@ -2029,9 +2198,11 @@ Verify the PR description matches what's in the diff.
 | P2-15 | Remove old Feishu handling from `peer_server.ex` | `peer_server.ex` |
 | P2-16 | Delete `Esr.AdapterHub.Registry` + `Esr.AdapterHub.Supervisor` | file deletions |
 | P2-17 | Remove feature flag (now that new path is sole path) | config cleanup |
-| P2-18 | Open PR-2 | `gh pr create` |
+| P2-18 | Open PR-2 draft + **Feishu notify** | `gh pr create` + `mcp__openclaw-channel__reply` |
+| P2-19 | Wait for user review + merge | — |
+| P2-20 | Write PR-2 progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr2-snapshot.md` |
 
-**When PR-1 merges, expand each P2-N into bite-sized TDD steps matching the API shapes from PR-1.**
+**When PR-1 merges, expand each P2-N into bite-sized TDD steps matching the API shapes from PR-1. Add Feishu `PR start` notification as first task.**
 
 ---
 
@@ -2071,9 +2242,11 @@ Verify the PR description matches what's in the diff.
 | P3-14 | Delete `Esr.Routing.SlashHandler` (renamed misplaced router from PR-0) | file deletion |
 | P3-15 | PubSub audit: grep for free broadcasts; convert to neighbor-ref `send/cast` | manual sweep + test |
 | P3-16 | Delete old CC/tmux code from `peer_server.ex` | `peer_server.ex` |
-| P3-17 | Open PR-3 | `gh pr create` |
+| P3-17 | Open PR-3 draft + **Feishu notify** | `gh pr create` + reply |
+| P3-18 | Wait for user review + merge | — |
+| P3-19 | Write PR-3 progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr3-snapshot.md` |
 
-**When PR-2 merges, expand each P3-N into bite-sized steps.**
+**When PR-2 merges, expand each P3-N into bite-sized steps. Add Feishu `PR start` notification as first task.**
 
 ---
 
@@ -2107,7 +2280,9 @@ Verify the PR description matches what's in the diff.
 | P4a-10 | E2E: `/new-session --agent cc-voice` | integration test |
 | P4a-11 | E2E: `/new-session --agent voice-e2e` | integration test |
 | P4a-12 | Delete `py/voice_gateway/` | file deletion |
-| P4a-13 | Open PR-4a | `gh pr create` |
+| P4a-13 | Open PR-4a draft + **Feishu notify** | `gh pr create` + reply |
+| P4a-14 | Wait for user review + merge | — |
+| P4a-15 | Write PR-4a progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr4a-snapshot.md` |
 
 ---
 
@@ -2134,7 +2309,9 @@ Verify the PR description matches what's in the diff.
 | P4b-6 | Update Elixir callers to target split sidecars (via PyProcess底座) | peers/ updates |
 | P4b-7 | Run regression test suite | full `mix test` |
 | P4b-8 | Delete `py/src/esr/ipc/adapter_runner.py` | file deletion |
-| P4b-9 | Open PR-4b | `gh pr create` |
+| P4b-9 | Open PR-4b draft + **Feishu notify** | `gh pr create` + reply |
+| P4b-10 | Wait for user review + merge | — |
+| P4b-11 | Write PR-4b progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr4b-snapshot.md` |
 
 ---
 
@@ -2160,8 +2337,52 @@ Verify the PR description matches what's in the diff.
 | P5-4 | Capture baseline perf from PR-0 (retrospective) and compare | perf harness |
 | P5-5 | Fix any perf regression > 20% OR document as acceptable | TBD per measurement |
 | P5-6 | Full regression suite run | CI |
-| P5-7 | Open PR-5 | `gh pr create` |
-| P5-8 | Merge PR-5 | closing the refactor |
+| P5-7 | Open PR-5 draft + **Feishu notify** | `gh pr create` + reply |
+| P5-8 | Wait for user review + merge | — |
+| P5-9 | PR-5 progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr5-snapshot.md` |
+
+---
+
+# PR-6: Simplify Pass (outline)
+
+**Goal:** After the refactor lands, run the `simplify` skill against the entire Peer/Session subsystem (Elixir + Python) to identify and remove over-engineering and over-optimization introduced during the 16-day push. Produce concrete simplification PRs/commits, not just a report.
+
+**Prereq:** PR-5 merged. The codebase is in its "first stable post-refactor state".
+
+**Rationale:** Rapid implementation under design pressure frequently leaves behind:
+- Abstractions that turned out single-use (proposed to support generality that never materialized)
+- Error-handling paths for conditions that cannot occur in practice
+- Config knobs no one set
+- Tests that duplicate other tests' assertions
+- Dead-code branches left from transitional states
+- Python sidecars with overlapping responsibilities (if S3 split produced ambiguity)
+
+The `simplify` skill's job is to find these and propose removals.
+
+**Acceptance gates**:
+- `simplify` skill executed end-to-end; its findings report committed at `docs/superpowers/progress/<date>-pr6-simplify-report.md`
+- Every accepted finding results in a concrete commit (not just notes)
+- Test suite remains green after every simplification commit
+- Total LOC should **decrease** measurably (target: ≥5% reduction in refactor-touched files); if no decrease, document why
+- No regression in performance benchmarks captured in PR-5
+
+### Task outlines
+
+| Task | Purpose | Key files |
+|---|---|---|
+| P6-1 | Invoke `simplify` skill scoped to runtime/lib/esr/peer*, peer/**, os_process.ex, session*, peers/**, admin_session*, peer_factory.ex, peer_pool.ex, session_router.ex | Elixir side |
+| P6-2 | Invoke `simplify` skill scoped to py/voice_*/*, py/cc_adapter_runner/*, py/feishu_adapter_runner/*, py/generic_adapter_runner/* | Python side |
+| P6-3 | Collate findings into `docs/superpowers/progress/<date>-pr6-simplify-report.md` with categories: (a) single-use abstraction, (b) unreachable error path, (c) unused config, (d) duplicate test, (e) dead transitional code, (f) overlap between Python sidecars | report |
+| P6-4 | Feishu notify with report summary + per-finding recommendation (accept / reject / defer); wait for user's per-finding decision | user interaction |
+| P6-5..P6-N | One commit per accepted finding — each with its own test-run green verification | per-finding |
+| P6-final-1 | Run full regression + perf bench; assert no regression | CI |
+| P6-final-2 | Open PR-6 draft + **Feishu notify** | `gh pr create` + reply |
+| P6-final-3 | Wait for user review + merge | — |
+| P6-final-4 | Final progress snapshot + **Feishu "refactor + simplification complete"** notification | `docs/superpowers/progress/<date>-pr6-final.md` |
+
+**Note on skill dependency:** The `simplify` skill must exist in the toolchain before this PR runs. If not available as a standard superpowers skill, create one via `skill-creator` with this brief: "Given a scope (path glob), identify: single-use abstractions, unreachable error paths, unused config, duplicate tests, dead transitional code. For each finding, output: (a) location (file:line), (b) category, (c) suggested change (delete / inline / merge), (d) risk (low/medium/high). Do NOT make changes — just report."
+
+**When PR-5 merges, expand each P6-N into bite-sized steps. Add Feishu `PR start` notification as first task.**
 
 ---
 
