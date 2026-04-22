@@ -37,6 +37,28 @@ defmodule Esr.PeerFactory do
     DynamicSupervisor.start_child(resolve_sup(session_id), spec)
   end
 
+  @doc """
+  Bootstrap-time peer spawn that bypasses `Esr.Session.supervisor_name/1`.
+
+  Only AdminSession's init-time children use this — it is the documented
+  exception to the "all peers spawn via the normal control plane" rule
+  (spec §6 Risk F). The first arg is the literal DynamicSupervisor name
+  (not a session_id) because at boot AdminSession's children supervisor
+  is the only supervisor that can host the peer.
+  """
+  @spec spawn_peer_bootstrap(sup_name :: atom(), mod :: module(), args :: map(), neighbors :: list()) ::
+          {:ok, pid()} | {:error, term()}
+  def spawn_peer_bootstrap(sup_name, mod, args, neighbors) when is_atom(sup_name) do
+    :telemetry.execute([:esr, :peer_factory, :spawn_bootstrap], %{}, %{mod: mod, sup: sup_name})
+
+    if Code.ensure_loaded?(mod) do
+      init_args = Map.merge(args, %{session_id: "admin", neighbors: neighbors, proxy_ctx: %{}})
+      DynamicSupervisor.start_child(sup_name, {mod, init_args})
+    else
+      {:error, {:unknown_impl, mod}}
+    end
+  end
+
   # Session supervisor resolution. In PR-1, only the test-override path
   # is used; PR-2 introduces Esr.Session.supervisor_name/1 for the real
   # AdminSession / SessionsSupervisor lookup.
