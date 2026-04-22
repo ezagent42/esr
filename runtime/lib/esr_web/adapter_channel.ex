@@ -146,7 +146,60 @@ defmodule EsrWeb.AdapterChannel do
   # Resolve topic → actor_id → pid → send the tagged message. Replies
   # :ok on success, :error with a reason when the binding or pid is
   # gone so the adapter can react (retry / drop / log).
-  defp forward(socket, msg) do
+  #
+  # When `new_peer_chain?/0` is on AND the topic is `adapter:feishu/<app_id>`,
+  # inbound_event frames are rerouted through the new-chain peer
+  # `Esr.Peers.FeishuAppAdapter` (registered under
+  # `:feishu_app_adapter_<app_id>` in AdminSessionProcess — see P2-2/P2-11).
+  # directive_ack and non-Feishu topics still flow through the legacy
+  # AdapterHub.Registry → PeerRegistry path so the rest of the adapter
+  # fleet (non-Feishu) is unaffected by the flag flip.
+  defp forward(socket, {:inbound_event, envelope} = msg) do
+    topic = socket.assigns.topic
+
+    if new_peer_chain?() and String.starts_with?(topic, "adapter:feishu/") do
+      case forward_to_new_chain(topic, envelope) do
+        :ok -> {:reply, :ok, socket}
+        :error -> {:reply, {:error, %{reason: "no feishu_app_adapter"}}, socket}
+      end
+    else
+      forward_legacy(socket, msg)
+    end
+  end
+
+  defp forward(socket, msg), do: forward_legacy(socket, msg)
+
+  @doc """
+  Forward an inbound Feishu envelope to the new-chain peer
+  `Esr.Peers.FeishuAppAdapter` for `app_id` (parsed from `topic`).
+
+  Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
+  to the adapter's mailbox), `:error` when no adapter is registered under
+  `:feishu_app_adapter_<app_id>` in `Esr.AdminSessionProcess`.
+
+  Exposed for direct unit testing of the routing path without spinning
+  up a Phoenix.Channel socket.
+  """
+  @spec forward_to_new_chain(String.t(), map()) :: :ok | :error
+  def forward_to_new_chain("adapter:feishu/" <> app_id, envelope) do
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
+
+    case Esr.AdminSessionProcess.admin_peer(sym) do
+      {:ok, pid} ->
+        send(pid, {:inbound_event, envelope})
+        :ok
+
+      :error ->
+        require Logger
+        Logger.warning("adapter_channel: no FeishuAppAdapter for app_id=#{app_id}")
+        :error
+    end
+  end
+
+  # Preserve the pre-P2-11 behaviour verbatim under a named helper so
+  # the new branch can fall through to it without duplicating the
+  # Registry-lookup logic.
+  defp forward_legacy(socket, msg) do
     topic = socket.assigns.topic
 
     with {:ok, actor_id} <- HubRegistry.lookup(topic),
