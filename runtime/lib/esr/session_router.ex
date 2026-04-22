@@ -6,7 +6,12 @@ defmodule Esr.SessionRouter do
     * `:create_session_sync`   — from `Esr.Admin.Commands.Session.New`
     * `:end_session_sync`      — from `Esr.Admin.Commands.Session.End`
     * `:new_chat_thread`       — PubSub broadcast from `FeishuAppAdapter`
-                                 on `lookup_by_chat_thread → :not_found`
+                                 on `lookup_by_chat_thread → :not_found`.
+                                 Topic `"session_router"`, tuple shape
+                                 `{:new_chat_thread, app_id, chat_id,
+                                 thread_id, envelope}`. P3-7 promotes
+                                 this from log-only to auto-create via
+                                 `do_create/1`.
     * `:peer_crashed`          — internal, raised by `Process.monitor`
                                  DOWNs on spawned peer pids
     * `:agents_yaml_reloaded`  — from `SessionRegistry` watcher (stub;
@@ -122,22 +127,66 @@ defmodule Esr.SessionRouter do
   end
 
   @impl true
-  def handle_info({:new_chat_thread, chat_id, thread_id, app_id, envelope}, state) do
-    # PR-3: log the signal but do not auto-create. Slash-initiated flow
-    # is the only session-creation path in PR-3 scope.
-    :telemetry.execute(
-      [:esr, :session_router, :new_chat_thread_dropped],
-      %{count: 1},
-      %{chat_id: chat_id, thread_id: thread_id, app_id: app_id}
-    )
+  def handle_info({:new_chat_thread, app_id, chat_id, thread_id, envelope}, state) do
+    # P3-7: auto-spawn a session for a previously-unseen (chat_id,
+    # thread_id). Tuple order is `{app_id, chat_id, thread_id, envelope}`
+    # — app_id first, matching the wiring owned by FeishuAppAdapter.
+    #
+    # Defaults: agent "cc" (the single agent in PR-3 scope), principal
+    # pulled from the envelope when present. On create failure we log +
+    # emit telemetry but keep the router alive (Risk E).
+    principal_id = extract_principal(envelope)
 
-    Logger.info(
-      "session_router: observed new_chat_thread chat_id=#{inspect(chat_id)} " <>
-        "thread_id=#{inspect(thread_id)} (PR-3 no-auto-create; use /new-session slash)"
-    )
+    params = %{
+      agent: "cc",
+      dir: default_session_dir(),
+      principal_id: principal_id,
+      chat_id: chat_id,
+      thread_id: thread_id,
+      app_id: app_id
+    }
 
-    _ = envelope
-    {:noreply, state}
+    case do_create(params) do
+      {:ok, sid, monitor_refs} ->
+        :telemetry.execute(
+          [:esr, :session_router, :new_chat_thread_auto_created],
+          %{count: 1},
+          %{session_id: sid, chat_id: chat_id, thread_id: thread_id, app_id: app_id}
+        )
+
+        Logger.info(
+          "session_router: auto-created session #{sid} for new_chat_thread " <>
+            "app_id=#{inspect(app_id)} chat_id=#{inspect(chat_id)} " <>
+            "thread_id=#{inspect(thread_id)}"
+        )
+
+        monitors =
+          Enum.reduce(monitor_refs, state.monitors, fn {ref, pid}, acc ->
+            Map.put(acc, ref, {sid, pid})
+          end)
+
+        {:noreply, %{state | monitors: monitors}}
+
+      {:error, reason} ->
+        :telemetry.execute(
+          [:esr, :session_router, :new_chat_thread_failed],
+          %{count: 1},
+          %{
+            chat_id: chat_id,
+            thread_id: thread_id,
+            app_id: app_id,
+            reason: inspect(reason)
+          }
+        )
+
+        Logger.warning(
+          "session_router: new_chat_thread auto-create failed app_id=#{inspect(app_id)} " <>
+            "chat_id=#{inspect(chat_id)} thread_id=#{inspect(thread_id)} " <>
+            "reason=#{inspect(reason)}"
+        )
+
+        {:noreply, state}
+    end
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
@@ -176,12 +225,16 @@ defmodule Esr.SessionRouter do
   # ------------------------------------------------------------------
 
   defp subscribe_to_new_chat_thread do
+    # P3-7: subscribe to the `session_router` topic for
+    # `{:new_chat_thread, app_id, chat_id, thread_id, envelope}` events
+    # broadcast by FeishuAppAdapter on `lookup_by_chat_thread → :not_found`.
+    #
     # Only subscribe if the PubSub is running. In isolated unit tests
     # that don't boot `EsrWeb.PubSub`, skipping the subscribe keeps
     # `init/1` from crashing the test supervisor.
     case Process.whereis(EsrWeb.PubSub) do
       nil -> :ok
-      _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, "new_chat_thread")
+      _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
     end
   end
 
@@ -370,6 +423,24 @@ defmodule Esr.SessionRouter do
   defp get_param(params, key) when is_atom(key) do
     Map.get(params, key) || Map.get(params, Atom.to_string(key))
   end
+
+  # P3-7: pull principal from the envelope if present. Feishu envelopes
+  # carry the submitter's open_id under `payload.sender.open_id` when the
+  # adapter_runner normalises the event; fall back to nil so `verify_caps`
+  # handles the missing case uniformly.
+  defp extract_principal(envelope) when is_map(envelope) do
+    get_in(envelope, ["payload", "sender", "open_id"]) ||
+      get_in(envelope, ["payload", "sender", "sender_id", "open_id"]) ||
+      get_in(envelope, ["principal_id"]) ||
+      nil
+  end
+
+  defp extract_principal(_), do: nil
+
+  # P3-7: agent-sessions opened by auto-spawn land in a neutral working
+  # directory; the slash-path (`Session.New`) explicit `dir` param
+  # overrides this when a user starts a session manually.
+  defp default_session_dir, do: System.tmp_dir!() || "/tmp"
 
   # Safe wrapper around AdminSessionProcess.admin_peer/1 — returns
   # `:error` rather than crashing when AdminSessionProcess isn't

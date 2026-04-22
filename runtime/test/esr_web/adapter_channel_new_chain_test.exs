@@ -45,8 +45,9 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
 
     # Subscribe BEFORE triggering the forward so the broadcast emitted
     # inside FeishuAppAdapter.handle_upstream (no session matches →
-    # :new_chat_thread) can't race ahead of us.
-    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "new_chat_thread")
+    # :new_chat_thread) can't race ahead of us. P3-7: topic renamed to
+    # `session_router` + tuple order `{app_id, chat_id, thread_id, ...}`.
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
 
     envelope = %{
       "principal_id" => "p1",
@@ -61,7 +62,7 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
 
     :ok = EsrWeb.AdapterChannel.forward_to_new_chain("adapter:feishu/cli_app_p211", envelope)
 
-    assert_receive {:new_chat_thread, "oc_test", "om_test", "cli_app_p211", ^envelope}, 500
+    assert_receive {:new_chat_thread, "cli_app_p211", "oc_test", "om_test", ^envelope}, 500
   end
 
   test "forward_to_new_chain returns :error when no FeishuAppAdapter is registered for the app_id" do
