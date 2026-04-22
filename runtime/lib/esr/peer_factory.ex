@@ -6,9 +6,11 @@ defmodule Esr.PeerFactory do
   Its public surface is exactly three functions: `spawn_peer/5`,
   `terminate_peer/2`, `restart_peer/2`. Review rejects additions.
 
-  The factory resolves `session_id` to the correct Session supervisor
-  via a convention: `via_tuple(session_id)` returning `{:via, Registry, {Esr.SessionRegistry.Via, {:session_sup, session_id}}}`.
-  The test helper may override via `Process.put(:peer_factory_sup_override, name)`.
+  The factory resolves `session_id` to the correct Session supervisor by
+  delegating to `Esr.Session.supervisor_name/1` (registry-backed in PR-2).
+  An opt-in app-env override (`:esr, :peer_factory_sup_override`) is
+  retained for unit tests that don't stand up a real Session; PR-3 removes
+  this last scaffold once all tests use real Sessions.
 
   See spec §3.3, §5.4, and §6 Risk A.
   """
@@ -59,11 +61,14 @@ defmodule Esr.PeerFactory do
     end
   end
 
-  # Session supervisor resolution. In PR-1, only the test-override path
-  # is used; PR-2 introduces Esr.Session.supervisor_name/1 for the real
-  # AdminSession / SessionsSupervisor lookup.
+  # Session supervisor resolution.
+  #
+  # Production: Esr.Session.supervisor_name/1 (registry-backed in PR-2).
+  # Test-only opt-in override: Application.put_env(:esr, :peer_factory_sup_override, name)
+  #   — used in unit tests that don't spin up a real Session. Removed entirely
+  #   in PR-3 once all tests use real Sessions.
   defp resolve_sup(session_id) do
-    case Process.get(:peer_factory_sup_override) do
+    case Application.get_env(:esr, :peer_factory_sup_override) do
       nil -> Esr.Session.supervisor_name(session_id)
       override -> override
     end
