@@ -29,7 +29,7 @@ agents:
         type: string
 
   cc-echo:
-    description: "Echo variant, same pipeline"
+    description: "Simple echo variant without CC pipeline — used by N=2 routing tests"
     capabilities_required:
       - session:default/create
       - peer_proxy:feishu/forward

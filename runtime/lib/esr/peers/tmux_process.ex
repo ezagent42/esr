@@ -62,6 +62,21 @@ defmodule Esr.Peers.TmuxProcess do
     GenServer.start_link(__MODULE__.OSProcessWorker, args, name: name_for(args))
   end
 
+  # Added by P3-6: the full CC-chain `cc` agent in `simple.yaml` now
+  # lists `tmux_process` in `pipeline.inbound`, so SessionRouter spawns
+  # it via `DynamicSupervisor.start_child(sup, {TmuxProcess, args})`.
+  # The `use Esr.Peer.Stateful` / `use Esr.OSProcess` macros don't
+  # inject a GenServer-style `child_spec/1`, so we provide one.
+  def child_spec(args) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [args]},
+      type: :worker,
+      restart: :transient,
+      shutdown: 5_000
+    }
+  end
+
   @doc """
   Write a tmux control-mode command to the session's stdin.
 

@@ -8,10 +8,12 @@ defmodule Esr.SessionRouterTest do
   (`cc_proxy`, `feishu_app_proxy`). Per `Esr.Peer.Proxy` docs and the
   existing CCProxy/FeishuAppProxy modules, proxies are **stateless
   forwarder modules** — they have no `start_link/1` and cannot be
-  spawned as pids. Tests here assert only on the Stateful peer pids
-  actually present in `simple.yaml` (`feishu_chat_proxy`, `cc_process`).
-  When the full CC chain lands (P3-6) with `cc_proxy` + `tmux_process`
-  in the inbound list, update assertions accordingly.
+  spawned as pids. After P3-6 the `simple.yaml` pipeline inbound is
+  the full CC chain (`feishu_chat_proxy → cc_proxy → cc_process →
+  tmux_process`); tests here assert pids for the three Stateful entries
+  (`feishu_chat_proxy`, `cc_process`, `tmux_process`) and NOT for the
+  stateless `cc_proxy` entry (recorded symbolically in refs as
+  `{:proxy_module, Module}` when reachable).
 
   Tests do not rely on `SessionRouter` being in `Esr.Application`'s
   child tree — the router is started via `start_supervised/1` in
@@ -81,12 +83,16 @@ defmodule Esr.SessionRouterTest do
     assert {:ok, ^session_id, refs} =
              Esr.SessionRegistry.lookup_by_chat_thread("oc_xx", "om_yy")
 
-    # simple.yaml inbound: feishu_chat_proxy → cc_process. Both
-    # Stateful, both spawned as pids.
+    # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
+    # cc_process → tmux_process. The three Stateful peers are spawned
+    # as pids; cc_proxy is a stateless module and not recorded in refs
+    # via spawn (see drift note in moduledoc).
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
+    assert is_pid(refs.tmux_process)
     assert Process.alive?(refs.feishu_chat_proxy)
     assert Process.alive?(refs.cc_process)
+    assert Process.alive?(refs.tmux_process)
   end
 
   test "create_session returns {:error, :unknown_agent} for missing agent_def" do
