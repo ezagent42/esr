@@ -150,7 +150,19 @@ defmodule Esr.Peers.CCProcess do
   end
 
   defp call_handler(state, payload, timeout) do
-    Esr.HandlerRouter.call(state.handler_module, payload, timeout)
+    # P3-10: Application-env override reaches across process boundaries
+    # for integration tests that spawn CCProcess indirectly (via
+    # SessionRouter/PeerFactory) and therefore don't have the pid handy
+    # at start to call `put_handler_override/2`. The override, when set,
+    # takes precedence over the real HandlerRouter round-trip. Scoped to
+    # `Mix.env() == :test`-style usage; prod leaves the env unset.
+    case Application.get_env(:esr, :handler_module_override) do
+      {:test_fun, fun} when is_function(fun, 3) ->
+        fun.(strip_fn_suffix(payload["handler"]), payload, timeout)
+
+      _ ->
+        Esr.HandlerRouter.call(state.handler_module, payload, timeout)
+    end
   end
 
   # The payload threads the handler module as "<mod>.on_msg" (matching

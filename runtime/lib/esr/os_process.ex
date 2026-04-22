@@ -112,6 +112,29 @@ defmodule Esr.OSProcess do
           end
         end
 
+        # Any other message is treated as a downstream peer event and
+        # routed through the parent's `handle_downstream/2` callback.
+        # This is the integration path used by upstream peers (e.g.
+        # `Esr.Peers.CCProcess`'s `:send_input` action targeted at
+        # `Esr.Peers.TmuxProcess`): the upstream peer calls
+        # `send(tmux_pid, {:send_input, text})`, and the wrapping
+        # OSProcessWorker dispatches the message into
+        # `TmuxProcess.handle_downstream/2`, which writes to the child
+        # process's stdin. Introduced in P3-10 to unblock the full E2E
+        # integration test (and to make the Peer.Stateful contract
+        # hold for every OSProcess-backed peer, not just TmuxProcess).
+        def handle_info(msg, s) do
+          if function_exported?(s.parent, :handle_downstream, 2) do
+            case s.parent.handle_downstream(msg, s.state) do
+              {:forward, _msgs, new_state} -> {:noreply, %{s | state: new_state}}
+              {:drop, _reason, new_state} -> {:noreply, %{s | state: new_state}}
+              _other -> {:noreply, s}
+            end
+          else
+            {:noreply, s}
+          end
+        end
+
         @impl true
         def terminate(_reason, %{parent: parent, state: state, port: port}) do
           if function_exported?(parent, :on_terminate, 1) do
