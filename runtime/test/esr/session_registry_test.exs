@@ -2,7 +2,9 @@ defmodule Esr.SessionRegistryTest do
   use ExUnit.Case, async: false
 
   setup do
-    start_supervised!({Esr.SessionRegistry, []})
+    # Esr.SessionRegistry is started by the application supervisor
+    # (see Esr.Application). Tests share this singleton.
+    assert is_pid(Process.whereis(Esr.SessionRegistry))
     :ok
   end
 
