@@ -678,20 +678,9 @@ defmodule Esr.PeerServer do
     %__MODULE__{state | pending_directives: Map.put(state.pending_directives, id, %{action: action})}
   end
 
-  defp dispatch_action(%{"type" => "route", "target" => target, "msg" => msg}, %__MODULE__{} = state) do
-    case Registry.lookup(Esr.PeerRegistry, target) do
-      [{pid, _}] ->
-        send(pid, {:inbound_event, %{"payload" => msg}})
-
-      [] ->
-        :telemetry.execute([:esr, :route, :target_missing], %{}, %{
-          actor_id: state.actor_id,
-          target: target
-        })
-    end
-
-    state
-  end
+  # P3-16: `route` action deleted. Spec §2.9 removes cross-esrd
+  # routing — directive-returning handlers now flow through
+  # CCProcess/TmuxProcess peer chains, not a PeerRegistry lookup.
 
   defp dispatch_action(unknown, %__MODULE__{} = state) do
     :telemetry.execute([:esr, :action, :unknown], %{}, %{

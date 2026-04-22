@@ -1,10 +1,13 @@
 defmodule Esr.PeerServerActionDispatchTest do
   @moduledoc """
-  PRD 01 F07 — PeerServer dispatches Emit / Route actions returned by
+  PRD 01 F07 — PeerServer dispatches Emit actions returned by
   HandlerRouter.call.
 
-  P3-13: InvokeCommand is gone (Topology module deleted); session
+  P3-13: InvokeCommand deleted (Topology module gone); session
   creation is now a SessionRouter control-plane operation.
+
+  P3-16: Route action deleted (cross-esrd routing removed per spec
+  §2.9); directive-returning handlers flow through the peer chain.
   """
 
   use ExUnit.Case, async: false
@@ -115,68 +118,37 @@ defmodule Esr.PeerServerActionDispatchTest do
     send(worker.pid, :stop)
   end
 
-  test "Route action delivers {:inbound_event, _} to target actor" do
-    source_id = "route-src-#{System.unique_integer([:positive])}"
-    target_id = "route-tgt-#{System.unique_integer([:positive])}"
+  # P3-16: the "Route action" + "Route to unknown target" tests were
+  # removed with the `dispatch_action "route"` clause. Cross-esrd
+  # routing is replaced by the CCProcess/TmuxProcess peer chain per
+  # spec §2.9.
+
+  test "unknown action type emits [:esr, :action, :unknown]" do
+    actor_id = "unknown-act-#{System.unique_integer([:positive])}"
 
     worker =
       start_fake_worker("noop", fn _payload ->
         %{
           "new_state" => %{},
-          "actions" => [
-            %{
-              "type" => "route",
-              "target" => target_id,
-              "msg" => %{"event_type" => "forwarded", "args" => %{"x" => 1}}
-            }
-          ]
-        }
-      end)
-
-    assert_receive :worker_ready, 500
-
-    # Target is self() via a fake Registry registration
-    {:ok, _} = Registry.register(Esr.PeerRegistry, target_id, nil)
-
-    peer_pid = start_peer(source_id)
-    send_event(peer_pid)
-
-    assert_receive {:inbound_event, routed}, 2_000
-    assert routed["payload"]["event_type"] == "forwarded"
-
-    Registry.unregister(Esr.PeerRegistry, target_id)
-    send(worker.pid, :stop)
-  end
-
-  test "Route to unknown target fires telemetry (not a crash)" do
-    actor_id = "route-orphan-#{System.unique_integer([:positive])}"
-
-    worker =
-      start_fake_worker("noop", fn _payload ->
-        %{
-          "new_state" => %{},
-          "actions" => [
-            %{"type" => "route", "target" => "does-not-exist", "msg" => "x"}
-          ]
+          "actions" => [%{"type" => "route", "target" => "x", "msg" => "y"}]
         }
       end)
 
     assert_receive :worker_ready, 500
 
     :telemetry.attach(
-      "test-orphan-route",
-      [:esr, :route, :target_missing],
-      fn _e, _m, metadata, pid -> send(pid, {:orphan, metadata}) end,
+      "test-unknown-action-#{:erlang.unique_integer()}",
+      [:esr, :action, :unknown],
+      fn _e, _m, metadata, pid -> send(pid, {:unknown, metadata}) end,
       self()
     )
 
     peer_pid = start_peer(actor_id)
     send_event(peer_pid)
 
-    assert_receive {:orphan, metadata}, 2_000
-    assert metadata[:target] == "does-not-exist"
+    assert_receive {:unknown, metadata}, 2_000
+    assert metadata[:action]["type"] == "route"
 
-    :telemetry.detach("test-orphan-route")
     send(worker.pid, :stop)
   end
 end
