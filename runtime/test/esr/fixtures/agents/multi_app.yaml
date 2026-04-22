@@ -1,0 +1,49 @@
+# N=2 test fixture — two agents, each referencing a different Feishu app_id
+# via ${app_id} template. Spec §3.5.
+
+agents:
+  cc:
+    description: "Claude Code for multi-app tests"
+    capabilities_required:
+      - cap.session.create
+      - cap.peer_proxy.forward_feishu
+    pipeline:
+      inbound:
+        - name: feishu_chat_proxy
+          impl: Esr.Peers.FeishuChatProxy
+      outbound:
+        - feishu_chat_proxy
+    proxies:
+      - name: feishu_app_proxy
+        impl: Esr.Peers.FeishuAppProxy
+        target: "admin::feishu_app_adapter_${app_id}"
+    params:
+      - name: dir
+        required: true
+        type: path
+      - name: app_id
+        required: true
+        type: string
+
+  cc-echo:
+    description: "Echo variant, same pipeline"
+    capabilities_required:
+      - cap.session.create
+      - cap.peer_proxy.forward_feishu
+    pipeline:
+      inbound:
+        - name: feishu_chat_proxy
+          impl: Esr.Peers.FeishuChatProxy
+      outbound:
+        - feishu_chat_proxy
+    proxies:
+      - name: feishu_app_proxy
+        impl: Esr.Peers.FeishuAppProxy
+        target: "admin::feishu_app_adapter_${app_id}"
+    params:
+      - name: dir
+        required: true
+        type: path
+      - name: app_id
+        required: true
+        type: string

@@ -23,7 +23,7 @@ defmodule Esr.Admin.DispatcherTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Dispatcher
-  alias Esr.AdapterHub.Registry, as: HubRegistry
+  alias Esr.AdminSessionProcess
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_dispatcher_test"
@@ -46,14 +46,9 @@ defmodule Esr.Admin.DispatcherTest do
     prior_grants = snapshot_grants()
     Grants.load_snapshot(Map.put(prior_grants, @test_principal, ["*"]))
 
-    # Clean any leftover bindings so the first feishu topic we bind
-    # below is unambiguously our test topic.
-    for {topic, _} <- HubRegistry.list(), do: HubRegistry.unbind(topic)
-
     ensure_admin_dispatcher()
 
     on_exit(fn ->
-      for {topic, _} <- HubRegistry.list(), do: HubRegistry.unbind(topic)
       Grants.load_snapshot(prior_grants)
 
       if prev_home,
@@ -64,6 +59,17 @@ defmodule Esr.Admin.DispatcherTest do
     end)
 
     {:ok, tmp: tmp}
+  end
+
+  # Post-P2-16: register_fake_feishu_adapter/1 replaces the old
+  # HubRegistry.bind dance — Notify now discovers feishu adapters via
+  # AdminSessionProcess.list_admin_peers/0.
+  defp register_fake_feishu_adapter(app_id) do
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
+    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    topic = "adapter:feishu/#{app_id}"
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    topic
   end
 
   defp ensure_admin_dispatcher do
@@ -80,9 +86,7 @@ defmodule Esr.Admin.DispatcherTest do
 
   describe "secret redaction on queue file write" do
     test "redacts args.app_secret in completed/<id>.yaml", %{tmp: tmp} do
-      topic = "adapter:feishu/redact_app_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:redact")
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("redact_app_#{System.unique_integer([:positive])}")
 
       id = "01ARZREDACT#{System.unique_integer([:positive])}"
       pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])
@@ -116,9 +120,7 @@ defmodule Esr.Admin.DispatcherTest do
     end
 
     test "redacts secret and token args in completed/<id>.yaml", %{tmp: tmp} do
-      topic = "adapter:feishu/redact_all_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:redact-all")
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("redact_all_#{System.unique_integer([:positive])}")
 
       id = "01ARZALLSEC#{System.unique_integer([:positive])}"
       pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])
@@ -211,9 +213,7 @@ defmodule Esr.Admin.DispatcherTest do
 
     test "emits :command_executed with kind + submitted_by + duration_ms on success",
          %{tmp: tmp} do
-      topic = "adapter:feishu/telem_ok_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:telem-ok")
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("telem_ok_#{System.unique_integer([:positive])}")
 
       id = "01ARZTELEMOK#{System.unique_integer([:positive])}"
       pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])

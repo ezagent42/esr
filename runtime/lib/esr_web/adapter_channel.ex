@@ -3,21 +3,20 @@ defmodule EsrWeb.AdapterChannel do
   Phoenix.Channel handling one adapter topic — ``adapter:<name>/<instance_id>``.
   PRD 01 F09.
 
-  Routing:
-   - On join, the topic must already be bound to an actor_id via
-     `Esr.AdapterHub.Registry`. Unbound topics are rejected so the
-     adapter knows its instance wasn't registered correctly.
-   - Inbound ``event`` messages: look up the owning PeerServer via
-     AdapterHub.Registry → Esr.PeerRegistry and `send/2` the envelope
-     as ``{:inbound_event, envelope}``.
-   - Inbound ``directive_ack`` messages: route the same way, tagged
-     ``{:directive_ack, envelope}``. Correlation-by-id happens inside
-     the receiving PeerServer (F07).
+  Routing (post-P2-17):
+   - On join, the topic is accepted regardless of binding state; Python
+     adapter workers connect before the peer chain is up.
+   - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
+     are forwarded unconditionally into the new peer chain via
+     `forward_to_new_chain/2` → `Esr.AdminSessionProcess.admin_peer/1`
+     → `Esr.Peers.FeishuAppAdapter`.
+   - Non-Feishu topics receiving `:inbound_event` get an explicit error
+     reply; the legacy `AdapterHub.Registry → PeerRegistry` path was
+     deleted in P2-16 and the `USE_NEW_PEER_CHAIN` feature flag was
+     removed in P2-17.
   """
 
   use Phoenix.Channel
-
-  alias Esr.AdapterHub.Registry, as: HubRegistry
 
   @impl Phoenix.Channel
   def join("adapter:" <> _rest = topic, _payload, socket) do
@@ -120,22 +119,65 @@ defmodule EsrWeb.AdapterChannel do
 
   defp register_permissions(_other, _declared_by), do: :ok
 
-  # Resolve topic → actor_id → pid → send the tagged message. Replies
-  # :ok on success, :error with a reason when the binding or pid is
-  # gone so the adapter can react (retry / drop / log).
-  defp forward(socket, msg) do
+  # Inbound Feishu frames flow unconditionally through the new chain
+  # (post-P2-17). The topic is `adapter:feishu/<app_id>`; non-feishu
+  # topics receiving `:inbound_event` get an explicit error reply
+  # (legacy `AdapterHub.Registry → PeerRegistry` was deleted in P2-16).
+  defp forward(socket, {:inbound_event, envelope}) do
     topic = socket.assigns.topic
 
-    with {:ok, actor_id} <- HubRegistry.lookup(topic),
-         [{pid, _}] <- Registry.lookup(Esr.PeerRegistry, actor_id) do
-      send(pid, msg)
-      {:reply, :ok, socket}
+    if String.starts_with?(topic, "adapter:feishu/") do
+      case forward_to_new_chain(topic, envelope) do
+        :ok -> {:reply, :ok, socket}
+        :error -> {:reply, {:error, %{reason: "no feishu_app_adapter"}}, socket}
+      end
     else
-      :error ->
-        {:reply, {:error, %{reason: "no binding"}}, socket}
+      require Logger
 
-      [] ->
-        {:reply, {:error, %{reason: "peer not alive"}}, socket}
+      Logger.warning(
+        "adapter_channel: :inbound_event on non-feishu topic " <>
+          "(topic=#{inspect(topic)}); no route after P2-17"
+      )
+
+      {:reply, {:error, %{reason: "unknown_topic"}}, socket}
+    end
+  end
+
+  defp forward(socket, _msg) do
+    require Logger
+
+    Logger.warning(
+      "adapter_channel: unhandled forward message " <>
+        "(topic=#{inspect(socket.assigns[:topic])})"
+    )
+
+    {:reply, {:error, %{reason: "unhandled_forward"}}, socket}
+  end
+
+  @doc """
+  Forward an inbound Feishu envelope to the new-chain peer
+  `Esr.Peers.FeishuAppAdapter` for `app_id` (parsed from `topic`).
+
+  Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
+  to the adapter's mailbox), `:error` when no adapter is registered under
+  `:feishu_app_adapter_<app_id>` in `Esr.AdminSessionProcess`.
+
+  Exposed for direct unit testing of the routing path without spinning
+  up a Phoenix.Channel socket.
+  """
+  @spec forward_to_new_chain(String.t(), map()) :: :ok | :error
+  def forward_to_new_chain("adapter:feishu/" <> app_id, envelope) do
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
+
+    case Esr.AdminSessionProcess.admin_peer(sym) do
+      {:ok, pid} ->
+        send(pid, {:inbound_event, envelope})
+        :ok
+
+      :error ->
+        require Logger
+        Logger.warning("adapter_channel: no FeishuAppAdapter for app_id=#{app_id}")
+        :error
     end
   end
 end

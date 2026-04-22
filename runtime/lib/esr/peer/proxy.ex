@@ -3,14 +3,32 @@ defmodule Esr.Peer.Proxy do
   Stateless forwarder Peer.
 
   Compile-time restricted: a module using `Esr.Peer.Proxy` cannot
-  define `handle_call/3` or `handle_cast/2`. This enforces "proxies
-  never accumulate state".
+  define `handle_call/3` or `handle_cast/2` — doing so raises a
+  compile error.
 
-  See spec §3.1.
+  Optional `@required_cap "<permission_str>"` module attribute (literal
+  string only; runtime templates deferred) injects a capability-check
+  wrapper around `forward/2`. The wrapper:
+
+    1. Reads `ctx.principal_id` (must be a binary).
+    2. Calls `Esr.Capabilities.has?(principal_id, @required_cap)`.
+    3. On false → returns `{:drop, :cap_denied}`.
+    4. On true → delegates to the user's `forward/2` body.
+       If the body's return is `:ok` or `{:ok, _}`, the wrapper additionally
+       checks the `ctx.target_pid` is alive before the send already happened
+       inside `forward/2`; dead-target handling is the body's responsibility
+       (idiomatic pattern: `send(ctx.target_pid, msg)` then `:ok`, and the
+       caller handles `{:drop, :target_unavailable}` via a DOWN monitor).
+
+  Test-time override: set `Process.put(:esr_cap_test_override, fn pid, perm -> bool end)`
+  to bypass Esr.Capabilities.has?/2 in unit tests. Production never reads
+  this key.
+
+  See spec §3.1, §3.6, §6 Risk B.
   """
 
   @callback forward(msg :: term(), ctx :: map()) ::
-              :ok | {:drop, reason :: atom()}
+              :ok | {:ok, term()} | {:drop, reason :: atom()}
 
   @forbidden [{:handle_call, 3}, {:handle_cast, 2}]
 
@@ -25,8 +43,7 @@ defmodule Esr.Peer.Proxy do
   defmacro __before_compile__(env) do
     defined = Module.definitions_in(env.module, :def)
 
-    offenders =
-      for fa <- @forbidden, fa in defined, do: fa
+    offenders = for fa <- @forbidden, fa in defined, do: fa
 
     if offenders != [] do
       msg =
@@ -36,6 +53,35 @@ defmodule Esr.Peer.Proxy do
       raise CompileError, description: msg
     end
 
-    :ok
+    cap = Module.get_attribute(env.module, :required_cap)
+
+    if is_binary(cap) do
+      quote do
+        defoverridable forward: 2
+
+        def forward(msg, ctx) do
+          principal_id = Map.get(ctx, :principal_id)
+
+          check =
+            case Process.get(:esr_cap_test_override) do
+              fun when is_function(fun, 2) -> fun
+              _ -> &Esr.Capabilities.has?/2
+            end
+
+          cond do
+            not is_binary(principal_id) ->
+              {:drop, :cap_denied}
+
+            check.(principal_id, unquote(cap)) ->
+              super(msg, ctx)
+
+            true ->
+              {:drop, :cap_denied}
+          end
+        end
+      end
+    else
+      :ok
+    end
   end
 end

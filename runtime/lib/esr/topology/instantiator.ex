@@ -12,8 +12,11 @@ defmodule Esr.Topology.Instantiator do
    3. Rejects cyclic ``depends_on`` via Kahn's algorithm.
    4. Spawns a PeerServer per node via ``Esr.PeerSupervisor.start_peer``
       in topological order.
-   5. Binds each node's adapter in ``Esr.AdapterHub.Registry``.
-   6. Registers the instantiation in ``Esr.Topology.Registry``.
+   5. Registers the instantiation in ``Esr.Topology.Registry``.
+
+  Post-P2-16: the Registry-binding step (old #5) is gone — the legacy
+  `Esr.AdapterHub.Registry` was deleted. PR-3 retires this entire
+  module in favour of `SessionRouter.create_session/2` + `PeerFactory`.
 
   Idempotent: if ``(name, params)`` is already registered, returns
   the existing handle without re-spawning.
@@ -21,7 +24,6 @@ defmodule Esr.Topology.Instantiator do
   F13b init_directive dispatch is deferred to the next commit.
   """
 
-  alias Esr.AdapterHub.Registry, as: HubRegistry
   alias Esr.PeerSupervisor
   alias Esr.Topology.Registry, as: TopoRegistry
 
@@ -74,52 +76,12 @@ defmodule Esr.Topology.Instantiator do
 
   # --- Param validation ---------------------------------------------
 
-  # v0.2 §3.3 — verify that the workspace (if any) in params references
-  # only live adapter instances. Unknown workspace → skip (v0.3 will
-  # tighten). Empty/missing workspace → skip.
-  defp validate_workspace_apps(params) do
-    case Map.get(params, "workspace") do
-      nil ->
-        :ok
-
-      "" ->
-        :ok
-
-      ws_name when is_binary(ws_name) ->
-        case Esr.Workspaces.Registry.get(ws_name) do
-          {:ok, ws} -> check_ws_app_ids(ws)
-          :error -> :ok
-        end
-    end
-  end
-
-  # v0.2 §3.3 + reviewer C3: exact-match on the parsed app_id suffix of
-  # the AdapterHub topic, not String.contains? — otherwise a short
-  # prefix "cli_a9" would spuriously match "cli_a9563...".
-  # Topic format is `adapter:feishu/feishu-app:<app_id>`.
-  defp check_ws_app_ids(%{chats: chats}) do
-    live_app_ids =
-      HubRegistry.list()
-      |> Enum.flat_map(fn {topic, _bound_actor} ->
-        case topic do
-          "adapter:feishu/feishu-app:" <> app_id -> [app_id]
-          _ -> []
-        end
-      end)
-      |> MapSet.new()
-
-    missing =
-      chats
-      |> Enum.map(fn chat -> Map.get(chat, "app_id", Map.get(chat, :app_id)) end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-      |> Enum.reject(&MapSet.member?(live_app_ids, &1))
-
-    case missing do
-      [] -> :ok
-      [first | _] -> {:error, {:app_not_registered, first}}
-    end
-  end
+  # Post-P2-16: AdapterHub.Registry is gone, so we can no longer cross-
+  # check workspace app_ids against "live" adapter instances via that
+  # Registry. The check is now a no-op — PR-3 replaces this module
+  # with SessionRouter, which will re-introduce the validation against
+  # SessionRegistry. v0.2 §3.3's strict check is relaxed until then.
+  defp validate_workspace_apps(_params), do: :ok
 
   defp check_params(artifact, params) do
     required = Map.get(artifact, "params", []) |> Enum.map(&to_string/1)
@@ -242,7 +204,7 @@ defmodule Esr.Topology.Instantiator do
   defp spawn_loop([id | rest], by_id, timeout, acc) do
     node = Map.fetch!(by_id, id)
     {:ok, _pid} = start_peer(node)
-    bind_adapter(node)
+    # Post-P2-16: bind_adapter removed — AdapterHub.Registry is gone.
     # 8f: ensure the Python counterparts are running. Idempotent — any
     # worker already pre-spawned by fixtures (scenario setup) or
     # previously by this supervisor is reused via its pidfile.
@@ -331,22 +293,12 @@ defmodule Esr.Topology.Instantiator do
 
   defp issue_init_directive(_node, _timeout), do: :ok
 
-  # Terminate the spawned PeerServers AND synchronously unbind their
-  # adapters. The DOWN handler in HubRegistry cleans up bindings async
-  # on pid exit, but an immediate instantiate retry could observe stale
-  # bindings in the tiny window between termination and DOWN delivery.
-  defp rollback_spawned(ids, by_id) do
-    Enum.each(ids, fn id ->
-      Esr.PeerSupervisor.stop_peer(id)
-
-      case Map.get(by_id, id) do
-        %{"adapter" => adapter, "id" => node_id} when is_binary(adapter) ->
-          HubRegistry.unbind("adapter:#{adapter}/#{node_id}")
-
-        _ ->
-          :ok
-      end
-    end)
+  # Post-P2-16: AdapterHub.Registry is gone, so rollback just
+  # terminates the spawned PeerServers. The old unbind-step is a
+  # no-op — there's no binding to drop anymore. `by_id` is retained
+  # to keep the caller contract stable (PR-3 deletes this module).
+  defp rollback_spawned(ids, _by_id) do
+    Enum.each(ids, fn id -> Esr.PeerSupervisor.stop_peer(id) end)
   end
 
   defp start_peer(node) do
@@ -369,13 +321,7 @@ defmodule Esr.Topology.Instantiator do
     handler |> String.split(".", parts: 2) |> hd()
   end
 
-  defp bind_adapter(%{"adapter" => nil}), do: :ok
-
-  defp bind_adapter(%{"adapter" => adapter, "id" => id}) when is_binary(adapter) do
-    HubRegistry.bind("adapter:#{adapter}/#{id}", id)
-  end
-
-  defp bind_adapter(_), do: :ok
+  # (P2-16) `bind_adapter/1` removed — Esr.AdapterHub.Registry deleted.
 
   # Launch (or reuse) the Python adapter_runner / handler_worker
   # subprocesses a node needs. WorkerSupervisor is idempotent — already-

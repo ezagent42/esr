@@ -14,7 +14,8 @@ defmodule Esr.ApplicationTest do
   @expected_processes [
     Esr.PeerRegistry,
     Esr.PeerSupervisor,
-    Esr.AdapterHub.Supervisor,
+    # (P2-16) Esr.AdapterHub.Supervisor removed — its Registry's role
+    # is subsumed by Esr.SessionRegistry.
     Esr.HandlerRouter.Supervisor,
     Esr.Topology.Supervisor,
     Esr.Persistence.Supervisor,

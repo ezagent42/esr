@@ -20,7 +20,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
 
   alias Esr.Admin.Commands.Notify
   alias Esr.Admin.Dispatcher
-  alias Esr.AdapterHub.Registry, as: HubRegistry
+  alias Esr.AdminSessionProcess
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_notify_test"
@@ -42,10 +42,6 @@ defmodule Esr.Admin.Commands.NotifyTest do
     prior_grants = snapshot_grants()
     Grants.load_snapshot(Map.put(prior_grants, @test_principal, ["*"]))
 
-    # Clean any leftover bindings so the first feishu topic we bind
-    # below is unambiguously our test topic.
-    for {topic, _} <- HubRegistry.list(), do: HubRegistry.unbind(topic)
-
     # Esr.Admin.SupervisorTest can leave the app-level Admin.Supervisor
     # in a terminated state (it calls Supervisor.terminate_child on it
     # and then starts a test-local replacement that dies with the test
@@ -55,13 +51,24 @@ defmodule Esr.Admin.Commands.NotifyTest do
     ensure_admin_dispatcher()
 
     on_exit(fn ->
-      for {topic, _} <- HubRegistry.list(), do: HubRegistry.unbind(topic)
       Grants.load_snapshot(prior_grants)
       if prev_home, do: System.put_env("ESRD_HOME", prev_home), else: System.delete_env("ESRD_HOME")
       File.rm_rf!(tmp)
     end)
 
     {:ok, tmp: tmp}
+  end
+
+  # Post-P2-16: Notify.execute/1 discovers the feishu adapter topic by
+  # iterating `AdminSessionProcess.list_admin_peers/0` for a
+  # `:feishu_app_adapter_<app_id>` entry. Tests register the caller pid
+  # as a stand-in so the iteration resolves to a predictable topic.
+  defp register_fake_feishu_adapter(app_id) do
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
+    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    topic = "adapter:feishu/#{app_id}"
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    topic
   end
 
   # If the app-level Admin.Supervisor was torn down (by the supervisor
@@ -84,10 +91,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
 
   describe "Notify.execute/1 unit" do
     test "broadcasts a reply directive on the feishu adapter topic" do
-      topic = "adapter:feishu/test_app_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:test")
-
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("test_app_#{System.unique_integer([:positive])}")
 
       assert {:ok, %{"delivered_at" => ts}} =
                Notify.execute(%{"args" => %{"to" => "ou_receiver", "text" => "hello"}})
@@ -106,7 +110,9 @@ defmodule Esr.Admin.Commands.NotifyTest do
                      500
     end
 
-    test "returns no_feishu_adapter when no adapter:feishu/* topic is bound" do
+    test "returns no_feishu_adapter when no feishu app adapter is registered" do
+      # Don't register a fake — AdminSessionProcess has other peers
+      # (e.g. :slash_handler) but no :feishu_app_adapter_* entry.
       assert {:error, %{"type" => "no_feishu_adapter"}} =
                Notify.execute(%{"args" => %{"to" => "ou_x", "text" => "y"}})
     end
@@ -118,10 +124,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
 
   describe "Dispatcher → Notify end-to-end (direct cast)" do
     test "happy path — pending file ends up in completed/ with result", %{tmp: tmp} do
-      # Bind a feishu topic + subscribe so we see the directive broadcast.
-      topic = "adapter:feishu/e2e_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:e2e")
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("e2e_#{System.unique_integer([:positive])}")
 
       id = "01ARZTEST#{System.unique_integer([:positive])}"
       pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])
@@ -196,10 +199,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
     end
 
     test "delivers result to a pid reply target (Router path)", %{tmp: _tmp} do
-      # Bind a feishu topic so the command can actually succeed.
-      topic = "adapter:feishu/pid_#{System.unique_integer([:positive])}"
-      :ok = HubRegistry.bind(topic, "feishu-app:pid")
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+      _topic = register_fake_feishu_adapter("pid_#{System.unique_integer([:positive])}")
 
       id = "01ARZPID#{System.unique_integer([:positive])}"
       ref = make_ref()

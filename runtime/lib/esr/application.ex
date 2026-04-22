@@ -41,6 +41,20 @@ defmodule Esr.Application do
       Esr.SessionSocketRegistry,
       {Esr.SessionRegistry, []},
 
+      # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
+      # Must come BEFORE AdminSession (which calls Esr.Session.supervisor_name/1
+      # via PeerFactory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
+      # peers via Session.supervisor_name) and before SessionsSupervisor.
+      {Registry, keys: :unique, name: Esr.Session.Registry},
+
+      # 4e.2 AdminSession — permanent supervisor hosting admin-scope peers.
+      # Risk F: started BEFORE SessionRouter (not in PR-2 yet) and BEFORE
+      # SessionsSupervisor.
+      Esr.AdminSession,
+
+      # 4e.3 SessionsSupervisor (DynamicSupervisor, max_children=128).
+      Esr.SessionsSupervisor,
+
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,
 
@@ -66,7 +80,9 @@ defmodule Esr.Application do
       Esr.Routing.Supervisor,
 
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
-      Esr.AdapterHub.Supervisor,
+      # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
+      # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
+      # by Esr.SessionRegistry.lookup_by_chat_thread/2 in the new peer chain.
       Esr.HandlerRouter.Supervisor,
       Esr.Topology.Supervisor,
       Esr.Persistence.Supervisor,
@@ -165,7 +181,7 @@ defmodule Esr.Application do
   defp restore_feishu_app_session(app_id) do
     Task.start(fn ->
       # Small grace period for the Phoenix endpoint to be fully ready to
-      # receive the PeerSupervisor / AdapterHub bootstraps.
+      # receive the PeerSupervisor bootstraps.
       Process.sleep(2_000)
 
       case Esr.Topology.Registry.get_artifact("feishu-app-session") do
