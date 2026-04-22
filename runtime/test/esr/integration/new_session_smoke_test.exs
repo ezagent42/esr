@@ -7,13 +7,13 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       FeishuChatProxy-style envelope
               |
               v
-      Esr.Peers.SlashHandler  — parses the slash, casts session_agent_new
+      Esr.Peers.SlashHandler  — parses the slash, casts session_new
               |
               v
       Esr.Admin.Dispatcher    — cap-checks (D18) + Tasks the command
               |
               v
-      Esr.Admin.Commands.Session.AgentNew — validates args (D11/D13),
+      Esr.Admin.Commands.Session.New       — validates args (D11/D13),
               |                              re-checks agent_def caps,
               |                              calls SessionsSupervisor
               v
@@ -36,18 +36,14 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
   ## Drift from expansion doc
 
-  The expansion's "Test 3" (missing-caps path) asserts on the text
-  `"missing caps"` — that string is produced by a `format_result/1`
-  clause in `Esr.Peers.SlashHandler` that matches on an atom key
-  (`:missing_capabilities`) whereas `Session.AgentNew` emits a string
-  (`"missing_capabilities"`), so the pattern never fires. More
-  fundamentally, `Esr.Admin.Dispatcher` rejects `session_agent_new`
-  with `{:error, %{"type" => "unauthorized"}}` BEFORE the command ever
-  runs `Session.AgentNew.execute/1` when the submitter lacks
-  `session.create` — so the Session.AgentNew cap check is unreachable
-  for a principal who has no grants at all. The test covers the
-  dispatcher-level rejection (text `"unauthorized"`) instead; fixing
-  the two-level cap flow is a follow-up beyond PR-2.
+  P3-8 cleaned up the earlier drift: the SlashHandler's
+  missing-capabilities format_result/1 clause now matches on the string
+  `"missing_capabilities"` (matching `Session.New`'s actual emission),
+  and the dispatcher's `session_new` permission is now
+  `session:default/create` (canonical form). The text assertion below
+  still accepts either `unauthorized` (dispatcher-level) or
+  `missing_capabilities` (command-level) because the `ou_smoke_nocap`
+  principal lacks every grant — the dispatcher rejects first.
   """
   use ExUnit.Case, async: false
 
@@ -190,7 +186,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
     assert_receive {:reply, text}, 1_000
 
-    # Dispatcher rejects the cast before Session.AgentNew runs (see
+    # Dispatcher rejects the cast before Session.New runs (see
     # module-level "Drift from expansion doc"); text carries the
     # Dispatcher's "unauthorized" marker rather than AgentNew's
     # "missing_capabilities". Either way, the user gets a structured

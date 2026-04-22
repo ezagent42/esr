@@ -61,12 +61,20 @@ defmodule Esr.Admin.Dispatcher do
   require Logger
 
   # kind → required permission (spec §6.2 table).
+  #
+  # PR-3 P3-8.7: `session_new` now means the **agent-session** command
+  # (`Esr.Admin.Commands.Session.New`, formerly Session.AgentNew); the
+  # legacy branch-worktree path is `session_branch_new`. Both share the
+  # `session:default/create` permission (canonical prefix:name/perm form
+  # required by `Grants.matches?/2`). Legacy `session.create` dotted
+  # permission strings are still accepted via wildcard grants (`"*"`),
+  # which every test principal uses.
   @required_permissions %{
     "notify" => "notify.send",
     "reload" => "runtime.reload",
     "register_adapter" => "adapter.register",
-    "session_new" => "session.create",
-    "session_agent_new" => "session.create",
+    "session_new" => "session:default/create",
+    "session_branch_new" => "session:default/create",
     "session_switch" => "session.switch",
     "session_end" => "session.end",
     "session_list" => "session.list",
@@ -76,12 +84,16 @@ defmodule Esr.Admin.Dispatcher do
 
   # Map kind → Commands.<Module>. Missing entries surface as
   # {:error, %{type: "unknown_kind"}} so unsupported kinds fail fast.
+  #
+  # PR-3 P3-8: `session_new` → `Session.New` (agent-session, formerly
+  # AgentNew); `session_branch_new` → `Session.BranchNew` (the renamed
+  # legacy branch-worktree command).
   @command_modules %{
     "notify" => Esr.Admin.Commands.Notify,
     "reload" => Esr.Admin.Commands.Reload,
     "register_adapter" => Esr.Admin.Commands.RegisterAdapter,
     "session_new" => Esr.Admin.Commands.Session.New,
-    "session_agent_new" => Esr.Admin.Commands.Session.AgentNew,
+    "session_branch_new" => Esr.Admin.Commands.Session.BranchNew,
     "session_switch" => Esr.Admin.Commands.Session.Switch,
     "session_end" => Esr.Admin.Commands.Session.End,
     "session_list" => Esr.Admin.Commands.Session.List,

@@ -105,7 +105,7 @@ Resolved during brainstorming; frozen for this spec.
 | D15 | `session_new` Admin command | Breaking change accepted; gains `agent` field; no backwards-compat shim. |
 | D16 | PeerPool default size | **128** workers per pool (in `Esr.PeerPool` module). `pools.yaml` is optional; absent pool entries inherit the default. yaml only appears when overriding. |
 | D17 | SessionsSupervisor max_children | **128** concurrent user Sessions per esrd (`max_children: 128` on DynamicSupervisor). Each user Session owns one tmux → tmux count ≤ 128. |
-| D18 | `capabilities_required` in agents.yaml | Linked to existing capabilities v1. Declaring the capability set an agent needs is **mandatory** per agent entry. Admin.Dispatcher verifies the invoking principal holds all listed capabilities before creating the Session. See §3.5. |
+| D18 | `capabilities_required` in agents.yaml | Linked to existing capabilities v1. Declaring the capability set an agent needs is **mandatory** per agent entry. Admin.Dispatcher verifies the invoking principal holds all listed capabilities before creating the Session. Permissions use the canonical `prefix:name/perm` shape enforced by `Esr.Capabilities.Grants.matches?/2` — e.g. `session:default/create`, `tmux:default/spawn`, `handler:cc_adapter_runner/invoke`, `peer_proxy:feishu/forward`, `peer_pool:voice_asr/acquire`. The dotted `cap.*` form from earlier drafts is not supported. See §3.5 and `docs/notes/capability-name-format-mismatch.md`. |
 | D19 | Reserved field names in agents.yaml | `rate_limits`, `timeout_ms`, `allowed_principals` are reserved. Schema validator warns if they appear (not implemented yet). Prevents future schema-break when these features arrive. |
 | D20 | TmuxProcess mode | Use `tmux -C` control mode (per issue #7 recommendation). TmuxProcess parses tmux control protocol events (`%output`, `%window-close`, `%exit`). See §3.2 + §4.1 TmuxProcess card. |
 | D21 | Per-PR acceptance gates | Each PR has explicit test gates (§10.5). CI must pass each gate before PR is mergeable. |
@@ -248,7 +248,7 @@ Three behaviours define the Peer contract. Each peer module declares exactly one
 
 A Peer.Proxy module **must not** define `handle_call/3`. The `use Esr.Peer.Proxy` macro emits a compile error if one is present. This enforces "proxies never accumulate state".
 
-**Authorisation hook**: every Peer.Proxy automatically wraps `forward/2` in a capability check — `proxy_ctx.session_id` must have `cap.peer_proxy.forward(target=<target_peer>)`. The check happens per-call, using `Esr.Capabilities.has?/2`.
+**Authorisation hook**: every Peer.Proxy automatically wraps `forward/2` in a capability check — the `proxy_ctx.principal_id` must hold the permission declared by the Peer.Proxy module's `@required_cap` attribute (canonical `prefix:name/perm` shape, e.g. `peer_proxy:feishu/forward`). The check happens per-call, using `Esr.Capabilities.has?/2`.
 
 ### 3.2 OSProcess底座
 
@@ -388,9 +388,9 @@ agents:
   cc:
     description: "Claude Code in tmux, text I/O"
     capabilities_required:                   # mandatory; verified at /new-session time
-      - cap.session.create
-      - cap.tmux.spawn
-      - cap.handler.cc_adapter_runner.invoke
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -422,11 +422,11 @@ agents:
   cc-voice:
     description: "CC + voice I/O (voice in → ASR → CC → TTS → voice out)"
     capabilities_required:
-      - cap.session.create
-      - cap.tmux.spawn
-      - cap.handler.cc_adapter_runner.invoke
-      - cap.peer_pool.voice_asr.acquire
-      - cap.peer_pool.voice_tts.acquire
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
+      - peer_pool:voice_asr/acquire
+      - peer_pool:voice_tts/acquire
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -463,8 +463,8 @@ agents:
   voice-e2e:
     description: "End-to-end voice LLM; agent as side-input, no CC"
     capabilities_required:
-      - cap.session.create
-      - cap.handler.voice_e2e.invoke
+      - session:default/create
+      - handler:voice_e2e/invoke
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -526,7 +526,7 @@ User Session_<id>:
 
 Properties:
 - **Per-session mailbox**: if FeishuAppAdapter is slow, only the owning session's FeishuAppProxy backs up. Other sessions unaffected.
-- **Capability check hook**: FeishuAppProxy's injected `forward/2` wrapper checks `cap.peer_proxy.forward(target="admin::feishu_app_adapter_${app_id}")` before each forward. Per-session grants are enforced at the proxy boundary.
+- **Capability check hook**: FeishuAppProxy declares `@required_cap "peer_proxy:feishu/forward"`; the injected `forward/2` wrapper calls `Esr.Capabilities.has?(principal_id, "peer_proxy:feishu/forward")` before each forward. Per-session grants are enforced at the proxy boundary. (Runtime target-scoping — e.g. per-app_id — is a future extension; today the permission is a single scope-free string.)
 - **Static target binding**: FeishuAppProxy's `target` string is resolved once at session spawn (substitution happens in `SessionRouter.create_session/2`) and stored in `proxy_ctx`. Runtime forward is either a direct `send/cast` to a stored PID or a pool-acquire operation against a supervisor named in `proxy_ctx`. Arbitrary runtime lookups against SessionRegistry (or any other registry) on the hot path are disallowed. Two narrow exceptions — pool-acquire for voice peers (§4.1 VoiceASRProxy/VoiceTTSProxy) and the slash-handler fallback lookup (§5.3) — are documented where they appear.
 - **Missing-target handling**: if `target` resolves to a dead PID, the forward returns `{:drop, :target_unavailable}` and the owning Session gets a monitor DOWN notification. SessionRouter decides whether to rebuild or tear down the Session.
 
@@ -1066,7 +1066,7 @@ Every PR **must** pass the gates in its column before it can be merged. Gates ar
 - AdminSession boot test: `Supervisor.which_children/1` returns expected set (FeishuAppAdapter, SlashHandler, VoiceASRPool, VoiceTTSPool)
 - FeishuAppAdapter inbound test: fake WS frame → envelope decoded → `SessionRegistry.lookup_by_chat_thread/2` called → correct FeishuChatProxy pid receives message
 - FeishuChatProxy slash detection test: inbound with leading `/` → forwards to SlashHandler; without `/` → forwards downstream
-- FeishuAppProxy capability-check test: principal missing `cap.peer_proxy.forward(...)` → `{:drop, :unauthorized}`; with cap → forward succeeds
+- FeishuAppProxy capability-check test: principal missing `peer_proxy:feishu/forward` → `{:drop, :cap_denied}`; with cap → forward succeeds
 - Session supervisor boot test: spawn `{Session, [id, agent_def, params]}` → supervision tree matches `agents.yaml` declaration
 - **N=2 concurrent sessions test** (covers Risk D): create two sessions (different chat_ids), send message to session A, assert session B's FeishuChatProxy mailbox is untouched
 - E2E smoke: `/new-session --agent cc --dir /tmp/test` via simulated Feishu → Session created → tree shape correct

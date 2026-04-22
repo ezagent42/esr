@@ -1,12 +1,15 @@
 # N=2 test fixture — two agents, each referencing a different Feishu app_id
 # via ${app_id} template. Spec §3.5.
+#
+# Capability names use the canonical prefix:name/perm form required by
+# Esr.Capabilities.Grants.matches?/2 (see docs/notes/capability-name-format-mismatch.md).
 
 agents:
   cc:
     description: "Claude Code for multi-app tests"
     capabilities_required:
-      - cap.session.create
-      - cap.peer_proxy.forward_feishu
+      - session:default/create
+      - peer_proxy:feishu/forward
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -28,8 +31,8 @@ agents:
   cc-echo:
     description: "Echo variant, same pipeline"
     capabilities_required:
-      - cap.session.create
-      - cap.peer_proxy.forward_feishu
+      - session:default/create
+      - peer_proxy:feishu/forward
     pipeline:
       inbound:
         - name: feishu_chat_proxy

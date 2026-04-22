@@ -16,7 +16,7 @@ defmodule Esr.Peers.FeishuAppProxy do
   Spec §3.6, §4.1 FeishuAppProxy card.
   """
   use Esr.Peer.Proxy
-  @required_cap "cap.peer_proxy.forward_feishu"
+  @required_cap "peer_proxy:feishu/forward"
 
   @impl Esr.Peer.Proxy
   def forward(msg, %{target_pid: target} = _ctx) when is_pid(target) do

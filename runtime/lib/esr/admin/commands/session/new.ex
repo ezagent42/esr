@@ -1,229 +1,100 @@
 defmodule Esr.Admin.Commands.Session.New do
   @moduledoc """
-  `Esr.Admin.Commands.Session.New` — spawns an ephemeral esrd for a new
-  branch worktree and registers it in the routing/branches state
-  (dev-prod-isolation spec §6.4 Session.New bullet, plan DI-10 Task 20).
+  `Esr.Admin.Commands.Session.New` — the consolidated agent-session
+  command (spec D15 collapse). Creates an agent-backed Session under
+  `Esr.SessionsSupervisor` from an `agents.yaml` definition.
 
-  Called by `Esr.Admin.Dispatcher` inside `Task.start` when a
-  `session_new`-kind command reaches the front of the queue. The
-  Dispatcher already puts us in a Task, so blocking `System.cmd/3` on
-  `scripts/esr-branch.sh` is fine — we're not holding up the Dispatcher
-  GenServer.
+  Dispatcher kind: `session_new`. The legacy branch-worktree command
+  lives in `Esr.Admin.Commands.Session.BranchNew` (kind
+  `session_branch_new`) after PR-3 P3-8.
 
   ## Flow
 
-    1. Shell `scripts/esr-branch.sh new <branch>` via `System.cmd/3`.
-    2. Parse the single-line JSON stdout (contract documented in
-       `scripts/esr-branch.sh` header).
-    3. On `ok:true`: append an entry to `branches.yaml` (under
-       `branches.<sanitized_branch>`) via `Esr.Yaml.Writer` and update
-       `routing.yaml` for the submitter — set
-       `principals[submitted_by].active = <branch>` and add a target
-       entry with the canonical `esrd_url`
-       (`ws://127.0.0.1:<port>/adapter_hub/socket/websocket?vsn=2.0.0`)
-       and `cc_session_id` (`<submitted_by>-<branch>`).
-    4. On `ok:false`: propagate as `branch_spawn_failed`.
+    1. Validate `args.agent` present (D11) and `args.dir` present (D13).
+    2. Resolve the agent definition via `Esr.SessionRegistry.agent_def/1`.
+    3. Batch-verify `capabilities_required` (D18) via
+       `Esr.Capabilities.has_all?/2` — returns every missing cap at once
+       so the operator can see the full gap in a single reply.
+    4. Call `Esr.SessionsSupervisor.start_session/1` with the agent def
+       encoded in `metadata.agent_def`.
+    5. Return `{:ok, %{"session_id" => sid, "agent" => agent}}` on
+       success, or a structured error otherwise.
 
-  ## Result
+  The `Grants.matches?/2` contract requires permissions in the canonical
+  `prefix:name/perm` shape (see `docs/notes/capability-name-format-mismatch.md`);
+  agents.yaml fixtures + spec examples were canonicalized in P3-8.4.
 
-    * `{:ok, %{"branch" => name, "port" => port, "worktree_path" => path}}`
-    * `{:error, %{"type" => "invalid_args", ...}}` — malformed command.
-    * `{:error, %{"type" => "branch_spawn_failed", "details" => msg}}` —
-      script failed or JSON was unparseable.
-
-  ## Test injection
-
-  `execute/2` takes an `opts` keyword where `:spawn_fn` is a 1-arity
-  function receiving `{args :: [String.t()]}` and returning
-  `{stdout :: String.t(), exit :: integer()}` — the same shape
-  `System.cmd/3` returns. Tests pass a stub; production calls
-  `execute/1` which uses the real `System.cmd/3`. Mirrors the
-  `:spawn_fn` pattern in `Esr.Admin.Commands.RegisterAdapter`.
+  PR-3 wires the real pipeline spawn via `SessionRouter.create_session/2`.
+  In PR-2 the session start succeeds only when the agent_def has no
+  pipeline peers that require missing modules (CCProcess/CCProxy/…);
+  otherwise a controlled failure is expected (see P2-13).
   """
 
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
-  def execute(cmd), do: execute(cmd, [])
+  def execute(%{"submitted_by" => submitter, "args" => args})
+      when is_binary(submitter) and is_map(args) do
+    agent = args["agent"]
+    dir = args["dir"]
 
-  @spec execute(map(), keyword()) :: result()
-  def execute(%{"submitted_by" => submitter, "args" => %{"branch" => branch_raw} = args}, opts)
-      when is_binary(submitter) and is_binary(branch_raw) and branch_raw != "" do
-    script_args = build_script_args(branch_raw, args)
-
-    case call_script(script_args, opts) do
-      {:ok, json_map} ->
-        persist_and_reply(json_map, submitter)
-
-      {:error, _} = err ->
-        err
+    with :ok <- validate_args(agent, dir),
+         {:ok, agent_def} <- fetch_agent(agent),
+         :ok <- verify_caps(submitter, agent_def.capabilities_required),
+         {:ok, sid} <- start_session(agent, agent_def, dir, submitter) do
+      {:ok, %{"session_id" => sid, "agent" => agent}}
     end
   end
 
-  def execute(_cmd, _opts) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "session_new requires submitted_by and args.branch (non-empty string)"
-     }}
-  end
+  def execute(_),
+    do:
+      {:error,
+       %{"type" => "invalid_args", "message" => "submitted_by + args required"}}
 
-  # ------------------------------------------------------------------
-  # Script invocation
-  # ------------------------------------------------------------------
+  defp validate_args(nil, _),
+    do: {:error, %{"type" => "invalid_args", "message" => "agent required"}}
 
-  # Builds the argv for esr-branch.sh. The optional --worktree-base flag
-  # lets callers override the default `.claude/worktrees` (mostly for
-  # tests, but also exposed for operators who want a different layout).
-  defp build_script_args(branch_raw, args) do
-    base_flag =
-      case args["worktree_base"] do
-        nil -> []
-        "" -> []
-        v when is_binary(v) -> ["--worktree-base=#{v}"]
-        _ -> []
-      end
+  defp validate_args(_, nil),
+    do: {:error, %{"type" => "invalid_args", "message" => "dir required"}}
 
-    ["new", branch_raw | base_flag]
-  end
+  defp validate_args(_, _), do: :ok
 
-  # Invokes the script (or the injected stub) and parses JSON. Missing /
-  # malformed output is classified as branch_spawn_failed so the operator
-  # sees one stable error type regardless of script failure mode.
-  defp call_script(script_args, opts) do
-    spawn_fn =
-      Keyword.get(opts, :spawn_fn, fn {argv} ->
-        System.cmd(script_path(), argv, stderr_to_stdout: true)
-      end)
-
-    {output, exit_status} = spawn_fn.({script_args})
-
-    case Jason.decode(output) do
-      {:ok, %{"ok" => true} = m} when exit_status == 0 ->
-        {:ok, m}
-
-      {:ok, %{"ok" => false, "error" => msg}} ->
-        {:error, %{"type" => "branch_spawn_failed", "details" => to_string(msg)}}
-
-      {:ok, other} ->
-        {:error,
-         %{"type" => "branch_spawn_failed", "details" => "unexpected script payload: " <> inspect(other)}}
-
-      {:error, %Jason.DecodeError{} = err} ->
-        {:error,
-         %{
-           "type" => "branch_spawn_failed",
-           "details" => "malformed JSON stdout: " <> Exception.message(err)
-         }}
+  defp fetch_agent(name) do
+    case Esr.SessionRegistry.agent_def(name) do
+      {:ok, d} -> {:ok, d}
+      {:error, :not_found} -> {:error, %{"type" => "unknown_agent", "agent" => name}}
     end
   end
 
-  # Resolves the on-disk path to scripts/esr-branch.sh by walking up from
-  # the runtime app priv dir to the repo root. Relies on the repo layout
-  # having `scripts/` at the top level (true for ESR as of v0.2).
-  defp script_path do
-    repo_root =
-      :esr
-      |> Application.app_dir()
-      |> Path.join("../../../..")
-      |> Path.expand()
+  # Batch-verifies every permission in one shot via has_all?/2 so the
+  # error payload enumerates the full gap (not just the first miss).
+  # Returns the Session.New structured error shape, which SlashHandler's
+  # format_result/1 clause for {:error, %{"type" => "missing_capabilities"}}
+  # renders for the user.
+  defp verify_caps(submitter, caps) when is_list(caps) do
+    case Esr.Capabilities.has_all?(submitter, caps) do
+      :ok ->
+        :ok
 
-    Path.join([repo_root, "scripts", "esr-branch.sh"])
-  end
-
-  # ------------------------------------------------------------------
-  # YAML persistence
-  # ------------------------------------------------------------------
-
-  defp persist_and_reply(%{"branch" => branch, "port" => port} = json, submitter)
-       when is_binary(branch) and is_integer(port) do
-    worktree = json["worktree_path"] || ""
-    esrd_home = json["esrd_home"] || ""
-    kind = json["kind"] || "ephemeral"
-
-    with :ok <- append_branches_yaml(branch, port, worktree, esrd_home, kind),
-         :ok <- upsert_routing_yaml(submitter, branch, port) do
-      {:ok,
-       %{
-         "branch" => branch,
-         "port" => port,
-         "worktree_path" => worktree
-       }}
-    else
-      {:error, reason} ->
-        {:error,
-         %{"type" => "branch_spawn_failed", "details" => "yaml persist failed: " <> inspect(reason)}}
+      {:missing, missing} ->
+        {:error, %{"type" => "missing_capabilities", "caps" => missing}}
     end
   end
 
-  defp persist_and_reply(other, _submitter) do
-    {:error,
-     %{
-       "type" => "branch_spawn_failed",
-       "details" => "script payload missing branch/port: " <> inspect(other)
-     }}
+  defp verify_caps(_submitter, _other), do: :ok
+
+  defp start_session(agent, agent_def, dir, submitter) do
+    sid = :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
+
+    case Esr.SessionsSupervisor.start_session(%{
+           session_id: sid,
+           agent_name: agent,
+           dir: dir,
+           chat_thread_key: %{chat_id: "pending", thread_id: "pending"},
+           metadata: %{principal_id: submitter, agent_def: agent_def}
+         }) do
+      {:ok, _sup} -> {:ok, sid}
+      {:error, reason} -> {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
+    end
   end
-
-  defp append_branches_yaml(branch, port, worktree, esrd_home, kind) do
-    path = branches_yaml_path()
-
-    current =
-      case YamlElixir.read_from_file(path) do
-        {:ok, %{} = m} -> m
-        _ -> %{"branches" => %{}}
-      end
-
-    branches = Map.get(current, "branches") || %{}
-
-    entry = %{
-      "esrd_home" => esrd_home,
-      "worktree_path" => worktree,
-      "port" => port,
-      "spawned_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "status" => "running",
-      "kind" => kind
-    }
-
-    updated = Map.put(current, "branches", Map.put(branches, branch, entry))
-    Esr.Yaml.Writer.write(path, updated)
-  end
-
-  defp upsert_routing_yaml(submitter, branch, port) do
-    path = routing_yaml_path()
-
-    current =
-      case YamlElixir.read_from_file(path) do
-        {:ok, %{} = m} -> m
-        _ -> %{"principals" => %{}}
-      end
-
-    principals = Map.get(current, "principals") || %{}
-    existing = Map.get(principals, submitter) || %{}
-    existing_targets = Map.get(existing, "targets") || %{}
-
-    target = %{
-      "esrd_url" =>
-        "ws://127.0.0.1:" <> Integer.to_string(port) <> "/adapter_hub/socket/websocket?vsn=2.0.0",
-      "cc_session_id" => submitter <> "-" <> branch,
-      "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-
-    updated_principal =
-      existing
-      |> Map.put("active", branch)
-      |> Map.put("targets", Map.put(existing_targets, branch, target))
-
-    updated =
-      Map.put(current, "principals", Map.put(principals, submitter, updated_principal))
-
-    Esr.Yaml.Writer.write(path, updated)
-  end
-
-  # ------------------------------------------------------------------
-  # Path helpers — delegate to Esr.Paths when available, otherwise
-  # compose from runtime_home (the only thing guaranteed to exist).
-  # ------------------------------------------------------------------
-
-  defp branches_yaml_path, do: Path.join(Esr.Paths.runtime_home(), "branches.yaml")
-  defp routing_yaml_path, do: Path.join(Esr.Paths.runtime_home(), "routing.yaml")
 end

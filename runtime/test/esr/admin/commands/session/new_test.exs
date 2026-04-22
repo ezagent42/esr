@@ -1,198 +1,171 @@
 defmodule Esr.Admin.Commands.Session.NewTest do
   @moduledoc """
-  DI-10 Task 20 — `Esr.Admin.Commands.Session.New` shells out to
-  `scripts/esr-branch.sh new <branch>` via `System.cmd/3` (already
-  running inside a Task spawned by the Dispatcher, so blocking is OK),
-  parses the single-line JSON stdout, appends the new entry to
-  `branches.yaml`, and updates `routing.yaml` so the submitter has a
-  `targets[branch]` + `active = branch`.
+  P3-8.6 — `Esr.Admin.Commands.Session.New` is the consolidated
+  agent-session command (dispatcher kind `session_new`) after the D15
+  collapse. Formerly `Session.AgentNew`; the branch-worktree command
+  moved to `Session.BranchNew`.
 
-  ## System.cmd mocking
+  These tests cover:
 
-  `execute/2` accepts an `opts` keyword where `:spawn_fn` is a 1-arity
-  function receiving `{args :: [String.t()]}` and returning
-  `{output :: String.t(), exit_status :: integer()}` — the same shape
-  `System.cmd/3` returns. Tests pass a stub; production calls
-  `execute/1` which uses the real `System.cmd/3`. Same split pattern as
-  `Esr.Admin.Commands.RegisterAdapter.execute/2`.
+    * arg validation (D11: agent required; D13: dir required)
+    * agent resolution via `Esr.SessionRegistry.agent_def/1`
+    * `capabilities_required` verification (D18) via the new
+      `Esr.Capabilities.has_all?/2` helper — full coverage, total miss,
+      partial miss
+    * happy path: Session actually spawned under `SessionsSupervisor`
+      with the submitter recorded in `metadata.principal_id`
   """
-
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Commands.Session.New, as: SessionNew
+  alias Esr.Capabilities.Grants
 
   setup do
-    unique = System.unique_integer([:positive])
-    tmp = Path.join(System.tmp_dir!(), "admin_sessnew_#{unique}")
-    File.mkdir_p!(Path.join(tmp, "default"))
+    # App-level singletons (booted by Esr.Application).
+    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
+    assert is_pid(Process.whereis(Grants))
 
-    prev_home = System.get_env("ESRD_HOME")
-    System.put_env("ESRD_HOME", tmp)
+    :ok =
+      Esr.SessionRegistry.load_agents(
+        Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
+      )
+
+    # Snapshot + restore grants so tests don't bleed into siblings.
+    prior =
+      try do
+        :ets.tab2list(:esr_capabilities_grants) |> Map.new()
+      rescue
+        _ -> %{}
+      end
 
     on_exit(fn ->
-      if prev_home,
-        do: System.put_env("ESRD_HOME", prev_home),
-        else: System.delete_env("ESRD_HOME")
+      Grants.load_snapshot(prior)
 
-      File.rm_rf!(tmp)
+      # Clean up any sessions we spawned.
+      case Process.whereis(Esr.SessionsSupervisor) do
+        nil ->
+          :ok
+
+        pid ->
+          for {_, child, _, _} <- DynamicSupervisor.which_children(pid) do
+            if is_pid(child), do: DynamicSupervisor.terminate_child(pid, child)
+          end
+      end
     end)
 
-    {:ok, tmp: tmp}
+    :ok
   end
 
-  describe "execute/2 happy path" do
-    test "spawns script, writes branches.yaml + routing.yaml, returns ok", %{tmp: tmp} do
-      parent = self()
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature/foo"}
-      }
-
-      stub = fn {args} ->
-        send(parent, {:spawned, args})
-
-        json = ~s({"ok":true,"branch":"feature-foo","branch_raw":"feature/foo",) <>
-                 ~s("port":54399,"worktree_path":"/tmp/wt/feature-foo",) <>
-                 ~s("esrd_home":"/tmp/esrd-feature-foo"})
-
-        {json <> "\n", 0}
-      end
-
-      assert {:ok, %{"branch" => "feature-foo", "port" => 54399, "worktree_path" => "/tmp/wt/feature-foo"}} =
-               SessionNew.execute(cmd, spawn_fn: stub)
-
-      # spawn_fn saw `["new", "feature/foo", ...]`
-      assert_received {:spawned, args}
-      assert ["new", "feature/foo" | _] = args
-
-      # branches.yaml now has the entry.
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-      assert File.exists?(branches_path)
-      {:ok, branches} = YamlElixir.read_from_file(branches_path)
-
-      assert %{
-               "branches" => %{
-                 "feature-foo" => %{
-                   "esrd_home" => "/tmp/esrd-feature-foo",
-                   "worktree_path" => "/tmp/wt/feature-foo",
-                   "port" => 54399,
-                   "status" => "running"
-                 }
-               }
-             } = branches
-
-      # routing.yaml now has ou_alice.active = feature-foo and the
-      # target entry with canonical esrd_url format.
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
-      assert File.exists?(routing_path)
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-
-      assert routing["principals"]["ou_alice"]["active"] == "feature-foo"
-      target = routing["principals"]["ou_alice"]["targets"]["feature-foo"]
-      assert target["esrd_url"] == "ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0"
-      assert target["cc_session_id"] == "ou_alice-feature-foo"
+  describe "execute/1 arg validation" do
+    test "missing agent → invalid_args" do
+      cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
+      assert {:error, %{"type" => "invalid_args", "message" => msg}} = SessionNew.execute(cmd)
+      assert msg =~ "agent"
     end
 
-    test "merges into existing branches.yaml without clobbering prior entries", %{tmp: tmp} do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        dev:
-          esrd_home: /Users/alice/.esrd-dev
-          port: 54321
-          status: running
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature/bar"}
-      }
-
-      stub = fn {_args} ->
-        json = ~s({"ok":true,"branch":"feature-bar","branch_raw":"feature/bar",) <>
-                 ~s("port":54400,"worktree_path":"/tmp/wt/feature-bar",) <>
-                 ~s("esrd_home":"/tmp/esrd-feature-bar"})
-
-        {json <> "\n", 0}
-      end
-
-      assert {:ok, %{"branch" => "feature-bar"}} = SessionNew.execute(cmd, spawn_fn: stub)
-
-      {:ok, branches} = YamlElixir.read_from_file(branches_path)
-
-      assert Map.has_key?(branches["branches"], "dev")
-      assert Map.has_key?(branches["branches"], "feature-bar")
-      assert branches["branches"]["dev"]["port"] == 54321
-      assert branches["branches"]["feature-bar"]["port"] == 54400
+    test "missing dir → invalid_args" do
+      cmd = %{"submitted_by" => "ou_alice", "args" => %{"agent" => "cc"}}
+      assert {:error, %{"type" => "invalid_args", "message" => msg}} = SessionNew.execute(cmd)
+      assert msg =~ "dir"
     end
 
-    test "merges into existing routing.yaml — preserves other principals", %{tmp: tmp} do
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
-
-      File.write!(routing_path, """
-      principals:
-        ou_bob:
-          active: dev
-          targets:
-            dev:
-              esrd_url: ws://127.0.0.1:54321/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_bob-dev
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature/baz"}
-      }
-
-      stub = fn {_args} ->
-        json = ~s({"ok":true,"branch":"feature-baz","branch_raw":"feature/baz",) <>
-                 ~s("port":54500,"worktree_path":"/tmp/wt/feature-baz",) <>
-                 ~s("esrd_home":"/tmp/esrd-feature-baz"})
-
-        {json <> "\n", 0}
-      end
-
-      assert {:ok, _} = SessionNew.execute(cmd, spawn_fn: stub)
-
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-
-      assert Map.has_key?(routing["principals"], "ou_bob")
-      assert Map.has_key?(routing["principals"], "ou_alice")
-      assert routing["principals"]["ou_bob"]["active"] == "dev"
-      assert routing["principals"]["ou_alice"]["active"] == "feature-baz"
+    test "malformed command (no args) → invalid_args" do
+      assert {:error, %{"type" => "invalid_args"}} = SessionNew.execute(%{})
     end
   end
 
-  describe "execute/2 error paths" do
-    test "script exits non-zero with ok:false → branch_spawn_failed" do
-      cmd = %{"submitted_by" => "ou_alice", "args" => %{"branch" => "bad/branch"}}
+  describe "execute/1 agent resolution" do
+    test "unknown agent → unknown_agent error" do
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
-      stub = fn {_args} ->
-        {~s({"ok":false,"error":"git worktree add failed"}\n), 1}
-      end
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"agent" => "does-not-exist", "dir" => "/tmp/x"}
+      }
 
-      assert {:error, %{"type" => "branch_spawn_failed", "details" => "git worktree add failed"}} =
-               SessionNew.execute(cmd, spawn_fn: stub)
+      assert {:error, %{"type" => "unknown_agent", "agent" => "does-not-exist"}} =
+               SessionNew.execute(cmd)
+    end
+  end
+
+  describe "execute/1 capabilities_required verification (D18)" do
+    test "principal with every required cap → session created" do
+      Grants.load_snapshot(%{
+        "ou_alice" => [
+          "session:default/create",
+          "tmux:default/spawn",
+          "handler:cc_adapter_runner/invoke"
+        ]
+      })
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
+      }
+
+      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} = SessionNew.execute(cmd)
+      assert is_binary(sid)
+
+      # SessionProcess is actually up, with the submitter recorded.
+      state = Esr.SessionProcess.state(sid)
+      assert state.agent_name == "cc"
+      assert state.metadata.principal_id == "ou_alice"
     end
 
-    test "invalid args (missing branch) → invalid_args" do
-      cmd = %{"submitted_by" => "ou_alice", "args" => %{}}
+    test "principal missing ALL caps → missing_capabilities, Session NOT created" do
+      Grants.load_snapshot(%{"ou_bob" => []})
 
-      stub = fn {_args} -> flunk("spawn should not be called") end
+      before_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active
 
-      assert {:error, %{"type" => "invalid_args"}} =
-               SessionNew.execute(cmd, spawn_fn: stub)
+      cmd = %{
+        "submitted_by" => "ou_bob",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
+      }
+
+      assert {:error, %{"type" => "missing_capabilities", "caps" => missing}} =
+               SessionNew.execute(cmd)
+
+      # simple.yaml's cc agent declares the full canonical set.
+      assert Enum.sort(missing) == [
+               "handler:cc_adapter_runner/invoke",
+               "session:default/create",
+               "tmux:default/spawn"
+             ]
+
+      after_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active
+      assert after_count == before_count, "no new Session should have been created"
     end
 
-    test "malformed JSON stdout → branch_spawn_failed" do
-      cmd = %{"submitted_by" => "ou_alice", "args" => %{"branch" => "x"}}
+    test "principal with PARTIAL caps → missing_capabilities lists only the gap" do
+      # Has session:default/create + tmux:default/spawn but NOT handler/invoke.
+      Grants.load_snapshot(%{
+        "ou_carol" => ["session:default/create", "tmux:default/spawn"]
+      })
 
-      stub = fn {_args} -> {"not json\n", 0} end
+      before_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active
 
-      assert {:error, %{"type" => "branch_spawn_failed"}} =
-               SessionNew.execute(cmd, spawn_fn: stub)
+      cmd = %{
+        "submitted_by" => "ou_carol",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
+      }
+
+      assert {:error, %{"type" => "missing_capabilities", "caps" => ["handler:cc_adapter_runner/invoke"]}} =
+               SessionNew.execute(cmd)
+
+      after_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active
+      assert after_count == before_count, "no new Session should have been created"
+    end
+
+    test "wildcard grant is accepted for every declared cap" do
+      Grants.load_snapshot(%{"ou_wild" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_wild",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
+      }
+
+      assert {:ok, %{"session_id" => _sid}} = SessionNew.execute(cmd)
     end
   end
 end

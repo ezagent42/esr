@@ -17,8 +17,10 @@ defmodule Esr.Peers.SlashHandler do
   definition in
   `docs/superpowers/specs/2026-04-22-peer-session-refactor-design.md`.
 
-  Introduces a new admin command kind `session_agent_new` (distinct from
-  legacy `session_new` which spawns worktrees). PR-3 collapses these.
+  Emits admin command kind `session_new` (agent-session create). PR-3
+  P3-8 collapsed the legacy `session_new` (branch-worktree) into
+  `session_branch_new` and promoted the former `session_agent_new` to
+  `session_new`.
 
   Spec §4.1 SlashHandler card, §5.3, §1.8 D14.
   """
@@ -142,7 +144,7 @@ defmodule Esr.Peers.SlashHandler do
          "/new-session requires --dir (agent '#{agent}' declares dir required)"}
 
       true ->
-        {:ok, "session_agent_new", %{"agent" => agent, "dir" => dir}}
+        {:ok, "session_new", %{"agent" => agent, "dir" => dir}}
     end
   end
 
@@ -168,7 +170,10 @@ defmodule Esr.Peers.SlashHandler do
 
   defp format_result({:ok, %{} = m}), do: "ok: " <> inspect(m)
 
-  defp format_result({:error, %{"type" => :missing_capabilities, "caps" => caps}}),
+  # P3-8: Session.New emits string "missing_capabilities" (not atom); match
+  # accordingly. Pre-P3-8 the clause matched :missing_capabilities and never
+  # fired (see integration/new_session_smoke_test.exs module doc).
+  defp format_result({:error, %{"type" => "missing_capabilities", "caps" => caps}}),
     do: "error: missing caps — " <> Enum.join(caps, ", ")
 
   defp format_result({:error, %{"type" => t}}) when is_binary(t),

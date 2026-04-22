@@ -14,7 +14,7 @@ defmodule Esr.SessionRegistryTest do
 
     assert {:ok, agent_def} = Esr.SessionRegistry.agent_def("cc")
     assert agent_def.description == "Claude Code"
-    assert "cap.session.create" in agent_def.capabilities_required
+    assert "session:default/create" in agent_def.capabilities_required
     assert length(agent_def.pipeline.inbound) == 2
   end
 

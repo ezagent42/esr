@@ -2,8 +2,9 @@ agents:
   cc:
     description: "Claude Code"
     capabilities_required:
-      - cap.session.create
-      - cap.tmux.spawn
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:
         - name: feishu_chat_proxy
