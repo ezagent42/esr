@@ -147,15 +147,8 @@ defmodule Esr.Topology.InstantiatorTest do
     assert a == b
   end
 
-  test "adapter binding: node with adapter creates AdapterHub topic binding" do
-    {:ok, _handle} = Instantiator.instantiate(artifact_chain(), %{"thread_id" => "qux"})
-
-    # The tmux node declares adapter="cc_tmux" and has id tmux:qux.
-    # Binding topic is adapter:<adapter_name>/<node_id>; v0.1 simplifies to
-    # adapter:<adapter_name> with the node_id as actor_id.
-    assert {:ok, actor_id} =
-             Esr.AdapterHub.Registry.lookup("adapter:cc_tmux/tmux:qux")
-
-    assert actor_id == "tmux:qux"
-  end
+  # (P2-16) "adapter binding" test removed — Esr.AdapterHub.Registry
+  # deleted. Instantiator no longer binds adapter topics; the role is
+  # subsumed by Esr.SessionRegistry in the new peer chain. PR-3
+  # removes this module entirely, at which point this test file goes.
 end

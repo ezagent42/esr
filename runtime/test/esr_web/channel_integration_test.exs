@@ -5,15 +5,11 @@ defmodule EsrWeb.ChannelIntegrationTest do
   alias Esr.TestSupport.AuthContext
 
   setup do
-    # Guarantee emit_topic_for("feishu", ...) resolves to OUR test topic by
-    # clearing any feishu-adapter bindings left by earlier tests in the
-    # shared HubRegistry ETS.
-    for {topic, _actor_id} <- Esr.AdapterHub.Registry.list() do
-      if String.starts_with?(topic, "adapter:feishu/") do
-        :ok = Esr.AdapterHub.Registry.unbind(topic)
-      end
-    end
-
+    # Post-P2-16: emit_topic_for/2 dropped its AdapterHub.Registry
+    # lookup — it now returns the deterministic "adapter:<name>/<actor>"
+    # shape, so tests just subscribe to that exact topic (no registry
+    # bind/unbind dance required).
+    #
     # CAP-4 Lane B: tool_invoke checks the caller's grants. The MCP
     # channel defaults to ESR_BOOTSTRAP_PRINCIPAL_ID when no
     # session_register lands — grant that principal admin so existing
@@ -42,14 +38,11 @@ defmodule EsrWeb.ChannelIntegrationTest do
          ]}
       )
 
-    # Bind a feishu adapter topic so emit_topic_for("feishu", ...) resolves
-    # to a real Phoenix topic we can subscribe to.
-    unique_suffix = Integer.to_string(System.unique_integer([:positive]))
-    adapter_topic = "adapter:feishu/feishu-app:cli_int_" <> unique_suffix
-    :ok = Esr.AdapterHub.Registry.bind(adapter_topic, actor_id)
-
-    # Subscribe the test process to that adapter topic via Endpoint so we
-    # receive %Phoenix.Socket.Broadcast{} when emit_and_track broadcasts.
+    # Post-P2-16: emit_topic_for("feishu", actor_id) deterministically
+    # returns "adapter:feishu/<actor_id>" (no more HubRegistry fan-out).
+    # Subscribe to exactly that topic so emit_and_track's broadcast
+    # lands on our mailbox as a %Phoenix.Socket.Broadcast{}.
+    adapter_topic = "adapter:feishu/" <> actor_id
     EsrWeb.Endpoint.subscribe(adapter_topic)
 
     # Join the MCP side — ChannelChannel.join registers the session.

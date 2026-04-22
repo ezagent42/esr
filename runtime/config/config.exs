@@ -13,11 +13,12 @@ config :esr,
   handler_call_timeout_ms: 5_000,
   directive_timeout_ms: 30_000,
   # PR-2 Peer/Session refactor feature flag. When `true`, inbound Feishu
-  # frames go through `Esr.Peers.FeishuAppAdapter` (per-app_id consumer)
-  # instead of the legacy `AdapterHub.Registry → PeerRegistry` path in
-  # `EsrWeb.AdapterChannel`. Default off in P2-10; flipped on in P2-14;
-  # removed entirely in P2-17. Override per-process via the
-  # `ESR_USE_NEW_PEER_CHAIN` env var (see `EsrWeb.AdapterChannel.new_peer_chain?/0`).
+  # frames go through `Esr.Peers.FeishuAppAdapter` (per-app_id consumer).
+  # When `false`, `EsrWeb.AdapterChannel.forward_legacy/2` logs + errors
+  # (post-P2-16 the legacy `AdapterHub.Registry → PeerRegistry` path was
+  # deleted). Default off in P2-10; flipped on in P2-14; removed entirely
+  # in P2-17. Override per-process via the `ESR_USE_NEW_PEER_CHAIN` env
+  # var (see `EsrWeb.AdapterChannel.new_peer_chain?/0`).
   use_new_peer_chain: true
 
 # Configures the endpoint

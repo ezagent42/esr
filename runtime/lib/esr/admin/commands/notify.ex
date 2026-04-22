@@ -7,23 +7,19 @@ defmodule Esr.Admin.Commands.Notify do
   `notify`-kind command reaches the front of the queue. Pure function
   module (no GenServer) so it can be spawned and discarded.
 
-  Routing: uses the existing `Esr.AdapterHub.Registry` — which maps
-  adapter Phoenix topics (shape `"adapter:<name>/<actor_id>"`) to their
-  owning actor_id — to find the first running Feishu adapter topic.
-  The pattern mirrors `peer_server.ex:640-646` where tool-originated
-  directives are routed to adapters: scan the registry for a topic
-  matching a prefix, then broadcast on it.
-
-  The broadcast goes on `EsrWeb.PubSub` (the single Phoenix.PubSub
-  started in `Esr.Application`). The design doc references this as
-  `Esr.PubSub` but the concrete registered name in the runtime is
-  `EsrWeb.PubSub` (see `application.ex:24`).
+  Routing (post-P2-16): iterates the admin-scope peers registered in
+  `Esr.AdminSessionProcess` and finds the first
+  `:feishu_app_adapter_<app_id>` entry. It broadcasts a `{:directive,
+  directive}` to `adapter:feishu/<app_id>` on `EsrWeb.PubSub` — the
+  Python Feishu adapter subprocess is subscribed there via
+  `EsrWeb.AdapterChannel`. This replaces the pre-P2-16 lookup through
+  the now-deleted `Esr.AdapterHub.Registry`.
 
   Result shape:
     * `{:ok, %{"delivered_at" => <iso8601>}}` on successful broadcast.
-    * `{:error, %{"type" => "no_feishu_adapter"}}` when the registry
-      has no `adapter:feishu/...` binding — callers surface this as a
-      failed command without retry (operator action required).
+    * `{:error, %{"type" => "no_feishu_adapter"}}` when no Feishu
+      adapter is registered — callers surface this as a failed command
+      without retry (operator action required).
   """
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -55,14 +51,27 @@ defmodule Esr.Admin.Commands.Notify do
     {:error, %{"type" => "invalid_args", "message" => "notify requires args.to and args.text"}}
   end
 
-  # Find the first `adapter:feishu/...` topic in `AdapterHub.Registry.list/0`.
-  # The registry entry shape is `{topic, actor_id}` — we ignore the
-  # actor_id here because the broadcast targets the topic directly.
+  # Find the first `adapter:feishu/<app_id>` topic by iterating the
+  # AdminSessionProcess admin-peer map (post-P2-16 replacement for
+  # `Esr.AdapterHub.Registry.list/0`). Admin-peer names are atoms of
+  # the form `:feishu_app_adapter_<app_id>`.
   @spec find_feishu_topic() :: {:ok, String.t()} | :error
   defp find_feishu_topic do
-    Esr.AdapterHub.Registry.list()
-    |> Enum.find_value(:error, fn {topic, _actor_id} ->
-      if String.starts_with?(topic, "adapter:feishu/"), do: {:ok, topic}, else: nil
-    end)
+    case Process.whereis(Esr.AdminSessionProcess) do
+      nil ->
+        :error
+
+      _pid ->
+        Esr.AdminSessionProcess.list_admin_peers()
+        |> Enum.find_value(:error, fn {name, _pid} ->
+          case Atom.to_string(name) do
+            "feishu_app_adapter_" <> app_id ->
+              {:ok, "adapter:feishu/" <> app_id}
+
+            _ ->
+              nil
+          end
+        end)
+    end
   end
 end

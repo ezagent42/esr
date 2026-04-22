@@ -25,10 +25,20 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.CommandQueue.Watcher
-  alias Esr.AdapterHub.Registry, as: HubRegistry
+  alias Esr.AdminSessionProcess
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_watcher_test"
+
+  # Post-P2-16: register_fake_feishu_adapter/1 replaces the old
+  # HubRegistry.bind dance for Notify routing.
+  defp register_fake_feishu_adapter(app_id) do
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
+    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    topic = "adapter:feishu/#{app_id}"
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    topic
+  end
 
   setup do
     tmp =
@@ -84,9 +94,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
 
   test "on init, resubmits pending/*.yaml orphans to the Dispatcher",
        %{tmp: tmp, pending: pending, completed: completed} do
-    topic = "adapter:feishu/watcher_pending_#{System.unique_integer([:positive])}"
-    :ok = HubRegistry.bind(topic, "feishu-app:watcher-pending")
-    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    _topic = register_fake_feishu_adapter("watcher_pending_#{System.unique_integer([:positive])}")
 
     id = "01ARZWATCH#{System.unique_integer([:positive])}"
     orphan = Path.join(pending, "#{id}.yaml")

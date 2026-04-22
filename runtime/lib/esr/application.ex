@@ -80,7 +80,9 @@ defmodule Esr.Application do
       Esr.Routing.Supervisor,
 
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
-      Esr.AdapterHub.Supervisor,
+      # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
+      # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
+      # by Esr.SessionRegistry.lookup_by_chat_thread/2 in the new peer chain.
       Esr.HandlerRouter.Supervisor,
       Esr.Topology.Supervisor,
       Esr.Persistence.Supervisor,
@@ -179,7 +181,7 @@ defmodule Esr.Application do
   defp restore_feishu_app_session(app_id) do
     Task.start(fn ->
       # Small grace period for the Phoenix endpoint to be fully ready to
-      # receive the PeerSupervisor / AdapterHub bootstraps.
+      # receive the PeerSupervisor bootstraps.
       Process.sleep(2_000)
 
       case Esr.Topology.Registry.get_artifact("feishu-app-session") do

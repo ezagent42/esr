@@ -75,7 +75,12 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
              )
   end
 
-  test "adapter_channel uses legacy AdapterHub path when flag off" do
+  test "new_peer_chain?/0 returns false when flag is explicitly off" do
+    # Post-P2-16: the legacy AdapterHub.Registry path was deleted;
+    # `forward_legacy/2` now only logs + errors. The feature flag's
+    # meaningful off-state is tested by `adapter_channel_feature_flag_test.exs`;
+    # here we only assert that the flag read returns what the app env
+    # says. Removed entirely in P2-17.
     Application.put_env(:esr, :use_new_peer_chain, false)
     refute EsrWeb.AdapterChannel.new_peer_chain?()
   end

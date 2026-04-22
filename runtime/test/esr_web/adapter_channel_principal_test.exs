@@ -3,25 +3,40 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
   Capabilities spec §6.2/§6.3 (CAP-3 wiring) — inbound adapter events
   MUST carry ``principal_id``. The AdapterChannel rejects envelopes
   without one (catches mis-migrated adapters) and propagates both
-  ``principal_id`` + ``workspace_name`` into the
-  ``{:inbound_event, envelope}`` tuple forwarded to the bound
-  PeerServer.
+  ``principal_id`` + ``workspace_name`` onto the envelope that flows
+  into the peer chain.
+
+  Post-P2-16: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
+  was removed. These tests now exercise the new-chain path:
+  `adapter:feishu/<app_id>` topics route through
+  `AdminSessionProcess.admin_peer(:feishu_app_adapter_<app_id>)` → pid
+  which `send`s the envelope as `{:inbound_event, envelope}`. The test
+  registers the caller pid as a stand-in for that adapter, so
+  assertions ride on the caller's mailbox directly (no Dynamic-
+  Supervisor churn, no ordering races vs. `FeishuAppAdapterTest`).
+
+  Rejection happens at `handle_in("event", ...)` BEFORE the forward,
+  so rejection assertions do not depend on the downstream chain.
   """
 
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.AdapterHub.Registry, as: HubRegistry
-
   setup do
-    actor_id = "feishu_app_proxy.princ-#{System.unique_integer([:positive])}"
-    topic = "adapter:feishu-shared/princ-#{System.unique_integer([:positive])}"
+    # Pin the feature flag ON — a sibling test
+    # (`adapter_channel_new_chain_test.exs`) does
+    # `Application.delete_env(:esr, :use_new_peer_chain)` on exit, which
+    # leaves `new_peer_chain?/0` defaulting to `false` until P2-17.
+    Application.put_env(:esr, :use_new_peer_chain, true)
+    app_id = "princ_app_#{System.unique_integer([:positive])}"
+    topic = "adapter:feishu/#{app_id}"
+    sym = String.to_atom("feishu_app_adapter_#{app_id}")
 
-    {:ok, _} = Registry.register(Esr.PeerRegistry, actor_id, nil)
-    :ok = HubRegistry.bind(topic, actor_id)
+    # Register the caller pid as a stand-in FeishuAppAdapter — the
+    # AdminSessionProcess monitors the pid and auto-clears the entry
+    # on exit, so no on_exit cleanup is needed.
+    :ok = Esr.AdminSessionProcess.register_admin_peer(sym, self())
 
-    on_exit(fn -> HubRegistry.unbind(topic) end)
-
-    %{topic: topic, actor_id: actor_id}
+    %{topic: topic, app_id: app_id}
   end
 
   test "event with principal_id + workspace_name forwards both onto the envelope",
@@ -44,8 +59,8 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
     }
 
     push(socket, "event", envelope)
-    assert_receive {:inbound_event, received}, 500
 
+    assert_receive {:inbound_event, received}, 500
     assert received["principal_id"] == "ou_alice"
     assert received["workspace_name"] == "proj-a"
   end
@@ -65,6 +80,7 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
     }
 
     push(socket, "event", envelope)
+
     assert_receive {:inbound_event, received}, 500
     assert received["principal_id"] == "ou_alice"
     assert received["workspace_name"] == nil
@@ -84,7 +100,7 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
 
     assert_reply ref, :error, %{reason: reason}
     assert reason =~ "principal_id required"
-    # PeerServer must NOT have received anything
+    # The stand-in pid must NOT have received anything
     refute_receive {:inbound_event, _}, 100
   end
 

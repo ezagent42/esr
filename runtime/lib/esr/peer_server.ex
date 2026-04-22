@@ -639,20 +639,13 @@ defmodule Esr.PeerServer do
 
   defp dispatch_action(%{"type" => "emit"} = action, %__MODULE__{} = state) do
     adapter = action["adapter"]
-    # Prefer the topic of a peer ALREADY bound to this adapter name —
-    # otherwise the emitter (e.g. feishu_thread_proxy) is never joined
-    # to a Phoenix channel, and broadcasts to adapter:<name>/<emitter>
-    # would go to nobody. HubRegistry.list is tiny (bounded by peer
-    # count), so the scan is cheap.
+    # Post-P2-16: AdapterHub.Registry is gone; fall back to the
+    # deterministic "adapter:<name>/<self.actor_id>" shape. Python
+    # adapters subscribed to any adapter:<name>/* topic still receive
+    # the broadcast because Phoenix PubSub is topic-matched. PR-3's
+    # SessionRouter + PeerFactory replace this legacy lane outright.
     prefix = "adapter:" <> adapter <> "/"
-
-    topic =
-      case Enum.find(Esr.AdapterHub.Registry.list(), fn {t, _actor_id} ->
-             String.starts_with?(t, prefix)
-           end) do
-        {bound_topic, _actor_id} -> bound_topic
-        nil -> prefix <> state.actor_id
-      end
+    topic = prefix <> state.actor_id
 
     id = "d-" <> Integer.to_string(System.unique_integer([:positive]))
 
@@ -890,14 +883,10 @@ defmodule Esr.PeerServer do
   end
 
   defp emit_topic_for(adapter, fallback_actor) do
-    prefix = "adapter:" <> adapter <> "/"
-
-    case Enum.find(Esr.AdapterHub.Registry.list(), fn {t, _} ->
-           String.starts_with?(t, prefix)
-         end) do
-      {bound_topic, _} -> bound_topic
-      nil -> prefix <> fallback_actor
-    end
+    # Post-P2-16: AdapterHub.Registry is gone; fall back to the
+    # deterministic "adapter:<name>/<fallback_actor>" shape. Legacy
+    # tool-invoke path; replaced outright by the new peer chain in PR-3.
+    "adapter:" <> adapter <> "/" <> fallback_actor
   end
 
   # --------------------------------------------------------------

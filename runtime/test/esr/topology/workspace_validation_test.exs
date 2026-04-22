@@ -10,7 +10,13 @@ defmodule Esr.Topology.WorkspaceValidationTest do
     :ok
   end
 
+  @tag :skip
   test "instantiate rejects when workspace app_id is not in adapter registry" do
+    # (P2-16) Skipped — `validate_workspace_apps/1` was gutted when
+    # `Esr.AdapterHub.Registry` was deleted; there is no live-app-id
+    # source in PR-2 scope. PR-3's `SessionRouter` will re-introduce
+    # this validation against `SessionRegistry`, at which point this
+    # test is either rewritten or moved into the new module's suite.
     ws = %WsReg.Workspace{
       name: "esr-dev-#{System.unique_integer([:positive])}",
       cwd: "/tmp",

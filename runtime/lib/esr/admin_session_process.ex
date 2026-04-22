@@ -25,6 +25,14 @@ defmodule Esr.AdminSessionProcess do
   @doc "Return the slash_handler pid (convenience for the §5.3 fallback)."
   def slash_handler_ref, do: admin_peer(:slash_handler)
 
+  @doc """
+  Return `[{name, pid}, ...]` for all currently registered admin peers.
+  Used by legacy callers (e.g. `Esr.Admin.Commands.Notify`) that need
+  to iterate to find a matching peer — post-P2-16 replacement for
+  `Esr.AdapterHub.Registry.list/0`.
+  """
+  def list_admin_peers, do: GenServer.call(__MODULE__, :list_admin_peers)
+
   @impl true
   def init(_), do: {:ok, %{admin_peers: %{}}}
 
@@ -39,6 +47,10 @@ defmodule Esr.AdminSessionProcess do
       {:ok, pid} -> {:reply, {:ok, pid}, state}
       :error -> {:reply, :error, state}
     end
+  end
+
+  def handle_call(:list_admin_peers, _from, state) do
+    {:reply, Enum.to_list(state.admin_peers), state}
   end
 
   @impl true

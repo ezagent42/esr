@@ -3,21 +3,19 @@ defmodule EsrWeb.AdapterChannel do
   Phoenix.Channel handling one adapter topic — ``adapter:<name>/<instance_id>``.
   PRD 01 F09.
 
-  Routing:
-   - On join, the topic must already be bound to an actor_id via
-     `Esr.AdapterHub.Registry`. Unbound topics are rejected so the
-     adapter knows its instance wasn't registered correctly.
-   - Inbound ``event`` messages: look up the owning PeerServer via
-     AdapterHub.Registry → Esr.PeerRegistry and `send/2` the envelope
-     as ``{:inbound_event, envelope}``.
-   - Inbound ``directive_ack`` messages: route the same way, tagged
-     ``{:directive_ack, envelope}``. Correlation-by-id happens inside
-     the receiving PeerServer (F07).
+  Routing (post-P2-16):
+   - On join, the topic is accepted regardless of binding state; Python
+     adapter workers connect before the peer chain is up.
+   - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
+     are forwarded into the new peer chain via
+     `forward_to_new_chain/2` → `Esr.AdminSessionProcess.admin_peer/1`
+     → `Esr.Peers.FeishuAppAdapter`. Non-Feishu topics and other event
+     kinds fall into the legacy stub which logs + errors (P2-16 removed
+     `Esr.AdapterHub.Registry`; the stub goes entirely in P2-17 when
+     `USE_NEW_PEER_CHAIN` is retired).
   """
 
   use Phoenix.Channel
-
-  alias Esr.AdapterHub.Registry, as: HubRegistry
 
   @doc """
   Feature flag for the Peer/Session refactor (PR-2).
@@ -25,12 +23,13 @@ defmodule EsrWeb.AdapterChannel do
   Reads in this order:
     1. OS env var `ESR_USE_NEW_PEER_CHAIN` (`"1"`, `"true"`, `"TRUE"` → on;
        `"0"`, `"false"` → off; any other value → fall through)
-    2. Application env `:esr, :use_new_peer_chain` (defaults `false`)
+    2. Application env `:esr, :use_new_peer_chain` (defaults `true` after
+       P2-14)
 
   When `true`, inbound Feishu frames are forwarded through
   `Esr.Peers.FeishuAppAdapter` (wired in P2-11). When `false`, the legacy
-  `AdapterHub.Registry → PeerRegistry` path is used. Removed entirely in
-  P2-17 once the new path is the sole path.
+  stub logs + errors — post-P2-16 the `AdapterHub.Registry → PeerRegistry`
+  path is gone. The flag + stub are removed entirely in P2-17.
   """
   @spec new_peer_chain?() :: boolean()
   def new_peer_chain? do
@@ -143,17 +142,13 @@ defmodule EsrWeb.AdapterChannel do
 
   defp register_permissions(_other, _declared_by), do: :ok
 
-  # Resolve topic → actor_id → pid → send the tagged message. Replies
-  # :ok on success, :error with a reason when the binding or pid is
-  # gone so the adapter can react (retry / drop / log).
-  #
-  # When `new_peer_chain?/0` is on AND the topic is `adapter:feishu/<app_id>`,
+  # Resolve the inbound frame to the new peer chain. Post-P2-16 the
+  # legacy `AdapterHub.Registry → PeerRegistry` lookup is gone — the
+  # legacy stub now only logs + errors. When
+  # `new_peer_chain?/0` is on AND the topic is `adapter:feishu/<app_id>`,
   # inbound_event frames are rerouted through the new-chain peer
   # `Esr.Peers.FeishuAppAdapter` (registered under
   # `:feishu_app_adapter_<app_id>` in AdminSessionProcess — see P2-2/P2-11).
-  # directive_ack and non-Feishu topics still flow through the legacy
-  # AdapterHub.Registry → PeerRegistry path so the rest of the adapter
-  # fleet (non-Feishu) is unaffected by the flag flip.
   defp forward(socket, {:inbound_event, envelope} = msg) do
     topic = socket.assigns.topic
 
@@ -196,22 +191,21 @@ defmodule EsrWeb.AdapterChannel do
     end
   end
 
-  # Preserve the pre-P2-11 behaviour verbatim under a named helper so
-  # the new branch can fall through to it without duplicating the
-  # Registry-lookup logic.
-  defp forward_legacy(socket, msg) do
-    topic = socket.assigns.topic
+  # Post-P2-16 stub: the legacy `AdapterHub.Registry → PeerRegistry`
+  # lookup was deleted when the Registry itself was removed. Any call
+  # that lands here means either (a) `ESR_USE_NEW_PEER_CHAIN=0` was set
+  # explicitly or (b) a non-Feishu topic is still trying to use this
+  # channel. Both are regressions post-P2-14 — log loudly and reply
+  # with an actionable error. The stub is removed entirely in P2-17
+  # together with the feature flag.
+  defp forward_legacy(socket, _msg) do
+    require Logger
 
-    with {:ok, actor_id} <- HubRegistry.lookup(topic),
-         [{pid, _}] <- Registry.lookup(Esr.PeerRegistry, actor_id) do
-      send(pid, msg)
-      {:reply, :ok, socket}
-    else
-      :error ->
-        {:reply, {:error, %{reason: "no binding"}}, socket}
+    Logger.warning(
+      "adapter_channel: legacy AdapterHub.Registry path invoked after P2-16 removal " <>
+        "(topic=#{inspect(socket.assigns[:topic])}); set ESR_USE_NEW_PEER_CHAIN=1"
+    )
 
-      [] ->
-        {:reply, {:error, %{reason: "peer not alive"}}, socket}
-    end
+    {:reply, {:error, %{reason: "legacy_path_removed"}}, socket}
   end
 end
