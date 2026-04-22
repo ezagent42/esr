@@ -62,8 +62,8 @@ This plan uses **progressive expansion**:
 |---|---|---|
 | `runtime/lib/esr/session_registry.ex` | Gutted; new content = yaml compiler + mapping registry | PR-1 (rename old content to session_socket_registry.ex first) |
 | `runtime/lib/esr/application.ex` | Supervision tree updated per §4 | PR-1 initial additions; PR-2/PR-3 extend |
-| `runtime/lib/esr/admin/commands/session/new.ex` | Require `agent` field; reject without it | PR-3 |
-| `runtime/lib/esr/admin/commands/session/end.ex` | Adapt to new Session supervisor tree | PR-3 |
+| `runtime/lib/esr/admin/commands/session/new.ex` | Require `agent` field; verify `capabilities_required`; reject without — **these files arrive with PR #11 squash-merge** (v2.2 Admin subsystem); PR-3 assumes PR #11 merged | PR-3 (after PR #11) |
+| `runtime/lib/esr/admin/commands/session/end.ex` | Adapt to new Session supervisor tree — **same PR #11 dependency** | PR-3 (after PR #11) |
 | `runtime/mix.exs` | Add `{:muontrap, "~> 1.3"}` dep | PR-1 |
 | `runtime/lib/esr/routing/session_router.ex` | (PR-0) rename module to `Esr.Routing.SlashHandler` + file rename | PR-0 |
 | `runtime/test/esr/routing/session_router_test.exs` | (PR-0) rename references | PR-0 |
@@ -605,10 +605,7 @@ defmodule Esr.Peer.Proxy do
         "Esr.Peer.Proxy module #{inspect(env.module)} cannot define stateful callbacks. " <>
           "Found: #{inspect(offenders)}. Use Esr.Peer.Stateful if you need state."
 
-      raise CompileError,
-        description: msg,
-        file: env.file,
-        line: env.line
+      raise CompileError, description: msg
     end
 
     :ok
@@ -794,6 +791,8 @@ Expected: FAIL with "module Esr.OSProcess is not loaded" or similar.
 
 - [ ] **Step 3: implement OSProcess behaviour + its inner worker**
 
+**Important API note:** `MuonTrap.Daemon` does NOT expose a stdin-write API, but we need one (tmux control-mode commands, Python sidecar JSON requests). The correct pattern is to use Elixir's `Port` directly with the `muontrap` binary (shipped by the muontrap Hex package at `:code.priv_dir(:muontrap)`) as a wrapper. Port gives us `Port.command/2` for stdin writes, and the muontrap wrapper guarantees OS-process cleanup on BEAM exit (same mechanism Daemon uses internally).
+
 Create `runtime/lib/esr/os_process.ex`:
 
 ```elixir
@@ -802,9 +801,16 @@ defmodule Esr.OSProcess do
   Composition底座 for Peers that wrap one OS process.
 
   A Peer that uses `Esr.OSProcess` gains an embedded worker module
-  (`<PeerModule>.OSProcessWorker`) which supervises the OS process
-  via `MuonTrap.Daemon`. The Peer's lifecycle controls the OS process's
-  lifecycle: when the Peer dies, the OS process is terminated within 5s.
+  (`<PeerModule>.OSProcessWorker`) which opens a `Port` to the
+  `muontrap` wrapper binary. The wrapper executes the Peer's target
+  command and guarantees cleanup on BEAM exit (cgroup on Linux,
+  equivalent mechanism on macOS).
+
+  The worker exposes:
+  - `os_pid/1` — fetch the child OS pid
+  - `write_stdin/2` — write bytes to child's stdin
+  - automatic forwarding of child stdout lines to the Peer via
+    `handle_upstream({:os_stdout, line}, state)`
 
   See spec §3.2.
   """
@@ -825,9 +831,10 @@ defmodule Esr.OSProcess do
         @moduledoc false
         use GenServer
 
-        alias MuonTrap.Daemon
-
         def start_link(init_args), do: GenServer.start_link(__MODULE__, init_args)
+
+        def os_pid(pid), do: GenServer.call(pid, :os_pid)
+        def write_stdin(pid, bytes), do: GenServer.cast(pid, {:write_stdin, bytes})
 
         @impl true
         def init(init_args) do
@@ -837,34 +844,76 @@ defmodule Esr.OSProcess do
           [exe | args] = parent.os_cmd(state)
           env = parent.os_env(state)
 
-          {:ok, daemon} =
-            Daemon.start_link(exe, args,
-              env: env,
-              log_output: :debug,
-              exit_status_to_reason: &{:os_exit, &1}
+          muontrap_bin = Path.join(:code.priv_dir(:muontrap), "muontrap")
+
+          port =
+            Port.open(
+              {:spawn_executable, muontrap_bin},
+              [
+                :binary,
+                :exit_status,
+                :stderr_to_stdout,
+                {:line, 4096},
+                {:env, to_env_charlists(env)},
+                {:args, ["--delay-to-sigkill", "5000", "--"] ++ [exe | args]}
+              ]
             )
 
-          Process.monitor(daemon)
-          os_pid = Daemon.os_pid(daemon)
+          os_pid =
+            case Port.info(port, :os_pid) do
+              {:os_pid, pid} -> pid
+              _              -> nil
+            end
 
-          {:ok, %{parent: parent, state: state, daemon: daemon, os_pid: os_pid}}
+          {:ok, %{parent: parent, state: state, port: port, os_pid: os_pid}}
         end
 
         @impl true
         def handle_call(:os_pid, _from, s), do: {:reply, {:ok, s.os_pid}, s}
 
         @impl true
-        def handle_info({:DOWN, _ref, :process, daemon, {:os_exit, status}}, %{daemon: daemon} = s) do
+        def handle_cast({:write_stdin, bytes}, s) do
+          true = Port.command(s.port, bytes)
+          {:noreply, s}
+        end
+
+        @impl true
+        def handle_info({port, {:data, {_eol, line}}}, %{port: port} = s) do
+          # Forward stdout line to Peer's handle_upstream
+          new_state = dispatch_stdout(s, line)
+          {:noreply, new_state}
+        end
+
+        def handle_info({port, {:exit_status, status}}, %{port: port} = s) do
           case s.parent.on_os_exit(status, s.state) do
             {:stop, reason} -> {:stop, reason, s}
             {:restart, _new_state} -> {:stop, :restart_not_yet_implemented, s}
           end
+        end
+
+        defp dispatch_stdout(s, line) do
+          case s.parent.handle_upstream({:os_stdout, line}, s.state) do
+            {:forward, _msgs, new_state} -> %{s | state: new_state}
+            {:reply, _msg, new_state}    -> %{s | state: new_state}
+            {:drop, _reason, new_state}  -> %{s | state: new_state}
+          end
+        end
+
+        defp to_env_charlists(env) do
+          for {k, v} <- env, do: {String.to_charlist(k), String.to_charlist(v)}
         end
       end
     end
   end
 end
 ```
+
+**Rationale for Port + muontrap-binary over MuonTrap.Daemon:**
+- `MuonTrap.Daemon` manages lifecycle via a GenServer wrapping a Port but hides the Port, so stdin writes are not available.
+- Using `Port` directly with the `muontrap` wrapper binary gives us BOTH: the `--delay-to-sigkill 5000` flag guarantees cleanup (same as Daemon does internally), and `Port.command/2` exposes stdin.
+- The `{:line, 4096}` option makes stdout arrive as `{port, {:data, {_eol_flag, line}}}` — one line per message — which is exactly what tmux `-C` and Python JSON-line sidecars need.
+
+If `muontrap` wrapper binary is missing at runtime, `Path.join(:code.priv_dir(:muontrap), "muontrap")` raises. This is caught in Task P1-1 by `mix deps.compile muontrap` running successfully — verify with `ls deps/muontrap/priv/muontrap` after deps fetch.
 
 - [ ] **Step 4: run test**
 
@@ -1009,23 +1058,9 @@ defmodule Esr.TmuxProcess do
 end
 ```
 
-**Note:** `Esr.TmuxProcess.OSProcessWorker.write_stdin/2` is a helper that needs to be added to the OSProcessWorker macro (extend `os_process.ex` to forward stdin writes to `MuonTrap.Daemon`'s input). That extension is part of this task; include it below.
+**Note:** `Esr.TmuxProcess.OSProcessWorker.write_stdin/2` is provided by the `Esr.OSProcess` macro from P1-5 (Port + `muontrap` binary wrapper pattern). No additional os_process.ex extension needed in this task.
 
-- [ ] **Step 4: extend OSProcess worker with stdin write support**
-
-Modify `runtime/lib/esr/os_process.ex` — inside the `OSProcessWorker` `quote do` block, add:
-
-```elixir
-def write_stdin(pid, bytes), do: GenServer.cast(pid, {:write_stdin, bytes})
-
-@impl true
-def handle_cast({:write_stdin, bytes}, s) do
-  MuonTrap.Daemon.send(s.daemon, bytes)
-  {:noreply, s}
-end
-```
-
-And handle `{:daemon_stdout, line}` to parse and forward as `:tmux_event` or similar. (Concrete parsing code for tmux `-C` line-protocol added below.)
+- [ ] **Step 4: add the tmux control-protocol parser**
 
 Add to `tmux_process.ex` a pure parser:
 
@@ -1500,11 +1535,14 @@ defmodule Esr.SessionRegistry do
 end
 ```
 
-- [ ] **Step 4: add `yaml_elixir` dependency**
+- [ ] **Step 4: verify `yaml_elixir` dependency**
 
-Check `runtime/mix.exs` — if `yaml_elixir` is not already listed, add `{:yaml_elixir, "~> 2.9"}`.
+`yaml_elixir ~> 2.11` is already declared in `runtime/mix.exs` (line ~50) from earlier work. Confirm with:
+```bash
+grep yaml_elixir runtime/mix.exs
+```
 
-Run: `mix deps.get`
+Expected: one match. No code change needed. If missing, add `{:yaml_elixir, "~> 2.11"}` and run `mix deps.get`.
 
 - [ ] **Step 5: run test**
 
@@ -1561,20 +1599,22 @@ defmodule Esr.PeerFactoryTest do
   end
 
   setup do
-    {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: TestSup)
-    %{sup: TestSup}
+    {:ok, _sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: :test_peer_sup)
+    # Stub Esr.Session.supervisor_name/1 to return our test supervisor
+    Process.put(:peer_factory_sup_override, :test_peer_sup)
+    :ok
   end
 
-  test "spawn_peer starts a child under the specified supervisor", %{sup: sup} do
+  test "spawn_peer starts a child under the session's supervisor" do
     assert {:ok, pid} =
-             Esr.PeerFactory.spawn_peer(sup, TestPeer, %{name: "p1"}, [], %{})
+             Esr.PeerFactory.spawn_peer("test-session-1", TestPeer, %{name: "p1"}, [], %{})
 
     assert Process.alive?(pid)
   end
 
-  test "spawn_peer rejects unknown peer impl", %{sup: sup} do
+  test "spawn_peer rejects unknown peer impl" do
     assert {:error, _} =
-             Esr.PeerFactory.spawn_peer(sup, NonExistentMod, %{}, [], %{})
+             Esr.PeerFactory.spawn_peer("test-session-1", NonExistentMod, %{}, [], %{})
   end
 
   test "PeerFactory.__info__(:functions) matches the declared public surface" do
@@ -1616,34 +1656,50 @@ defmodule Esr.PeerFactory do
   Its public surface is exactly three functions: `spawn_peer/5`,
   `terminate_peer/2`, `restart_peer/2`. Review rejects additions.
 
-  See spec §3.3 and §6 Risk A.
+  The factory resolves `session_id` to the correct Session supervisor
+  via a convention: `via_tuple(session_id)` returning `{:via, Registry, {Esr.SessionRegistry.Via, {:session_sup, session_id}}}`.
+  The test helper may override via `Process.put(:peer_factory_sup_override, name)`.
+
+  See spec §3.3, §5.4, and §6 Risk A.
   """
   require Logger
 
-  @spec spawn_peer(sup :: term(), mod :: module(), args :: map(), neighbors :: list(), ctx :: map()) ::
+  @spec spawn_peer(session_id :: String.t(), mod :: module(), args :: map(), neighbors :: list(), ctx :: map()) ::
           {:ok, pid()} | {:error, term()}
-  def spawn_peer(sup, mod, args, neighbors, ctx) do
-    :telemetry.execute([:esr, :peer_factory, :spawn], %{}, %{mod: mod, ctx: ctx})
+  def spawn_peer(session_id, mod, args, neighbors, ctx) do
+    :telemetry.execute([:esr, :peer_factory, :spawn], %{}, %{mod: mod, session_id: session_id})
 
     if Code.ensure_loaded?(mod) do
-      init_args = Map.merge(args, %{neighbors: neighbors, proxy_ctx: ctx})
-      DynamicSupervisor.start_child(sup, {mod, init_args})
+      init_args = Map.merge(args, %{session_id: session_id, neighbors: neighbors, proxy_ctx: ctx})
+      DynamicSupervisor.start_child(resolve_sup(session_id), {mod, init_args})
     else
       {:error, {:unknown_impl, mod}}
     end
   end
 
-  @spec terminate_peer(sup :: term(), pid :: pid()) :: :ok | {:error, term()}
-  def terminate_peer(sup, pid) do
-    DynamicSupervisor.terminate_child(sup, pid)
+  @spec terminate_peer(session_id :: String.t(), pid :: pid()) :: :ok | {:error, term()}
+  def terminate_peer(session_id, pid) do
+    DynamicSupervisor.terminate_child(resolve_sup(session_id), pid)
   end
 
-  @spec restart_peer(sup :: term(), spec :: term()) :: {:ok, pid()} | {:error, term()}
-  def restart_peer(sup, spec) do
-    DynamicSupervisor.start_child(sup, spec)
+  @spec restart_peer(session_id :: String.t(), spec :: term()) :: {:ok, pid()} | {:error, term()}
+  def restart_peer(session_id, spec) do
+    DynamicSupervisor.start_child(resolve_sup(session_id), spec)
+  end
+
+  # Session supervisor resolution. In PR-1, only the test-override path
+  # is used; PR-2 introduces Esr.Session.supervisor_name/1 for the real
+  # AdminSession / SessionsSupervisor lookup.
+  defp resolve_sup(session_id) do
+    case Process.get(:peer_factory_sup_override) do
+      nil -> Esr.Session.supervisor_name(session_id)
+      override -> override
+    end
   end
 end
 ```
+
+**Note for P1-10:** `Esr.Session.supervisor_name/1` doesn't exist yet — it's introduced in PR-2 Task P2-6. Until then, PeerFactory tests MUST use the `:peer_factory_sup_override` process dictionary key. This is a temporary scaffold; PR-2 removes the Process.put dance by introducing the proper lookup.
 
 - [ ] **Step 4: run test**
 
@@ -1823,38 +1879,40 @@ returns {:error, :pool_exhausted} after the configured timeout.
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task P1-12: Add new control-plane modules to application.ex
+### Task P1-12: Add `Esr.SessionRegistry` to application.ex children
+
+**Context:** P1-8's sed replacement already renamed `Esr.SessionRegistry` → `Esr.SessionSocketRegistry` in `application.ex`. This task adds the NEW `Esr.SessionRegistry` (yaml compiler) to the children list — so after this task both are started at boot.
 
 **Files:**
 - Modify: `runtime/lib/esr/application.ex`
 
-- [ ] **Step 1: confirm current supervision tree**
+- [ ] **Step 1: read current children list**
 
-Read `runtime/lib/esr/application.ex`. Note the existing children list.
+```bash
+grep -n "Esr\." runtime/lib/esr/application.ex
+```
 
-- [ ] **Step 2: add new children**
+Note where `Esr.SessionSocketRegistry` appears.
 
-At an appropriate position in the children list (before any dependent services), add:
+- [ ] **Step 2: add the new `Esr.SessionRegistry` child**
+
+Open `runtime/lib/esr/application.ex`. In the `children = [...]` list, after the `Esr.SessionSocketRegistry` entry, add:
 
 ```elixir
 {Esr.SessionRegistry, []},
-# Esr.SessionSocketRegistry retains its existing entry (it was already in the tree as Esr.SessionRegistry; adjust the name)
 ```
 
-Update the `Esr.SessionRegistry` entry (if it exists referring to the old one) to `Esr.SessionSocketRegistry`, since the rename happened in P1-8.
+No change needed to the `SessionSocketRegistry` entry — it is already correct from P1-8.
 
-- [ ] **Step 3: run full tests + start the app**
+- [ ] **Step 3: run full tests + boot smoke**
 
 ```bash
 mix test
-```
-
-And manually:
-```bash
 iex -S mix
 # inside iex:
-# Process.whereis(Esr.SessionRegistry)     # should return a pid
-# Process.whereis(Esr.SessionSocketRegistry) # should return a pid
+# Process.whereis(Esr.SessionRegistry)        # expect a pid
+# Process.whereis(Esr.SessionSocketRegistry)  # expect a different pid
+# exit
 ```
 
 Expected: both pids returned, no crash.
@@ -1863,11 +1921,10 @@ Expected: both pids returned, no crash.
 
 ```bash
 git add runtime/lib/esr/application.ex
-git commit -m "chore(app): wire Esr.SessionRegistry and renamed SessionSocketRegistry
+git commit -m "chore(app): start Esr.SessionRegistry at boot
 
-Both the new SessionRegistry (yaml compiler) and the renamed
-SessionSocketRegistry (WS bindings) are now started at boot. No
-downstream callers use the new one yet.
+The new yaml-compiled topology registry is now a supervised child
+alongside Esr.SessionSocketRegistry. No downstream callers use it yet.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -1955,12 +2012,12 @@ Verify the PR description matches what's in the diff.
 
 | Task | Purpose | Key files |
 |---|---|---|
-| P2-1 | Create `Esr.AdminSession` supervisor + `Esr.AdminSessionProcess` | `admin_session.ex`, `admin_session_process.ex`, test |
+| P2-1 | Create `Esr.AdminSession` supervisor + `Esr.AdminSessionProcess`. **Must document the bootstrap exception** (§6 Risk F): AdminSession is started by Esr.Supervisor directly, NOT by SessionRouter. Add `PeerFactory.spawn_peer_bootstrap/4` that bypasses `Esr.Session.supervisor_name/1` resolution. | `admin_session.ex`, `admin_session_process.ex`, `peer_factory.ex` (add bootstrap fn), test |
 | P2-2 | Create `Esr.Peers.FeishuAppAdapter` (Peer.Stateful; owns WS) | `peers/feishu_app_adapter.ex`, test |
 | P2-3 | Create `Esr.Peers.FeishuChatProxy` (Peer.Stateful; slash detection) | `peers/feishu_chat_proxy.ex`, test |
-| P2-4 | Create `Esr.Peers.FeishuAppProxy` (Peer.Proxy + capability check) | `peers/feishu_app_proxy.ex`, test |
+| P2-4 | Create `Esr.Peers.FeishuAppProxy` + generic capability-check wrapper in `Esr.Peer.Proxy` macro. **The `use Esr.Peer.Proxy` macro should auto-wrap `forward/2` with a capability check** (§3.6) — this is an additive change to P1-3's macro. FeishuAppProxy declares `@required_cap :cap.peer_proxy.forward_feishu` and macro reads it; check happens in generated wrapper. | `peer/proxy.ex` (extend macro), `peers/feishu_app_proxy.ex`, test |
 | P2-5 | Create `Esr.Peers.SlashHandler` (Peer.Stateful; channel-agnostic) | `peers/slash_handler.ex`, test |
-| P2-6 | Create `Esr.Session` supervisor module + `Esr.SessionProcess` | `session.ex`, `session_process.ex`, test |
+| P2-6 | Create `Esr.Session` supervisor module + `Esr.SessionProcess`. Expose `Esr.Session.supervisor_name/1` for PeerFactory to resolve. Remove the `:peer_factory_sup_override` scaffold from P1-10's PeerFactory. | `session.ex`, `session_process.ex`, `peer_factory.ex` cleanup, test |
 | P2-7 | Create `Esr.SessionsSupervisor` (DynamicSupervisor, max_children=128) | `sessions_supervisor.ex`, test |
 | P2-8 | Agents.yaml fixture with minimal `cc` agent declaration | `${ESRD_HOME}/default/agents.yaml` (dev), test fixture |
 | P2-9 | Update `application.ex` to start AdminSession + SessionsSupervisor | `application.ex` |
@@ -2005,7 +2062,7 @@ Verify the PR description matches what's in the diff.
 | P3-5 | Control-plane boundary test: reject data-plane messages | test |
 | P3-6 | Integrate CC peers into `cc` agent in `agents.yaml` | yaml update |
 | P3-7 | Wire SessionRouter to respond to `:new_chat_thread` event from FeishuAppAdapter | cross-module |
-| P3-8 | Update `Esr.Admin.Commands.Session.New` to require `agent` field | `session/new.ex` |
+| P3-8 | Update `Esr.Admin.Commands.Session.New` to require `agent` field AND verify `capabilities_required` via `Esr.Capabilities.has_all?/2` against the invoking principal (§1.8 D18). On missing caps: return `{:error, {:missing_capabilities, [cap_names]}}` without creating the Session. | `session/new.ex`, test |
 | P3-9 | Update `Esr.Admin.Commands.Session.End` to tear down new Session supervisor tree | `session/end.ex` |
 | P3-10 | Full E2E test: Feishu → tmux → Feishu roundtrip | `test/esr/integration/cc_e2e_test.exs` |
 | P3-11 | N=2 concurrent tmux test | `test/esr/integration/n2_tmux_test.exs` |
