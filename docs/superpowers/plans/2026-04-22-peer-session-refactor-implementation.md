@@ -755,6 +755,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Create: `runtime/lib/esr/os_process.ex`
 - Create: `runtime/test/esr/os_process_test.exs`
 
+- [ ] **Step 0: configure ExUnit to exclude integration tests by default**
+
+Edit `runtime/test/test_helper.exs`:
+```elixir
+ExUnit.start(exclude: [:integration])
+```
+
+This ensures `mix test` skips `:integration`-tagged tests (which are slow OS-process-spawning tests), while `mix test --only integration` runs only them. All subsequent PR-1 integration tests (TmuxProcess, PyProcess) use the same tag and inherit this config.
+
 - [ ] **Step 1: write a test using a fixture that wraps `/bin/sleep`**
 
 Create `runtime/test/esr/os_process_test.exs`:
@@ -797,10 +806,17 @@ defmodule Esr.OSProcessTest do
   end
 
   test "killing the Elixir GenServer cleans up the OS process within 10s" do
+    # trap_exit because GenServer.start_link links the worker to the test pid;
+    # without this, Process.exit(pid, :kill) propagates through the link and
+    # kills the test process itself. This is a test-harness detail only —
+    # it does not affect the cleanup semantics being verified.
+    Process.flag(:trap_exit, true)
+
     {:ok, pid} = GenServer.start_link(SleepPeer.OSProcessWorker, %{dur: 60})
     {:ok, os_pid} = GenServer.call(pid, :os_pid)
 
     Process.exit(pid, :kill)
+    assert_receive {:EXIT, ^pid, :killed}, 1_000
 
     # Poll up to 10s
     Enum.reduce_while(1..20, nil, fn _i, _ ->
