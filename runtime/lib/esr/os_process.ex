@@ -37,6 +37,9 @@ defmodule Esr.OSProcess do
   @callback os_env(state :: term()) :: [{String.t(), String.t()}]
   @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::
               {:stop, reason :: term()} | {:restart, new_state :: term()}
+  @callback on_terminate(state :: term()) :: :ok
+
+  @optional_callbacks on_terminate: 1
 
   defmacro __using__(opts) do
     kind = Keyword.fetch!(opts, :kind)
@@ -107,6 +110,29 @@ defmodule Esr.OSProcess do
             {:stop, reason} -> {:stop, reason, s}
             {:restart, _new_state} -> {:stop, :restart_not_yet_implemented, s}
           end
+        end
+
+        @impl true
+        def terminate(_reason, %{parent: parent, state: state, port: port}) do
+          if function_exported?(parent, :on_terminate, 1) do
+            try do
+              parent.on_terminate(state)
+            rescue
+              _ -> :ok
+            catch
+              _, _ -> :ok
+            end
+          end
+
+          try do
+            _ = Port.close(port)
+          rescue
+            _ -> :ok
+          catch
+            _, _ -> :ok
+          end
+
+          :ok
         end
 
         defp dispatch_stdout(s, line) do

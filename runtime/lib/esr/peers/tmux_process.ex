@@ -1,4 +1,4 @@
-defmodule Esr.TmuxProcess do
+defmodule Esr.Peers.TmuxProcess do
   @moduledoc """
   Peer + OSProcess composition that owns one tmux session in control mode (`-C`).
 
@@ -6,15 +6,40 @@ defmodule Esr.TmuxProcess do
   (`%output`, `%begin`, `%end`, `%exit`, `%session-changed`, etc.) so
   consumers don't need to parse raw ANSI.
 
-  See spec §3.2 and §4.1 TmuxProcess card.
+  ## Role in the CC chain (PR-3)
+
+  `Esr.Peers.TmuxProcess` sits immediately downstream of
+  `Esr.Peers.CCProcess`. Two wiring points matter:
+
+    * **Downstream from CCProcess** — `handle_downstream({:send_input,
+      text}, state)` writes `send-keys -t <session> "<escaped>" Enter\\n`
+      to tmux's stdin via the generated `OSProcessWorker.write_stdin/2`.
+      A legacy `{:send_keys, text}` clause remains for PR-1 callers.
+
+    * **Upstream to CCProcess** — when the worker forwards a
+      `{:os_stdout, line}` event, we parse it with `parse_event/1`,
+      broadcast `{:tmux_event, _}` to subscribers, and — for
+      `{:output, _pane, bytes}` events specifically — also send
+      `{:tmux_output, bytes}` to the `cc_process` neighbor so
+      `CCProcess.handle_upstream/2` can feed it into the Python handler.
+
+  ## Cleanup
+
+  Tmux owns its own session lifecycle, so BEAM SIGKILL protection (via
+  muontrap) is less important than for arbitrary sidecars. We use
+  `wrapper: :none` and rely on `on_terminate/1` — called from
+  `OSProcessWorker.terminate/2` — to run `tmux kill-session -t <name>`
+  when the peer stops normally.
+
+  See spec §3.2 and §4.1 TmuxProcess card; expansion P3-3.
   """
 
   use Esr.Peer.Stateful
   # NOTE: wrapper: :none bypasses the MuonTrap binary. We cannot use muontrap
   # here because `--capture-output` (needed to receive tmux's `%begin/%end/...`
   # events on stdout) also makes muontrap consume its own stdin for ack bytes,
-  # which means writes from Esr.TmuxProcess.send_command/2 would never reach
-  # tmux's stdin. Tmux owns its own session lifecycle (`tmux kill-session`), so
+  # which means writes from send_command/2 would never reach tmux's stdin.
+  # Tmux owns its own session lifecycle (`tmux kill-session`), so
   # BEAM-SIGKILL orphan protection is less critical than for arbitrary sidecars.
   use Esr.OSProcess, kind: :tmux, wrapper: :none
 
@@ -26,6 +51,11 @@ defmodule Esr.TmuxProcess do
     * `:dir` (required) — starting directory for the session.
     * `:subscriber` (optional) — pid that receives `{:tmux_event, _}`
       messages. Defaults to the caller of `start_link/1`.
+    * `:neighbors` (optional, keyword) — other peers in the chain.
+      Currently recognised key: `:cc_process`.
+    * `:proxy_ctx` (optional, map) — shared context snapshot threaded
+      through the Peer.Proxy hooks (unused in PR-3 but kept for chain
+      consistency).
   """
   def start_link(args) do
     args = Map.put_new(args, :subscriber, self())
@@ -48,7 +78,9 @@ defmodule Esr.TmuxProcess do
      %{
        session_name: args.session_name,
        dir: args.dir,
-       subscribers: [args[:subscriber] || self()]
+       subscribers: [args[:subscriber] || self()],
+       neighbors: Map.get(args, :neighbors, []),
+       proxy_ctx: Map.get(args, :proxy_ctx, %{})
      }}
   end
 
@@ -57,16 +89,34 @@ defmodule Esr.TmuxProcess do
     event = parse_event(line)
     tuple = {:tmux_event, event}
     Enum.each(state.subscribers, &send(&1, tuple))
+
+    case event do
+      {:output, _pane_id, bytes} ->
+        case Keyword.get(state.neighbors, :cc_process) do
+          pid when is_pid(pid) -> send(pid, {:tmux_output, bytes})
+          _ -> :ok
+        end
+
+      _ ->
+        :ok
+    end
+
     {:forward, [tuple], state}
   end
 
   def handle_upstream(_msg, state), do: {:forward, [], state}
 
   @impl Esr.Peer.Stateful
-  def handle_downstream({:send_keys, text}, state) do
+  def handle_downstream({:send_input, text}, state) do
     cmd = "send-keys -t #{state.session_name} \"#{escape(text)}\" Enter\n"
     __MODULE__.OSProcessWorker.write_stdin(self(), cmd)
     {:forward, [], state}
+  end
+
+  # Keep the PR-1 `{:send_keys, text}` clause for backward compat with
+  # existing tmux callers; new code in PR-3 uses `{:send_input, text}`.
+  def handle_downstream({:send_keys, text}, state) do
+    handle_downstream({:send_input, text}, state)
   end
 
   def handle_downstream(_msg, state), do: {:forward, [], state}
@@ -88,6 +138,16 @@ defmodule Esr.TmuxProcess do
   @impl Esr.OSProcess
   def on_os_exit(0, _state), do: {:stop, :normal}
   def on_os_exit(status, _state), do: {:stop, {:tmux_crashed, status}}
+
+  @impl Esr.OSProcess
+  def on_terminate(%{session_name: name}) do
+    _ =
+      System.cmd("tmux", ["kill-session", "-t", name],
+        stderr_to_stdout: true
+      )
+
+    :ok
+  end
 
   @doc """
   Parse a single tmux control-mode output line into a structured event.
