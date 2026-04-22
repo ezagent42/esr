@@ -46,3 +46,4 @@ esr-cc.local.sh
 # (out-of-tree `uv run --with ...`). Do not track until cc_mcp
 # is properly added to py/pyproject.toml uv.sources.
 adapters/cc_mcp/uv.lock
+.claude/skills/muontrap-elixir-workspace/
