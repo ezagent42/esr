@@ -26,7 +26,7 @@ defmodule Esr.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, "test.e2e.os_cleanup": :test]
     ]
   end
 
@@ -64,7 +64,12 @@ defmodule Esr.MixProject do
   defp aliases do
     [
       setup: ["deps.get"],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"],
+      # P3-12: "nightly gate" per spec §10.5 — kills an esrd BEAM subprocess
+      # with SIGKILL and asserts no tmux orphans within 10 s. Excluded from
+      # default `mix test` via `:os_cleanup` tag in test_helper.exs; runs
+      # only when this alias (or `mix test --only os_cleanup`) is invoked.
+      "test.e2e.os_cleanup": ["test --only os_cleanup"]
     ]
   end
 end
