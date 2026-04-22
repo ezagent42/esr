@@ -71,13 +71,13 @@ defmodule Esr.Application do
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
       Esr.Admin.Supervisor,
 
-      # 4h. Routing subsystem — SlashHandler parses Feishu slash
-      # commands and forwards them to Esr.Admin.Dispatcher
-      # (dev-prod-isolation spec §6.5). Sits AFTER Esr.Admin.Supervisor
-      # because every slash-command cast targets the Dispatcher by its
-      # registered name — the Router must never start ahead of its
-      # downstream.
-      Esr.Routing.Supervisor,
+      # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
+      # Esr.Routing.SlashHandler removed. The new slash-parsing path
+      # is Esr.Peers.SlashHandler, spawned per-Session under
+      # AdminSessionProcess / SessionProcess (spec §3.5). The old
+      # top-level subsystem was PR-0 scaffolding that got stranded
+      # once the peer/session refactor moved slash parsing into the
+      # peer graph.
 
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's

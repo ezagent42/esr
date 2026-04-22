@@ -7,10 +7,9 @@ defmodule Esr.Peers.SlashHandler do
   `Esr.Admin.Dispatcher` with a correlation ref, and relay the reply
   back to the originating ChatProxy as `{:reply, text}`.
 
-  Replaces the slash-parsing half of `Esr.Routing.SlashHandler` (which
-  stays in place until PR-3 deletes it). Post-P2-17, Feishu slash
-  commands route through here unconditionally (the legacy router is
-  no longer reachable from `AdapterChannel`).
+  Replaces the slash-parsing half of the legacy
+  `Esr.Routing.SlashHandler` (deleted in PR-3 P3-14). Post-P2-17, Feishu
+  slash commands route through here unconditionally.
 
   Parser enforces spec D11 (`--agent` required on `/new-session`) and
   D13 (`--dir` required) — both are required per the decision-index
