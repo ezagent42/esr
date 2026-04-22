@@ -69,6 +69,12 @@ defmodule Esr.Admin.Dispatcher do
   # required by `Grants.matches?/2`). Legacy `session.create` dotted
   # permission strings are still accepted via wildcard grants (`"*"`),
   # which every test principal uses.
+  #
+  # PR-3 P3-9.3: `session_end` now means the **agent-session** teardown
+  # command (`Esr.Admin.Commands.Session.End`, delegating to
+  # `Esr.SessionRouter.end_session/1`); the legacy branch-worktree
+  # teardown path is `session_branch_end`. Both share the canonical
+  # `session:default/end` permission.
   @required_permissions %{
     "notify" => "notify.send",
     "reload" => "runtime.reload",
@@ -76,7 +82,8 @@ defmodule Esr.Admin.Dispatcher do
     "session_new" => "session:default/create",
     "session_branch_new" => "session:default/create",
     "session_switch" => "session.switch",
-    "session_end" => "session.end",
+    "session_end" => "session:default/end",
+    "session_branch_end" => "session:default/end",
     "session_list" => "session.list",
     "grant" => "cap.manage",
     "revoke" => "cap.manage"
@@ -88,6 +95,10 @@ defmodule Esr.Admin.Dispatcher do
   # PR-3 P3-8: `session_new` → `Session.New` (agent-session, formerly
   # AgentNew); `session_branch_new` → `Session.BranchNew` (the renamed
   # legacy branch-worktree command).
+  #
+  # PR-3 P3-9: `session_end` → `Session.End` (agent-session teardown via
+  # SessionRouter); `session_branch_end` → `Session.BranchEnd` (the
+  # renamed legacy branch-worktree teardown command).
   @command_modules %{
     "notify" => Esr.Admin.Commands.Notify,
     "reload" => Esr.Admin.Commands.Reload,
@@ -96,6 +107,7 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_new" => Esr.Admin.Commands.Session.BranchNew,
     "session_switch" => Esr.Admin.Commands.Session.Switch,
     "session_end" => Esr.Admin.Commands.Session.End,
+    "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
     "session_list" => Esr.Admin.Commands.Session.List,
     "grant" => Esr.Admin.Commands.Cap.Grant,
     "revoke" => Esr.Admin.Commands.Cap.Revoke
@@ -113,8 +125,10 @@ defmodule Esr.Admin.Dispatcher do
 
   @doc """
   Register the current process as the Task awaiting a `:cleanup_signal`
-  for `session_id`. Called by `Esr.Admin.Commands.Session.End` on its
-  non-force branch (DI-11 Task 25) before it blocks on `receive`.
+  for `session_id`. Called by `Esr.Admin.Commands.Session.BranchEnd`
+  (the legacy branch-worktree path, formerly `Session.End` before the
+  PR-3 P3-9 rename) on its non-force branch (DI-11 Task 25) before it
+  blocks on `receive`.
 
   Dispatcher stores `session_id → task_pid` in `state.pending_cleanups`
   so an inbound `{:cleanup_signal, session_id, status, details}` message
@@ -130,8 +144,8 @@ defmodule Esr.Admin.Dispatcher do
   end
 
   @doc """
-  Deregister a pending cleanup — used by `Session.End` on timeout or
-  after the signal has been consumed, so the Dispatcher doesn't keep
+  Deregister a pending cleanup — used by `Session.BranchEnd` on timeout
+  or after the signal has been consumed, so the Dispatcher doesn't keep
   a stale `session_id → pid` mapping around.
   """
   @spec deregister_cleanup(String.t()) :: :ok
@@ -250,9 +264,9 @@ defmodule Esr.Admin.Dispatcher do
 
   # DI-11 Task 25: route the cleanup signal emitted by the
   # `session.signal_cleanup` MCP tool (Task 24) back to the Task that
-  # is blocking inside `Session.End.execute/2`. Drops the session_id
-  # entry after delivery — a second signal with no pending waiter
-  # falls through to the catch-all below.
+  # is blocking inside `Session.BranchEnd.execute/2`. Drops the
+  # session_id entry after delivery — a second signal with no pending
+  # waiter falls through to the catch-all below.
   def handle_info({:cleanup_signal, session_id, status, details}, state)
       when is_binary(session_id) and is_binary(status) do
     case Map.pop(state.pending_cleanups, session_id) do

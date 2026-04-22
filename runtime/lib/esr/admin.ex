@@ -33,7 +33,13 @@ defmodule Esr.Admin do
       "session.switch",
       "session.end",
       "session.list",
-      "cap.manage"
+      "cap.manage",
+      # PR-3 P3-8/P3-9: canonical prefix:name/perm form for the new
+      # agent-session lifecycle commands (`session_new` +
+      # `session_branch_new` share `session:default/create`; `session_end`
+      # + `session_branch_end` share `session:default/end`).
+      "session:default/create",
+      "session:default/end"
     ]
   end
 end

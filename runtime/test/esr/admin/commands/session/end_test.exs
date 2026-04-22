@@ -1,313 +1,123 @@
 defmodule Esr.Admin.Commands.Session.EndTest do
   @moduledoc """
-  DI-10 Task 21 — `Esr.Admin.Commands.Session.End` tears down an
-  ephemeral esrd + worktree via `scripts/esr-branch.sh end <branch>
-  --force`, then removes the branch entry from `branches.yaml` and
-  drops `principals[*].targets[<branch>]` across all principals in
-  `routing.yaml`. If the submitter's `active` pointed at the ended
-  branch, unset (or fall back to the first remaining target name).
+  P3-9.2 — `Esr.Admin.Commands.Session.End` (the new, post-D15-collapse
+  agent-session teardown command; dispatcher kind `session_end`) tears
+  down a Session supervisor tree by delegating to
+  `Esr.SessionRouter.end_session/1`.
 
-  ## Force-only (DI-10)
+  Before PR-3 P3-9 this module name held the legacy branch-worktree
+  teardown logic, now renamed to `Session.BranchEnd` (dispatcher kind
+  `session_branch_end`; tests in `branch_end_test.exs`).
 
-  DI-10 always passes `--force` to the shell script. MCP
-  `session.signal_cleanup` coordination + the 30-s interactive
-  timeout are added in DI-11 Task 25.
+  These tests cover:
 
-  ## System.cmd mocking
-
-  Mirrors the `:spawn_fn` injection pattern in
-  `Esr.Admin.Commands.Session.New` — tests pass a 1-arity stub that
-  receives `{argv}` and returns `{stdout, exit_status}`.
+    * happy path: real `SessionRouter.create_session` → `End.execute`
+      tears the Session supervisor down and unregisters it.
+    * `unknown_session` surface from the router propagates back to the
+      caller as `{:error, %{"type" => "unknown_session", ...}}`.
+    * arg validation: missing `session_id` → `invalid_args`.
   """
-
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Commands.Session.End, as: SessionEnd
+  alias Esr.Capabilities.Grants
 
   setup do
-    unique = System.unique_integer([:positive])
-    tmp = Path.join(System.tmp_dir!(), "admin_sessend_#{unique}")
-    File.mkdir_p!(Path.join(tmp, "default"))
+    # App-level singletons must already be up for SessionRouter to
+    # do real work.
+    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
+    assert is_pid(Process.whereis(Grants))
 
-    prev_home = System.get_env("ESRD_HOME")
-    System.put_env("ESRD_HOME", tmp)
+    :ok =
+      Esr.SessionRegistry.load_agents(
+        Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
+      )
+
+    # Ensure SessionRouter is running. Started as a supervised child in
+    # app boot, but some test runs skip it — start-if-missing keeps the
+    # suite self-contained.
+    case Process.whereis(Esr.SessionRouter) do
+      nil -> {:ok, _} = Esr.SessionRouter.start_link([])
+      _ -> :ok
+    end
+
+    prior =
+      try do
+        :ets.tab2list(:esr_capabilities_grants) |> Map.new()
+      rescue
+        _ -> %{}
+      end
 
     on_exit(fn ->
-      if prev_home,
-        do: System.put_env("ESRD_HOME", prev_home),
-        else: System.delete_env("ESRD_HOME")
+      Grants.load_snapshot(prior)
 
-      File.rm_rf!(tmp)
+      case Process.whereis(Esr.SessionsSupervisor) do
+        nil ->
+          :ok
+
+        pid ->
+          for {_, child, _, _} <- DynamicSupervisor.which_children(pid) do
+            if is_pid(child), do: DynamicSupervisor.terminate_child(pid, child)
+          end
+      end
     end)
 
-    {:ok, tmp: tmp}
+    :ok
   end
 
-  describe "execute/2 happy path" do
-    test "removes branch from branches.yaml + drops target across all principals", %{tmp: tmp} do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
+  describe "execute/1 happy path" do
+    test "ends an existing agent-session via SessionRouter" do
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
-      File.write!(branches_path, """
-      branches:
-        dev:
-          esrd_home: /Users/alice/.esrd-dev
-          port: 54321
-          status: running
-        feature-foo:
-          esrd_home: /tmp/esrd-feature-foo
-          port: 54399
-          status: running
-      """)
+      {:ok, sid} =
+        Esr.SessionRouter.create_session(%{
+          agent: "cc",
+          dir: "/tmp",
+          principal_id: "ou_alice",
+          chat_id: "oc_end_happy_#{System.unique_integer([:positive])}",
+          thread_id: "om_end_happy_#{System.unique_integer([:positive])}"
+        })
 
-      File.write!(routing_path, """
-      principals:
-        ou_alice:
-          active: dev
-          targets:
-            dev:
-              esrd_url: ws://127.0.0.1:54321/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-dev
-            feature-foo:
-              esrd_url: ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-feature-foo
-        ou_bob:
-          active: feature-foo
-          targets:
-            feature-foo:
-              esrd_url: ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_bob-feature-foo
-      """)
+      # Supervisor exists pre-teardown.
+      via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
+      pre_pid = GenServer.whereis(via)
+      assert is_pid(pre_pid) and Process.alive?(pre_pid)
 
-      parent = self()
+      cmd = %{"submitted_by" => "ou_alice", "args" => %{"session_id" => sid}}
 
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
+      assert {:ok, %{"session_id" => ^sid, "ended" => true}} = SessionEnd.execute(cmd)
 
-      stub = fn {args} ->
-        send(parent, {:spawned, args})
-        {~s({"ok":true,"branch":"feature-foo"}\n), 0}
-      end
-
-      assert {:ok, %{"branch" => "feature-foo"}} =
-               SessionEnd.execute(cmd, spawn_fn: stub)
-
-      # Force is always passed in DI-10.
-      assert_received {:spawned, args}
-      assert "end" in args
-      assert "feature-foo" in args
-      assert "--force" in args
-
-      # branches.yaml: feature-foo removed; dev preserved.
-      {:ok, branches} = YamlElixir.read_from_file(branches_path)
-      refute Map.has_key?(branches["branches"], "feature-foo")
-      assert Map.has_key?(branches["branches"], "dev")
-
-      # routing.yaml: targets[feature-foo] dropped from BOTH principals.
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-
-      alice_targets = routing["principals"]["ou_alice"]["targets"]
-      refute Map.has_key?(alice_targets, "feature-foo")
-      assert Map.has_key?(alice_targets, "dev")
-
-      bob_targets = routing["principals"]["ou_bob"]["targets"] || %{}
-      refute Map.has_key?(bob_targets, "feature-foo")
-    end
-
-    test "unsets active when ended branch was submitter's active (no remaining targets)", %{
-      tmp: tmp
-    } do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        feature-foo:
-          esrd_home: /tmp/esrd-feature-foo
-          port: 54399
-          status: running
-      """)
-
-      File.write!(routing_path, """
-      principals:
-        ou_alice:
-          active: feature-foo
-          targets:
-            feature-foo:
-              esrd_url: ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-feature-foo
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
-
-      stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
-
-      assert {:ok, _} = SessionEnd.execute(cmd, spawn_fn: stub)
-
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-      # Active unset — no remaining targets to fall back to.
-      assert routing["principals"]["ou_alice"]["active"] in [nil, ""]
-    end
-
-    test "falls back active to first remaining target name when ended branch was active", %{
-      tmp: tmp
-    } do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        dev:
-          esrd_home: /Users/alice/.esrd-dev
-          port: 54321
-          status: running
-        feature-foo:
-          esrd_home: /tmp/esrd-feature-foo
-          port: 54399
-          status: running
-      """)
-
-      File.write!(routing_path, """
-      principals:
-        ou_alice:
-          active: feature-foo
-          targets:
-            dev:
-              esrd_url: ws://127.0.0.1:54321/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-dev
-            feature-foo:
-              esrd_url: ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-feature-foo
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
-
-      stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
-
-      assert {:ok, _} = SessionEnd.execute(cmd, spawn_fn: stub)
-
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-      # Active fell back to "dev" (the only remaining target).
-      assert routing["principals"]["ou_alice"]["active"] == "dev"
-    end
-
-    test "leaves active unchanged if ended branch was NOT the submitter's active", %{tmp: tmp} do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-      routing_path = Path.join([tmp, "default", "routing.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        dev:
-          esrd_home: /Users/alice/.esrd-dev
-          port: 54321
-          status: running
-        feature-foo:
-          esrd_home: /tmp/esrd-feature-foo
-          port: 54399
-          status: running
-      """)
-
-      File.write!(routing_path, """
-      principals:
-        ou_alice:
-          active: dev
-          targets:
-            dev:
-              esrd_url: ws://127.0.0.1:54321/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-dev
-            feature-foo:
-              esrd_url: ws://127.0.0.1:54399/adapter_hub/socket/websocket?vsn=2.0.0
-              cc_session_id: ou_alice-feature-foo
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
-
-      stub = fn {_args} -> {~s({"ok":true,"branch":"feature-foo"}\n), 0} end
-
-      assert {:ok, _} = SessionEnd.execute(cmd, spawn_fn: stub)
-
-      {:ok, routing} = YamlElixir.read_from_file(routing_path)
-      assert routing["principals"]["ou_alice"]["active"] == "dev"
+      # Supervisor is gone.
+      assert GenServer.whereis(via) == nil
     end
   end
 
-  describe "execute/2 error paths" do
-    test "branch missing from branches.yaml → no_such_branch (no shell call)", %{tmp: tmp} do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        dev:
-          esrd_home: /Users/alice/.esrd-dev
-          port: 54321
-          status: running
-      """)
-
+  describe "execute/1 error paths" do
+    test "unknown session_id → {:error, %{\"type\" => \"unknown_session\"}}" do
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "never-created"}
+        "args" => %{"session_id" => "NONEXISTENT_#{System.unique_integer([:positive])}"}
       }
 
-      stub = fn {_args} -> flunk("spawn should not be called when branch is absent") end
-
-      assert {:error, %{"type" => "no_such_branch"}} =
-               SessionEnd.execute(cmd, spawn_fn: stub)
+      assert {:error, %{"type" => "unknown_session"}} = SessionEnd.execute(cmd)
     end
 
-    test "missing branches.yaml entirely → no_such_branch" do
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
-
-      stub = fn {_args} -> flunk("spawn should not be called") end
-
-      assert {:error, %{"type" => "no_such_branch"}} =
-               SessionEnd.execute(cmd, spawn_fn: stub)
-    end
-
-    test "esr-branch.sh end fails → pass through error", %{tmp: tmp} do
-      branches_path = Path.join([tmp, "default", "branches.yaml"])
-
-      File.write!(branches_path, """
-      branches:
-        feature-foo:
-          esrd_home: /tmp/esrd-feature-foo
-          port: 54399
-          status: running
-      """)
-
-      cmd = %{
-        "submitted_by" => "ou_alice",
-        "args" => %{"branch" => "feature-foo", "force" => true}
-      }
-
-      stub = fn {_args} ->
-        {~s({"ok":false,"error":"git worktree remove failed"}\n), 1}
-      end
-
-      assert {:error, %{"type" => "branch_end_failed", "details" => "git worktree remove failed"}} =
-               SessionEnd.execute(cmd, spawn_fn: stub)
-    end
-
-    test "missing args.branch → invalid_args" do
-      cmd = %{"submitted_by" => "ou_alice", "args" => %{}}
-
-      stub = fn {_args} -> flunk("spawn should not be called") end
-
+    test "missing args.session_id → invalid_args" do
       assert {:error, %{"type" => "invalid_args"}} =
-               SessionEnd.execute(cmd, spawn_fn: stub)
+               SessionEnd.execute(%{"submitted_by" => "ou_alice", "args" => %{}})
+    end
+
+    test "empty session_id string → invalid_args" do
+      assert {:error, %{"type" => "invalid_args"}} =
+               SessionEnd.execute(%{
+                 "submitted_by" => "ou_alice",
+                 "args" => %{"session_id" => ""}
+               })
+    end
+
+    test "malformed command (no args key) → invalid_args" do
+      assert {:error, %{"type" => "invalid_args"}} = SessionEnd.execute(%{})
     end
   end
 end
