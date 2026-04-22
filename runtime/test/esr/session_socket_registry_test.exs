@@ -1,7 +1,7 @@
-defmodule Esr.SessionRegistryTest do
+defmodule Esr.SessionSocketRegistryTest do
   use ExUnit.Case, async: false
 
-  alias Esr.SessionRegistry
+  alias Esr.SessionSocketRegistry, as: SessionRegistry
 
   setup do
     # Registry is started by the Application supervisor; each test can

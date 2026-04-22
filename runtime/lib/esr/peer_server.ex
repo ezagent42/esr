@@ -599,7 +599,7 @@ defmodule Esr.PeerServer do
     Enum.reduce(actions, state, &dispatch_action/2)
   end
 
-  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via SessionRegistry.
+  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via SessionSocketRegistry.
   defp dispatch_action(
          %{"type" => "emit", "adapter" => "esr-channel"} = action,
          %__MODULE__{} = state
@@ -624,7 +624,7 @@ defmodule Esr.PeerServer do
       session_id: session_id
     })
 
-    case Esr.SessionRegistry.notify_session(session_id, envelope) do
+    case Esr.SessionSocketRegistry.notify_session(session_id, envelope) do
       :ok ->
         :ok
 

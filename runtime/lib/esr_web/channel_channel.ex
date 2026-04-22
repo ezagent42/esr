@@ -11,11 +11,11 @@ defmodule EsrWeb.ChannelChannel do
   use Phoenix.Channel
   require Logger
 
-  alias Esr.SessionRegistry
+  alias Esr.SessionSocketRegistry
 
   @impl Phoenix.Channel
   def join("cli:channel/" <> session_id, _payload, socket) do
-    SessionRegistry.register(session_id,
+    SessionSocketRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: [],
       app_ids: [],
@@ -36,7 +36,7 @@ defmodule EsrWeb.ChannelChannel do
   # Capabilities spec §6.2/§6.3 — CC session worker declares its
   # principal_id (the admin/user running CC) and workspace_name (which
   # workspace row this session operates in) on register. Both end up
-  # on the SessionRegistry row AND on the socket's assigns so the
+  # on the SessionSocketRegistry row AND on the socket's assigns so the
   # tool_invoke handler can inject principal_id into the arity-6
   # {:tool_invoke, ...} tuple that Lane B (CAP-4) enforces against.
   #
@@ -52,7 +52,7 @@ defmodule EsrWeb.ChannelChannel do
     principal_id = payload["principal_id"] || System.get_env("ESR_BOOTSTRAP_PRINCIPAL_ID")
     workspace_name = payload["workspace_name"]
 
-    SessionRegistry.register(session_id,
+    SessionSocketRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: chat_ids,
       app_ids: app_ids,
@@ -134,7 +134,7 @@ defmodule EsrWeb.ChannelChannel do
   @impl Phoenix.Channel
   def terminate(_reason, socket) do
     if sid = socket.assigns[:session_id] do
-      SessionRegistry.mark_offline(sid)
+      SessionSocketRegistry.mark_offline(sid)
       :telemetry.execute([:esr, :session, :offline], %{},
         %{session_id: sid, reason: :ws_closed})
     end

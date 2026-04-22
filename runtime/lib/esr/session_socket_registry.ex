@@ -1,5 +1,10 @@
-defmodule Esr.SessionRegistry do
+defmodule Esr.SessionSocketRegistry do
   @moduledoc """
+  Formerly `Esr.SessionRegistry`. Manages CC WebSocket session bindings
+  (ws_pid → chat_ids/app_ids/workspace/principal). Renamed to free
+  `Esr.SessionRegistry` for the new yaml-compiled topology registry
+  (see spec §2.3).
+
   Tracks live CC session ↔ WebSocket bindings (spec §3.2).
 
   State row per session_id:
