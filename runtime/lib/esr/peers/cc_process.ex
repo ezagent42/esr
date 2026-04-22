@@ -1,0 +1,206 @@
+defmodule Esr.Peers.CCProcess do
+  @moduledoc """
+  Per-Session `Peer.Stateful` holding CC business state. Invokes Python
+  handler code via `Esr.HandlerRouter.call/3` on upstream messages and
+  translates handler actions into downstream messages for the
+  `TmuxProcess` neighbor (`:send_input`) or upward replies to
+  `FeishuChatProxy` via `CCProxy` (`:reply`).
+
+  State:
+
+    * `:session_id` — session this peer belongs to (spec §3.1)
+    * `:handler_module` — the Python handler module string (e.g.
+      `"cc_adapter_runner"`) passed verbatim as the first argument to
+      `HandlerRouter.call/3`
+    * `:cc_state` — the handler's opaque state blob, threaded through
+      each invocation (`payload["state"]` in, `new_state` out)
+    * `:neighbors` — keyword: `:tmux_process`, `:cc_proxy`
+    * `:proxy_ctx` — shared context snapshot (principal_id, etc.) used
+      by downstream Peer.Proxy ctx hooks
+    * `:handler_override` — optional 3-arity fun for tests to stub the
+      HandlerRouter round-trip without a running Phoenix worker
+      channel; set via `put_handler_override/2`
+
+  Peer.Stateful protocol (spec §3.1):
+
+    * `handle_upstream({:text, bytes}, state)` — from `CCProxy`; invoke
+      handler, dispatch resulting actions
+    * `handle_upstream({:tmux_output, bytes}, state)` — from
+      `TmuxProcess`; invoke handler, dispatch resulting actions
+    * `handle_downstream(_, state)` — no-op in PR-3 (the upward path is
+      handled via direct dispatch of `:reply` actions to the `cc_proxy`
+      neighbor; no downstream message arrives here today)
+
+  Spec §4.1 CCProcess card, §5.1 data flow; expansion P3-2.
+  """
+  use Esr.Peer.Stateful
+  use GenServer
+  require Logger
+
+  @default_timeout 5_000
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(args) when is_map(args), do: GenServer.start_link(__MODULE__, args)
+
+  @doc """
+  Installs a 3-arity fun `(handler_module, payload, timeout)` that
+  replaces the real `HandlerRouter.call/3` call inside this peer. Used
+  by tests to stub the handler round-trip deterministically. The
+  override lives in the peer's own process state, so it is scoped to
+  this pid only and does not leak across tests.
+  """
+  @spec put_handler_override(pid(), (String.t(), map(), pos_integer() -> term())) :: :ok
+  def put_handler_override(pid, fun) when is_pid(pid) and is_function(fun, 3) do
+    GenServer.call(pid, {:put_handler_override, fun})
+  end
+
+  # ------------------------------------------------------------------
+  # Peer.Stateful callbacks
+  # ------------------------------------------------------------------
+
+  @impl Esr.Peer.Stateful
+  def init(args) do
+    {:ok,
+     %{
+       session_id: Map.fetch!(args, :session_id),
+       handler_module: Map.fetch!(args, :handler_module),
+       cc_state: Map.get(args, :initial_state, %{}),
+       neighbors: Map.get(args, :neighbors, []),
+       proxy_ctx: Map.get(args, :proxy_ctx, %{}),
+       handler_override: nil
+     }}
+  end
+
+  @impl Esr.Peer.Stateful
+  def handle_upstream({:text, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
+  def handle_upstream({:tmux_output, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
+  def handle_upstream(_other, state), do: {:drop, :unknown_upstream, state}
+
+  @impl Esr.Peer.Stateful
+  def handle_downstream(_msg, state), do: {:forward, [], state}
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl GenServer
+  def handle_call({:put_handler_override, fun}, _from, state) do
+    {:reply, :ok, %{state | handler_override: fun}}
+  end
+
+  @impl GenServer
+  def handle_info({:text, _} = msg, state), do: via_stateful(msg, state, &handle_upstream/2)
+  def handle_info({:tmux_output, _} = msg, state), do: via_stateful(msg, state, &handle_upstream/2)
+  def handle_info(_other, state), do: {:noreply, state}
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  defp via_stateful(msg, state, fun) do
+    case fun.(msg, state) do
+      {:forward, _out, ns} -> {:noreply, ns}
+      {:drop, _reason, ns} -> {:noreply, ns}
+    end
+  end
+
+  defp invoke_and_dispatch(event, state) do
+    payload = %{
+      "handler" => state.handler_module <> ".on_msg",
+      "state" => state.cc_state,
+      "event" => event_to_map(event)
+    }
+
+    case call_handler(state, payload, @default_timeout) do
+      {:ok, new_state, actions} when is_map(new_state) and is_list(actions) ->
+        dispatch_actions(actions, state)
+        {:forward, [], %{state | cc_state: new_state}}
+
+      {:error, :handler_timeout} ->
+        Logger.warning(
+          "cc_process: handler timeout session_id=#{state.session_id}"
+        )
+
+        :telemetry.execute([:esr, :cc_process, :handler_timeout], %{}, %{
+          session_id: state.session_id
+        })
+
+        {:drop, :handler_timeout, state}
+
+      {:error, other} ->
+        Logger.warning(
+          "cc_process: handler error #{inspect(other)} session_id=#{state.session_id}"
+        )
+
+        :telemetry.execute([:esr, :cc_process, :handler_error], %{}, %{
+          session_id: state.session_id,
+          reason: other
+        })
+
+        {:drop, :handler_error, state}
+    end
+  end
+
+  defp call_handler(%{handler_override: fun}, payload, timeout) when is_function(fun, 3) do
+    fun.(payload["handler"] |> strip_fn_suffix(), payload, timeout)
+  end
+
+  defp call_handler(state, payload, timeout) do
+    Esr.HandlerRouter.call(state.handler_module, payload, timeout)
+  end
+
+  # The payload threads the handler module as "<mod>.on_msg" (matching
+  # PeerServer's invoke_handler convention), but the override callback
+  # receives the bare module string — strip the "on_msg" suffix so test
+  # stubs can assert on the canonical module name.
+  defp strip_fn_suffix(handler_fqn) do
+    case String.split(handler_fqn, ".", parts: 2) do
+      [mod, _fn] -> mod
+      [mod] -> mod
+    end
+  end
+
+  defp dispatch_actions(actions, state) do
+    Enum.each(actions, &dispatch_action(&1, state))
+  end
+
+  defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
+    case Keyword.get(state.neighbors, :tmux_process) do
+      pid when is_pid(pid) ->
+        send(pid, {:send_input, text})
+
+      _ ->
+        Logger.warning(
+          "cc_process: :send_input with no tmux_process neighbor " <>
+            "session_id=#{state.session_id}"
+        )
+    end
+  end
+
+  defp dispatch_action(%{"type" => "reply", "text" => text}, state) do
+    case Keyword.get(state.neighbors, :cc_proxy) do
+      pid when is_pid(pid) ->
+        send(pid, {:reply, text})
+
+      _ ->
+        Logger.warning(
+          "cc_process: :reply with no cc_proxy neighbor " <>
+            "session_id=#{state.session_id}"
+        )
+    end
+  end
+
+  defp dispatch_action(unknown, state) do
+    :telemetry.execute([:esr, :cc_process, :unknown_action], %{}, %{
+      session_id: state.session_id,
+      action: unknown
+    })
+  end
+
+  defp event_to_map({:text, bytes}), do: %{"kind" => "text", "text" => bytes}
+  defp event_to_map({:tmux_output, bytes}), do: %{"kind" => "tmux_output", "bytes" => bytes}
+end
