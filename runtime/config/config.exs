@@ -11,7 +11,14 @@ config :esr,
   generators: [timestamp_type: :utc_datetime],
   telemetry_buffer_retention_minutes: 15,
   handler_call_timeout_ms: 5_000,
-  directive_timeout_ms: 30_000
+  directive_timeout_ms: 30_000,
+  # PR-2 Peer/Session refactor feature flag. When `true`, inbound Feishu
+  # frames go through `Esr.Peers.FeishuAppAdapter` (per-app_id consumer)
+  # instead of the legacy `AdapterHub.Registry → PeerRegistry` path in
+  # `EsrWeb.AdapterChannel`. Default off in P2-10; flipped on in P2-14;
+  # removed entirely in P2-17. Override per-process via the
+  # `ESR_USE_NEW_PEER_CHAIN` env var (see `EsrWeb.AdapterChannel.new_peer_chain?/0`).
+  use_new_peer_chain: false
 
 # Configures the endpoint
 config :esr, EsrWeb.Endpoint,

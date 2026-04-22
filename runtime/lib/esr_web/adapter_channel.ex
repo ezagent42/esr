@@ -19,6 +19,29 @@ defmodule EsrWeb.AdapterChannel do
 
   alias Esr.AdapterHub.Registry, as: HubRegistry
 
+  @doc """
+  Feature flag for the Peer/Session refactor (PR-2).
+
+  Reads in this order:
+    1. OS env var `ESR_USE_NEW_PEER_CHAIN` (`"1"`, `"true"`, `"TRUE"` → on;
+       `"0"`, `"false"` → off; any other value → fall through)
+    2. Application env `:esr, :use_new_peer_chain` (defaults `false`)
+
+  When `true`, inbound Feishu frames are forwarded through
+  `Esr.Peers.FeishuAppAdapter` (wired in P2-11). When `false`, the legacy
+  `AdapterHub.Registry → PeerRegistry` path is used. Removed entirely in
+  P2-17 once the new path is the sole path.
+  """
+  @spec new_peer_chain?() :: boolean()
+  def new_peer_chain? do
+    case System.get_env("ESR_USE_NEW_PEER_CHAIN") do
+      v when v in ["1", "true", "TRUE"] -> true
+      "0" -> false
+      "false" -> false
+      _ -> Application.get_env(:esr, :use_new_peer_chain, false)
+    end
+  end
+
   @impl Phoenix.Channel
   def join("adapter:" <> _rest = topic, _payload, socket) do
     # Join succeeds regardless of whether a PeerServer is bound yet —
