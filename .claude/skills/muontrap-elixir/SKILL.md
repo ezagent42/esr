@@ -1,6 +1,6 @@
 ---
 name: muontrap-elixir
-description: Use whenever the task involves the MuonTrap Elixir package — wrapping OS processes with guaranteed cleanup on BEAM exit, spawning tmux / python / shell / any long-running external program under OTP supervision, or needing stdin/stdout interaction with a child process. Triggers include any code that touches `:muontrap`, `MuonTrap.cmd`, `MuonTrap.Daemon`, `MuonTrap.muontrap_path`, writing a custom OSProcess底座 / process wrapper on Elixir, spawning external sidecars from Elixir, debugging orphaned processes after BEAM crash, designing cleanup semantics for tmux or Python subprocesses, or reviewing any Elixir code that uses `Port.open/2` against an OS-spawned child to ensure cleanup is guaranteed. Always use even when MuonTrap is mentioned briefly — training data does not cover 1.6/1.7 API shape reliably.
+description: Use whenever the task involves the MuonTrap Elixir package (1.7.x) — wrapping OS processes with guaranteed cleanup on BEAM exit, spawning tmux / python / shell / any long-running external program under OTP supervision, designing interactive sidecar peers with stdin+stdout, or debugging orphaned processes. Triggers include any code that touches `:muontrap`, `MuonTrap.cmd`, `MuonTrap.Daemon`, `MuonTrap.muontrap_path`, `Port.open` against an OS-spawned child, writing a custom OSProcess底座, reasoning about "Mode 3" stdin/stdout/cleanup trade-offs, deciding between the muontrap wrapper and plain Port for interactive children, or reviewing peer code that spawns external commands. Also use when touching the ESR `Esr.OSProcess` / `Esr.TmuxProcess` / `Esr.PyProcess` modules — they're direct consumers of these patterns. ALWAYS use even when MuonTrap is mentioned briefly — training data doesn't cover 1.7 API reliably and the library has a non-obvious empirical constraint (Mode 3 stdin+stdout+cleanup cannot be satisfied simultaneously — see the body) that is easy to get wrong.
 ---
 
 # MuonTrap (Elixir) — OS Process Wrapping with Guaranteed Cleanup
@@ -71,15 +71,39 @@ stats = MuonTrap.Daemon.statistics(:my_daemon)  # {cpu, mem, ...}
 
 Use Mode 2 for: pure-output daemons (redis, nginx, a database, a background worker that logs).
 
-### Mode 3: `Port.open` + `MuonTrap.muontrap_path()` — interactive stdin/stdout
+### Mode 3: interactive sidecar (stdin + stdout) — pick your sub-variant
 
-When you need:
-- Write bytes to child's stdin (tmux control-mode commands, Python JSON-line requests, an interactive shell)
-- Receive child stdout line-by-line as Erlang messages
-- Supervise the child under OTP
-- Guarantee cleanup on BEAM exit
+**STOP and pick 3a / 3b / 3c based on what you actually need.** Mode 3 has a hard empirical constraint discovered in ESR PR-1 (see `docs/notes/muontrap-mode3-constraint.md` in the ESR repo): **MuonTrap 1.7's wrapper binary cannot simultaneously provide all three of — stdin write from Elixir, stdout read in Elixir, and BEAM-exit cleanup of the child.** Without `--capture-output`, child stdout is `dup2`'d to `/dev/null`. With `--capture-output`, the wrapper consumes its own stdin as an ack-byte-counting channel, so `Port.command/2` bytes never reach the child. Pick any two.
 
-You DIY a GenServer that opens a Port to the `muontrap` binary wrapper, using `MuonTrap.muontrap_path/0` to locate it. The wrapper binary intercepts signals and forwards them, so even on SIGKILL of the BEAM, the child is cleaned up (cgroup on Linux, equivalent on macOS).
+#### Mode 3a: cleanup + stdout (no stdin)
+
+For daemons you launch and observe — the child produces output, Elixir watches, Elixir never needs to write back.
+
+Use `MuonTrap.Daemon` with `log_output: :info` or `{:stdout, pid}`-style forwarding (see `MuonTrap.Daemon` options). `MuonTrap.Daemon` already encodes this sub-variant; you don't need to DIY a Port.
+
+```elixir
+{:ok, daemon} = MuonTrap.Daemon.start_link("watcher", ["--verbose"],
+  log_output: :info, name: :my_watcher)
+# Daemon handles SIGTERM-→-SIGKILL cleanup on BEAM exit.
+# No stdin access is available; don't try to use GenServer.call/cast to write bytes.
+```
+
+#### Mode 3b: cleanup + stdin (stdout silently discarded)
+
+For fire-and-forget processes that need a kick-off command and then run autonomously.
+
+This is the rarest of the three. Use `MuonTrap.cmd/3` with `into: IO.stream(:stdio, :line)` to discard output, and pipe stdin at spawn time via `stderr_to_stdout`. In practice, you almost always want 3a or 3c instead — if you have a case that truly needs 3b, come back and expand this section.
+
+#### Mode 3c: stdin + stdout, no wrapper (DIY cleanup)
+
+For interactive sidecars where you exchange data with the child across its whole lifetime: tmux in control mode, Python JSON-line RPC, interactive shells.
+
+**Do NOT use the muontrap wrapper binary for this case.** Use a plain Elixir `Port` directly. Cleanup becomes the child's own responsibility — the two reliable patterns:
+
+1. **Child detects stdin EOF** (standard for well-behaved Python scripts, shell REPLs): when BEAM closes the Port, the child's stdin hits EOF, and it exits on its next read. Clean, fast (~100ms for Python with `PYTHONUNBUFFERED=1`). No Elixir-side code needed.
+2. **Child has an out-of-band cleanup command**: e.g. `tmux kill-session -t <name>`. Fire it in the Peer's `terminate/2`. Supervisor teardown guarantees `terminate/2` runs (unless the BEAM itself is SIGKILL'd, in which case the child's session may outlive — accept that trade-off per-peer-type).
+
+**Code template (Mode 3c):**
 
 ```elixir
 defmodule MyInteractive do
@@ -91,28 +115,22 @@ defmodule MyInteractive do
   @impl true
   def init(opts) do
     exe = Keyword.fetch!(opts, :exe)      # e.g. "tmux"
-    args = Keyword.get(opts, :args, [])   # e.g. ["-C", "new-session", "-d"]
+    args = Keyword.get(opts, :args, [])   # e.g. ["-C", "new-session", "-s", name]
     env = Keyword.get(opts, :env, [])
 
-    muontrap_bin = MuonTrap.muontrap_path()
-
-    # Wrapper CLI: [wrapper-opts...] -- target-cmd [target-args...]
-    wrapper_args =
-      [
-        "--delay-to-sigkill", "5000",
-        "--"
-      ] ++ [exe | args]
-
+    # Plain Port — NO muontrap wrapper.
+    # Spawn the target command directly. Cleanup must be handled
+    # by the child itself (EOF-on-stdin) or by terminate/2 below.
     port =
       Port.open(
-        {:spawn_executable, muontrap_bin},
+        {:spawn_executable, System.find_executable(exe)},
         [
           :binary,
           :exit_status,
           :stderr_to_stdout,
           {:line, 4096},
           {:env, to_env_charlists(env)},
-          {:args, wrapper_args}
+          {:args, args}
         ]
       )
 
@@ -122,7 +140,8 @@ defmodule MyInteractive do
         _ -> nil
       end
 
-    {:ok, %{port: port, os_pid: os_pid, subscriber: opts[:subscriber] || self()}}
+    {:ok, %{port: port, os_pid: os_pid, exe: exe, args: args,
+            subscriber: opts[:subscriber] || self()}}
   end
 
   @impl true
@@ -141,14 +160,26 @@ defmodule MyInteractive do
     {:stop, {:child_exited, status}, s}
   end
 
+  @impl true
+  def terminate(_reason, s) do
+    # Per-peer cleanup. Examples:
+    # - tmux: System.cmd("tmux", ["kill-session", "-t", s.session_name])
+    # - python: nothing — child exits on stdin EOF when Port dies
+    :ok
+  end
+
   defp to_env_charlists(env) do
     for {k, v} <- env, do: {String.to_charlist(k), String.to_charlist(v)}
   end
 end
 ```
 
-**Why this works and direct `Port.open({:spawn_executable, "tmux"}, ...)` doesn't:**
-- Plain Port relies on EOF on stdin to signal shutdown to the child. Many programs don't check stdin EOF (tmux, python with PYTHONUNBUFFERED, long services). On BEAM SIGKILL, children orphan.
+**When Mode 3c is NOT enough** (BEAM hard-crashes + child doesn't detect EOF + there's no out-of-band kill command):
+- Consider `erlexec` (see [GitHub issue #7](https://github.com/ezagent42/esr/issues/7) in ESR) — more sophisticated OS-process management with full stdin/stdout/cleanup support in one package.
+- Or run a thin wrapper script (bash / python) that reads from its own stdin, pipes to the real child, and kills the child when stdin closes. More code, but gives you 3-way properties via composition.
+
+**Why plain Port + muontrap wrapper breaks (the empirical finding):**
+- Plain Port **without** muontrap: relies on child EOF-on-stdin detection. Works for tmux and Python; doesn't work for children that ignore stdin.
 - `muontrap` wrapper binary receives signals and explicitly kills the child on parent death (via prctl `PR_SET_PDEATHSIG` on Linux, `kqueue EVFILT_PROC EV_NOTE_EXIT` on macOS). Cleanup is guaranteed even on abnormal termination.
 
 ---
@@ -174,6 +205,8 @@ Commonly used options:
 | `--` | End of wrapper opts; everything after is the target command + args. |
 
 Env vars: pass via Port's `{:env, list}` option; they are inherited by the wrapper which passes them to the child.
+
+**About `--capture-output`:** this flag enables forwarding of child stdout to the parent Port. BUT it also repurposes the wrapper's own stdin as an ack-byte-counting channel (`MuonTrap.Port.encode_acks/1`) — meaning `Port.command/2` bytes from Elixir are decoded as ack counts and do NOT reach the child. This is the core constraint behind Mode 3's three-way trade-off. Use `--capture-output` only for Mode 3a (stdout-only + cleanup); never for Mode 3c (bidirectional).
 
 ---
 
@@ -243,12 +276,16 @@ Same problem. Prefer MuonTrap.
 
 ## When to use each mode (decision table)
 
-| Requirement | Mode |
-|---|---|
-| Synchronous, capture all output, short-lived | `MuonTrap.cmd/3` |
-| Long-running daemon, stdout only, Logger forwarding is enough | `MuonTrap.Daemon` |
-| Long-running daemon, need stdin write or custom stdout parsing | `Port.open` + `MuonTrap.muontrap_path()` (Mode 3) |
-| Need pooling / multiple workers of same child | Build a DynamicSupervisor of Mode 2 or Mode 3 GenServers |
+| Requirement | stdin? | stdout read? | BEAM-exit cleanup? | Mode |
+|---|---|---|---|---|
+| Short-lived, capture-all-output | — | ✓ | ✓ (via caller process exit) | `MuonTrap.cmd/3` |
+| Long-running daemon, stdout to Logger | — | ✓ | ✓ | `MuonTrap.Daemon` (= Mode 3a) |
+| Long-running, stdout-only + cleanup | ❌ | ✓ | ✓ | Mode 3a (use `MuonTrap.Daemon` with log_output/forwarding) |
+| Fire-and-forget with startup kick | ✓ (startup) | ❌ | ✓ | Mode 3b (`MuonTrap.cmd` with stdin pipe) — rare |
+| Bidirectional interactive (tmux, Python sidecar, REPL) | ✓ | ✓ | **app-layer** (not kernel) | Mode 3c (plain Port, no muontrap wrapper) |
+| Pool of workers | — | — | — | Wrap any mode in a DynamicSupervisor |
+
+**The key row** is the last one: if you need bidirectional interactive I/O, the muontrap wrapper is actively in your way (its stdin-as-ack-channel breaks `Port.command/2`). Accept app-layer cleanup as the trade-off, or switch to `erlexec`.
 
 ---
 
