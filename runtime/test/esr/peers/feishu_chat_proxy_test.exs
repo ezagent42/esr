@@ -4,14 +4,13 @@ defmodule Esr.Peers.FeishuChatProxyTest do
   alias Esr.Peers.FeishuChatProxy
 
   setup do
-    # Drift from expansion doc: `Esr.SessionRegistry` is already started by
-    # `Esr.Application` (see application.ex "4d. Session registry"), so a
-    # redundant `start_supervised!` would crash with :already_started.
-    # Same drift that feishu_app_adapter_test.exs already called out.
-    # `Esr.AdminSessionProcess` is NOT yet in the application tree (that
-    # lands with P2-9), so we start it locally here.
+    # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
+    # `Esr.AdminSessionProcess` (via P2-9's AdminSession) are now started
+    # at app boot, so a redundant `start_supervised!` would crash with
+    # :already_started. We reuse the app-level processes; register_admin_peer
+    # is idempotent per-key so cross-test pollution is bounded.
     assert is_pid(Process.whereis(Esr.SessionRegistry))
-    start_supervised!({Esr.AdminSessionProcess, []})
+    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
     :ok
   end
 

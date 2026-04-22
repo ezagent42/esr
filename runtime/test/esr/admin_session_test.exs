@@ -2,22 +2,20 @@ defmodule Esr.AdminSessionTest do
   use ExUnit.Case, async: false
 
   setup do
-    # Isolated start so the app-level AdminSession does not conflict.
-    # We start the supervisor directly under a throwaway name and let
-    # it bring up its own AdminSessionProcess child (registered under
-    # Esr.AdminSessionProcess — the module-level name the real code uses).
-    #
-    # NOTE: the PR-2 expansion setup also included a redundant
-    # `start_supervised!({Esr.AdminSessionProcess, []})` above the
-    # `Esr.AdminSession.start_link/1` call. That would double-register
-    # the same GenServer name and crash the supervisor with
-    # `:already_started`. Removed here to preserve the expansion's
-    # actual intent (one AdminSessionProcess, owned by the supervisor).
+    # Drift from expansion doc: P2-9 added `Esr.AdminSession` to
+    # `Esr.Application`'s supervision tree, registering
+    # `Esr.AdminSessionProcess` and `Esr.AdminSession.ChildrenSupervisor`
+    # at app boot. To keep these tests hermetic and avoid the
+    # `:already_started` collision, we start a second, isolated
+    # AdminSession tree under test-only names for every assertion
+    # here. The app-level process is left untouched.
+    test_process_name = :"test_admin_session_process_#{:erlang.unique_integer([:positive])}"
+
     {:ok, sup} =
       Esr.AdminSession.start_link(
         name: :test_admin_session,
         children_sup_name: :test_admin_children_sup,
-        process_name: Esr.AdminSessionProcess
+        process_name: test_process_name
       )
 
     on_exit(fn ->
@@ -33,11 +31,11 @@ defmodule Esr.AdminSessionTest do
       end
     end)
 
-    {:ok, sup: sup}
+    {:ok, sup: sup, admin_process: test_process_name}
   end
 
-  test "AdminSession starts AdminSessionProcess", _ctx do
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
+  test "AdminSession starts AdminSessionProcess", %{admin_process: name} do
+    assert is_pid(Process.whereis(name))
   end
 
   test "AdminSession.children_supervisor/1 returns the DynamicSupervisor for admin peers" do
@@ -68,11 +66,11 @@ defmodule Esr.AdminSessionTest do
     assert Process.alive?(pid)
   end
 
-  test "AdminSession starts even when Esr.SessionRouter is not loaded" do
+  test "AdminSession starts even when Esr.SessionRouter is not loaded", %{admin_process: name} do
     # Risk F boot-order test: AdminSession must not depend on SessionRouter
     refute Code.ensure_loaded?(Esr.SessionRouter),
            "Esr.SessionRouter must not be loaded for this test (it's introduced in PR-3)"
 
-    assert Process.alive?(Process.whereis(Esr.AdminSessionProcess))
+    assert Process.alive?(Process.whereis(name))
   end
 end

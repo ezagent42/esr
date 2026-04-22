@@ -12,7 +12,11 @@ defmodule Esr.PeerFactoryTest do
   end
 
   setup do
-    start_supervised!({Registry, keys: :unique, name: Esr.Session.Registry})
+    # Drift from expansion doc: `Esr.Session.Registry` is already started
+    # by `Esr.Application` (P2-9 added it). Previously the test booted its
+    # own Registry under the same name; now we just assert the app-level
+    # one is up and reuse it.
+    assert is_pid(Process.whereis(Esr.Session.Registry))
     :ok
   end
 

@@ -4,7 +4,10 @@ defmodule Esr.Peers.SlashHandlerTest do
   alias Esr.Peers.SlashHandler
 
   setup do
-    start_supervised!({Esr.AdminSessionProcess, []})
+    # Drift from expansion doc: P2-9 added `Esr.AdminSessionProcess` to
+    # `Esr.Application`'s tree, so a redundant `start_supervised!` would
+    # crash with :already_started. Reuse the app-level process.
+    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
     # Stub Esr.Admin.Dispatcher with a process that echoes commands back.
     dispatcher = self()
     Process.register(dispatcher, :test_admin_dispatcher)

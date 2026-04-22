@@ -4,14 +4,12 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
   alias Esr.Peers.FeishuAppAdapter
 
   setup do
-    # Drift from expansion doc: `Esr.SessionRegistry` is already started by
-    # `Esr.Application` (see application.ex "4d. Session registry"), so a
-    # redundant `start_supervised!` would crash with :already_started.
-    # Same drift that admin_session_test.exs called out for AdminSessionProcess.
-    # `Esr.AdminSessionProcess` is NOT yet in the application tree (that
-    # lands with P2-9), so we start it locally here.
+    # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
+    # `Esr.AdminSessionProcess` (via P2-9's AdminSession) are now started
+    # at app boot, so a redundant `start_supervised!` would crash with
+    # :already_started. Reuse the app-level processes.
     assert is_pid(Process.whereis(Esr.SessionRegistry))
-    start_supervised!({Esr.AdminSessionProcess, []})
+    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
     {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: :fab_test_sup)
 
     on_exit(fn -> if Process.alive?(sup), do: Process.exit(sup, :shutdown) end)

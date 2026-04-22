@@ -2,7 +2,10 @@ defmodule Esr.SessionTest do
   use ExUnit.Case, async: false
 
   setup do
-    start_supervised!({Registry, keys: :unique, name: Esr.Session.Registry})
+    # Drift from expansion doc: `Esr.Session.Registry` is already started
+    # by `Esr.Application` (P2-9 added it). Reuse the app-level Registry
+    # rather than booting a redundant one.
+    assert is_pid(Process.whereis(Esr.Session.Registry))
     :ok
   end
 
