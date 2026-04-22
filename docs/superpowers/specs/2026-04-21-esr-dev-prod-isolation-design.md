@@ -11,6 +11,8 @@ Relates to:
 - v1 (initial): Minimal-runtime approach; `esr notify` / `esr reload` directly shell-out or call Feishu API, bypassing the actor model.
 - v2 (this): Introduces `Esr.Admin` subsystem as the single execution path for all administrative operations. CLI becomes a thin UX+queue-writer; `Esr.Routing.SessionRouter` becomes a command parser that forwards to the Dispatcher. `esr adapter feishu create-app` also flows through the Dispatcher (clarified: esrd runs even with empty adapters.yaml).
 
+> **Note (2026-04-22):** The `Esr.Routing.SessionRouter` introduced by v2.2 Task 17 has been renamed to `Esr.Routing.SlashHandler` (cosmetic change only; behaviour unchanged). The real SessionRouter (control-plane actor) is defined in the Peer/Session refactor spec (`2026-04-22-peer-session-refactor-design.md`) and lands post-merge of PR #11.
+
 ## 1. Goal & Scope
 
 ### 1.1 Problem statement
