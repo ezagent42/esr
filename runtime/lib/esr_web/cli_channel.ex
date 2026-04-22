@@ -15,7 +15,12 @@ defmodule EsrWeb.CliChannel do
   alias Esr.DeadLetter.Entry, as: DeadLetterEntry
   alias Esr.Telemetry.Buffer
   alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
-  alias Esr.Topology.Instantiator
+
+  # Error shape returned by every cli:topology/* / cli:run/* / cli:stop/*
+  # / cli:drain op now that Esr.Topology has been deleted (P3-13).
+  # Maps to the CLI's data.get("error") path — user sees the migration
+  # message and can follow the `/new-session` + `/list-sessions` flow.
+  @topology_removed_error "topology module removed — use /new-session + /list-sessions"
 
   @impl Phoenix.Channel
   def join("cli:" <> _op = topic, _payload, socket) do
@@ -48,17 +53,11 @@ defmodule EsrWeb.CliChannel do
   end
 
   def dispatch("cli:actors/tree", _payload) do
-    topologies =
-      Esr.Topology.Registry.list_all()
-      |> Enum.map(fn h ->
-        %{
-          "name" => h.name,
-          "params" => stringify_keys(h.params),
-          "peer_ids" => h.peer_ids
-        }
-      end)
-
-    %{"data" => %{"topologies" => topologies}}
+    # P3-13: Topology module deleted. The "tree" view used to group
+    # PeerRegistry entries by their Topology handle; without that
+    # registry we can still surface the raw actor list so the CLI
+    # remains useful, and return an empty topologies list.
+    %{"data" => %{"topologies" => [], "error" => @topology_removed_error}}
   end
 
   def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
@@ -101,78 +100,44 @@ defmodule EsrWeb.CliChannel do
   end
 
   def dispatch("cli:run/" <> name, payload) when is_binary(name) do
-    artifact = Map.get(payload, "artifact") || %{"name" => name}
+    # P3-13: Topology module deleted — no more artifact instantiation
+    # via Elixir. Session creation now flows through SessionRouter via
+    # the /new-session slash command.
     params = Map.get(payload, "params") || %{}
-
-    # Register the artifact so future InvokeCommand actions (fired by
-    # handlers via e.g. /new-thread) can look it up. ETS is shared
-    # across all PeerServers; one put_artifact per distinct name.
-    :ok = Esr.Topology.Registry.put_artifact(name, artifact)
-
-    case Instantiator.instantiate(artifact, params) do
-      {:ok, handle} ->
-        %{
-          "data" => %{
-            "name" => handle.name,
-            "params" => handle.params,
-            "peer_ids" => handle.peer_ids
-          }
-        }
-
-      {:error, reason} ->
-        %{
-          "data" => %{
-            "error" => instantiate_error_message(reason),
-            "name" => name,
-            "params" => params,
-            "peer_ids" => []
-          }
-        }
-    end
-  end
-
-  def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
-    params = Map.get(payload, "params") || %{}
-
-    case Esr.Topology.Registry.lookup(name, params) do
-      {:ok, handle} ->
-        :ok = Esr.Topology.Registry.deactivate(handle)
-
-        %{
-          "data" => %{
-            "name" => name,
-            "params" => params,
-            "stopped_peer_ids" => handle.peer_ids
-          }
-        }
-
-      :error ->
-        %{
-          "data" => %{
-            "error" => "instantiation not found",
-            "name" => name,
-            "params" => params,
-            "stopped_peer_ids" => []
-          }
-        }
-    end
-  end
-
-  def dispatch("cli:drain", _payload) do
-    handles = Esr.Topology.Registry.list_all()
-
-    peer_ids =
-      handles
-      |> Enum.flat_map(& &1.peer_ids)
-
-    Enum.each(handles, &Esr.Topology.Registry.deactivate/1)
 
     %{
       "data" => %{
-        "drained" => Enum.map(handles, fn h ->
-          %{"name" => h.name, "params" => stringify_keys(h.params), "peer_ids" => h.peer_ids}
-        end),
-        "stopped_peer_ids" => peer_ids,
+        "error" => @topology_removed_error,
+        "name" => name,
+        "params" => params,
+        "peer_ids" => []
+      }
+    }
+  end
+
+  def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
+    # P3-13: Topology module deleted — session teardown now flows
+    # through SessionRouter via the /end-session slash command.
+    params = Map.get(payload, "params") || %{}
+
+    %{
+      "data" => %{
+        "error" => @topology_removed_error,
+        "name" => name,
+        "params" => params,
+        "stopped_peer_ids" => []
+      }
+    }
+  end
+
+  def dispatch("cli:drain", _payload) do
+    # P3-13: Topology module deleted — drain semantics folded into
+    # SessionRouter (`/list-sessions` + `/end-session` per row).
+    %{
+      "data" => %{
+        "error" => @topology_removed_error,
+        "drained" => [],
+        "stopped_peer_ids" => [],
         "timeouts" => []
       }
     }
@@ -270,23 +235,6 @@ defmodule EsrWeb.CliChannel do
     # matches every other dispatch ({"data" => ...}) so the CLI helpers
     # surface the error string via their existing data.get("error") paths.
     %{"data" => %{"error" => "unknown_topic: #{topic}"}}
-  end
-
-  @spec instantiate_error_message(term()) :: String.t()
-  defp instantiate_error_message({:missing_params, names}) do
-    "missing_params: #{Enum.join(names, ", ")}"
-  end
-
-  defp instantiate_error_message(:cycle_in_depends_on) do
-    "cycle_in_depends_on"
-  end
-
-  defp instantiate_error_message({:init_directive_failed, node_id, detail}) do
-    "init_directive_failed on #{node_id}: #{inspect(detail)}"
-  end
-
-  defp instantiate_error_message(other) do
-    "instantiate_failed: #{inspect(other)}"
   end
 
   @spec debug_toggle(String.t(), :pause | :resume) :: map()

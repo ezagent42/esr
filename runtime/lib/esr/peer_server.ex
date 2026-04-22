@@ -22,8 +22,6 @@ defmodule Esr.PeerServer do
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
-  alias Esr.Topology.Instantiator, as: TopoInstantiator
-  alias Esr.Topology.Registry, as: TopoRegistry
 
   @doc """
   Built-in MCP tool names exposed by `build_emit_for_tool/3`
@@ -695,29 +693,6 @@ defmodule Esr.PeerServer do
     state
   end
 
-  defp dispatch_action(%{"type" => "invoke_command"} = action, %__MODULE__{} = state) do
-    name = action["name"]
-    params = Map.get(action, "params", %{})
-
-    case TopoRegistry.get_artifact(name) do
-      {:ok, artifact} ->
-        # Instantiator.instantiate blocks up to directive_timeout per
-        # init_directive node; run it in a fire-and-forget Task so the
-        # PeerServer's mailbox stays responsive (reviewer S2/C5).
-        actor_id = state.actor_id
-
-        _ = Task.start(fn -> run_instantiation(artifact, params, actor_id) end)
-
-      :error ->
-        :telemetry.execute([:esr, :invoke_command, :unknown], %{}, %{
-          actor_id: state.actor_id,
-          name: name
-        })
-    end
-
-    state
-  end
-
   defp dispatch_action(unknown, %__MODULE__{} = state) do
     :telemetry.execute([:esr, :action, :unknown], %{}, %{
       actor_id: state.actor_id,
@@ -725,25 +700,6 @@ defmodule Esr.PeerServer do
     })
 
     state
-  end
-
-  defp run_instantiation(artifact, params, source_actor) do
-    case TopoInstantiator.instantiate(artifact, params) do
-      {:ok, _handle} ->
-        :telemetry.execute([:esr, :topology, :activated], %{}, %{
-          name: artifact["name"],
-          params: params,
-          invoked_by: source_actor
-        })
-
-      {:error, reason} ->
-        :telemetry.execute([:esr, :topology, :failed], %{}, %{
-          name: artifact["name"],
-          params: params,
-          invoked_by: source_actor,
-          reason: reason
-        })
-    end
   end
 
   defp emit_directive_outcome(actor_id, id, %{"ok" => true}) do

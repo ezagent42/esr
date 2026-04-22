@@ -1,7 +1,10 @@
 defmodule Esr.PeerServerActionDispatchTest do
   @moduledoc """
-  PRD 01 F07 — PeerServer dispatches Emit / Route / InvokeCommand
-  actions returned by HandlerRouter.call.
+  PRD 01 F07 — PeerServer dispatches Emit / Route actions returned by
+  HandlerRouter.call.
+
+  P3-13: InvokeCommand is gone (Topology module deleted); session
+  creation is now a SessionRouter control-plane operation.
   """
 
   use ExUnit.Case, async: false
@@ -142,85 +145,6 @@ defmodule Esr.PeerServerActionDispatchTest do
     assert routed["payload"]["event_type"] == "forwarded"
 
     Registry.unregister(Esr.PeerRegistry, target_id)
-    send(worker.pid, :stop)
-  end
-
-  test "InvokeCommand with unknown artifact emits [:esr, :invoke_command, :unknown]" do
-    actor_id = "ic-test-#{System.unique_integer([:positive])}"
-
-    worker =
-      start_fake_worker("noop", fn _payload ->
-        %{
-          "new_state" => %{},
-          "actions" => [
-            %{
-              "type" => "invoke_command",
-              "name" => "feishu-thread-session",
-              "params" => %{"thread_id" => "t-1"}
-            }
-          ]
-        }
-      end)
-
-    assert_receive :worker_ready, 500
-
-    # The name "feishu-thread-session" is NOT registered as an artifact
-    # in Topology.Registry, so PeerServer emits :unknown (PRD 01 F07 C5).
-    :telemetry.attach(
-      "test-invoke-command",
-      [:esr, :invoke_command, :unknown],
-      fn _event, _measurements, metadata, pid -> send(pid, {:ic, metadata}) end,
-      self()
-    )
-
-    peer_pid = start_peer(actor_id)
-    send_event(peer_pid)
-
-    assert_receive {:ic, metadata}, 2_000
-    assert metadata[:name] == "feishu-thread-session"
-
-    :telemetry.detach("test-invoke-command")
-    send(worker.pid, :stop)
-  end
-
-  test "InvokeCommand with an existing artifact activates the topology" do
-    :ok = Esr.Topology.Registry.put_artifact("existing-art", %{
-      "name" => "existing-art",
-      "params" => ["x"],
-      "nodes" => [
-        %{"id" => "ic-ok:{{x}}", "actor_type" => "t", "handler" => "noop.handler"}
-      ],
-      "edges" => []
-    })
-
-    actor_id = "ic-ok-src-#{System.unique_integer([:positive])}"
-
-    worker =
-      start_fake_worker("noop", fn _payload ->
-        %{
-          "new_state" => %{},
-          "actions" => [
-            %{"type" => "invoke_command", "name" => "existing-art", "params" => %{"x" => "7"}}
-          ]
-        }
-      end)
-
-    assert_receive :worker_ready, 500
-
-    :telemetry.attach(
-      "ic-activated-existing-#{:erlang.unique_integer()}",
-      [:esr, :topology, :activated],
-      fn _e, _m, metadata, pid -> send(pid, {:activated, metadata}) end,
-      self()
-    )
-
-    peer_pid = start_peer(actor_id)
-    send_event(peer_pid)
-
-    assert_receive {:activated, metadata}, 3_000
-    assert metadata[:name] == "existing-art"
-    assert metadata[:params] == %{"x" => "7"}
-
     send(worker.pid, :stop)
   end
 
