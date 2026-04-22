@@ -48,4 +48,49 @@ defmodule Esr.SessionTest do
     assert state.agent_name == "cc"
     assert state.dir == "/tmp/w2"
   end
+
+  describe "SessionProcess grants (P2-6a scaffold)" do
+    setup do
+      {:ok, _sup} =
+        Esr.Session.start_link(%{
+          session_id: "g-s1",
+          agent_name: "cc",
+          dir: "/tmp/g",
+          chat_thread_key: %{chat_id: "oc", thread_id: "om"},
+          metadata: %{principal_id: "p_test"}
+        })
+
+      :ok
+    end
+
+    test "SessionProcess.has?/2 passes through to Esr.Capabilities.Grants.has?/2 today" do
+      # With no grants loaded for principal, has? returns false.
+      refute Esr.SessionProcess.has?("g-s1", "workspace:*/msg.send")
+    end
+
+    test "has? reads principal_id from metadata and calls global Grants" do
+      # Same as above but illustrates the passthrough surface
+      assert Esr.SessionProcess.has?("g-s1", "*") ==
+               Esr.Capabilities.Grants.has?("p_test", "*")
+    end
+
+    test "has? returns true after seeding grants for principal_id" do
+      # Seed the global Grants ETS — P3-3a will swap this for per-session
+      # projection, but today pass-through means a write here is visible.
+      prior =
+        case :ets.lookup(:esr_capabilities_grants, "p_test") do
+          [] -> nil
+          [{_, held}] -> held
+        end
+
+      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_test" => ["*"]})
+
+      try do
+        assert Esr.SessionProcess.has?("g-s1", "workspace:proj/msg.send")
+      after
+        snap = if prior, do: %{"p_test" => prior}, else: %{}
+        :ok = Esr.Capabilities.Grants.load_snapshot(snap)
+      end
+    end
+  end
 end

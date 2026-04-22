@@ -30,6 +30,32 @@ defmodule Esr.SessionProcess do
 
   def state(session_id), do: GenServer.call(via(session_id), :state)
 
+  @doc """
+  PR-2 scaffold for spec §3.3a: session-scoped capability check.
+
+  Today: reads `principal_id` from `SessionProcess.metadata` and delegates
+  to `Esr.Capabilities.Grants.has?/2` (global ETS lookup).
+
+  PR-3 (P3-3a) replaces this with a local grants map populated at Session
+  init and refreshed via PubSub `{:grants_changed, principal_id}`. Peers
+  calling `SessionProcess.has?/2` today will transparently gain
+  session-local resolution once P3-3a ships.
+
+  See `docs/futures/peer-session-capability-projection.md`.
+  """
+  def has?(session_id, permission) when is_binary(session_id) and is_binary(permission) do
+    state = state(session_id)
+
+    principal_id =
+      Map.get(state.metadata, :principal_id) || Map.get(state.metadata, "principal_id")
+
+    if is_binary(principal_id) do
+      Esr.Capabilities.Grants.has?(principal_id, permission)
+    else
+      false
+    end
+  end
+
   @impl true
   def init(args) do
     {:ok,
