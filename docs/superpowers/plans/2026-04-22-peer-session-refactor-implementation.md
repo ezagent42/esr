@@ -97,7 +97,7 @@ These notifications are **part of the plan**, not optional courtesy. A subagent 
 | `runtime/lib/esr/application.ex` | Supervision tree updated per §4 | PR-1 initial additions; PR-2/PR-3 extend |
 | `runtime/lib/esr/admin/commands/session/new.ex` | Require `agent` field; verify `capabilities_required`; reject without — **these files arrive with PR #11 squash-merge** (v2.2 Admin subsystem); PR-3 assumes PR #11 merged | PR-3 (after PR #11) |
 | `runtime/lib/esr/admin/commands/session/end.ex` | Adapt to new Session supervisor tree — **same PR #11 dependency** | PR-3 (after PR #11) |
-| `runtime/mix.exs` | Add `{:muontrap, "~> 1.3"}` dep | PR-1 |
+| `runtime/mix.exs` | Add `{:muontrap, "~> 1.7"}` dep | PR-1 |
 | `runtime/lib/esr/routing/session_router.ex` | (PR-0) rename module to `Esr.Routing.SlashHandler` + file rename | PR-0 |
 | `runtime/test/esr/routing/session_router_test.exs` | (PR-0) rename references | PR-0 |
 
@@ -333,8 +333,9 @@ Comment on PR #11: "Rename surgery complete; SessionRouter → SlashHandler. Rea
 
 Open `runtime/mix.exs`. In the `defp deps do` list, add:
 ```elixir
-{:muontrap, "~> 1.3"}
+{:muontrap, "~> 1.7"}
 ```
+(Target 1.7 per `.claude/skills/muontrap-elixir/SKILL.md` — the skill's verified-from-hexdocs API is 1.7.x.)
 
 - [ ] **Step 2: fetch**
 
