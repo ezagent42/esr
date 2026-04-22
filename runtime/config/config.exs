@@ -18,7 +18,7 @@ config :esr,
   # `EsrWeb.AdapterChannel`. Default off in P2-10; flipped on in P2-14;
   # removed entirely in P2-17. Override per-process via the
   # `ESR_USE_NEW_PEER_CHAIN` env var (see `EsrWeb.AdapterChannel.new_peer_chain?/0`).
-  use_new_peer_chain: false
+  use_new_peer_chain: true
 
 # Configures the endpoint
 config :esr, EsrWeb.Endpoint,
