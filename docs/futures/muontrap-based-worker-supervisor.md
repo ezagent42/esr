@@ -161,6 +161,56 @@ end
 
 Authz mechanism for v1 (single-host) leans toward "declaration-set membership is sufficient proof" — `AdapterAuthz.verify/3` checks that `(name, id)` is present in the current `Esr.Topology.Registry` / `adapters.yaml` snapshot, and trusts that the WS socket + YAML are already gatekept by OS file permissions. A shared-secret token mechanism is available as a later hardening step but not needed for v1.
 
+## Why not erlexec
+
+[saleyn/erlexec](https://github.com/saleyn/erlexec) is a mature, feature-rich alternative (battle-tested in finance and telecom Erlang systems for 15+ years). It is strictly more capable than MuonTrap on several axes: run-as-user (setuid/setgid), cross-platform `setrlimit` resource caps, PTY allocation, bidirectional stdin streaming, and explicit process-group kill semantics. It was evaluated and rejected for ESR's v1 needs.
+
+Comparison on axes relevant to ESR:
+
+| Axis | MuonTrap | erlexec | ESR need |
+|---|---|---|---|
+| Kill on BEAM exit | `PR_SET_PDEATHSIG` (Linux) / `kqueue` (BSD/macOS), kernel-level | `exec-port` watchdog process monitors BEAM and kills children | both sufficient |
+| Process-group kill (uv→python fork chain) | default (new session group per daemon) | explicit `kill_group` option | MuonTrap zero-config |
+| OTP supervisor integration | `MuonTrap.Daemon` is a GenServer, drops directly into `DynamicSupervisor` | can be used but runs its own supervision model in parallel with OTP | MuonTrap cleaner |
+| Elixir API ergonomics | Elixir-native, idiomatic | Erlang API, usable from Elixir but feels like borrowed clothing | MuonTrap cleaner |
+| Dependency weight | one C helper + small Elixir module | C++ port program + Erlang modules + parallel supervision model | MuonTrap lighter |
+| Resource limits (cgroups/rlimit) | cgroups, **Linux only** | `setrlimit`, **cross-platform** | not needed v1 |
+| Run as different OS user | not supported | first-class | not needed v1 |
+| PTY allocation | not supported | first-class | **NOT needed by the subprocess wrapper** — see below |
+| Dynamic stdin writes | limited (fixed at spawn time) | full `exec:send/2` bidirectional | not needed (WebSocket handles all runtime I/O) |
+
+### About the PTY question specifically
+
+ESR does have a PTY somewhere in its stack — CC TUI runs inside tmux — but the PTY lives at a different layer than the subprocess wrapper we are choosing. Evidence from `adapters/cc_tmux/src/esr_cc_tmux/adapter.py`:
+
+- `tmux new-session -d -s <name> <cmd>` (line 117) is invoked via `subprocess.run(argv, capture_output=True, text=True)` — the `-d` flag is **detached mode**, which does not require the invoker to have a TTY. The tmux server internally calls `forkpty()` to allocate a PTY for CC.
+- `tmux send-keys`, `tmux capture-pane -p`, and `tmux kill-session` are all headless tmux CLI commands that operate on the running tmux server via its control socket. None require a TTY on the invoker.
+
+Layer diagram:
+
+```
+MuonTrap.Daemon → uv run python -m esr.ipc.adapter_runner    ← plain process, no PTY
+                    ↓ internal subprocess.run
+                  tmux new-session -d / send-keys / capture-pane  ← plain CLI commands, no PTY
+                    ↓ tmux server internally
+                  forkpty() + exec(claude)                   ← PTY lives here, owned by tmux
+```
+
+tmux is a purpose-built PTY multiplexer. It already handles the PTY layer better than any subprocess wrapper could (persistent sessions, detached by default, `capture-pane` for polling output, `send-keys` for input injection — all battle-tested semantics). Neither MuonTrap nor erlexec ever sees a PTY; this axis does not differentiate them.
+
+### When the erlexec choice should be revisited
+
+The following triggers — none present in current ESR roadmap — would flip the evaluation toward erlexec:
+
+1. **Multi-tenant adapter deployment** where different adapters must run under different OS users for permission isolation (e.g., Feishu adapter as `esr-feishu`, CC-MCP adapter as `esr-cc`). erlexec's `{user, "..."}` option is a one-line config; MuonTrap would require wrapping with `sudo -u` and accepting the ergonomic cost.
+2. **Cross-platform resource limits** in production (per-adapter CPU or memory caps enforced on both macOS dev machines and Linux servers). MuonTrap's cgroups support is Linux-only; erlexec's `setrlimit` works on both.
+3. **Third-party adapter ecosystem** where adapters are written and distributed by external developers. setuid + rlimit + finer I/O isolation become real security requirements, not optional features.
+4. **Architectural shift away from tmux delegation** to ESR directly spawning TUI applications while holding their PTY (e.g., running `claude` under direct ESR supervision without tmux in the middle). erlexec's PTY allocation would become directly relevant.
+
+For the current ESR architecture (single-host, single-OS-user, internal-only adapters, tmux-delegated TUI hosting), erlexec is strictly more power than we use. Unused capability becomes maintenance burden ("why does this code path use erlexec's supervision while that one uses `DynamicSupervisor`?"). MuonTrap's smaller surface matches our needs without leaving dead feature weight.
+
+**Decision: MuonTrap for v1. Re-evaluate when any of the four triggers above becomes real.**
+
 ## Why not Pythonx
 
 Evaluated during brainstorming. [livebook-dev/pythonx](https://github.com/livebook-dev/pythonx) embeds CPython into the BEAM process via NIF (`Py_Initialize` / `PyRun_SimpleString`). Three disqualifiers for ESR:
