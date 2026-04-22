@@ -74,10 +74,10 @@ defmodule EsrWeb.CliChannel do
           "state" => stringify_keys(snap.state)
         }
 
-        # Augment with chat_ids from SessionRegistry if this actor is a
+        # Augment with chat_ids from SessionSocketRegistry if this actor is a
         # cc_proxy / feishu_thread_proxy etc tracked there.
         session_ctx =
-          case Esr.SessionRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
+          case Esr.SessionSocketRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
             {:ok, row} ->
               %{
                 "chat_ids" => row.chat_ids,

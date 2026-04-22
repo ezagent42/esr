@@ -38,7 +38,8 @@ defmodule Esr.Application do
       Esr.WorkerSupervisor,
 
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
-      Esr.SessionRegistry,
+      Esr.SessionSocketRegistry,
+      {Esr.SessionRegistry, []},
 
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,

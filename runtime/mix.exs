@@ -49,6 +49,7 @@ defmodule Esr.MixProject do
       {:bandit, "~> 1.5"},
       {:yaml_elixir, "~> 2.11"},
       {:file_system, "~> 1.0"},
+      {:muontrap, "~> 1.7"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]

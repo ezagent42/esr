@@ -1,81 +1,53 @@
 defmodule Esr.SessionRegistryTest do
   use ExUnit.Case, async: false
 
-  alias Esr.SessionRegistry
-
   setup do
-    # Registry is started by the Application supervisor; each test can
-    # read/write freely since we key by unique session_id per test.
-    %{session_id: "sess-#{System.unique_integer([:positive])}"}
+    # Esr.SessionRegistry is started by the application supervisor
+    # (see Esr.Application). Tests share this singleton.
+    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    :ok
   end
 
-  test "register creates an online row", %{session_id: sid} do
-    :ok = SessionRegistry.register(sid,
-            ws_pid: self(),
-            chat_ids: ["oc_x"],
-            app_ids: ["cli_x"],
-            workspace: "esr-dev")
+  test "loads agents.yaml and exposes agent_def/1" do
+    path = Path.expand("fixtures/agents/simple.yaml", __DIR__)
+    :ok = Esr.SessionRegistry.load_agents(path)
 
-    {:ok, row} = SessionRegistry.lookup(sid)
-    assert row.status == :online
-    assert row.workspace == "esr-dev"
-    assert row.ws_pid == self()
-    # Reviewer S1: peer_pid intentionally omitted from registry row
-    refute Map.has_key?(row, :peer_pid)
+    assert {:ok, agent_def} = Esr.SessionRegistry.agent_def("cc")
+    assert agent_def.description == "Claude Code"
+    assert "cap.session.create" in agent_def.capabilities_required
+    assert length(agent_def.pipeline.inbound) == 2
   end
 
-  test "register with same session_id + different ws_pid evicts old", %{session_id: sid} do
-    old_ws = spawn(fn -> receive do _ -> :ok end end)
-    new_ws = spawn(fn -> receive do _ -> :ok end end)
-
-    :ok = SessionRegistry.register(sid, ws_pid: old_ws,
-            chat_ids: [], app_ids: [], workspace: "w")
-    :ok = SessionRegistry.register(sid, ws_pid: new_ws,
-            chat_ids: [], app_ids: [], workspace: "w")
-
-    {:ok, row} = SessionRegistry.lookup(sid)
-    assert row.ws_pid == new_ws
+  test "returns error for unknown agent" do
+    assert {:error, :not_found} = Esr.SessionRegistry.agent_def("nonexistent")
   end
 
-  test "same ws_pid register is idempotent (no eviction)", %{session_id: sid} do
-    ws = spawn(fn -> receive do _ -> :ok end end)
-    :ok = SessionRegistry.register(sid, ws_pid: ws,
-            chat_ids: [], app_ids: [], workspace: "w1")
-    :ok = SessionRegistry.register(sid, ws_pid: ws,
-            chat_ids: [], app_ids: [], workspace: "w2")
+  test "registers session and looks up by chat_thread" do
+    :ok = Esr.SessionRegistry.register_session("session-1", %{chat_id: "c1", thread_id: "t1"}, %{})
 
-    {:ok, row} = SessionRegistry.lookup(sid)
-    assert row.workspace == "w2"
+    assert {:ok, "session-1", _peer_refs} =
+             Esr.SessionRegistry.lookup_by_chat_thread("c1", "t1")
   end
 
-  test "notify_session pushes to the ws_pid when online", %{session_id: sid} do
-    parent = self()
-    ws_pid = spawn(fn ->
-      receive do
-        {:push_envelope, payload} -> send(parent, {:got, payload})
-      end
-    end)
+  test "reserved field names in agents.yaml trigger WARN log" do
+    path = Path.join(System.tmp_dir!(), "reserved_test.yaml")
+    File.write!(path, ~S"""
+    agents:
+      demo:
+        description: "demo"
+        capabilities_required: []
+        pipeline: {inbound: [], outbound: []}
+        proxies: []
+        params: []
+        rate_limits: {}  # reserved
+    """)
 
-    :ok = SessionRegistry.register(sid, ws_pid: ws_pid,
-            chat_ids: [], app_ids: [], workspace: "w")
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        :ok = Esr.SessionRegistry.load_agents(path)
+      end)
 
-    :ok = SessionRegistry.notify_session(sid,
-            %{"kind" => "notification", "content" => "hello"})
-
-    assert_receive {:got, %{"kind" => "notification", "content" => "hello"}}, 500
-  end
-
-  test "notify_session returns :error when offline", %{session_id: sid} do
-    :ok = SessionRegistry.register(sid, ws_pid: self(),
-            chat_ids: [], app_ids: [], workspace: "w")
-    :ok = SessionRegistry.mark_offline(sid)
-
-    assert {:error, :offline} =
-             SessionRegistry.notify_session(sid, %{"kind" => "notification"})
-  end
-
-  test "notify_session returns :error when unknown session", %{session_id: sid} do
-    assert {:error, :not_registered} =
-             SessionRegistry.notify_session(sid, %{"kind" => "notification"})
+    assert log =~ "reserved field"
+    File.rm!(path)
   end
 end
