@@ -165,12 +165,9 @@ defmodule Esr.PeerServer do
       actor_type: actor_type
     })
 
-    # Emit session_killed log for feishu_thread_proxy peers so the gate's
-    # L5 grep can find "session_killed published session_id=<id>".
-    if actor_type == "feishu_thread_proxy" do
-      session_id = actor_id |> String.split(":", parts: 2) |> List.last()
-      Logger.info("session_killed published session_id=#{session_id}")
-    end
+    # REMOVED (P2-15): feishu_thread_proxy-specific log moved to
+    # Esr.Peers.FeishuChatProxy's terminate/2 in PR-3 when the actor_type
+    # lane retires.
 
     :ok
   end
