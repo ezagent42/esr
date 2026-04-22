@@ -12,6 +12,7 @@ Living index of findings surfaced during ESR development that are worth preservi
 |---|---|---|
 | MuonTrap 1.7 wrapper limitation | [muontrap-mode3-constraint.md](muontrap-mode3-constraint.md) | The `muontrap` binary wrapper cannot provide stdin-write + stdout-read + cleanup-on-BEAM-exit simultaneously. Pick any two. |
 | Feishu WS ownership stays in Python | [feishu-ws-ownership-python.md](feishu-ws-ownership-python.md) | FeishuAppAdapter doesn't own the WS — Python's `MsgBotClient` does, and forwards decoded events over Phoenix channel. Not planned to flip. |
+| Capability name format mismatch | [capability-name-format-mismatch.md](capability-name-format-mismatch.md) | Spec uses `cap.*` dotted shape; `Grants.matches?/2` only parses `prefix:name/perm`. Resolve in PR-3 P3-8. |
 
 ---
 
