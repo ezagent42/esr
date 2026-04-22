@@ -22,7 +22,20 @@ defmodule Esr.PeerFactory do
     :telemetry.execute([:esr, :peer_factory, :spawn], %{}, %{mod: mod, session_id: session_id})
 
     if Code.ensure_loaded?(mod) do
-      init_args = Map.merge(args, %{session_id: session_id, neighbors: neighbors, proxy_ctx: ctx})
+      # P3-3a: thread `session_process_pid` into every proxy_ctx so
+      # Peer.Proxy's capability-check wrapper can route to
+      # SessionProcess.has?/2 (per-session local map) instead of the
+      # global Grants GenServer. Resolving the pid here — once, at
+      # spawn time — avoids a Registry lookup on every forward/2 call.
+      ctx_with_sp =
+        case resolve_session_process_pid(session_id) do
+          nil -> ctx
+          pid -> Map.put(ctx, :session_process_pid, pid)
+        end
+
+      init_args =
+        Map.merge(args, %{session_id: session_id, neighbors: neighbors, proxy_ctx: ctx_with_sp})
+
       DynamicSupervisor.start_child(resolve_sup(session_id), {mod, init_args})
     else
       {:error, {:unknown_impl, mod}}
@@ -72,5 +85,23 @@ defmodule Esr.PeerFactory do
       nil -> Esr.Session.supervisor_name(session_id)
       override -> override
     end
+  end
+
+  # Resolve the SessionProcess pid for this session at spawn time so
+  # downstream peer's capability checks can target it directly.
+  # Returns `nil` for the admin session (no per-session SessionProcess)
+  # and when no SessionProcess is registered yet (test setups that
+  # spawn peers without a real Session around them — common in early
+  # refactor phases).
+  defp resolve_session_process_pid("admin"), do: nil
+
+  defp resolve_session_process_pid(session_id) when is_binary(session_id) do
+    case Registry.lookup(Esr.Session.Registry, {:session_process, session_id}) do
+      [{pid, _}] -> pid
+      _ -> nil
+    end
+  rescue
+    # Registry may not yet exist in isolated unit tests.
+    ArgumentError -> nil
   end
 end

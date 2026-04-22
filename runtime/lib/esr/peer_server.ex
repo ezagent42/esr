@@ -898,6 +898,15 @@ defmodule Esr.PeerServer do
   # can legitimately omit principal_id — treat anything non-binary as
   # "no grant" so the check always returns a boolean and the deny
   # path records the absent principal clearly.
+  #
+  # P3-3a: this helper still reads the global `Esr.Capabilities.has?/2`
+  # rather than `Esr.SessionProcess.has?/2`. The legacy peer_server
+  # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
+  # to `Esr.Peers.CCProcess` + `Esr.Peers.TmuxProcess` which are
+  # spawned through `PeerFactory.spawn_peer/5` and receive a
+  # `session_process_pid` in their `proxy_ctx`). Leaving the global
+  # read in place here keeps the legacy data plane working during the
+  # cutover; migration happens by deletion, not refactor.
   defp capability_granted?(principal_id, required)
        when is_binary(principal_id) and is_binary(required) do
     Esr.Capabilities.has?(principal_id, required)

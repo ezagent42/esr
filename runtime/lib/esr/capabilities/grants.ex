@@ -66,8 +66,53 @@ defmodule Esr.Capabilities.Grants do
 
   @impl true
   def handle_call({:load, snapshot}, _from, state) do
+    # Diff against the prior snapshot BEFORE mutating the table so
+    # per-session projections only refresh when their principal's
+    # grants actually changed. Without the diff, every
+    # `load_snapshot/1` wakes every SessionProcess regardless of
+    # whether its principal was touched — wasted work at scale, and a
+    # test-isolation hazard (one test's load_snapshot spams every
+    # other test's sessions).
+    prior = current_snapshot()
+    changed_principals = diff_changed(prior, snapshot)
+
     :ets.delete_all_objects(@table)
     Enum.each(snapshot, fn {pid, held} -> :ets.insert(@table, {pid, held}) end)
+
+    broadcast_grants_changed(changed_principals)
+
     {:reply, :ok, state}
+  end
+
+  # --- internal ---
+
+  defp current_snapshot do
+    :ets.tab2list(@table) |> Map.new()
+  rescue
+    ArgumentError -> %{}
+  end
+
+  # Returns the set of principal_ids whose held-list differs between
+  # the two snapshots. Uses list equality (order-sensitive) — matches
+  # how `capabilities.yaml` is round-tripped, and in the rare case of
+  # a reorder the extra broadcast is harmless.
+  defp diff_changed(prior, new) do
+    all_principals =
+      MapSet.union(MapSet.new(Map.keys(prior)), MapSet.new(Map.keys(new)))
+
+    MapSet.to_list(all_principals)
+    |> Enum.filter(fn principal_id ->
+      Map.get(prior, principal_id) != Map.get(new, principal_id)
+    end)
+  end
+
+  defp broadcast_grants_changed(principal_ids) do
+    Enum.each(principal_ids, fn principal_id ->
+      Phoenix.PubSub.broadcast(
+        EsrWeb.PubSub,
+        "grants_changed:#{principal_id}",
+        :grants_changed
+      )
+    end)
   end
 end
