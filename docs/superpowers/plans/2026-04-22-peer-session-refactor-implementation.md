@@ -2187,6 +2187,7 @@ Use `mcp__openclaw-channel__reply` to the chat:
 | P2-4 | Create `Esr.Peers.FeishuAppProxy` + generic capability-check wrapper in `Esr.Peer.Proxy` macro. **The `use Esr.Peer.Proxy` macro should auto-wrap `forward/2` with a capability check** (§3.6) — this is an additive change to P1-3's macro. FeishuAppProxy declares `@required_cap :cap.peer_proxy.forward_feishu` and macro reads it; check happens in generated wrapper. | `peer/proxy.ex` (extend macro), `peers/feishu_app_proxy.ex`, test |
 | P2-5 | Create `Esr.Peers.SlashHandler` (Peer.Stateful; channel-agnostic) | `peers/slash_handler.ex`, test |
 | P2-6 | Create `Esr.Session` supervisor module + `Esr.SessionProcess`. Expose `Esr.Session.supervisor_name/1` for PeerFactory to resolve. Remove the `:peer_factory_sup_override` scaffold from P1-10's PeerFactory. | `session.ex`, `session_process.ex`, `peer_factory.ex` cleanup, test |
+| P2-6a | Scaffold `SessionProcess.grants` field + `SessionProcess.has?/2` helper (pass-through to `Esr.Capabilities.Grants.has?/2` for now). Establishes the API surface that P3-3a will fill in with real projection. Rationale: `docs/futures/peer-session-capability-projection.md`. | `session_process.ex` (extend), test |
 | P2-7 | Create `Esr.SessionsSupervisor` (DynamicSupervisor, max_children=128) | `sessions_supervisor.ex`, test |
 | P2-8 | Agents.yaml fixture with minimal `cc` agent declaration | `${ESRD_HOME}/default/agents.yaml` (dev), test fixture |
 | P2-9 | Update `application.ex` to start AdminSession + SessionsSupervisor | `application.ex` |
@@ -2229,6 +2230,7 @@ Use `mcp__openclaw-channel__reply` to the chat:
 | P3-1 | Create `Esr.Peers.CCProxy` (Peer.Proxy) | `peers/cc_proxy.ex`, test |
 | P3-2 | Create `Esr.Peers.CCProcess` (Peer.Stateful) | `peers/cc_process.ex`, test |
 | P3-3 | Create `Esr.Peers.TmuxProcess` (Peer.Stateful + OSProcess, control-mode) | `peers/tmux_process.ex`, test |
+| P3-3a | **Session-scoped capability projection** (see `docs/futures/peer-session-capability-projection.md`): `SessionProcess` pulls principal's grants from global `Grants` on init; subscribes to `{:grants_changed, principal_id}` PubSub topic; serves `SessionProcess.has?/2` from local map. Peers call `SessionProcess.has?/2` instead of `Grants.has?/2`. Resolves shared-singleton contention that currently causes test flakes (see `docs/operations/known-flakes.md` in the dev-prod-isolation branch). | `session_process.ex` (extend), `peer_server.ex` / peer modules (migrate has? calls), tests |
 | P3-4 | Create `Esr.SessionRouter` (control plane) | `session_router.ex`, test |
 | P3-5 | Control-plane boundary test: reject data-plane messages | test |
 | P3-6 | Integrate CC peers into `cc` agent in `agents.yaml` | yaml update |
