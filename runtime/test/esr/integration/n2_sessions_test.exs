@@ -32,9 +32,6 @@ defmodule Esr.Integration.N2SessionsTest do
   alias Esr.Peers.FeishuAppAdapter
 
   setup do
-    Application.put_env(:esr, :use_new_peer_chain, true)
-    on_exit(fn -> Application.delete_env(:esr, :use_new_peer_chain) end)
-
     # App-level singletons (booted by Esr.Application):
     assert is_pid(Process.whereis(Esr.SessionRegistry))
     assert is_pid(Process.whereis(Esr.AdminSessionProcess))

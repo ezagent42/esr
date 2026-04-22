@@ -6,8 +6,9 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
   ``principal_id`` + ``workspace_name`` onto the envelope that flows
   into the peer chain.
 
-  Post-P2-16: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
-  was removed. These tests now exercise the new-chain path:
+  Post-P2-17: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
+  was removed (P2-16) and the `USE_NEW_PEER_CHAIN` feature flag was
+  retired (P2-17). These tests exercise the sole path:
   `adapter:feishu/<app_id>` topics route through
   `AdminSessionProcess.admin_peer(:feishu_app_adapter_<app_id>)` → pid
   which `send`s the envelope as `{:inbound_event, envelope}`. The test
@@ -22,11 +23,6 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
   use EsrWeb.ChannelCase, async: false
 
   setup do
-    # Pin the feature flag ON — a sibling test
-    # (`adapter_channel_new_chain_test.exs`) does
-    # `Application.delete_env(:esr, :use_new_peer_chain)` on exit, which
-    # leaves `new_peer_chain?/0` defaulting to `false` until P2-17.
-    Application.put_env(:esr, :use_new_peer_chain, true)
     app_id = "princ_app_#{System.unique_integer([:positive])}"
     topic = "adapter:feishu/#{app_id}"
     sym = String.to_atom("feishu_app_adapter_#{app_id}")

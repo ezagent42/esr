@@ -71,8 +71,6 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     ensure_admin_dispatcher()
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
-    Application.put_env(:esr, :use_new_peer_chain, true)
-
     :ok =
       Esr.SessionRegistry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
@@ -105,7 +103,6 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       })
 
     on_exit(fn ->
-      Application.delete_env(:esr, :use_new_peer_chain)
       Grants.load_snapshot(prior_grants)
 
       # Wipe any dynamically-started Sessions so tests don't pollute

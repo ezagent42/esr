@@ -1,11 +1,12 @@
 defmodule EsrWeb.AdapterChannelNewChainTest do
   @moduledoc """
-  P2-11 — When `USE_NEW_PEER_CHAIN` is ON and the topic is
-  `adapter:feishu/<app_id>`, EsrWeb.AdapterChannel routes inbound
-  envelopes to the registered `Esr.Peers.FeishuAppAdapter` for that
-  app_id (looked up via `Esr.AdminSessionProcess.admin_peer/1` under
-  the symbolic name `:feishu_app_adapter_<app_id>`). Legacy path is
-  preserved when the flag is OFF.
+  P2-11 — For `adapter:feishu/<app_id>` topics, EsrWeb.AdapterChannel
+  routes inbound envelopes to the registered `Esr.Peers.FeishuAppAdapter`
+  for that app_id (looked up via `Esr.AdminSessionProcess.admin_peer/1`
+  under the symbolic name `:feishu_app_adapter_<app_id>`).
+
+  Post-P2-17: the `USE_NEW_PEER_CHAIN` feature flag is gone — the new
+  chain is the sole path.
   """
   use ExUnit.Case, async: false
 
@@ -19,8 +20,6 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
     # crashes with `:already_started`, so reuse the app-level pid.
     assert is_pid(Process.whereis(Esr.AdminSessionProcess))
 
-    Application.put_env(:esr, :use_new_peer_chain, true)
-
     {:ok, _sup} =
       DynamicSupervisor.start_link(strategy: :one_for_one, name: :p2_11_test_sup)
 
@@ -31,8 +30,6 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
       )
 
     on_exit(fn ->
-      Application.delete_env(:esr, :use_new_peer_chain)
-
       case Process.whereis(:p2_11_test_sup) do
         nil -> :ok
         pid -> Process.exit(pid, :shutdown)
@@ -73,15 +70,5 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
                "adapter:feishu/cli_app_missing",
                %{"payload" => %{}}
              )
-  end
-
-  test "new_peer_chain?/0 returns false when flag is explicitly off" do
-    # Post-P2-16: the legacy AdapterHub.Registry path was deleted;
-    # `forward_legacy/2` now only logs + errors. The feature flag's
-    # meaningful off-state is tested by `adapter_channel_feature_flag_test.exs`;
-    # here we only assert that the flag read returns what the app env
-    # says. Removed entirely in P2-17.
-    Application.put_env(:esr, :use_new_peer_chain, false)
-    refute EsrWeb.AdapterChannel.new_peer_chain?()
   end
 end

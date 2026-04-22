@@ -8,9 +8,9 @@ defmodule Esr.Peers.SlashHandler do
   back to the originating ChatProxy as `{:reply, text}`.
 
   Replaces the slash-parsing half of `Esr.Routing.SlashHandler` (which
-  stays in place until PR-3 deletes it). The PR-2 feature flag
-  `USE_NEW_PEER_CHAIN` (P2-10) gates whether Feishu slash commands route
-  through here or through the legacy router.
+  stays in place until PR-3 deletes it). Post-P2-17, Feishu slash
+  commands route through here unconditionally (the legacy router is
+  no longer reachable from `AdapterChannel`).
 
   Parser enforces spec D11 (`--agent` required on `/new-session`) and
   D13 (`--dir` required) — both are required per the decision-index
