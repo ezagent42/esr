@@ -126,23 +126,88 @@ defmodule Esr.SessionRouterTest do
     assert {:error, :unknown_session} = SessionRouter.end_session("nope-sid")
   end
 
-  # --- Risk-E drift guard (spec §6 Risk E) ---
+  # --- Risk-E boundary (spec §6 Risk E) ---
   #
-  # The handle_call catch-all only rejects control-plane-shaped calls;
-  # data-plane-shaped info messages land in the handle_info catch-all
-  # and are dropped with a WARN. The router MUST stay alive after
-  # receiving a data-plane-shaped message.
+  # The data-plane hot path (inbound/outbound user-message traffic) must
+  # NEVER be allowed to enter SessionRouter. Any shape that looks like a
+  # data-plane envelope must be rejected (call) or dropped (cast/info)
+  # with a WARN, and MUST NEVER crash the router. If a data-plane shape
+  # ever makes it in, the router's supervisor-restart cascade would
+  # masquerade the mistake as a transient blip; the boundary test below
+  # is the last line of defence before that happens.
+  #
+  # P3-5 adds these explicit Risk-E tests (spec §6 Risk E) on top of
+  # the pre-existing drift guards. Together they exercise:
+  #   1. data-plane-shaped GenServer.call  → {:error, :not_control_plane}
+  #   2. data-plane-shaped info message    → drop + WARN, router alive
+  #   3. peer-crashed DOWN (a legit control-plane info shape that rides
+  #      the same handle_info/2 module) fires telemetry without crash.
 
-  test "rejects unexpected GenServer.call with {:error, :not_control_plane}" do
-    assert {:error, :not_control_plane} =
-             GenServer.call(Esr.SessionRouter, {:inbound_event, %{"text" => "hi"}})
-  end
+  describe "Risk E — data-plane boundary (spec §6)" do
+    test "rejects data-plane-shaped GenServer.call with {:error, :not_control_plane}" do
+      # An {:inbound_event, envelope} tuple is the canonical data-plane
+      # shape used by Peer.Stateful.handle_upstream/2. It must never be
+      # accepted as a control-plane call.
+      assert {:error, :not_control_plane} =
+               GenServer.call(Esr.SessionRouter, {:inbound_event, %{"text" => "hi"}})
 
-  test "unexpected info messages are dropped (no crash)" do
-    router = Process.whereis(Esr.SessionRouter)
-    send(router, {:forward, "session_abc", %{"text" => "hi"}})
-    # Give the router a moment to process and drop.
-    _ = :sys.get_state(router)
-    assert Process.alive?(router)
+      # Router must still be alive after the rejection.
+      assert Process.alive?(Process.whereis(Esr.SessionRouter))
+    end
+
+    test "data-plane-shaped info messages are dropped (no crash)" do
+      router = Process.whereis(Esr.SessionRouter)
+      # {:forward, sid, envelope} is the canonical data-plane fan-out
+      # shape used between Stateful peers. Must be dropped, not raise.
+      send(router, {:forward, :session_abc, %{"text" => "hi"}})
+      # Give the router a moment to process and drop.
+      _ = :sys.get_state(router)
+      assert Process.alive?(router)
+    end
+
+    test "another data-plane shape — :outbound envelope — is also dropped" do
+      router = Process.whereis(Esr.SessionRouter)
+      # The outbound envelope shape emitted by CCProcess/TmuxProcess.
+      send(router, {:outbound, %{"payload" => %{"text" => "bye"}}})
+      _ = :sys.get_state(router)
+      assert Process.alive?(router)
+    end
+
+    test "telemetry fires on peer_crashed DOWN without crashing the router" do
+      ref =
+        :telemetry_test.attach_event_handlers(self(), [
+          [:esr, :session_router, :peer_crashed]
+        ])
+
+      # A DOWN for an unknown monitor ref must NOT fire peer_crashed
+      # (it's dropped silently) — confirms the early-return clause.
+      router = Process.whereis(Esr.SessionRouter)
+      send(router, {:DOWN, make_ref(), :process, self(), :unknown_monitor})
+      _ = :sys.get_state(router)
+      refute_receive {[:esr, :session_router, :peer_crashed], _, _, _, _}, 100
+
+      # Now spawn a real session so the router has a tracked monitor,
+      # kill the peer, and confirm peer_crashed fires.
+      {:ok, _sid} =
+        SessionRouter.create_session(%{
+          agent: "cc",
+          dir: "/tmp",
+          principal_id: "ou_alice",
+          chat_id: "oc_crash",
+          thread_id: "om_crash",
+          app_id: "cli_test"
+        })
+
+      # Find one spawned peer and kill it; the router's monitor will
+      # DOWN and fire the telemetry event.
+      {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat_thread("oc_crash", "om_crash")
+      Process.exit(refs.cc_process, :kill)
+
+      assert_receive {[:esr, :session_router, :peer_crashed], _ref, %{count: 1}, meta}, 500
+      assert is_binary(meta.session_id)
+
+      :telemetry.detach(ref)
+      assert Process.alive?(router)
+    end
   end
 end
