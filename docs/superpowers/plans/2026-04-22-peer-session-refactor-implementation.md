@@ -826,7 +826,7 @@ Expected: FAIL with "module Esr.OSProcess is not loaded" or similar.
 
 - [ ] **Step 3: implement OSProcess behaviour + its inner worker**
 
-**Important API note:** `MuonTrap.Daemon` does NOT expose a stdin-write API, but we need one (tmux control-mode commands, Python sidecar JSON requests). The correct pattern is to use Elixir's `Port` directly with the `muontrap` binary (shipped by the muontrap Hex package at `:code.priv_dir(:muontrap)`) as a wrapper. Port gives us `Port.command/2` for stdin writes, and the muontrap wrapper guarantees OS-process cleanup on BEAM exit (same mechanism Daemon uses internally).
+**Important API note:** `MuonTrap.Daemon` does NOT expose a stdin-write API, but we need one (tmux control-mode commands, Python sidecar JSON requests). The correct pattern is to use Elixir's `Port` directly with the `muontrap` binary wrapper located via `MuonTrap.muontrap_path/0` (the documented helper — do NOT use `:code.priv_dir(:muontrap)` which is not the stable public API). Port gives us `Port.command/2` for stdin writes, and the muontrap wrapper guarantees OS-process cleanup on BEAM exit (same mechanism Daemon uses internally). See the `muontrap-elixir` skill for full API reference.
 
 Create `runtime/lib/esr/os_process.ex`:
 
@@ -879,7 +879,7 @@ defmodule Esr.OSProcess do
           [exe | args] = parent.os_cmd(state)
           env = parent.os_env(state)
 
-          muontrap_bin = Path.join(:code.priv_dir(:muontrap), "muontrap")
+          muontrap_bin = MuonTrap.muontrap_path()
 
           port =
             Port.open(
@@ -948,7 +948,7 @@ end
 - Using `Port` directly with the `muontrap` wrapper binary gives us BOTH: the `--delay-to-sigkill 5000` flag guarantees cleanup (same as Daemon does internally), and `Port.command/2` exposes stdin.
 - The `{:line, 4096}` option makes stdout arrive as `{port, {:data, {_eol_flag, line}}}` — one line per message — which is exactly what tmux `-C` and Python JSON-line sidecars need.
 
-If `muontrap` wrapper binary is missing at runtime, `Path.join(:code.priv_dir(:muontrap), "muontrap")` raises. This is caught in Task P1-1 by `mix deps.compile muontrap` running successfully — verify with `ls deps/muontrap/priv/muontrap` after deps fetch.
+If `muontrap` wrapper binary is missing at runtime, `MuonTrap.muontrap_path/0` raises. This is caught in Task P1-1 by `mix deps.compile muontrap` running successfully — verify manually with `iex -S mix` then `MuonTrap.muontrap_path() |> File.exists?()` returning `true`.
 
 - [ ] **Step 4: run test**
 
@@ -2104,7 +2104,7 @@ Create `docs/superpowers/progress/<YYYY-MM-DD>-pr1-snapshot.md` with this struct
 
 ## Decisions locked in during PR-1
 
-- D1-PR1-a: `OSProcess` worker uses `Port` with `muontrap` binary wrapper, NOT `MuonTrap.Daemon`. Daemon has no stdin API. Wrapper binary is at `Path.join(:code.priv_dir(:muontrap), "muontrap")`.
+- D1-PR1-a: `OSProcess` worker uses `Port` with `muontrap` binary wrapper, NOT `MuonTrap.Daemon`. Daemon has no stdin API. Wrapper binary located via `MuonTrap.muontrap_path/0`. See `.claude/skills/muontrap-elixir/` for full reference.
 - D1-PR1-b: `Peer.Proxy` capability-check wrapper deferred to P2-4 (macro extension). Current proxy has no `@required_cap`.
 - D1-PR1-c: `PeerFactory` uses `:peer_factory_sup_override` process-dict for test-time supervisor override. P2-6 introduces `Esr.Session.supervisor_name/1` and removes the override.
 
