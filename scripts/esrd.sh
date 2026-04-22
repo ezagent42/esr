@@ -43,9 +43,25 @@ cmd_start() {
     return 0
   fi
 
+  # Parse optional --port=<N>
+  local port=""
+  for arg in "$@"; do
+    case "$arg" in
+      --port=*) port="${arg#--port=}" ;;
+    esac
+  done
+
+  # Pre-select a free port if not specified
+  if [[ -z "$port" ]]; then
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); print(p)')
+  fi
+
+  # Write port file BEFORE exec
+  echo "$port" > "$dir/esrd.port"
+
   # Command override for tests; otherwise run the real Phoenix server on
-  # port 4001 (spec §7.1 default; url.py's DEFAULT_*_HUB_URL assumes it).
-  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && PORT=4001 exec mix phx.server}"
+  # the selected port (spec §7.1 default 4001; url.py's DEFAULT_*_HUB_URL assumes it).
+  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && PORT=$port exec mix phx.server}"
 
   # Launch detached, redirect output, capture child pid. The subshell's
   # stdout/stderr must be redirected so the parent's captured streams

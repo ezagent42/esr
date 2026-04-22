@@ -14,7 +14,12 @@ from typing import Any
 import click
 import yaml
 
+from esr.cli import paths
+from esr.cli.adapter.feishu import feishu as feishu_group
+from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
+from esr.cli.notify import notify as notify_cmd
+from esr.cli.reload import reload as reload_cmd
 from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
@@ -64,13 +69,36 @@ def _host_port_from_endpoint(endpoint: str) -> str:
 
 
 @click.group()
-def cli() -> None:
+@click.option("--instance", default=None, envvar="ESR_INSTANCE",
+              help="Runtime instance name (default: 'default').")
+@click.option("--esrd-home", default=None, envvar="ESRD_HOME",
+              help="Override ESRD_HOME root (default: ~/.esrd).")
+def cli(instance: str | None, esrd_home: str | None) -> None:
     """``esr`` — command-line entry to a running esrd."""
+    if instance:
+        os.environ["ESR_INSTANCE"] = instance
+    if esrd_home:
+        os.environ["ESRD_HOME"] = esrd_home
 
 
 # Capability-based access control CLI lives in its own module so
 # Phase CAP-7 (grant/revoke) can extend it without bloating main.py.
 cli.add_command(cap_group)
+
+# Admin-queue CLI primitive (`esr admin submit`) — Phase DI-7. Future
+# admin wrappers (`reload`, `notify`, `grant`, `revoke`) compose on top
+# of this single queue-writer entry point.
+cli.add_command(admin_group)
+
+# Phase DI-12: `esr reload` — thin wrapper over `esr admin submit reload`
+# with `--acknowledge-breaking` / `--dry-run` ergonomics for operators
+# completing a merge into dev / prod.
+cli.add_command(reload_cmd)
+
+# Phase DI-13: `esr notify` — thin wrapper over `esr admin submit notify`
+# invoked by the post-merge git hook to DM the operator about breaking
+# commits before the next reload (spec §7.7, §8.2).
+cli.add_command(notify_cmd)
 
 
 @cli.command("use")
@@ -287,7 +315,7 @@ def adapters() -> None:
 @adapters.command("list")
 def adapters_list() -> None:
     """List configured adapter instances from ~/.esrd/default/adapters.yaml."""
-    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "adapters.yaml"
+    path = paths.adapters_yaml_path()
     if not path.exists():
         click.echo("no adapter instances configured")
         return
@@ -309,6 +337,12 @@ def adapters_list() -> None:
 @cli.group()
 def adapter() -> None:
     """Adapter install / instance / list operations."""
+
+
+# Per-adapter-type subgroups live under ``esr.cli.adapter`` — attach
+# them here so ``esr adapter feishu create-app`` (DI-8 Task 15) surfaces
+# under the same ``adapter`` parent as ``add`` / ``install`` / ``list``.
+adapter.add_command(feishu_group)
 
 
 @adapter.command("add", context_settings={"ignore_unknown_options": True})
@@ -340,7 +374,7 @@ def adapter_add(
         if test_chat:
             cfg_dict["poll_chat_id"] = test_chat
 
-    cfg_path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "adapters.yaml"
+    cfg_path = paths.adapters_yaml_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
     doc: dict[str, Any] = {"instances": {}}
@@ -385,11 +419,7 @@ def _auto_instantiate_feishu_app_session(app_id: str) -> None:
     import subprocess
 
     # Compile if not cached — final_gate --live doesn't pre-compile.
-    compiled = (
-        Path(os.path.expanduser("~"))
-        / ".esrd" / "default" / "commands" / ".compiled"
-        / "feishu-app-session.yaml"
-    )
+    compiled = paths.commands_compiled_dir() / "feishu-app-session.yaml"
     if not compiled.exists():
         compiled.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -830,9 +860,7 @@ def cmd_run(name: str, params: tuple[str, ...], compiled_dir: Path | None) -> No
     runtime. Prints the instantiation handle on stdout. Timeout 30 s
     per PRD.
     """
-    root = compiled_dir or (
-        Path(os.path.expanduser("~")) / ".esrd" / "default" / "commands" / ".compiled"
-    )
+    root = compiled_dir or paths.commands_compiled_dir()
     path = root / f"{name}.yaml"
     if not path.exists():
         click.echo(f"command {name!r} not found at {path}", err=True)
@@ -943,9 +971,7 @@ def cmd_restart(name: str, params: tuple[str, ...], compiled_dir: Path | None) -
     persisted via F18 ETS survives the stop/run boundary, so a
     restart keeps handler counters / dedup sets intact.
     """
-    root = compiled_dir or (
-        Path(os.path.expanduser("~")) / ".esrd" / "default" / "commands" / ".compiled"
-    )
+    root = compiled_dir or paths.commands_compiled_dir()
     path = root / f"{name}.yaml"
     if not path.exists():
         click.echo(f"command {name!r} not found at {path}", err=True)
@@ -1248,7 +1274,7 @@ def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
         k, v = e.split("=", 1)
         env_dict[k] = v
 
-    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    path = paths.workspaces_yaml_path()
     ws = Workspace(name=name, cwd=cwd, start_cmd=start_cmd, role=role,
                    chats=parsed_chats, env=env_dict)
     try:
@@ -1278,7 +1304,7 @@ def workspace_list() -> None:
     """List declared workspaces."""
     from esr.workspaces import read_workspaces
 
-    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    path = paths.workspaces_yaml_path()
     for name, ws in read_workspaces(path).items():
         chat_refs = ",".join(
             f"{c['chat_id']}@{c['app_id']}" for c in ws.chats
@@ -1292,7 +1318,7 @@ def workspace_remove(name: str) -> None:
     """Remove a workspace declaration."""
     from esr.workspaces import remove_workspace
 
-    path = Path(os.path.expanduser("~")) / ".esrd" / "default" / "workspaces.yaml"
+    path = paths.workspaces_yaml_path()
     if not remove_workspace(path, name):
         click.echo(f"workspace {name!r} not found", err=True)
         raise click.exceptions.Exit(code=1)

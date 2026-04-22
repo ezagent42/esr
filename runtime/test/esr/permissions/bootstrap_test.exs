@@ -25,13 +25,15 @@ defmodule Esr.Permissions.BootstrapTest do
   end
 
   test "handler-declared permissions from Esr.PeerServer are registered" do
-    # PeerServer declares the 4 built-in MCP tools (reply, react,
-    # send_file, _echo). CAP-4 would deny every tool_invoke without
-    # these in the Registry, so coverage here guards the happy path.
+    # PeerServer declares the built-in MCP tools (reply, react,
+    # send_file, _echo, session.signal_cleanup). CAP-4 would deny
+    # every tool_invoke without these in the Registry, so coverage
+    # here guards the happy path.
     assert Registry.declared?("reply")
     assert Registry.declared?("react")
     assert Registry.declared?("send_file")
     assert Registry.declared?("_echo")
+    assert Registry.declared?("session.signal_cleanup")
   end
 
   test "bootstrap is idempotent (safe to re-run)" do
@@ -41,10 +43,17 @@ defmodule Esr.Permissions.BootstrapTest do
   end
 
   test "Esr.PeerServer implements the Esr.Handler behaviour" do
-    # The 4 MCP tool names come from PeerServer.permissions/0 — verify
+    # The MCP tool names come from PeerServer.permissions/0 — verify
     # the callback shape directly so a future rename to the behaviour
     # surface gets caught here rather than via a cryptic missed grant.
     assert function_exported?(Esr.PeerServer, :permissions, 0)
-    assert Esr.PeerServer.permissions() == ["reply", "react", "send_file", "_echo"]
+
+    assert Esr.PeerServer.permissions() == [
+             "reply",
+             "react",
+             "send_file",
+             "_echo",
+             "session.signal_cleanup"
+           ]
   end
 end

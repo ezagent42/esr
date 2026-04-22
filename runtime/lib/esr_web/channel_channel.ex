@@ -111,6 +111,16 @@ defmodule EsrWeb.ChannelChannel do
     {:noreply, socket}
   end
 
+  # Admin-originated notifications (e.g. `cleanup_check_requested`
+  # from `Esr.Admin.Commands.Session.End` on the non-force path).
+  # `Phoenix.PubSub.broadcast(EsrWeb.PubSub, "cli:channel/<sid>", {:notification, ...})`
+  # reaches this channel because Phoenix.Channel auto-subscribes the
+  # channel pid to the PubSub topic matching its join topic.
+  def handle_info({:notification, payload}, socket) when is_map(payload) do
+    push(socket, "envelope", payload)
+    {:noreply, socket}
+  end
+
   def handle_info({:tool_result, req_id, result}, socket) do
     push(
       socket,

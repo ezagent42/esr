@@ -25,11 +25,23 @@ orchestration half — deferred until F13 (integration smoke).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from typing import Any
 
 from esr.events import Event
 from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY, all_permissions
 from esr.ipc.envelope import make_handler_hello, serialise_action
+
+logger = logging.getLogger(__name__)
+
+
+# Task 7 (DI-3): reconnect backoff schedule (seconds). 200ms → 400ms → 800ms
+# → 1600ms, capped at 5s. Applied by :func:`run_with_reconnect` between
+# successive connection attempts. Mirrors adapter_runner's schedule so
+# handler/adapter subprocesses recover from esrd restarts in lockstep.
+_RECONNECT_BACKOFF_SCHEDULE: tuple[float, ...] = (0.2, 0.4, 0.8, 1.6, 3.2, 5.0)
 
 
 def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
@@ -134,16 +146,61 @@ def _to_json_native(value: Any) -> Any:
     return value
 
 
+async def _watch_disconnect(
+    client: Any, poll_interval: float = 0.1
+) -> None:
+    """Task 7 (DI-3): raise ConnectionError when the WS drops.
+
+    Mirror of ``adapter_runner._watch_disconnect``. See its docstring for
+    semantics. Separate copy (vs shared helper) because the two modules
+    deliberately depend only on ``esr.handler`` / ``esr.events`` /
+    ``esr.ipc.envelope`` — cross-importing from adapter_runner would
+    couple handler-worker imports to adapter-loading machinery.
+    """
+    while True:
+        if not getattr(client, "connected", True):
+            raise ConnectionError("ws disconnected")
+        await asyncio.sleep(poll_interval)
+
+
+async def _handler_call_loop(
+    client: Any, queue: asyncio.Queue[dict[str, Any] | None], topic: str
+) -> None:
+    """Drain ``queue`` of handler_call envelopes; push each reply back.
+
+    Extracted from the inline body of :func:`run_with_client` so the
+    disconnect-watcher task (Task 7 DI-3) can sit alongside it inside a
+    TaskGroup — a ``while True`` + ``finally`` body doesn't compose with
+    sibling tasks the way a coroutine does.
+    """
+    while True:
+        envelope = await queue.get()
+        if envelope is None:
+            return
+        reply_payload = process_handler_call(envelope["payload"])
+        # source is an esr:// URI (wire invariant §7.5) — mirror the
+        # adapter_runner convention of "esr://localhost/" + topic.
+        await client.push(topic, "envelope", {
+            "kind": "handler_reply",
+            "id": envelope["id"],
+            "source": "esr://localhost/" + topic,
+            "payload": reply_payload,
+        })
+
+
 async def run_with_client(client: Any, *, topic: str) -> None:
     """TDD-friendly entry: given a ChannelClient, connect, join the handler
     topic, and process handler_call envelopes by routing to
     :func:`process_handler_call` and pushing handler_reply back on the same
     topic.
-    """
-    import asyncio as _asyncio
 
+    Returns normally when the handler_call queue drains with a ``None``
+    sentinel. If the underlying WS disconnects, the disconnect watcher
+    raises ConnectionError which unwinds through the TaskGroup as an
+    ExceptionGroup; :func:`run_with_reconnect` catches and reconnects.
+    """
     await client.connect()
-    queue: _asyncio.Queue[dict[str, Any] | None] = _asyncio.Queue()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
     def _on_frame(frame: list[Any]) -> None:
         if len(frame) < 5:
@@ -167,32 +224,113 @@ async def run_with_client(client: Any, *, topic: str) -> None:
     )
     await client.push(topic, "envelope", hello)
 
+    # Run the call loop and disconnect watcher concurrently. First one
+    # to finish drives teardown: clean drain (None sentinel on queue)
+    # returns normally; WS drop raises ConnectionError that propagates
+    # out to :func:`run_with_reconnect`.
+    call_task = asyncio.create_task(_handler_call_loop(client, queue, topic))
+    watch_task = asyncio.create_task(_watch_disconnect(client))
     try:
-        while True:
-            envelope = await queue.get()
-            if envelope is None:
-                return
-            reply_payload = process_handler_call(envelope["payload"])
-            # source is an esr:// URI (wire invariant §7.5) — mirror the
-            # adapter_runner convention of "esr://localhost/" + topic.
-            await client.push(topic, "envelope", {
-                "kind": "handler_reply",
-                "id": envelope["id"],
-                "source": "esr://localhost/" + topic,
-                "payload": reply_payload,
-            })
+        done, _pending = await asyncio.wait(
+            {call_task, watch_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        # Cancel the survivor, then surface the completer's outcome.
+        for t in (call_task, watch_task):
+            if not t.done():
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+        for t in done:
+            exc = t.exception()
+            if exc is not None:
+                raise exc
     finally:
         await client.close()
 
 
+def _resolve_url(fallback_url: str) -> str:
+    """Task 7 (DI-3): re-read ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and
+    substitute the port into ``fallback_url``'s authority.
+
+    Mirror of ``adapter_runner._resolve_url``. See its docstring for
+    rationale. Separate copy so handler_worker stays independent of the
+    adapter-loader module tree (which adapter_runner pulls in).
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    from esr.cli import paths
+
+    port_file = paths.runtime_home() / "esrd.port"
+    try:
+        port_txt = port_file.read_text().strip()
+    except (FileNotFoundError, OSError):
+        return fallback_url
+    if not port_txt.isdigit():
+        return fallback_url
+
+    parsed = urlparse(fallback_url)
+    host = parsed.hostname or "127.0.0.1"
+    new_netloc = f"{host}:{port_txt}"
+    if parsed.username:
+        creds = parsed.username
+        if parsed.password:
+            creds += f":{parsed.password}"
+        new_netloc = f"{creds}@{new_netloc}"
+    return urlunparse(parsed._replace(netloc=new_netloc))
+
+
+async def run_with_reconnect(
+    *,
+    topic: str,
+    fallback_url: str,
+    client_factory: Any = None,
+    backoff_schedule: tuple[float, ...] = _RECONNECT_BACKOFF_SCHEDULE,
+) -> None:
+    """Task 7 (DI-3): wrap :func:`run_with_client` in an exponential-backoff
+    reconnect loop that re-reads the port file on every attempt.
+
+    See ``adapter_runner.run_with_reconnect`` for semantics. Handler
+    workers don't carry an adapter instance, so the signature drops that
+    argument.
+    """
+    from esr.ipc.channel_client import ChannelClient
+
+    if client_factory is None:
+        def client_factory(u: str) -> Any:
+            return ChannelClient(u)
+
+    attempt = 0
+    while True:
+        url = _resolve_url(fallback_url)
+        client = client_factory(url)
+        try:
+            await run_with_client(client, topic=topic)
+            attempt = 0
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, OSError) as exc:
+            logger.warning(
+                "run_with_client disconnected (%s); reconnecting", exc
+            )
+        except Exception as exc:  # noqa: BLE001 — protect the outer loop
+            logger.warning(
+                "run_with_client raised unexpected error (%s); reconnecting",
+                exc,
+            )
+
+        delay = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
+        await asyncio.sleep(delay)
+        attempt += 1
+
+
 async def run(handler_module: str, worker_id: str, url: str) -> None:
-    """Full-orchestration entry point — constructs a :class:`ChannelClient`
-    and delegates to :func:`run_with_client` (spec §3.4 F07). Phase 8b
-    passes handler_module/worker_id via the daemon spawning this worker.
+    """Full-orchestration entry point — loads the handler module so its
+    ``@handler`` decorators register, then delegates to
+    :func:`run_with_reconnect` (spec §3.4 F07 + §5.4 reconnect). Task 7
+    (DI-3) wraps the single-connection ``run_with_client`` in an
+    auto-reconnect loop with port-file-based URL re-resolution.
     """
     import importlib
-
-    from esr.ipc.channel_client import ChannelClient
 
     # Import the handler module so its @handler decorators register into
     # HANDLER_REGISTRY. handler_module looks like "feishu_thread.on_msg";
@@ -205,8 +343,7 @@ async def run(handler_module: str, worker_id: str, url: str) -> None:
         # Fall back to the raw module path (useful for tests with shim packages).
         importlib.import_module(handler_module)
     topic = f"handler:{handler_module}/{worker_id}"
-    client = ChannelClient(url)
-    await run_with_client(client, topic=topic)
+    await run_with_reconnect(topic=topic, fallback_url=url)
 
 
 def _parse_main_args(argv: list[str]) -> Any:

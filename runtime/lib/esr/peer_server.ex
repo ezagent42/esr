@@ -33,7 +33,7 @@ defmodule Esr.PeerServer do
   at boot or every tool_invoke would be denied.
   """
   @impl Esr.Handler
-  def permissions, do: ["reply", "react", "send_file", "_echo"]
+  def permissions, do: ["reply", "react", "send_file", "_echo", "session.signal_cleanup"]
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
@@ -298,6 +298,18 @@ defmodule Esr.PeerServer do
             Map.put(new_state.pending_tool_reqs, directive_id, {req_id, reply_pid})
 
           {:noreply, %__MODULE__{new_state | pending_tool_reqs: pending_tool_reqs}}
+
+        {:ok, :direct_ack, result} ->
+          # Direct-ack tools (e.g. `session.signal_cleanup`) finish
+          # synchronously inside build_emit_for_tool/3 — no adapter
+          # directive, no pending_tool_reqs entry. Reply immediately
+          # so the CC caller's tool_invoke round-trip completes.
+          send(
+            reply_pid,
+            {:tool_result, req_id, Map.merge(%{"ok" => true}, result)}
+          )
+
+          {:noreply, state}
 
         {:error, reason} ->
           send(
@@ -819,6 +831,25 @@ defmodule Esr.PeerServer do
     end
   end
 
+  # DI-11 Task 24: route session cleanup signals from CC to the Admin
+  # dispatcher. Returns `{:ok, :direct_ack, result}` — a distinct tag
+  # from the usual `{:ok, emit}` path so `handle_info(:tool_invoke)`
+  # skips the adapter broadcast and acks the CC caller immediately.
+  # `send/2` is fire-and-forget: a missing Dispatcher (e.g. early boot)
+  # must never block or crash the tool_invoke; the CC-side caller gets
+  # the ack regardless. Task 25 adds matching `handle_info/2` on
+  # `Esr.Admin.Dispatcher` — today its catch-all swallows the message.
+  defp build_emit_for_tool("session.signal_cleanup", args, _state) do
+    if pid = Process.whereis(Esr.Admin.Dispatcher) do
+      send(
+        pid,
+        {:cleanup_signal, args["session_id"], args["status"], args["details"] || %{}}
+      )
+    end
+
+    {:ok, :direct_ack, %{"acknowledged" => true}}
+  end
+
   defp build_emit_for_tool(unknown, _args, _state),
     do: {:error, "unknown tool: #{unknown}"}
 
@@ -905,6 +936,9 @@ defmodule Esr.PeerServer do
     @doc false
     def invoke_tool_for_test(%__MODULE__{} = state, tool, args) do
       case build_emit_for_tool(tool, args, state) do
+        {:ok, :direct_ack, result} ->
+          Map.merge(%{"ok" => true}, result)
+
         {:ok, _emit} ->
           %{"ok" => true}
 

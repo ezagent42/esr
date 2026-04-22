@@ -3,7 +3,12 @@
 Run as: python -m esr_cc_mcp.channel
 
 Reads env vars for identity:
-  ESR_ESRD_URL    default ws://127.0.0.1:4001
+  ESR_ESRD_URL    explicit override; when unset the bridge reads
+                  $ESRD_HOME/$ESR_INSTANCE/esrd.port (see
+                  _resolve_from_port_file below) and falls back to
+                  ws://127.0.0.1:4001 if the port file is absent.
+  ESRD_HOME       default ~/.esrd
+  ESR_INSTANCE    default "default"
   ESR_SESSION_ID  required
   ESR_WORKSPACE   required
   ESR_CHAT_IDS    JSON-encoded list of {chat_id, app_id, kind}
@@ -20,6 +25,7 @@ import logging
 import os
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -39,6 +45,39 @@ log = logging.getLogger("esr-channel")
 _pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _ws: EsrWSClient | None = None
 _mcp_server: Server | None = None
+
+
+def _resolve_from_port_file() -> str:
+    """Task 8 (DI-3): discover esrd's WS URL from the port file.
+
+    Reads ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` (defaults ``~/.esrd`` /
+    ``default``) and returns ``ws://127.0.0.1:<port>``. Falls back to
+    ``ws://127.0.0.1:4001`` if the file is absent or contains non-decimal
+    content — keeps the dev path (``mix phx.server`` on 4001) working.
+
+    ``launchctl kickstart`` can restart esrd on any free port, so this
+    helper is re-invoked by the reconnect loop (via the URL callable
+    passed to :class:`EsrWSClient`) to follow port changes.
+    """
+    home = os.environ.get("ESRD_HOME") or os.path.expanduser("~/.esrd")
+    instance = os.environ.get("ESR_INSTANCE", "default")
+    port_file = Path(home) / instance / "esrd.port"
+    try:
+        port_txt = port_file.read_text().strip()
+    except (FileNotFoundError, OSError):
+        return "ws://127.0.0.1:4001"
+    if not port_txt.isdigit():
+        return "ws://127.0.0.1:4001"
+    return f"ws://127.0.0.1:{port_txt}"
+
+
+def _resolve_url() -> str:
+    """Top-level URL discovery: ``ESR_ESRD_URL`` wins (explicit
+    override for e2e / remote esrd), else fall back to the port file.
+    Invoked once at startup and once per reconnect attempt so the
+    bridge follows ``launchctl kickstart``.
+    """
+    return os.environ.get("ESR_ESRD_URL") or _resolve_from_port_file()
 
 
 def _format_channel_tag(envelope: dict[str, Any]) -> str:
@@ -138,7 +177,10 @@ def _build_server() -> Server:
 async def _main() -> None:
     global _ws
 
-    url = os.environ.get("ESR_ESRD_URL", "ws://127.0.0.1:4001")
+    # Task 8 (DI-3): URL discovery reads env first (explicit override)
+    # then the port file. Pass the resolver as a callable so EsrWSClient
+    # re-reads on every reconnect — the bridge follows launchctl
+    # kickstart onto a fresh port.
     sid = os.environ["ESR_SESSION_ID"]
     ws_name = os.environ["ESR_WORKSPACE"]
     chats_json = os.environ.get("ESR_CHAT_IDS", "[]")
@@ -147,7 +189,12 @@ async def _main() -> None:
     except (ValueError, TypeError):
         chats = []
 
-    _ws = EsrWSClient(url=url, session_id=sid, workspace=ws_name, chats=chats)
+    _ws = EsrWSClient(
+        url=_resolve_url,
+        session_id=sid,
+        workspace=ws_name,
+        chats=chats,
+    )
     server = _build_server()
 
     async with anyio.create_task_group() as tg:

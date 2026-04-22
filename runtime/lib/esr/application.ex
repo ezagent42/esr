@@ -49,6 +49,21 @@ defmodule Esr.Application do
       # FileLoader can cross-check workspace names during validation.
       Esr.Capabilities.Supervisor,
 
+      # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
+      # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
+      # (Dispatcher checks grants during authorization) and AFTER
+      # Workspaces.Registry (register_adapter validates workspace
+      # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
+      Esr.Admin.Supervisor,
+
+      # 4h. Routing subsystem — SlashHandler parses Feishu slash
+      # commands and forwards them to Esr.Admin.Dispatcher
+      # (dev-prod-isolation spec §6.5). Sits AFTER Esr.Admin.Supervisor
+      # because every slash-command cast targets the Dispatcher by its
+      # registered name — the Router must never start ahead of its
+      # downstream.
+      Esr.Routing.Supervisor,
+
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       Esr.AdapterHub.Supervisor,
       Esr.HandlerRouter.Supervisor,
@@ -64,11 +79,12 @@ defmodule Esr.Application do
     result = Supervisor.start_link(children, opts)
 
     if Application.get_env(:esr, :restore_on_start, true) do
-      esrd_home =
-        System.get_env("ESRD_HOME", Path.join(System.user_home!(), ".esrd"))
-
-      _ = load_workspaces_from_disk(esrd_home)
-      _ = restore_adapters_from_disk(esrd_home)
+      # esrd_home argument retained for backward-compat with existing
+      # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /
+      # ESR_INSTANCE directly, so the passed value is effectively
+      # advisory — set ESRD_HOME to override.
+      _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
+      _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
     end
 
     result
@@ -80,8 +96,8 @@ defmodule Esr.Application do
   file is not an error — returns :ok.
   """
   @spec load_workspaces_from_disk(Path.t()) :: :ok
-  def load_workspaces_from_disk(esrd_home) do
-    path = Path.join([esrd_home, "default", "workspaces.yaml"])
+  def load_workspaces_from_disk(_esrd_home) do
+    path = Esr.Paths.workspaces_yaml()
 
     case Esr.Workspaces.Registry.load_from_file(path) do
       {:ok, workspaces} ->
@@ -104,7 +120,7 @@ defmodule Esr.Application do
   `ensure_adapter` via `default_adapter_ws_url/0`.
   """
   @spec restore_adapters_from_disk(Path.t(), keyword()) :: :ok
-  def restore_adapters_from_disk(esrd_home, opts \\ []) do
+  def restore_adapters_from_disk(_esrd_home, opts \\ []) do
     spawn_fn =
       Keyword.get(opts, :spawn_fn, fn instance, type, config ->
         url = default_adapter_ws_url()
@@ -116,7 +132,7 @@ defmodule Esr.Application do
         end
       end)
 
-    path = Path.join([esrd_home, "default", "adapters.yaml"])
+    path = Esr.Paths.adapters_yaml()
 
     if File.exists?(path) do
       with {:ok, parsed} <- YamlElixir.read_from_file(path),

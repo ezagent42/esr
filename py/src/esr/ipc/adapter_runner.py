@@ -27,10 +27,20 @@ dispatch pieces (``process_directive``, ``directive_loop``,
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 from typing import Any, Protocol
 
 from esr.handler import all_permissions
 from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
+
+logger = logging.getLogger(__name__)
+
+
+# Task 7 (DI-3): reconnect backoff schedule (seconds). 200ms → 400ms → 800ms
+# → 1600ms, capped at 5s. Applied by :func:`run_with_reconnect` between
+# successive connection attempts.
+_RECONNECT_BACKOFF_SCHEDULE: tuple[float, ...] = (0.2, 0.4, 0.8, 1.6, 3.2, 5.0)
 
 
 class AdapterPusher(Protocol):
@@ -116,6 +126,29 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
         await pusher.push_envelope(env)
 
 
+async def _watch_disconnect(
+    client: Any, poll_interval: float = 0.1
+) -> None:
+    """Task 7 (DI-3): raise ConnectionError when the WS drops.
+
+    Polls ``client.connected`` every ``poll_interval`` seconds. When the
+    flag flips False (e.g. aiohttp's read loop exits because the server
+    closed the socket), raises :class:`ConnectionError` so the enclosing
+    TaskGroup unwinds and :func:`run_with_reconnect` can attempt a
+    fresh connection. The wall-clock ceiling on disconnect detection is
+    ~``poll_interval``.
+
+    Fake test clients without a ``connected`` attribute (the existing
+    ``run_with_client`` tests use ``FakeChannelClient`` which does have
+    one, defaulting to True post-connect) are tolerated by treating
+    ``getattr`` misses as "still connected".
+    """
+    while True:
+        if not getattr(client, "connected", True):
+            raise ConnectionError("ws disconnected")
+        await asyncio.sleep(poll_interval)
+
+
 async def run_with_client(
     adapter: Any,
     client: Any,
@@ -128,6 +161,12 @@ async def run_with_client(
     The Phoenix v2 frame shape — ``[join_ref, ref, topic, event, payload]`` —
     is parsed inside the on_msg callback; envelopes are pushed onto a queue
     that :func:`directive_loop` drains.
+
+    Returns normally only if directive_loop / event_loop both complete
+    (they typically don't — they're driven off infinite queues/generators).
+    If the underlying WS disconnects, the disconnect watcher raises
+    ConnectionError which unwinds through the TaskGroup as an
+    ExceptionGroup; :func:`run_with_reconnect` catches it and reconnects.
     """
     from esr.ipc.channel_pusher import ChannelPusher
 
@@ -163,12 +202,123 @@ async def run_with_client(
         permissions=sorted(all_permissions()),
     )
     await client.push(topic, "envelope", hello)
+
+    # Run directive_loop + event_loop alongside a disconnect watcher. When
+    # the watcher raises (WS dropped) or either loop returns/raises, we
+    # cancel the survivors and propagate the first exception so
+    # :func:`run_with_reconnect` can attempt a fresh connection.
+    directive_task = asyncio.create_task(directive_loop(adapter, queue, pusher))
+    event_task = asyncio.create_task(event_loop(adapter, pusher))
+    watch_task = asyncio.create_task(_watch_disconnect(client))
+    all_tasks = (directive_task, event_task, watch_task)
     try:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(directive_loop(adapter, queue, pusher))
-            tg.create_task(event_loop(adapter, pusher))
+        done, _pending = await asyncio.wait(
+            set(all_tasks), return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in all_tasks:
+            if not t.done():
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+        for t in done:
+            exc = t.exception()
+            if exc is not None:
+                raise exc
     finally:
         await client.close()
+
+
+def _resolve_url(fallback_url: str) -> str:
+    """Task 7 (DI-3): re-read ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and
+    substitute the port into ``fallback_url``'s authority.
+
+    Launchctl kickstart restarts a crashed esrd on a new port each time,
+    so clients must re-resolve on every reconnect rather than caching the
+    URL from the ``--url`` CLI arg. If the port file is absent (e.g. dev
+    who launched esrd manually on a fixed port, or during initial boot
+    before esrd has written the file), we return ``fallback_url`` as-is
+    — the launchctl-unmanaged path still works.
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    from esr.cli import paths
+
+    port_file = paths.runtime_home() / "esrd.port"
+    try:
+        port_txt = port_file.read_text().strip()
+    except (FileNotFoundError, OSError):
+        return fallback_url
+    if not port_txt.isdigit():
+        return fallback_url
+
+    parsed = urlparse(fallback_url)
+    # parsed.hostname may be None for unusual URLs; preserve original netloc
+    # auth (user:pass@) but swap host:port.
+    host = parsed.hostname or "127.0.0.1"
+    new_netloc = f"{host}:{port_txt}"
+    if parsed.username:
+        creds = parsed.username
+        if parsed.password:
+            creds += f":{parsed.password}"
+        new_netloc = f"{creds}@{new_netloc}"
+    return urlunparse(parsed._replace(netloc=new_netloc))
+
+
+async def run_with_reconnect(
+    adapter: Any,
+    *,
+    topic: str,
+    fallback_url: str,
+    client_factory: Any = None,
+    backoff_schedule: tuple[float, ...] = _RECONNECT_BACKOFF_SCHEDULE,
+) -> None:
+    """Task 7 (DI-3): wrap :func:`run_with_client` in an exponential-backoff
+    reconnect loop that re-reads the port file on every attempt.
+
+    Each iteration:
+    1. Re-resolve the URL via :func:`_resolve_url` (follows launchctl
+       kickstart when ``esrd.port`` changes).
+    2. Construct a fresh :class:`ChannelClient` (new WS session).
+    3. Delegate to :func:`run_with_client`; a clean return resets the
+       backoff schedule.
+    4. On ``ConnectionError`` (raised by the disconnect watcher) or
+       ``OSError`` (WS dial failure), sleep per the backoff schedule and
+       retry.
+
+    ``client_factory`` is injection-friendly for tests — defaults to
+    ``ChannelClient(url)`` construction, but a test can pass a lambda
+    that returns fakes. The factory receives the resolved URL as its
+    only argument.
+    """
+    from esr.ipc.channel_client import ChannelClient
+
+    if client_factory is None:
+        def client_factory(u: str) -> Any:
+            return ChannelClient(u)
+
+    attempt = 0
+    while True:
+        url = _resolve_url(fallback_url)
+        client = client_factory(url)
+        try:
+            await run_with_client(adapter, client, topic=topic)
+            # Clean return (rare: all loops exited) → reset & retry.
+            attempt = 0
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, OSError) as exc:
+            logger.warning(
+                "run_with_client disconnected (%s); reconnecting", exc
+            )
+        except Exception as exc:  # noqa: BLE001 — protect the outer loop
+            logger.warning(
+                "run_with_client raised unexpected error (%s); reconnecting",
+                exc,
+            )
+
+        delay = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
+        await asyncio.sleep(delay)
+        attempt += 1
 
 
 async def run(
@@ -178,12 +328,12 @@ async def run(
     url: str,
 ) -> None:
     """Full-orchestration entry point — loads an adapter factory, constructs
-    a :class:`ChannelClient`, and delegates to :func:`run_with_client`
-    (spec §5.3 F13). Phase 8b supplies the factory-loading logic.
+    a :class:`ChannelClient`, and delegates to :func:`run_with_reconnect`
+    (spec §5.3 F13 + §5.4 reconnect). Phase 8b supplies the factory-loading
+    logic; Task 7 (DI-3) wraps it in the auto-reconnect loop.
     """
     from esr.adapter import AdapterConfig
     from esr.adapters import load_adapter_factory  # type: ignore[import-not-found]
-    from esr.ipc.channel_client import ChannelClient
 
     factory = load_adapter_factory(adapter_name)
     # Factories declare ``config: AdapterConfig`` — wrap the raw JSON dict
@@ -195,8 +345,7 @@ async def run(
     )
     adapter = factory(instance_id, adapter_config)
     topic = f"adapter:{adapter_name}/{instance_id}"
-    client = ChannelClient(url)
-    await run_with_client(adapter, client, topic=topic)
+    await run_with_reconnect(adapter, topic=topic, fallback_url=url)
 
 
 def _parse_main_args(argv: list[str]) -> Any:
