@@ -1,5 +1,11 @@
-defmodule Esr.Routing.SessionRouter do
+defmodule Esr.Routing.SlashHandler do
   @moduledoc """
+  Slash command parser — currently the only kind of message routing
+  this module does. Forwards parsed commands to `Esr.Admin.Dispatcher`
+  via cast+correlation-ref. Will be replaced by `Esr.Peers.SlashHandler`
+  in the Peer/Session refactor (see
+  `docs/superpowers/specs/2026-04-22-peer-session-refactor-design.md`).
+
   GenServer that dispatches inbound Feishu `msg_received` envelopes
   (spec §6.5, dev-prod-isolation Task 17).
 
@@ -142,7 +148,7 @@ defmodule Esr.Routing.SessionRouter do
         # Unknown ref — log and ignore. Avoids crash if the Dispatcher
         # sends a stale result (e.g. Router was restarted between
         # cast and reply).
-        Logger.warning("routing.session_router: unknown command_result ref — ignoring")
+        Logger.warning("routing.slash_handler: unknown command_result ref — ignoring")
 
         {:noreply, state}
 
@@ -281,7 +287,7 @@ defmodule Esr.Routing.SessionRouter do
       Phoenix.PubSub.broadcast(@pubsub, "route:#{target_url}", {:forward, envelope})
     else
       Logger.debug(
-        "routing.session_router: no active route for principal=#{inspect(principal_id)}"
+        "routing.slash_handler: no active route for principal=#{inspect(principal_id)}"
       )
     end
 

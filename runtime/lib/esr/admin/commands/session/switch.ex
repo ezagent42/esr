@@ -4,7 +4,7 @@ defmodule Esr.Admin.Commands.Session.Switch do
   routing target to the requested branch (spec §6.4 Session.Switch,
   plan DI-10 Task 20).
 
-  Pure `routing.yaml` read-modify-write. The SessionRouter observes the
+  Pure `routing.yaml` read-modify-write. The SlashHandler observes the
   change via its fs_watch and refreshes its in-memory routing map (no
   need to notify anything explicitly).
 

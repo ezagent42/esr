@@ -4,7 +4,7 @@ defmodule Esr.Admin.Dispatcher do
 
   Receives commands via two async paths — both `GenServer.cast` —
   from `Esr.Admin.CommandQueue.Watcher` (file-based CLI queue) and
-  `Esr.Routing.SessionRouter` (Feishu slash-command path). Both paths
+  `Esr.Routing.SlashHandler` (Feishu slash-command path). Both paths
   supply `{:execute, command, {:reply_to, target}}` where `target` is
   one of:
 

@@ -1,8 +1,8 @@
-defmodule Esr.Routing.SessionRouterTest do
+defmodule Esr.Routing.SlashHandlerTest do
   @moduledoc """
   DI-9 Task 17 — Router parser + forward-to-Dispatcher.
 
-  `Esr.Routing.SessionRouter` subscribes to the Feishu `msg_received`
+  `Esr.Routing.SlashHandler` subscribes to the Feishu `msg_received`
   Phoenix.PubSub topic, parses leading-slash admin commands, and casts
   them to `Esr.Admin.Dispatcher` with a `{:reply_to, {:pid, self(), ref}}`
   correlation pattern. Non-command messages are routed to the sender's
@@ -27,7 +27,7 @@ defmodule Esr.Routing.SessionRouterTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Routing.SessionRouter
+  alias Esr.Routing.SlashHandler
 
   setup do
     # Disposable ESRD_HOME so `Esr.Paths.runtime_home()` points at a
@@ -45,15 +45,15 @@ defmodule Esr.Routing.SessionRouterTest do
     prev_home = System.get_env("ESRD_HOME")
     System.put_env("ESRD_HOME", tmp)
 
-    # Stop the app-level Routing.Supervisor so its child SessionRouter
+    # Stop the app-level Routing.Supervisor so its child SlashHandler
     # doesn't race our test's start_link (the Supervisor would restart
-    # the Router out from under us on every `stop_session_router/0`
+    # the Router out from under us on every `stop_slash_handler/0`
     # call, and repeated restarts would trip the restart intensity and
     # cascade up to Esr.Supervisor — taking Phoenix.PubSub with it).
     stop_routing_supervisor()
 
     on_exit(fn ->
-      stop_session_router()
+      stop_slash_handler()
 
       # Restart the app-level Routing.Supervisor so subsequent test
       # modules find the Router where they expect it.
@@ -75,58 +75,58 @@ defmodule Esr.Routing.SessionRouterTest do
 
   describe "parse_command/1" do
     test "/new-session <branch> is session_new with new_worktree=false" do
-      assert SessionRouter.parse_command("/new-session feature/foo") ==
+      assert SlashHandler.parse_command("/new-session feature/foo") ==
                {:slash, "session_new", %{"branch" => "feature/foo", "new_worktree" => false}}
     end
 
     test "/new-session <branch> --new-worktree sets the flag" do
-      assert SessionRouter.parse_command("/new-session feature/foo --new-worktree") ==
+      assert SlashHandler.parse_command("/new-session feature/foo --new-worktree") ==
                {:slash, "session_new", %{"branch" => "feature/foo", "new_worktree" => true}}
     end
 
     test "/switch-session <branch> is session_switch" do
-      assert SessionRouter.parse_command("/switch-session dev") ==
+      assert SlashHandler.parse_command("/switch-session dev") ==
                {:slash, "session_switch", %{"branch" => "dev"}}
     end
 
     test "/end-session <branch> is session_end with force=false" do
-      assert SessionRouter.parse_command("/end-session feature/bar") ==
+      assert SlashHandler.parse_command("/end-session feature/bar") ==
                {:slash, "session_end", %{"branch" => "feature/bar", "force" => false}}
     end
 
     test "/end-session <branch> --force sets the flag" do
-      assert SessionRouter.parse_command("/end-session feature/bar --force") ==
+      assert SlashHandler.parse_command("/end-session feature/bar --force") ==
                {:slash, "session_end", %{"branch" => "feature/bar", "force" => true}}
     end
 
     test "/sessions is session_list with empty args" do
-      assert SessionRouter.parse_command("/sessions") ==
+      assert SlashHandler.parse_command("/sessions") ==
                {:slash, "session_list", %{}}
     end
 
     test "/list-sessions is session_list with empty args" do
-      assert SessionRouter.parse_command("/list-sessions") ==
+      assert SlashHandler.parse_command("/list-sessions") ==
                {:slash, "session_list", %{}}
     end
 
     test "/reload is reload with acknowledge_breaking=false" do
-      assert SessionRouter.parse_command("/reload") ==
+      assert SlashHandler.parse_command("/reload") ==
                {:slash, "reload", %{"acknowledge_breaking" => false}}
     end
 
     test "/reload --acknowledge-breaking sets the flag" do
-      assert SessionRouter.parse_command("/reload --acknowledge-breaking") ==
+      assert SlashHandler.parse_command("/reload --acknowledge-breaking") ==
                {:slash, "reload", %{"acknowledge_breaking" => true}}
     end
 
     test "non-slash text is :not_command" do
-      assert SessionRouter.parse_command("hi there") == :not_command
-      assert SessionRouter.parse_command("") == :not_command
-      assert SessionRouter.parse_command("  /new-session foo") == :not_command
+      assert SlashHandler.parse_command("hi there") == :not_command
+      assert SlashHandler.parse_command("") == :not_command
+      assert SlashHandler.parse_command("  /new-session foo") == :not_command
     end
 
     test "unknown slash command is :not_command" do
-      assert SessionRouter.parse_command("/unknown foo") == :not_command
+      assert SlashHandler.parse_command("/unknown foo") == :not_command
     end
   end
 
@@ -136,7 +136,7 @@ defmodule Esr.Routing.SessionRouterTest do
 
   describe "slash command path" do
     test "slash command is cast to Dispatcher with {:pid, self, ref} reply-to" do
-      {:ok, _pid} = SessionRouter.start_link([])
+      {:ok, _pid} = SlashHandler.start_link([])
 
       # Replace the registered Dispatcher name with this test pid so
       # GenServer.cast(Esr.Admin.Dispatcher, ...) is received here.
@@ -167,7 +167,7 @@ defmodule Esr.Routing.SessionRouterTest do
     end
 
     test "command_result with matching ref emits a reply directive broadcast" do
-      {:ok, router_pid} = SessionRouter.start_link([])
+      {:ok, router_pid} = SlashHandler.start_link([])
 
       swap_dispatcher_to_self()
 
@@ -197,7 +197,7 @@ defmodule Esr.Routing.SessionRouterTest do
     end
 
     test "command_result with unknown ref is ignored gracefully (no crash)" do
-      {:ok, router_pid} = SessionRouter.start_link([])
+      {:ok, router_pid} = SlashHandler.start_link([])
 
       # A ref never stored in pending_refs must not crash the GenServer.
       send(router_pid, {:command_result, make_ref(), {:ok, %{}}})
@@ -232,7 +232,7 @@ defmodule Esr.Routing.SessionRouterTest do
 
       File.write!(Path.join(runtime, "routing.yaml"), routing_yaml)
 
-      {:ok, _pid} = SessionRouter.start_link([])
+      {:ok, _pid} = SlashHandler.start_link([])
 
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "route:ws://localhost:4011")
 
@@ -252,7 +252,7 @@ defmodule Esr.Routing.SessionRouterTest do
     test "sender with no routing entry is silently dropped" do
       # No routing.yaml — the init-time load yields an empty map, so
       # no broadcast happens for any sender.
-      {:ok, router_pid} = SessionRouter.start_link([])
+      {:ok, router_pid} = SlashHandler.start_link([])
 
       envelope = %{
         "principal_id" => "ou_unknown",
@@ -290,7 +290,7 @@ defmodule Esr.Routing.SessionRouterTest do
           port: 4011
       """)
 
-      {:ok, pid} = SessionRouter.start_link([])
+      {:ok, pid} = SlashHandler.start_link([])
 
       state = :sys.get_state(pid)
       assert state.routing["principals"]["ou_a"]["active"] == "dev"
@@ -298,7 +298,7 @@ defmodule Esr.Routing.SessionRouterTest do
     end
 
     test "missing routing.yaml + branches.yaml yields empty maps" do
-      {:ok, pid} = SessionRouter.start_link([])
+      {:ok, pid} = SlashHandler.start_link([])
 
       state = :sys.get_state(pid)
       assert state.routing == %{}
@@ -319,7 +319,7 @@ defmodule Esr.Routing.SessionRouterTest do
           active: dev
       """)
 
-      {:ok, pid} = SessionRouter.start_link([])
+      {:ok, pid} = SlashHandler.start_link([])
 
       # Initial load visible in state.
       assert :sys.get_state(pid).routing["principals"]["ou_a"]["active"] == "dev"
@@ -351,7 +351,7 @@ defmodule Esr.Routing.SessionRouterTest do
           port: 4011
       """)
 
-      {:ok, pid} = SessionRouter.start_link([])
+      {:ok, pid} = SlashHandler.start_link([])
 
       assert :sys.get_state(pid).branches["branches"]["dev"]["port"] == 4011
 
@@ -379,7 +379,7 @@ defmodule Esr.Routing.SessionRouterTest do
           active: dev
       """)
 
-      {:ok, pid} = SessionRouter.start_link([])
+      {:ok, pid} = SlashHandler.start_link([])
 
       Process.sleep(300)
 
@@ -460,7 +460,7 @@ defmodule Esr.Routing.SessionRouterTest do
           status: running
       """)
 
-      {:ok, pid} = SessionRouter.start_link(orphan_scan_dir: scan_dir)
+      {:ok, pid} = SlashHandler.start_link(orphan_scan_dir: scan_dir)
 
       # Live dir must survive on disk; dead dir must be gone.
       assert File.dir?(live_dir)
@@ -498,7 +498,7 @@ defmodule Esr.Routing.SessionRouterTest do
 
       on_exit(fn -> File.rm_rf!(scan_dir) end)
 
-      {:ok, _pid} = SessionRouter.start_link(orphan_scan_dir: scan_dir)
+      {:ok, _pid} = SlashHandler.start_link(orphan_scan_dir: scan_dir)
 
       assert File.dir?(thirdparty)
       assert File.exists?(Path.join(thirdparty, "somefile"))
@@ -523,8 +523,8 @@ defmodule Esr.Routing.SessionRouterTest do
   # helpers
   # ------------------------------------------------------------------
 
-  defp stop_session_router do
-    case Process.whereis(SessionRouter) do
+  defp stop_slash_handler do
+    case Process.whereis(SlashHandler) do
       nil ->
         :ok
 

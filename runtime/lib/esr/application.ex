@@ -56,7 +56,7 @@ defmodule Esr.Application do
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
       Esr.Admin.Supervisor,
 
-      # 4h. Routing subsystem — SessionRouter parses Feishu slash
+      # 4h. Routing subsystem — SlashHandler parses Feishu slash
       # commands and forwards them to Esr.Admin.Dispatcher
       # (dev-prod-isolation spec §6.5). Sits AFTER Esr.Admin.Supervisor
       # because every slash-command cast targets the Dispatcher by its
