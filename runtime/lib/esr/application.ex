@@ -94,6 +94,30 @@ defmodule Esr.Application do
     opts = [strategy: :one_for_one, name: Esr.Supervisor]
     result = Supervisor.start_link(children, opts)
 
+    # P4a-7: bring up the voice pools under AdminSession's children
+    # supervisor. Must happen after Supervisor.start_link/2 because the
+    # bootstrap resolves the `AdminSession.ChildrenSupervisor` via its
+    # registered name. Failures are logged but non-fatal — the rest of
+    # the tree keeps running with voice paths degraded.
+    case result do
+      {:ok, _} ->
+        case Esr.AdminSession.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            require Logger
+
+            Logger.warning(
+              "admin_session: bootstrap_voice_pools failed: #{inspect(reason)}; " <>
+                "voice peers will be unavailable until restart"
+            )
+        end
+
+      _ ->
+        :ok
+    end
+
     if Application.get_env(:esr, :restore_on_start, true) do
       # esrd_home argument retained for backward-compat with existing
       # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /

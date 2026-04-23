@@ -1,0 +1,45 @@
+agents:
+  cc-voice:
+    description: "CC + voice I/O (voice in → ASR → CC → TTS → voice out)"
+    capabilities_required:
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
+      - peer_pool:voice_asr/acquire
+      - peer_pool:voice_tts/acquire
+    pipeline:
+      inbound:
+        - { name: feishu_chat_proxy, impl: Esr.Peers.FeishuChatProxy }
+        - { name: voice_asr,         impl: Esr.Peers.VoiceASRProxy }
+        - { name: cc_proxy,          impl: Esr.Peers.CCProxy }
+        - { name: cc_process,        impl: Esr.Peers.CCProcess }
+        - { name: tmux_process,      impl: Esr.Peers.TmuxProcess }
+      outbound:
+        - tmux_process
+        - cc_process
+        - cc_proxy
+        - voice_tts
+        - feishu_chat_proxy
+    proxies:
+      - { name: feishu_app_proxy, impl: Esr.Peers.FeishuAppProxy, target: "admin::feishu_app_adapter_${app_id}" }
+      - { name: voice_asr,        impl: Esr.Peers.VoiceASRProxy,  target: "admin::voice_asr_pool" }
+      - { name: voice_tts,        impl: Esr.Peers.VoiceTTSProxy,  target: "admin::voice_tts_pool" }
+    params:
+      - { name: dir,    required: true,  type: path }
+      - { name: app_id, required: false, default: "default", type: string }
+
+  voice-e2e:
+    description: "End-to-end voice LLM; agent as side-input, no CC"
+    capabilities_required:
+      - session:default/create
+      - handler:voice_e2e/invoke
+    pipeline:
+      inbound:
+        - { name: feishu_chat_proxy, impl: Esr.Peers.FeishuChatProxy }
+        - { name: voice_e2e,         impl: Esr.Peers.VoiceE2E }
+      outbound:
+        - voice_e2e
+        - feishu_chat_proxy
+    proxies:
+      - { name: feishu_app_proxy, impl: Esr.Peers.FeishuAppProxy, target: "admin::feishu_app_adapter_${app_id}" }
+    params: []
