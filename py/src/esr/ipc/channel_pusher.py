@@ -1,7 +1,7 @@
 """ChannelPusher — bridge from :class:`ChannelClient` to the
 :class:`AdapterPusher` / pusher-protocol consumed by
-:func:`esr.ipc.adapter_runner.directive_loop` and
-:func:`esr.ipc.adapter_runner.event_loop` (Phase 8a F13).
+:func:`_adapter_common.runner_core.directive_loop` and
+:func:`_adapter_common.runner_core.event_loop` (Phase 8a F13).
 
 ``directive_loop`` / ``event_loop`` want an object with
 ``source_uri: str`` and ``async def push_envelope(env)``. Phoenix

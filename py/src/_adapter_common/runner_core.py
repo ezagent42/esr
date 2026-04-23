@@ -1,4 +1,12 @@
-"""Core adapter-runner dispatch machinery (extracted from ``esr.ipc.adapter_runner``).
+"""Core adapter-runner dispatch machinery.
+
+Hosts ``run`` / ``run_with_reconnect`` / ``run_with_client`` plus the
+directive/event loops for every Python adapter sidecar. Named
+``_adapter_common`` because the three per-type sidecars
+(``feishu_adapter_runner``, ``cc_adapter_runner``,
+``generic_adapter_runner``) all share this orchestration code. IPC
+plumbing shared with ``handler_worker`` (URL resolution, backoff,
+disconnect watcher) lives in :mod:`_ipc_common`.
 
 PRD 03 F09 / F10; spec §5.3. A Python adapter process runs two
 concurrent coroutines:

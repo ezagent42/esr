@@ -1,14 +1,16 @@
 defmodule Esr.Integration.AdapterRunnerSplitTest do
   @moduledoc """
   P4b-9 — end-to-end check that `Esr.WorkerSupervisor.ensure_adapter/4`
-  now routes through the per-type sidecars introduced in PR-4b rather
-  than the legacy `esr.ipc.adapter_runner` monolith.
+  now routes through the per-type sidecars (`feishu_adapter_runner`,
+  `cc_adapter_runner`, `generic_adapter_runner`). The
+  `esr.ipc.adapter_runner` shim was hard-deleted in PR-5; the `refute`
+  assertions below guard against regressions that would accidentally
+  resurrect a monolith path.
 
   We don't need a full Phoenix-channel handshake here (adapter startup
   with a bad URL loops forever on reconnect backoff, and the unit-test
   suite already covers runner_core mechanics). The discriminating
-  observable is the spawned process's command line: before PR-4b we'd
-  see `python -m esr.ipc.adapter_runner`; after PR-4b we see
+  observable is the spawned process's command line: we see
   `python -m feishu_adapter_runner` for feishu and
   `python -m cc_adapter_runner` for cc_tmux.
 

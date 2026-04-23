@@ -17,9 +17,9 @@ each sidecar is reduced to ~25 lines of glue:
 Note: URL resolution (``resolve_url``) and reconnect backoff schedule
 were moved to :mod:`_ipc_common` in P5-2.
 
-Decoupling note: these helpers deliberately do **not** import
-``esr.ipc.adapter_runner`` — the relationship is the other way around.
-PR-4b's final shim re-exports from here so pre-existing
-``from esr.ipc.adapter_runner import run_with_client`` code keeps
-working during the migration window.
+Historical note: these helpers were extracted from the former
+``esr.ipc.adapter_runner`` monolith; that shim has been deleted in
+PR-5. ``_adapter_common`` is now the authoritative home for the
+shared dispatch machinery — there is no longer a compatibility
+re-export layer.
 """

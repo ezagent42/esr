@@ -3,9 +3,11 @@ defmodule Esr.WorkerSupervisor do
   Spawns and tracks Python adapter/handler subprocesses (Phase 8f).
 
   When Topology.Instantiator binds an adapter or starts a PeerServer,
-  the Python-side counterpart (``esr.ipc.adapter_runner`` /
-  ``esr.ipc.handler_worker``) must be joined to the matching Phoenix
-  channel *before* the first directive/call broadcasts. `scripts/
+  the Python-side counterpart (the per-type adapter sidecars —
+  ``feishu_adapter_runner``, ``cc_adapter_runner``,
+  ``generic_adapter_runner`` — and ``esr.ipc.handler_worker``) must be
+  joined to the matching Phoenix channel *before* the first
+  directive/call broadcasts. `scripts/
   spawn_scenario_workers.sh` pre-spawns these externally for the mock
   scenario, but `final_gate.sh --live` is SHA-pinned and can't take
   that extra step — so the runtime launches them itself, on demand,
@@ -68,11 +70,12 @@ defmodule Esr.WorkerSupervisor do
   end
 
   @doc """
-  Ensure a Python adapter_runner subprocess is joined for
+  Ensure a Python adapter sidecar subprocess is joined for
   `(adapter_name, instance_id)` against `url`.
 
   `config` is a map (or JSON-encoded string) passed verbatim to
-  `python -m esr.ipc.adapter_runner --config-json ...`.
+  the sidecar CLI (`python -m <sidecar_module> --config-json ...`).
+  `sidecar_module/1` picks the per-adapter module name.
   """
   @spec ensure_adapter(String.t(), String.t(), map() | String.t(), String.t()) ::
           :ok | :already_running | {:error, term()}
@@ -317,14 +320,12 @@ defmodule Esr.WorkerSupervisor do
   end
 
   defp log_path_for(args) do
-    # Mirror the pidfile naming so operators can cross-reference. PR-4b
-    # split the adapter runner into per-type sidecars, so the module name
-    # in the argv is now one of `{feishu,cc,generic}_adapter_runner` (or
-    # the old `esr.ipc.adapter_runner` shim during the deprecation window).
+    # Mirror the pidfile naming so operators can cross-reference. The
+    # module in argv is one of the three per-type sidecars:
+    # `{feishu,cc,generic}_adapter_runner`.
     case args do
       ["-m", module, "--adapter", name, "--instance-id", id | _]
       when module in [
-             "esr.ipc.adapter_runner",
              "feishu_adapter_runner",
              "cc_adapter_runner",
              "generic_adapter_runner"

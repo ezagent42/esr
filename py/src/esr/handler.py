@@ -93,9 +93,10 @@ def handler(
 def all_permissions() -> frozenset[str]:
     """Union of every registered handler's permissions (spec §3.1).
 
-    Used by ``esr.ipc.adapter_runner`` / ``handler_worker`` to emit
-    the ``handler_hello`` envelope payload that tells the Elixir
-    runtime which permission strings this Python process declares.
+    Used by ``feishu_adapter_runner`` / ``cc_adapter_runner`` /
+    ``generic_adapter_runner`` / ``handler_worker`` to emit the
+    ``handler_hello`` envelope payload that tells the Elixir runtime
+    which permission strings this Python process declares.
     """
     return frozenset().union(*(e.permissions for e in HANDLER_REGISTRY.values()))
 

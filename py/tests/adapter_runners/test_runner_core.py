@@ -1,11 +1,10 @@
 """Tests for ``_adapter_common.runner_core`` — the shared per-sidecar core.
 
-Migrated from ``py/tests/test_adapter_runner{,_main,_run}.py`` as part of
-PR-4b's monolith split. The three pre-existing files are preserved (they
-still import ``esr.ipc.adapter_runner``, which PR-4b-6 converts to a
-deprecation shim); this consolidated file asserts the same behaviours
-against the new shared package so the core stays green even if the shim
-is later deleted.
+Migrated from ``py/tests/test_adapter_runner{,_main,_run}.py`` as part
+of PR-4b's monolith split — those tests were migrated off the monolith
+in PR-4b, and the compatibility shim was removed in PR-5. This
+consolidated file asserts the behaviours against the shared
+``_adapter_common`` package directly.
 
 PRD 03 F09 / F10 coverage:
 - ``process_directive`` happy / error / missing-args / missing-action
