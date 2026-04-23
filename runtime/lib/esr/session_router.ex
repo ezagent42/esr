@@ -58,7 +58,13 @@ defmodule Esr.SessionRouter do
                     "Esr.Peers.FeishuChatProxy",
                     "Esr.Peers.CCProcess",
                     "Esr.Peers.TmuxProcess",
-                    "Esr.Peers.FeishuAppAdapter"
+                    "Esr.Peers.FeishuAppAdapter",
+                    # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
+                    # AdminSession and NOT spawned per-session (the
+                    # `cc-voice` pipeline references them only via the
+                    # VoiceASRProxy/VoiceTTSProxy). VoiceE2E is
+                    # per-session and needs to be spawned.
+                    "Esr.Peers.VoiceE2E"
                   ])
 
   # ------------------------------------------------------------------
@@ -382,6 +388,26 @@ defmodule Esr.SessionRouter do
     %{principal_id: get_param(params, :principal_id)}
   end
 
+  # P4a-9: VoiceASRProxy / VoiceTTSProxy ctx — attach the symbolic
+  # pool_name the proxy uses to acquire/release workers from
+  # AdminSession's pool. acquire_timeout is a conservative default
+  # (5s); can be overridden per-agent in a future PR.
+  defp build_ctx(%{"impl" => "Esr.Peers.VoiceASRProxy"}, params) do
+    %{
+      principal_id: get_param(params, :principal_id),
+      pool_name: :voice_asr_pool,
+      acquire_timeout: 5_000
+    }
+  end
+
+  defp build_ctx(%{"impl" => "Esr.Peers.VoiceTTSProxy"}, params) do
+    %{
+      principal_id: get_param(params, :principal_id),
+      pool_name: :voice_tts_pool,
+      acquire_timeout: 5_000
+    }
+  end
+
   defp build_ctx(_, _params), do: %{}
 
   defp spawn_args(%{"impl" => "Esr.Peers.FeishuChatProxy"}, params) do
@@ -403,6 +429,12 @@ defmodule Esr.SessionRouter do
   defp spawn_args(%{"impl" => "Esr.Peers.FeishuAppAdapter"}, params) do
     %{app_id: get_param(params, :app_id) || "default"}
   end
+
+  # P4a-9: VoiceE2E needs `:session_id`; `PeerFactory.spawn_peer/5`
+  # already merges `session_id` into init_args, so this is technically
+  # a no-op placeholder — kept for explicitness and so future edits can
+  # attach per-agent tuning (turn timeout, engine selection) here.
+  defp spawn_args(%{"impl" => "Esr.Peers.VoiceE2E"}, _params), do: %{}
 
   defp spawn_args(_, _), do: %{}
 

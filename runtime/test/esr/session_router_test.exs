@@ -179,6 +179,71 @@ defmodule Esr.SessionRouterTest do
       assert Process.alive?(router)
     end
 
+    test "P4a-9: cc-voice agent spawns the CC chain + records VoiceASR/TTS as proxy_module" do
+      # Load the voice fixture on top of the existing agents so both
+      # `cc` (simple.yaml) and `cc-voice` (voice.yaml) resolve.
+      voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
+      :ok = Esr.SessionRegistry.load_agents(voice_fixture)
+
+      assert {:ok, _agent_def} = Esr.SessionRegistry.agent_def("cc-voice")
+
+      assert {:ok, session_id} =
+               Esr.SessionRouter.create_session(%{
+                 agent: "cc-voice",
+                 dir: "/tmp",
+                 principal_id: "ou_alice",
+                 chat_id: "oc_voice",
+                 thread_id: "om_voice",
+                 app_id: "cli_test"
+               })
+
+      assert is_binary(session_id)
+
+      {:ok, ^session_id, refs} =
+        Esr.SessionRegistry.lookup_by_chat_thread("oc_voice", "om_voice")
+
+      # Stateful peers in cc-voice inbound: feishu_chat_proxy, cc_process,
+      # tmux_process. VoiceASRProxy, CCProxy are stateless modules;
+      # VoiceTTSProxy is only referenced as a proxies-block entry.
+      assert is_pid(refs.feishu_chat_proxy)
+      assert is_pid(refs.cc_process)
+      assert is_pid(refs.tmux_process)
+
+      # VoiceASR/VoiceTTS live in AdminSession's pool — NOT in refs.
+      refute Map.has_key?(refs, :voice_asr_worker)
+      refute Map.has_key?(refs, :voice_tts_worker)
+
+      # Proxies block records the pool-binding markers symbolically.
+      assert refs.voice_asr == {:proxy_module, Esr.Peers.VoiceASRProxy}
+      assert refs.voice_tts == {:proxy_module, Esr.Peers.VoiceTTSProxy}
+      assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
+    end
+
+    test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer" do
+      voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
+      :ok = Esr.SessionRegistry.load_agents(voice_fixture)
+
+      assert {:ok, _agent_def} = Esr.SessionRegistry.agent_def("voice-e2e")
+
+      assert {:ok, session_id} =
+               Esr.SessionRouter.create_session(%{
+                 agent: "voice-e2e",
+                 dir: "/tmp",
+                 principal_id: "ou_alice",
+                 chat_id: "oc_e2e",
+                 thread_id: "om_e2e",
+                 app_id: "cli_test"
+               })
+
+      {:ok, ^session_id, refs} =
+        Esr.SessionRegistry.lookup_by_chat_thread("oc_e2e", "om_e2e")
+
+      assert is_pid(refs.feishu_chat_proxy)
+      assert is_pid(refs.voice_e2e)
+      assert Process.alive?(refs.voice_e2e)
+      assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
+    end
+
     test "telemetry fires on peer_crashed DOWN without crashing the router" do
       ref =
         :telemetry_test.attach_event_handlers(self(), [
