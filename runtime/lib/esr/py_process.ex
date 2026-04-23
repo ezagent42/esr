@@ -85,6 +85,49 @@ defmodule Esr.PyProcess do
   def os_env(_state), do: [{"PYTHONUNBUFFERED", "1"}]
 
   @impl Esr.OSProcess
+  def os_cwd(state) do
+    # `uv run python -m <pkg>` autodetects the project via cwd walk.
+    # Modules live under `py/src/` so every sidecar must run from the
+    # repo's `py/` directory; absolute `{:script, path}` entries don't
+    # care but we set cwd unconditionally for consistency.
+    #
+    # `{:script, path}` with an absolute path takes precedence — running
+    # from `py/` is harmless for those too.
+    case state.entry_point do
+      {:module, _} -> py_project_dir()
+      {:script, _} -> py_project_dir()
+    end
+  end
+
+  @impl Esr.OSProcess
   def on_os_exit(0, _state), do: {:stop, :normal}
   def on_os_exit(status, _state), do: {:stop, {:py_crashed, status}}
+
+  # Resolve the repo's `py/` directory. App-env override
+  # `config :esr, :py_project_dir, path` lets operators pin the path
+  # (e.g. when running from an install prefix); default walks up from
+  # `Application.app_dir/1` to find the sibling `py/` dir.
+  defp py_project_dir do
+    case Application.get_env(:esr, :py_project_dir) do
+      path when is_binary(path) ->
+        path
+
+      _ ->
+        # In a dev checkout `Application.app_dir(:esr)` resolves to
+        # `.../runtime/_build/.../lib/esr`. Walk up to the repo root
+        # and append `py`. If the walk fails we fall back to `../py`
+        # relative to the current cwd (best-effort for mix test).
+        try do
+          app = Application.app_dir(:esr)
+          # Walk up to the repo root. Typical chain is
+          #   <repo>/runtime/_build/<env>/lib/esr  → 4 parents deep
+          # the 5th is <repo>, then append `py`.
+          repo = app |> Path.split() |> Enum.reverse() |> Enum.drop(4) |> Enum.reverse() |> Path.join()
+          candidate = Path.join(repo, "py")
+          if File.dir?(candidate), do: candidate, else: Path.expand("../py", File.cwd!())
+        rescue
+          _ -> Path.expand("../py", File.cwd!())
+        end
+    end
+  end
 end

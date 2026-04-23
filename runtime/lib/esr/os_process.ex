@@ -54,8 +54,9 @@ defmodule Esr.OSProcess do
   @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::
               {:stop, reason :: term()} | {:restart, new_state :: term()}
   @callback on_terminate(state :: term()) :: :ok
+  @callback os_cwd(state :: term()) :: Path.t() | nil
 
-  @optional_callbacks on_terminate: 1
+  @optional_callbacks on_terminate: 1, os_cwd: 1
 
   # Graceful-shutdown window (ms) before erlexec escalates SIGTERM → SIGKILL.
   # Matches the previous muontrap `--delay-to-sigkill 5000` value.
@@ -94,7 +95,14 @@ defmodule Esr.OSProcess do
           [exe | args] = parent.os_cmd(state)
           env = parent.os_env(state)
 
-          case Esr.OSProcess.spawn_child(exe, args, env, @wrapper) do
+          cwd =
+            if function_exported?(parent, :os_cwd, 1) do
+              parent.os_cwd(state)
+            else
+              nil
+            end
+
+          case Esr.OSProcess.spawn_child(exe, args, env, @wrapper, cwd) do
             {:ok, exec_pid, os_pid} ->
               {:ok,
                %{
@@ -257,7 +265,7 @@ defmodule Esr.OSProcess do
   #
   # The command is passed as a list-of-charlists (no shell), which
   # avoids quoting / shell-injection surprises.
-  def spawn_child(exe, args, env, wrapper) do
+  def spawn_child(exe, args, env, wrapper, cwd \\ nil) do
     abs_exe = resolve_exe(exe)
 
     cmd = [String.to_charlist(abs_exe) | Enum.map(args, &String.to_charlist/1)]
@@ -272,6 +280,7 @@ defmodule Esr.OSProcess do
         {:env, to_exec_env(env)}
       ]
       |> maybe_add_pty(wrapper)
+      |> maybe_add_cwd(cwd)
 
     case :exec.run_link(cmd, opts) do
       {:ok, pid, os_pid} when is_integer(os_pid) ->
@@ -284,6 +293,12 @@ defmodule Esr.OSProcess do
 
   defp maybe_add_pty(opts, :pty), do: [:pty | opts]
   defp maybe_add_pty(opts, :plain), do: opts
+
+  defp maybe_add_cwd(opts, nil), do: opts
+
+  defp maybe_add_cwd(opts, cwd) when is_binary(cwd) do
+    [{:cd, String.to_charlist(cwd)} | opts]
+  end
 
   defp to_exec_env(env) do
     for {k, v} <- env, do: {String.to_charlist(k), String.to_charlist(v)}
