@@ -1,6 +1,18 @@
 ---
 name: muontrap-elixir
-description: Use whenever the task involves the MuonTrap Elixir package (1.7.x) — wrapping OS processes with guaranteed cleanup on BEAM exit, spawning tmux / python / shell / any long-running external program under OTP supervision, designing interactive sidecar peers with stdin+stdout, or debugging orphaned processes. Triggers include any code that touches `:muontrap`, `MuonTrap.cmd`, `MuonTrap.Daemon`, `MuonTrap.muontrap_path`, `Port.open` against an OS-spawned child, writing a custom OSProcess底座, reasoning about "Mode 3" stdin/stdout/cleanup trade-offs, deciding between the muontrap wrapper and plain Port for interactive children, or reviewing peer code that spawns external commands. Also use when touching the ESR `Esr.OSProcess` / `Esr.TmuxProcess` / `Esr.PyProcess` modules — they're direct consumers of these patterns. ALWAYS use even when MuonTrap is mentioned briefly — training data doesn't cover 1.7 API reliably and the library has a non-obvious empirical constraint (Mode 3 stdin+stdout+cleanup cannot be satisfied simultaneously — see the body) that is easy to get wrong.
+description: HISTORICAL — ESR moved off MuonTrap in PR-3 (2026-04-22). `Esr.OSProcess` now uses `:erlexec`. Use this skill ONLY when working with legacy code that still references MuonTrap directly, debugging an old commit, or contributing upstream to the muontrap package itself. For all new ESR OS-process work see `docs/notes/erlexec-migration.md`. Formerly: advice on wrapping OS processes with MuonTrap 1.7.x — the Mode 3 stdin/stdout/cleanup trade-off, which interactive-sidecar wrapper to pick, etc. The empirical findings in the body are still correct about MuonTrap 1.7; they're just no longer relevant to our peer底座.
+---
+
+> ⚠️ **HISTORICAL — do not apply to new ESR code.** `Esr.OSProcess` no
+> longer uses MuonTrap; see
+> [`docs/notes/erlexec-migration.md`](../../../docs/notes/erlexec-migration.md)
+> for the current底座. The body below is preserved verbatim because
+> (a) MuonTrap's Mode 3 empirical constraint is still accurate for
+> anyone using the library directly, and (b) the historical record
+> explains *why* we switched. For new peers, the correct macro is
+> `use Esr.OSProcess, kind: ..., wrapper: :pty | :plain` — not
+> `wrapper: :muontrap | :none`.
+
 ---
 
 # MuonTrap (Elixir) — OS Process Wrapping with Guaranteed Cleanup

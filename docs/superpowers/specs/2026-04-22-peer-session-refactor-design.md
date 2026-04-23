@@ -43,7 +43,7 @@ v3.0 **does not replace** v2.2. The two are complementary:
 ### 1.3 In scope
 
 1. **Peer behaviour layer**: `Esr.Peer`, `Esr.Peer.Proxy`, `Esr.Peer.Stateful` behaviours. `Esr.PeerServer` is retained as one implementation; new Peer types (`FeishuChatProxy`, `CCProxy`, etc.) are added atop the behaviour.
-2. **OSProcess底座**: `Esr.OSProcess` behaviour + `Esr.TmuxProcess` + `Esr.PyProcess` implementations via MuonTrap.
+2. **OSProcess底座**: `Esr.OSProcess` behaviour + `Esr.TmuxProcess` + `Esr.PyProcess` implementations. Initially via MuonTrap; switched to `:erlexec` in PR-3 `P3-17` for native PTY support (see §3.2 + `docs/notes/erlexec-migration.md`).
 3. **Control plane**: three modules with strict separation — `Esr.PeerFactory` (creation mechanics), `Esr.SessionRouter` (lifecycle decisions), `Esr.SessionRegistry` (yaml compiler + mapping queries).
 4. **AdminSession model**: global-scope peers belong to AdminSession; user Sessions access them via PeerProxy.
 5. **Agent definitions**: `agents.yaml` describing composable agents (`cc`, `cc-voice`, `voice-e2e`, future `gemini-cli`). `/new-session --agent <name>` spawns the declared peer pipeline.
@@ -73,7 +73,7 @@ v3.0 **does not replace** v2.2. The two are complementary:
 - **Peer**: an actor (GenServer or Supervisor-of-GenServer) that implements one of the `Esr.Peer.*` behaviours. Every Peer belongs to exactly one Session.
 - **Peer.Proxy**: a Peer subtype that is a stateless forwarder. Compile-time restricted to `forward/2` semantics; cannot hold business state.
 - **Peer.Stateful**: a Peer subtype that owns state (mailbox, in-memory data, optionally an OS process).
-- **OSProcess底座**: `Esr.OSProcess` behaviour providing OS-process lifecycle (spawn via MuonTrap, monitor, signal, kill). Used via composition: `defmodule TmuxProcess, do: use Esr.Peer.Stateful; use Esr.OSProcess, kind: :tmux`.
+- **OSProcess底座**: `Esr.OSProcess` behaviour providing OS-process lifecycle (spawn via [`:erlexec`](https://hexdocs.pm/erlexec/), monitor, signal, kill). Used via composition: `defmodule TmuxProcess, do: use Esr.Peer.Stateful; use Esr.OSProcess, kind: :tmux, wrapper: :pty`. See §3.2.
 - **esr-session** (or just "Session"): a supervisor subtree representing one complete human-AI collaboration workflow. Identified by a ULID (`session_id`). Contains a `SessionProcess` GenServer + the Peer subtree defined by the session's agent.
 - **AdminSession**: the one always-on Session (`session_id = "admin"`) that hosts global-scope peers (FeishuAppAdapter, SlashHandler, voice pools, etc.).
 - **Agent**: a user-facing composite primitive declared in `agents.yaml`. One agent name → one peer pipeline. Examples: `cc`, `cc-voice`, `voice-e2e`.
@@ -92,7 +92,7 @@ Resolved during brainstorming; frozen for this spec.
 | D2 | PR #11 fate | Rename surgery (SessionRouter → SlashHandler) then merge, main refactor on new branch. See §9 PR-0. |
 | D3 | Refactor depth | Full: merge AdapterHub.Registry into SessionRegistry, ban free PubSub broadcasts (except listed sites), introduce OSProcess底座 now. See §2.9. |
 | D4 | Session structure | User Sessions = Supervisor subtrees with private peers; AdminSession holds globals. No "global peer" category. See §3.4. |
-| D5 | Issue #7 scope | Absorbed into this refactor. TmuxProcess + all Python sidecars get MuonTrap-based OSProcess底座. See §3.2 + §8. |
+| D5 | Issue #7 scope | Absorbed into this refactor. TmuxProcess + all Python sidecars get an erlexec-based OSProcess底座 (P3-17, 2026-04-22 — first attempted with MuonTrap, switched after empirical PTY / stdin-ack constraints). See §3.2 + §8 + `docs/notes/erlexec-migration.md`. |
 | D6 | Python sidecar split (S3) | Split `voice-gateway` → voice-asr / voice-tts / voice-e2e; split `adapter_runner` → per-adapter-type. See §8. |
 | D7 | `cc_adapter_runner` lifecycle | **Per-session**, not per-esrd. One Session → one tmux → one cc_adapter_runner Python process. See §8.2. |
 | D8 | PeerFactory / SessionRouter / SessionRegistry separation | Three modules, strict role separation. See §3.3. |
@@ -255,55 +255,66 @@ A Peer.Proxy module **must not** define `handle_call/3`. The `use Esr.Peer.Proxy
 `Esr.OSProcess` is a behaviour (not a Peer type — it is a **composition mixin** used alongside `Peer.Stateful`).
 
 ```elixir
-@callback start_os_process(opts :: keyword()) ::
-  {:ok, pid :: pid(), os_pid :: non_neg_integer()} | {:error, reason :: term()}
 @callback os_cmd(state :: term()) :: [String.t()]
 @callback os_env(state :: term()) :: [{String.t(), String.t()}]
 @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::
   {:restart, new_state :: term()} | {:stop, reason :: term()}
+@callback on_terminate(state :: term()) :: :ok        # optional
 ```
 
-Implementation backs onto MuonTrap:
+**Implementation backs onto [`:erlexec`](https://hexdocs.pm/erlexec/)** (PR-3 `P3-17`, 2026-04-22). The first implementation attempt used `Port.open` with optional MuonTrap wrapper; that底座 is documented in `docs/notes/muontrap-mode3-constraint.md` and was replaced wholesale by erlexec because:
 
-- `Esr.TmuxProcess` — wraps `tmux -C new-session -d -s <name> -c <dir>` (control mode, per D20). Control mode gives a bi-directional protocol with tagged events (`%output`, `%window-close`, `%exit`) instead of raw ANSI escape parsing. MuonTrap owns the stdin/stdout to the control-mode client and guarantees OS cleanup on actor exit.
-- `Esr.PyProcess` — wraps `uv run python -m <sidecar_module>`. Provides stdin/stdout JSON-line protocol to Python code. One `PyProcess` = one Python OS process.
+1. erlexec provides native pseudo-terminal (PTY) support, which `tmux -C` control mode needs on macOS — without a controlling TTY the control-mode client exits immediately after session creation.
+2. erlexec supports bidirectional stdin/stdout simultaneously with BEAM-exit cleanup, which the MuonTrap wrapper binary cannot (its `--capture-output` flag repurposes wrapper stdin as an ack-byte channel, blocking application writes).
+
+See `docs/notes/erlexec-migration.md` for the full migration note.
+
+**Wrapper modes** — `use Esr.OSProcess, kind: :foo, wrapper: :pty | :plain`:
+
+- `:pty` — spawn the child under a real pseudo-terminal. Use for anything that calls `isatty(0)`, requires job control, or emits terminal escape sequences only when attached (`tmux -C`, interactive shells). Stdout arrives with `\r\n` which the底座 normalizes to `\n` before dispatching.
+- `:plain` — no PTY. Use for structured-protocol sidecars (JSON-line RPC, plain text log pipelines).
+
+**Concrete peers:**
+
+- `Esr.Peers.TmuxProcess` — wraps `tmux -C new-session -s <name> -c <dir>` (control mode, per D20). Uses `wrapper: :pty`. Control mode gives a bi-directional protocol with tagged events (`%output`, `%window-close`, `%exit`) instead of raw ANSI escape parsing.
+- `Esr.PyProcess` — wraps `uv run python -m <sidecar_module>`. Uses `wrapper: :plain`. Provides stdin/stdout JSON-line protocol to Python code. One `PyProcess` = one Python OS process.
 
 Composition pattern inside a Peer:
 
 ```elixir
 defmodule Esr.Peers.TmuxProcess do
   use Esr.Peer.Stateful
-  use Esr.OSProcess, kind: :tmux
+  use Esr.OSProcess, kind: :tmux, wrapper: :pty
 
   @impl Esr.Peer.Stateful
   def handle_downstream({:send_input, text}, state) do
     # Control-mode command: send-keys to the active pane
     cmd = "send-keys -t #{state.session_name} \"#{escape(text)}\" Enter\n"
-    :ok = os_write(state, cmd)
+    __MODULE__.OSProcessWorker.write_stdin(self(), cmd)
     {:forward, [], state}
   end
 
   @impl Esr.OSProcess
   def os_cmd(state) do
-    ["tmux", "-C", "new-session", "-d", "-s", state.session_name, "-c", state.dir]
+    ["tmux", "-C", "new-session", "-s", state.session_name, "-c", state.dir]
   end
 
   @impl Esr.OSProcess
   def on_os_exit(0, _state), do: {:stop, :normal}
-  def on_os_exit(status, _state) when status > 0, do: {:stop, {:tmux_crashed, status}}
+  def on_os_exit(status, _state), do: {:stop, {:tmux_crashed, status}}
 
-  # Parse tmux control protocol events from MuonTrap stdout
-  def handle_info({:os_stdout, line}, state) do
-    case parse_control_event(line) do
-      {:output, pane_id, bytes} -> {:forward, [{:tmux_output, bytes}], state}
-      {:exit, _status}          -> {:stop, :tmux_exited}
-      _other                    -> {:forward, [], state}
+  @impl Esr.Peer.Stateful
+  def handle_upstream({:os_stdout, line}, state) do
+    case parse_event(line) do
+      {:output, _pane, bytes} -> {:forward, [{:tmux_output, bytes}], state}
+      {:exit} -> {:stop, :tmux_exited, state}
+      _other -> {:forward, [], state}
     end
   end
 end
 ```
 
-The `use Esr.OSProcess, kind: :tmux` macro injects MuonTrap child-spec handling, monitors, and provides `os_write/2` / `os_signal/2` helpers.
+The `use Esr.OSProcess, kind: :tmux, wrapper: :pty` macro injects an embedded `OSProcessWorker` GenServer that owns the `:exec.run_link/2` call, demultiplexes `{:stdout, os_pid, data}` messages into whole-line `{:os_stdout, line}` events (via `Esr.OSProcess.split_lines/1`), and runs `:exec.stop/1` in `terminate/2` after the optional `on_terminate/1` app-level hook. Cleanup on BEAM hard-crash is handled by erlexec's `exec-port` C++ program (parent-death signaling on macOS/Linux).
 
 **Scope clarification**: every Python sidecar (per §7 S3 split) uses `PyProcess`; tmux uses `TmuxProcess`. Other OS processes (launchd-launched esrd itself, voice-gateway as a whole) are NOT wrapped by OSProcess底座 — they are at a different lifecycle tier (launchd-supervised, not Elixir-supervised).
 
