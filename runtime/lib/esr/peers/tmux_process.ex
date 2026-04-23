@@ -67,15 +67,16 @@ defmodule Esr.Peers.TmuxProcess do
   @impl Esr.Peer
   def spawn_args(params) do
     # Optional tmux_socket for test isolation: if caller passes
-    # `tmux_socket: "/tmp/esr-test-N.sock"`, TmuxProcess runs under that
-    # socket (no leaks into user's default tmux server). In production,
-    # omit the param → tmux uses the default socket.
+    # `tmux_socket: "/tmp/…"`, TmuxProcess runs under that socket; if
+    # the application env `:esr, :tmux_socket_override` is set (J1 —
+    # driven by ESR_E2E_TMUX_SOCK at boot), use that as a fallback.
     name = "esr_cc_#{:erlang.unique_integer([:positive])}"
     base = %{session_name: name, dir: Esr.Peer.get_param(params, :dir) || "/tmp"}
 
-    case Esr.Peer.get_param(params, :tmux_socket) do
+    case Esr.Peer.get_param(params, :tmux_socket) ||
+           Application.get_env(:esr, :tmux_socket_override) do
       nil -> base
-      path -> Map.put(base, :tmux_socket, path)
+      path when is_binary(path) -> Map.put(base, :tmux_socket, path)
     end
   end
 
