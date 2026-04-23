@@ -8,7 +8,8 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
 
   Post-P2-17: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
   was removed (P2-16) and the `USE_NEW_PEER_CHAIN` feature flag was
-  retired (P2-17). These tests exercise the sole path:
+  removed in P2-17 (migration complete; no current caller activates it).
+  These tests exercise the sole path:
   `adapter:feishu/<app_id>` topics route through
   `AdminSessionProcess.admin_peer(:feishu_app_adapter_<app_id>)` → pid
   which `send`s the envelope as `{:inbound_event, envelope}`. The test

@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "erlexec-stop-vs-kill-question",
+  "prompt": "What's the correct way to gracefully stop a child with SIGTERM → wait → SIGKILL via erlexec? Which pid (Erlang vs os_pid) does it take?",
+  "assertions": [
+    {"id": "recommends_exec_stop", "text": "Recommends :exec.stop for graceful shutdown", "type": "substring_in_answer", "pattern": ":exec.stop"},
+    {"id": "says_use_os_pid", "text": "Says the argument is os_pid (the integer), NOT the Erlang pid", "type": "substring_in_answer", "pattern": "os_pid"},
+    {"id": "mentions_kill_timeout", "text": "Mentions kill_timeout option for SIGTERM → SIGKILL delay", "type": "substring_in_answer", "pattern": "kill_timeout"},
+    {"id": "mentions_exec_kill", "text": "Mentions :exec.kill for arbitrary signals", "type": "substring_in_answer", "pattern": ":exec.kill"},
+    {"id": "no_hallucinated_functions", "text": "Does NOT invent :exec.graceful_stop or :exec.terminate", "type": "regex_not_in_answer", "pattern": ":exec\\.(graceful_stop|terminate)\\s*\\("},
+    {"id": "warns_about_pid_confusion", "text": "Calls out the os_pid vs Erlang pid confusion as a gotcha", "type": "substring_in_answer", "pattern": "erlang pid"}
+  ]
+}

@@ -2,7 +2,8 @@
 
 Handlers declare permissions via the ``@handler(permissions=[...])``
 decorator in :mod:`esr.handler`; this module re-exports the aggregation
-helper so downstream IPC code (``esr.ipc.adapter_runner``,
+helper so downstream IPC code (``feishu_adapter_runner``,
+``cc_adapter_runner``, ``generic_adapter_runner``,
 ``esr.ipc.handler_worker``) can import from a stable name.
 """
 

@@ -699,8 +699,8 @@ def track_di_j(tmp: Path) -> TrackResult:
             "J-1 reload.ex missing dev launchctl label",
         )
 
-        # J-2 / J-3: exercise _resolve_url directly.
-        from esr.ipc import adapter_runner
+        # J-2 / J-3: exercise resolve_url directly.
+        from _ipc_common.url import resolve_url
 
         home = tmp / "di-j"
         (home / "default").mkdir(parents=True)
@@ -714,22 +714,22 @@ def track_di_j(tmp: Path) -> TrackResult:
         os.environ["ESR_INSTANCE"] = "default"
 
         try:
-            url1 = adapter_runner._resolve_url("ws://127.0.0.1:9999/socket")
+            url1 = resolve_url("ws://127.0.0.1:9999/socket")
             _assert(
                 ":4001/" in url1,
-                f"J-2 _resolve_url didn't substitute port 4001 from file: {url1!r}",
+                f"J-2 resolve_url didn't substitute port 4001 from file: {url1!r}",
             )
 
             # J-3: rewrite port, call again, assert new port picked up.
             port_file.write_text("5005")
-            url2 = adapter_runner._resolve_url("ws://127.0.0.1:9999/socket")
+            url2 = resolve_url("ws://127.0.0.1:9999/socket")
             _assert(
                 ":5005/" in url2,
-                f"J-3 _resolve_url didn't pick up rewritten port: {url2!r}",
+                f"J-3 resolve_url didn't pick up rewritten port: {url2!r}",
             )
             _assert(
                 ":4001/" not in url2,
-                "J-3 _resolve_url cached old port 4001 after rewrite",
+                "J-3 resolve_url cached old port 4001 after rewrite",
             )
         finally:
             if prev_env is None:

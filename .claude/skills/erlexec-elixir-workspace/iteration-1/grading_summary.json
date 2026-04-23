@@ -1,0 +1,336 @@
+[
+  {
+    "eval_id": 0,
+    "eval_name": "tmux-control-mode",
+    "config": "with_skill",
+    "expectations": [
+      {
+        "text": "Uses :exec.run_link (not :exec.run) so child dies with caller",
+        "passed": true,
+        "evidence": ":exec.run_link"
+      },
+      {
+        "text": "Includes :pty in options (critical for tmux -C \u2014 isatty check)",
+        "passed": true,
+        "evidence": ":pty"
+      },
+      {
+        "text": "Includes :stdin option (enables :exec.send)",
+        "passed": true,
+        "evidence": ":stdin"
+      },
+      {
+        "text": "Includes :stdout option",
+        "passed": true,
+        "evidence": ":stdout"
+      },
+      {
+        "text": "Uses :exec.send with os_pid (not the Erlang pid)",
+        "passed": true,
+        "evidence": ":exec.send(os_pid"
+      },
+      {
+        "text": "Calls :exec.start() in init OR adds :erlexec to extra_applications",
+        "passed": true,
+        "evidence": ":exec.start()"
+      },
+      {
+        "text": "Does NOT use naked Port.open (erlexec subsumes that)",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Does NOT invent non-existent :exec functions",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Handles {:stdout, os_pid, bytes} messages",
+        "passed": true,
+        "evidence": ":stdout, os_pid, bytes}"
+      },
+      {
+        "text": "Handles {:DOWN, os_pid, :process, pid, reason} for monitor exit",
+        "passed": true,
+        "evidence": ":DOWN, os_pid, :process"
+      },
+      {
+        "text": "Parses tmux control events: %begin/%end/%output/%exit",
+        "passed": true,
+        "evidence": "%exit"
+      },
+      {
+        "text": "Buffers partial lines (erlexec doesn't do line framing)",
+        "passed": true,
+        "evidence": "buffer"
+      }
+    ],
+    "passed": 12,
+    "total": 12
+  },
+  {
+    "eval_id": 0,
+    "eval_name": "tmux-control-mode",
+    "config": "without_skill",
+    "expectations": [
+      {
+        "text": "Uses :exec.run_link (not :exec.run) so child dies with caller",
+        "passed": true,
+        "evidence": ":exec.run_link"
+      },
+      {
+        "text": "Includes :pty in options (critical for tmux -C \u2014 isatty check)",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Includes :stdin option (enables :exec.send)",
+        "passed": true,
+        "evidence": ":stdin"
+      },
+      {
+        "text": "Includes :stdout option",
+        "passed": true,
+        "evidence": ":stdout"
+      },
+      {
+        "text": "Uses :exec.send with os_pid (not the Erlang pid)",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Calls :exec.start() in init OR adds :erlexec to extra_applications",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Does NOT use naked Port.open (erlexec subsumes that)",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Does NOT invent non-existent :exec functions",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Handles {:stdout, os_pid, bytes} messages",
+        "passed": true,
+        "evidence": ":stdout, os_pid, chunk}"
+      },
+      {
+        "text": "Handles {:DOWN, os_pid, :process, pid, reason} for monitor exit",
+        "passed": true,
+        "evidence": ":DOWN, os_pid, :process"
+      },
+      {
+        "text": "Parses tmux control events: %begin/%end/%output/%exit",
+        "passed": true,
+        "evidence": "%begin"
+      },
+      {
+        "text": "Buffers partial lines (erlexec doesn't do line framing)",
+        "passed": true,
+        "evidence": "buffer"
+      }
+    ],
+    "passed": 9,
+    "total": 12
+  },
+  {
+    "eval_id": 1,
+    "eval_name": "python-sidecar-json-line",
+    "config": "with_skill",
+    "expectations": [
+      {
+        "text": "Uses :exec.run_link so sidecar dies with caller",
+        "passed": true,
+        "evidence": ":exec.run_link"
+      },
+      {
+        "text": "Does NOT include :pty \u2014 JSON-line protocol doesn't need a terminal",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Includes :stdin and :stdout options",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Uses :exec.send with os_pid",
+        "passed": true,
+        "evidence": ":exec.send(os_pid"
+      },
+      {
+        "text": "Sets PYTHONUNBUFFERED=1 in env option",
+        "passed": true,
+        "evidence": "PYTHONUNBUFFERED"
+      },
+      {
+        "text": "env values are charlists (String.to_charlist or ~c\"...\")",
+        "passed": true,
+        "evidence": "String.to_charlist"
+      },
+      {
+        "text": "Does NOT use naked Port.open",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Does NOT invent :exec functions",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Handles {:stdout, os_pid, bytes} messages",
+        "passed": true,
+        "evidence": ":stdout, os_pid, bytes}"
+      },
+      {
+        "text": "Buffers stdout chunks (erlexec doesn't do line framing) and splits on newline",
+        "passed": true,
+        "evidence": "buffer"
+      }
+    ],
+    "passed": 9,
+    "total": 10
+  },
+  {
+    "eval_id": 1,
+    "eval_name": "python-sidecar-json-line",
+    "config": "without_skill",
+    "expectations": [
+      {
+        "text": "Uses :exec.run_link so sidecar dies with caller",
+        "passed": true,
+        "evidence": ":exec.run_link"
+      },
+      {
+        "text": "Does NOT include :pty \u2014 JSON-line protocol doesn't need a terminal",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Includes :stdin and :stdout options",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Uses :exec.send with os_pid",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Sets PYTHONUNBUFFERED=1 in env option",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "env values are charlists (String.to_charlist or ~c\"...\")",
+        "passed": false,
+        "evidence": "not found in code"
+      },
+      {
+        "text": "Does NOT use naked Port.open",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Does NOT invent :exec functions",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Handles {:stdout, os_pid, bytes} messages",
+        "passed": true,
+        "evidence": ":stdout, os_pid, data}"
+      },
+      {
+        "text": "Buffers stdout chunks (erlexec doesn't do line framing) and splits on newline",
+        "passed": true,
+        "evidence": "buffer"
+      }
+    ],
+    "passed": 6,
+    "total": 10
+  },
+  {
+    "eval_id": 2,
+    "eval_name": "erlexec-stop-vs-kill-question",
+    "config": "with_skill",
+    "expectations": [
+      {
+        "text": "Recommends :exec.stop for graceful shutdown",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Says the argument is os_pid (the integer), NOT the Erlang pid",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Mentions kill_timeout option for SIGTERM \u2192 SIGKILL delay",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Mentions :exec.kill for arbitrary signals",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Does NOT invent :exec.graceful_stop or :exec.terminate",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Calls out the os_pid vs Erlang pid confusion as a gotcha",
+        "passed": true,
+        "evidence": "substring present"
+      }
+    ],
+    "passed": 6,
+    "total": 6
+  },
+  {
+    "eval_id": 2,
+    "eval_name": "erlexec-stop-vs-kill-question",
+    "config": "without_skill",
+    "expectations": [
+      {
+        "text": "Recommends :exec.stop for graceful shutdown",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Says the argument is os_pid (the integer), NOT the Erlang pid",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Mentions kill_timeout option for SIGTERM \u2192 SIGKILL delay",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Mentions :exec.kill for arbitrary signals",
+        "passed": true,
+        "evidence": "substring present"
+      },
+      {
+        "text": "Does NOT invent :exec.graceful_stop or :exec.terminate",
+        "passed": true,
+        "evidence": "no match (good)"
+      },
+      {
+        "text": "Calls out the os_pid vs Erlang pid confusion as a gotcha",
+        "passed": true,
+        "evidence": "substring present"
+      }
+    ],
+    "passed": 6,
+    "total": 6
+  }
+]

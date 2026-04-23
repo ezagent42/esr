@@ -29,7 +29,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
   defp via(app_id), do: String.to_atom("feishu_app_adapter_#{app_id}")
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(%{app_id: app_id} = args) do
     :ok =
       Esr.AdminSessionProcess.register_admin_peer(

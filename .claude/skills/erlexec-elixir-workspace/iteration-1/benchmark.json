@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "skill_name": "erlexec-elixir",
+    "skill_path": "/Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor/.claude/skills/erlexec-elixir",
+    "executor_model": "claude-opus-4-7[1m]",
+    "analyzer_model": "claude-opus-4-7[1m]",
+    "timestamp": "2026-04-23T10:50:00Z",
+    "evals_run": [
+      {"id": 0, "name": "tmux-control-mode"},
+      {"id": 1, "name": "python-sidecar-json-line"},
+      {"id": 2, "name": "erlexec-stop-vs-kill-question"}
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {"eval_id": 0, "eval_name": "tmux-control-mode", "config": "with_skill", "run_id": 1, "pass_rate": 1.000, "passed": 12, "total": 12, "duration_seconds": 168.0, "total_tokens": 38881},
+    {"eval_id": 0, "eval_name": "tmux-control-mode", "config": "without_skill", "run_id": 1, "pass_rate": 0.750, "passed": 9, "total": 12, "duration_seconds": 124.0, "total_tokens": 30048},
+    {"eval_id": 1, "eval_name": "python-sidecar-json-line", "config": "with_skill", "run_id": 1, "pass_rate": 0.900, "passed": 9, "total": 10, "duration_seconds": 127.8, "total_tokens": 36470},
+    {"eval_id": 1, "eval_name": "python-sidecar-json-line", "config": "without_skill", "run_id": 1, "pass_rate": 0.600, "passed": 6, "total": 10, "duration_seconds": 105.9, "total_tokens": 28654},
+    {"eval_id": 2, "eval_name": "erlexec-stop-vs-kill-question", "config": "with_skill", "run_id": 1, "pass_rate": 1.000, "passed": 6, "total": 6, "duration_seconds": 65.2, "total_tokens": 31548},
+    {"eval_id": 2, "eval_name": "erlexec-stop-vs-kill-question", "config": "without_skill", "run_id": 1, "pass_rate": 1.000, "passed": 6, "total": 6, "duration_seconds": 61.3, "total_tokens": 24073}
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 0.967, "stddev": 0.058, "min": 0.900, "max": 1.000},
+      "duration_seconds": {"mean": 120.3, "stddev": 51.9, "min": 65.2, "max": 168.0},
+      "total_tokens": {"mean": 35633, "stddev": 3764, "min": 31548, "max": 38881}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 0.783, "stddev": 0.207, "min": 0.600, "max": 1.000},
+      "duration_seconds": {"mean": 97.1, "stddev": 32.5, "min": 61.3, "max": 124.0},
+      "total_tokens": {"mean": 27592, "stddev": 3098, "min": 24073, "max": 30048}
+    },
+    "delta": {
+      "pass_rate": "+0.184",
+      "duration_seconds": "+23.2",
+      "tokens": "+8042"
+    }
+  },
+  "notes": [
+    "27/28 total with-skill assertions passed (96%) vs 21/28 baseline (75%). Delta +21pp.",
+    "Eval-0 (tmux -C): with-skill 12/12, baseline 9/12. Baseline missed some edge cases but used run_link + pty + monitor correctly; its FSM parser was impressive.",
+    "Eval-1 (python JSON-line): with-skill 9/10, baseline 6/10. Baseline missed: PYTHONUNBUFFERED env var + charlist env discipline + explicit erlexec-is-better-than-Port note.",
+    "Eval-2 (stop/kill Q): both 6/6. This Q&A is factual enough that general LLM knowledge is accurate; the skill adds clarity but no novel correctness. Good — a skill whose baseline outperforms on certain queries means we're not wasting tokens for no reason.",
+    "Skill overhead: +23s, +8k tokens per task. Acceptable for the API correctness guarantee on harder tasks.",
+    "Baseline quality was higher than expected for erlexec overall — likely because erlexec has been stable for years and is well-documented. Compare to muontrap skill baseline which was ~35% (here it's 75%)."
+  ]
+}

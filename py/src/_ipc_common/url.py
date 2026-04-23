@@ -1,10 +1,11 @@
-"""URL resolution helper — re-reads esrd.port between reconnect attempts.
+"""Port-file-aware URL resolution (shared by adapter + handler IPC).
 
-Launchctl kickstart restarts a crashed esrd on a new port each time, so
-clients must re-resolve on every connection attempt rather than caching
-the URL from the ``--url`` CLI arg. The lookup is a file read plus a
-netloc substitution; if the port file is missing or malformed, the
-fallback URL (the CLI arg) is returned verbatim.
+Read ``$ESRD_HOME/$ESR_INSTANCE/esrd.port``; if present and numeric,
+substitute its value into ``fallback_url``'s authority. Otherwise
+return ``fallback_url`` unchanged.
+
+See spec §5.3 F13 and docs/notes/tmux-socket-isolation.md for the
+reconnect-on-launchctl-kickstart rationale.
 """
 from __future__ import annotations
 

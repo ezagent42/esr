@@ -1,2 +1,2 @@
-ExUnit.start(exclude: [:integration, :os_cleanup])
+ExUnit.start(exclude: [:integration, :os_cleanup, :perf])
 

@@ -1,17 +1,12 @@
 """Task 7 (DI-3): IPC client auto-reconnect with port-file re-read.
 
-Note: ``esr.ipc.adapter_runner`` is the PR-4b deprecation shim. These
-tests intentionally exercise it (reconnect behaviour must survive the
-shim unchanged); the module-level ``filterwarnings`` below suppresses
-the shim's :class:`DeprecationWarning` so the run stays clean.
-
-Verifies :func:`esr.ipc.adapter_runner.run_with_reconnect` and
+Verifies :func:`_adapter_common.runner_core.run_with_reconnect` and
 :func:`esr.ipc.handler_worker.run_with_reconnect`:
 
 1. When the WS server closes the connection, the runner attempts a
    second connect within a couple of seconds (exponential backoff
    starts at 200ms).
-2. Between attempts, :func:`_resolve_url` re-reads
+2. Between attempts, :func:`_ipc_common.url.resolve_url` re-reads
    ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and substitutes the new
    port into the base URL — so that a launchctl-kickstart restart
    of esrd on a different port is followed seamlessly.
@@ -33,14 +28,6 @@ from typing import Any
 
 import pytest
 from aiohttp import WSMsgType, web
-
-# PR-4b: esr.ipc.adapter_runner is a deprecation shim. These tests are
-# the one place we still import from it (reconnect behaviour is the shim's
-# re-exported surface); silence the warning for the whole module so pytest
-# output stays noise-free.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:esr.ipc.adapter_runner is deprecated:DeprecationWarning"
-)
 
 
 @contextlib.asynccontextmanager
@@ -108,16 +95,16 @@ async def test_adapter_runner_reconnects_on_ws_close(
 ) -> None:
     """After the server closes attempt #1, the runner re-connects and
     the second WS lifecycle starts within 3 seconds (backoff base 200ms)."""
-    from esr.ipc import adapter_runner
+    from _adapter_common.runner_core import run_with_reconnect
 
     async with _flaky_phoenix_server() as (base_url, _port, connect_counter):
-        # Make _resolve_url() read from tmp_path so we don't depend on a
+        # Make resolve_url() read from tmp_path so we don't depend on a
         # real ~/.esrd layout. Port file absent → fallback to base_url.
         monkeypatch.setenv("ESRD_HOME", str(tmp_path))
         monkeypatch.setenv("ESR_INSTANCE", "test")
 
         task = asyncio.create_task(
-            adapter_runner.run_with_reconnect(
+            run_with_reconnect(
                 _MinimalAdapter(),
                 topic="adapter:noop/inst-1",
                 fallback_url=base_url,
@@ -181,8 +168,7 @@ def test_resolve_url_reads_port_file(
     """When ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` exists, the resolver
     rewrites the URL's port — so clients follow an esrd that launchctl
     restarted on a different port."""
-    from esr.ipc.adapter_runner import _resolve_url as adapter_resolve
-    from esr.ipc.handler_worker import _resolve_url as handler_resolve
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "test")
@@ -191,14 +177,12 @@ def test_resolve_url_reads_port_file(
     (instance_dir / "esrd.port").write_text("5555\n")
 
     fallback = "ws://127.0.0.1:4001/adapter_hub/socket/websocket?vsn=2.0.0"
-    resolved_a = adapter_resolve(fallback)
-    resolved_h = handler_resolve(fallback)
-    assert ":5555/" in resolved_a
-    assert ":4001" not in resolved_a
-    assert resolved_a == resolved_h  # both helpers agree
+    resolved = resolve_url(fallback)
+    assert ":5555/" in resolved
+    assert ":4001" not in resolved
     # Path + query preserved
-    assert "/adapter_hub/socket/websocket" in resolved_a
-    assert "vsn=2.0.0" in resolved_a
+    assert "/adapter_hub/socket/websocket" in resolved
+    assert "vsn=2.0.0" in resolved
 
 
 def test_resolve_url_absent_port_file_returns_fallback(
@@ -206,12 +190,12 @@ def test_resolve_url_absent_port_file_returns_fallback(
 ) -> None:
     """Missing port file is not an error — fallback URL is returned
     unchanged (dev who runs ``mix phx.server`` by hand still works)."""
-    from esr.ipc.adapter_runner import _resolve_url
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "nonexistent")
     fallback = "ws://127.0.0.1:4001/adapter_hub/socket/websocket"
-    assert _resolve_url(fallback) == fallback
+    assert resolve_url(fallback) == fallback
 
 
 def test_resolve_url_malformed_port_file_returns_fallback(
@@ -219,7 +203,7 @@ def test_resolve_url_malformed_port_file_returns_fallback(
 ) -> None:
     """Garbage in the port file (not a decimal string) is treated as
     absent rather than crashing the runner at boot."""
-    from esr.ipc.adapter_runner import _resolve_url
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "test")
@@ -228,4 +212,4 @@ def test_resolve_url_malformed_port_file_returns_fallback(
     (instance_dir / "esrd.port").write_text("not-a-port\n")
 
     fallback = "ws://127.0.0.1:4001/adapter_hub/socket/websocket"
-    assert _resolve_url(fallback) == fallback
+    assert resolve_url(fallback) == fallback

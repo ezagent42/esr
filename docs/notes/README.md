@@ -13,6 +13,7 @@ Living index of findings surfaced during ESR development that are worth preservi
 | erlexec migration (2026-04-22) | [erlexec-migration.md](erlexec-migration.md) | `Esr.OSProcess` uses `:erlexec`. Native PTY + bidirectional I/O + BEAM-exit cleanup in one底座. Appendix contains the historical MuonTrap Mode 3 finding that drove the switch. |
 | Feishu WS ownership stays in Python | [feishu-ws-ownership-python.md](feishu-ws-ownership-python.md) | FeishuAppAdapter doesn't own the WS — Python's `MsgBotClient` does, and forwards decoded events over Phoenix channel. Not planned to flip. |
 | Capability name format mismatch | [capability-name-format-mismatch.md](capability-name-format-mismatch.md) | Spec uses `cap.*` dotted shape; `Grants.matches?/2` only parses `prefix:name/perm`. Resolve in PR-3 P3-8. |
+| PR-5 perf baseline (2026-04-23) | [pr5-perf-baseline.md](pr5-perf-baseline.md) | SessionRouter dispatch latency p50/p99 — baseline for PR-6 simplify pass to compare against. |
 
 ---
 

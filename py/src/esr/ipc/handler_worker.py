@@ -30,18 +30,14 @@ import contextlib
 import logging
 from typing import Any
 
+from _ipc_common.disconnect import watch_disconnect
+from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
+from _ipc_common.url import resolve_url
 from esr.events import Event
 from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY, all_permissions
 from esr.ipc.envelope import make_handler_hello, serialise_action
 
 logger = logging.getLogger(__name__)
-
-
-# Task 7 (DI-3): reconnect backoff schedule (seconds). 200ms → 400ms → 800ms
-# → 1600ms, capped at 5s. Applied by :func:`run_with_reconnect` between
-# successive connection attempts. Mirrors adapter_runner's schedule so
-# handler/adapter subprocesses recover from esrd restarts in lockstep.
-_RECONNECT_BACKOFF_SCHEDULE: tuple[float, ...] = (0.2, 0.4, 0.8, 1.6, 3.2, 5.0)
 
 
 def process_handler_call(payload: dict[str, Any]) -> dict[str, Any]:
@@ -146,23 +142,6 @@ def _to_json_native(value: Any) -> Any:
     return value
 
 
-async def _watch_disconnect(
-    client: Any, poll_interval: float = 0.1
-) -> None:
-    """Task 7 (DI-3): raise ConnectionError when the WS drops.
-
-    Mirror of ``adapter_runner._watch_disconnect``. See its docstring for
-    semantics. Separate copy (vs shared helper) because the two modules
-    deliberately depend only on ``esr.handler`` / ``esr.events`` /
-    ``esr.ipc.envelope`` — cross-importing from adapter_runner would
-    couple handler-worker imports to adapter-loading machinery.
-    """
-    while True:
-        if not getattr(client, "connected", True):
-            raise ConnectionError("ws disconnected")
-        await asyncio.sleep(poll_interval)
-
-
 async def _handler_call_loop(
     client: Any, queue: asyncio.Queue[dict[str, Any] | None], topic: str
 ) -> None:
@@ -229,9 +208,9 @@ async def run_with_client(client: Any, *, topic: str) -> None:
     # returns normally; WS drop raises ConnectionError that propagates
     # out to :func:`run_with_reconnect`.
     call_task = asyncio.create_task(_handler_call_loop(client, queue, topic))
-    watch_task = asyncio.create_task(_watch_disconnect(client))
+    watch_task = asyncio.create_task(watch_disconnect(client))
     try:
-        done, _pending = await asyncio.wait(
+        done, _ = await asyncio.wait(
             {call_task, watch_task}, return_when=asyncio.FIRST_COMPLETED
         )
         # Cancel the survivor, then surface the completer's outcome.
@@ -248,43 +227,12 @@ async def run_with_client(client: Any, *, topic: str) -> None:
         await client.close()
 
 
-def _resolve_url(fallback_url: str) -> str:
-    """Task 7 (DI-3): re-read ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and
-    substitute the port into ``fallback_url``'s authority.
-
-    Mirror of ``adapter_runner._resolve_url``. See its docstring for
-    rationale. Separate copy so handler_worker stays independent of the
-    adapter-loader module tree (which adapter_runner pulls in).
-    """
-    from urllib.parse import urlparse, urlunparse
-
-    from esr.cli import paths
-
-    port_file = paths.runtime_home() / "esrd.port"
-    try:
-        port_txt = port_file.read_text().strip()
-    except (FileNotFoundError, OSError):
-        return fallback_url
-    if not port_txt.isdigit():
-        return fallback_url
-
-    parsed = urlparse(fallback_url)
-    host = parsed.hostname or "127.0.0.1"
-    new_netloc = f"{host}:{port_txt}"
-    if parsed.username:
-        creds = parsed.username
-        if parsed.password:
-            creds += f":{parsed.password}"
-        new_netloc = f"{creds}@{new_netloc}"
-    return urlunparse(parsed._replace(netloc=new_netloc))
-
-
 async def run_with_reconnect(
     *,
     topic: str,
     fallback_url: str,
     client_factory: Any = None,
-    backoff_schedule: tuple[float, ...] = _RECONNECT_BACKOFF_SCHEDULE,
+    backoff_schedule: tuple[float, ...] = RECONNECT_BACKOFF_SCHEDULE,
 ) -> None:
     """Task 7 (DI-3): wrap :func:`run_with_client` in an exponential-backoff
     reconnect loop that re-reads the port file on every attempt.
@@ -295,14 +243,12 @@ async def run_with_reconnect(
     """
     from esr.ipc.channel_client import ChannelClient
 
-    if client_factory is None:
-        def client_factory(u: str) -> Any:
-            return ChannelClient(u)
+    factory_fn: Any = client_factory or (lambda u: ChannelClient(u))
 
     attempt = 0
     while True:
-        url = _resolve_url(fallback_url)
-        client = client_factory(url)
+        url = resolve_url(fallback_url)
+        client = factory_fn(url)
         try:
             await run_with_client(client, topic=topic)
             attempt = 0

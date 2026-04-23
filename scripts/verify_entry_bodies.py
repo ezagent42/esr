@@ -16,11 +16,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_MANIFEST: list[tuple[str, list[str]]] = [
-    # PR-4b: `esr.ipc.adapter_runner` is now a deprecation shim that
-    # re-exports from `_adapter_common`; its `run` is a re-exported name
-    # (not a FunctionDef), so the AST-walker can't check it directly.
-    # The real body lives in `_adapter_common.runner_core.run`, which we
-    # check instead.
+    # PR-5 hard-deleted the `esr.ipc.adapter_runner` compatibility shim;
+    # the authoritative adapter-runner entry now lives in
+    # `_adapter_common.runner_core.run`, which the three per-type
+    # sidecars (feishu/cc/generic_adapter_runner) delegate to.
     ("py/src/esr/ipc/handler_worker.py", ["run"]),
     ("py/src/_adapter_common/runner_core.py", ["run"]),
     ("py/src/_adapter_common/main.py", ["build_main"]),

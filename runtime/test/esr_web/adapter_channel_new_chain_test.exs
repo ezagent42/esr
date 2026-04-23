@@ -5,8 +5,8 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
   for that app_id (looked up via `Esr.AdminSessionProcess.admin_peer/1`
   under the symbolic name `:feishu_app_adapter_<app_id>`).
 
-  Post-P2-17: the `USE_NEW_PEER_CHAIN` feature flag is gone — the new
-  chain is the sole path.
+  Post-P2-17: the `USE_NEW_PEER_CHAIN` feature flag was removed during
+  the peer chain migration (P2-16/P2-17); the new chain is the sole path.
   """
   use ExUnit.Case, async: false
 

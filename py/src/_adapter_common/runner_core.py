@@ -1,4 +1,12 @@
-"""Core adapter-runner dispatch machinery (extracted from ``esr.ipc.adapter_runner``).
+"""Core adapter-runner dispatch machinery.
+
+Hosts ``run`` / ``run_with_reconnect`` / ``run_with_client`` plus the
+directive/event loops for every Python adapter sidecar. Named
+``_adapter_common`` because the three per-type sidecars
+(``feishu_adapter_runner``, ``cc_adapter_runner``,
+``generic_adapter_runner``) all share this orchestration code. IPC
+plumbing shared with ``handler_worker`` (URL resolution, backoff,
+disconnect watcher) lives in :mod:`_ipc_common`.
 
 PRD 03 F09 / F10; spec §5.3. A Python adapter process runs two
 concurrent coroutines:
@@ -33,8 +41,9 @@ from typing import Any, Protocol
 from esr.handler import all_permissions
 from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 
-from _adapter_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
-from _adapter_common.url import resolve_url
+from _ipc_common.disconnect import watch_disconnect
+from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
+from _ipc_common.url import resolve_url
 
 logger = logging.getLogger(__name__)
 
@@ -120,27 +129,6 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
             workspace_name=event_dict.get("workspace_name"),
         )
         await pusher.push_envelope(env)
-
-
-async def watch_disconnect(
-    client: Any, poll_interval: float = 0.1
-) -> None:
-    """Task 7 (DI-3): raise :class:`ConnectionError` when the WS drops.
-
-    Polls ``client.connected`` every ``poll_interval`` seconds. When the
-    flag flips False (e.g. aiohttp's read loop exits because the server
-    closed the socket), raises :class:`ConnectionError` so the enclosing
-    TaskGroup unwinds and :func:`run_with_reconnect` can attempt a
-    fresh connection. The wall-clock ceiling on disconnect detection is
-    ~``poll_interval``.
-
-    Fake test clients without a ``connected`` attribute are tolerated by
-    treating ``getattr`` misses as "still connected".
-    """
-    while True:
-        if not getattr(client, "connected", True):
-            raise ConnectionError("ws disconnected")
-        await asyncio.sleep(poll_interval)
 
 
 async def run_with_client(
@@ -235,7 +223,7 @@ async def run_with_reconnect(
     reconnect loop that re-reads the port file on every attempt.
 
     Each iteration:
-    1. Re-resolve the URL via :func:`_adapter_common.url.resolve_url`
+    1. Re-resolve the URL via :func:`_ipc_common.url.resolve_url`
        (follows launchctl kickstart when ``esrd.port`` changes).
     2. Construct a fresh :class:`ChannelClient` (new WS session).
     3. Delegate to :func:`run_with_client`; a clean return resets the

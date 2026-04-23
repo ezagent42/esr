@@ -12,8 +12,9 @@ defmodule EsrWeb.AdapterChannel do
      → `Esr.Peers.FeishuAppAdapter`.
    - Non-Feishu topics receiving `:inbound_event` get an explicit error
      reply; the legacy `AdapterHub.Registry → PeerRegistry` path was
-     deleted in P2-16 and the `USE_NEW_PEER_CHAIN` feature flag was
-     removed in P2-17.
+     deleted in P2-16 (peer chain migration complete; the transitional
+     `USE_NEW_PEER_CHAIN` feature flag that gated this migration in
+     early drafts was removed in P2-17).
   """
 
   use Phoenix.Channel

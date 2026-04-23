@@ -34,7 +34,7 @@ defmodule Esr.Peers.VoiceE2E do
   @spec turn(pid(), String.t()) :: :ok
   def turn(pid, audio_b64), do: GenServer.cast(pid, {:turn, audio_b64})
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(args) do
     {:ok, py} =
       Esr.PyProcess.start_link(%{
