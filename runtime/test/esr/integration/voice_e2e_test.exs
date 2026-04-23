@@ -20,27 +20,19 @@ defmodule Esr.Integration.VoiceE2ETest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
   import Esr.TestSupport.TmuxIsolation
   setup :isolated_tmux_socket
+  setup :assert_with_grants
+  setup :wipe_sessions_on_exit
   @moduletag :integration
 
   @fixture Path.expand("../fixtures/agents/voice.yaml", __DIR__)
 
   setup do
-    # App-level singletons booted by Esr.Application.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
-    assert is_pid(Process.whereis(Esr.Capabilities.Grants))
-
     # "*" grants everything so any downstream cap checks pass.
-    prior_grants = snapshot_grants()
-
-    :ok =
-      Esr.Capabilities.Grants.load_snapshot(
-        Map.put(prior_grants, "ou_voice_e2e", ["*"])
-      )
+    :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_voice_e2e")
 
     :ok = Esr.SessionRegistry.load_agents(@fixture)
 
@@ -50,22 +42,6 @@ defmodule Esr.Integration.VoiceE2ETest do
     if Process.whereis(Esr.SessionRouter) == nil do
       start_supervised!(Esr.SessionRouter)
     end
-
-    on_exit(fn ->
-      Esr.Capabilities.Grants.load_snapshot(prior_grants)
-
-      # Wipe any Sessions started by this test so
-      # Esr.SessionsSupervisor stays clean for sibling tests.
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        sup ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(sup) do
-            if is_pid(child), do: DynamicSupervisor.terminate_child(sup, child)
-          end
-      end
-    end)
 
     :ok
   end
@@ -121,15 +97,5 @@ defmodule Esr.Integration.VoiceE2ETest do
 
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id)
-  end
-
-  # ------------------------------------------------------------------
-  # Helpers
-  # ------------------------------------------------------------------
-
-  defp snapshot_grants do
-    :ets.tab2list(:esr_capabilities_grants) |> Map.new()
-  rescue
-    _ -> %{}
   end
 end

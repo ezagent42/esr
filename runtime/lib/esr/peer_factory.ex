@@ -27,10 +27,16 @@ defmodule Esr.PeerFactory do
       # SessionProcess.has?/2 (per-session local map) instead of the
       # global Grants GenServer. Resolving the pid here — once, at
       # spawn time — avoids a Registry lookup on every forward/2 call.
+      #
+      # P6-A2: `session_id` is also threaded into ctx so Peer.Proxy's
+      # cap-check can call `Esr.SessionProcess.has?(session_id, perm)`
+      # directly (zero-hop persistent_term read). The pid is retained
+      # purely as a liveness guard — if the SessionProcess has died,
+      # we fall back to the global `Esr.Capabilities.has?/2`.
       ctx_with_sp =
         case resolve_session_process_pid(session_id) do
           nil -> ctx
-          pid -> Map.put(ctx, :session_process_pid, pid)
+          pid -> ctx |> Map.put(:session_process_pid, pid) |> Map.put(:session_id, session_id)
         end
 
       init_args =

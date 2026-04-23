@@ -14,6 +14,14 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
+  @impl Esr.Peer
+  def spawn_args(params) do
+    %{
+      chat_id: Esr.Peer.get_param(params, :chat_id) || "",
+      thread_id: Esr.Peer.get_param(params, :thread_id) || ""
+    }
+  end
+
   @impl GenServer
   def init(args) do
     state = %{

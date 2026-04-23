@@ -64,29 +64,21 @@ defmodule Esr.Integration.CCE2ETest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
   import Esr.TestSupport.TmuxIsolation
   setup :isolated_tmux_socket
+  setup :assert_with_grants
+  setup :wipe_sessions_on_exit
   @moduletag :integration
 
   @fixture_path Path.expand("../fixtures/agents/simple.yaml", __DIR__)
 
   setup do
-    # App-level singletons booted by Esr.Application.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
-    assert is_pid(Process.whereis(Esr.Capabilities.Grants))
-
     # "*" grants everything so CCProxy/FeishuAppProxy cap checks never
-    # short-circuit the pipeline. Snapshot prior grants and restore
-    # after the test so sibling tests don't see our writes.
-    prior_grants = snapshot_grants()
-
-    :ok =
-      Esr.Capabilities.Grants.load_snapshot(
-        Map.put(prior_grants, "ou_alice", ["*"])
-      )
+    # short-circuit the pipeline. Prior snapshot is restored by
+    # Esr.TestSupport.Grants on exit.
+    :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
 
     :ok = Esr.SessionRegistry.load_agents(@fixture_path)
 
@@ -98,23 +90,9 @@ defmodule Esr.Integration.CCE2ETest do
     end
 
     on_exit(fn ->
-      # Clear the handler override first so it doesn't leak into
-      # sibling tests that also use CCProcess.
+      # Clear the handler override so it doesn't leak into sibling
+      # tests that also use CCProcess.
       Application.delete_env(:esr, :handler_module_override)
-
-      Esr.Capabilities.Grants.load_snapshot(prior_grants)
-
-      # Wipe any Sessions started by this test so
-      # Esr.SessionsSupervisor stays clean for sibling tests.
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        sup ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(sup) do
-            if is_pid(child), do: DynamicSupervisor.terminate_child(sup, child)
-          end
-      end
     end)
 
     :ok
@@ -385,11 +363,5 @@ defmodule Esr.Integration.CCE2ETest do
     end)
 
     :ok
-  end
-
-  defp snapshot_grants do
-    :ets.tab2list(:esr_capabilities_grants) |> Map.new()
-  rescue
-    _ -> %{}
   end
 end

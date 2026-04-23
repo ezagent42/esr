@@ -15,6 +15,13 @@ defmodule Esr.SessionRegistry do
 
   @reserved_fields ~w(rate_limits timeout_ms allowed_principals)a
 
+  # ETS index for (chat_id, thread_id) → {session_id, refs}.
+  # Owned by the GenServer; writes route through the owner (handle_call)
+  # so consistency with the in-memory `sessions` map is preserved. Reads
+  # run directly from the caller process, bypassing the GenServer mailbox.
+  # Mirrors the pattern in `Esr.Capabilities.Grants`.
+  @ets_table :esr_session_chat_index
+
   # Public API
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -24,8 +31,16 @@ defmodule Esr.SessionRegistry do
   def register_session(session_id, chat_thread_key, peer_refs),
     do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
 
-  def lookup_by_chat_thread(chat_id, thread_id),
-    do: GenServer.call(__MODULE__, {:lookup_by_chat_thread, chat_id, thread_id})
+  @doc """
+  Direct ETS lookup — runs in the caller process with no GenServer hop.
+  See `@ets_table` docstring above for the read/write split rationale.
+  """
+  def lookup_by_chat_thread(chat_id, thread_id) do
+    case :ets.lookup(@ets_table, {chat_id, thread_id}) do
+      [{_k, sid, refs}] -> {:ok, sid, refs}
+      [] -> :not_found
+    end
+  end
 
   def unregister_session(session_id),
     do: GenServer.call(__MODULE__, {:unregister_session, session_id})
@@ -33,6 +48,7 @@ defmodule Esr.SessionRegistry do
   # GenServer callbacks
   @impl true
   def init(_opts) do
+    :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
     {:ok, %{agents: %{}, sessions: %{}, chat_to_session: %{}}}
   end
 
@@ -59,6 +75,12 @@ defmodule Esr.SessionRegistry do
         _from,
         state
       ) do
+    # Mirror into the ETS index so `lookup_by_chat_thread/2` can serve
+    # direct-reads from the caller process. `:ets.insert/2` on a `:set`
+    # table overwrites, matching the re-register semantics of the
+    # in-memory state update.
+    :ets.insert(@ets_table, {{c, t}, session_id, refs})
+
     state =
       state
       |> put_in([:sessions, session_id], %{key: key, refs: refs})
@@ -67,23 +89,14 @@ defmodule Esr.SessionRegistry do
     {:reply, :ok, state}
   end
 
-  def handle_call({:lookup_by_chat_thread, c, t}, _from, state) do
-    case Map.get(state.chat_to_session, {c, t}) do
-      nil ->
-        {:reply, :not_found, state}
-
-      sid ->
-        refs = get_in(state, [:sessions, sid, :refs]) || %{}
-        {:reply, {:ok, sid, refs}, state}
-    end
-  end
-
   def handle_call({:unregister_session, sid}, _from, state) do
     case Map.get(state.sessions, sid) do
       nil ->
         {:reply, :ok, state}
 
       %{key: %{chat_id: c, thread_id: t}} ->
+        :ets.delete(@ets_table, {c, t})
+
         state =
           state
           |> update_in([:sessions], &Map.delete(&1, sid))

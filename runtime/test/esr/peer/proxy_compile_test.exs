@@ -128,10 +128,15 @@ defmodule Esr.Peer.ProxyCompileTest do
         Registry.lookup(Esr.Session.Registry, {:session_process, "proxy-sp-1"})
 
       # With no grants for p_proxy_local, the local projection denies.
+      # P6-A2: ctx now carries `session_id` so the cap-check wrapper
+      # can call `SessionProcess.has?/2` as a zero-hop persistent_term
+      # read. The `session_process_pid` is still present as a liveness
+      # guard.
       assert {:drop, :cap_denied} =
                mod.forward(:hi, %{
                  principal_id: "p_proxy_local",
                  session_process_pid: sp_pid,
+                 session_id: "proxy-sp-1",
                  test_tag: :ok
                })
 
@@ -142,15 +147,15 @@ defmodule Esr.Peer.ProxyCompileTest do
           "p_proxy_local" => ["workspace:proj-p/msg.send"]
         })
 
-      # Wait a tick for the PubSub broadcast → handle_info → state update.
-      # A synchronous GenServer.call to the SessionProcess after the
-      # broadcast is ordered behind the handle_info.
+      # Wait a tick for the PubSub broadcast → handle_info → persistent_term
+      # update inside the SessionProcess.
       Process.sleep(50)
 
       assert {:ok, :ok} =
                mod.forward(:hi, %{
                  principal_id: "p_proxy_local",
                  session_process_pid: sp_pid,
+                 session_id: "proxy-sp-1",
                  test_tag: :ok
                })
     end

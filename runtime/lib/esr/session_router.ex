@@ -55,16 +55,16 @@ defmodule Esr.SessionRouter do
   require Logger
 
   @stateful_impls MapSet.new([
-                    "Esr.Peers.FeishuChatProxy",
-                    "Esr.Peers.CCProcess",
-                    "Esr.Peers.TmuxProcess",
-                    "Esr.Peers.FeishuAppAdapter",
+                    Esr.Peers.FeishuChatProxy,
+                    Esr.Peers.CCProcess,
+                    Esr.Peers.TmuxProcess,
+                    Esr.Peers.FeishuAppAdapter,
                     # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
                     # AdminSession and NOT spawned per-session (the
                     # `cc-voice` pipeline references them only via the
                     # VoiceASRProxy/VoiceTTSProxy). VoiceE2E is
                     # per-session and needs to be spawned.
-                    "Esr.Peers.VoiceE2E"
+                    Esr.Peers.VoiceE2E
                   ])
 
   # ------------------------------------------------------------------
@@ -320,13 +320,12 @@ defmodule Esr.SessionRouter do
 
   defp spawn_one(session_id, spec, params, refs_acc, mon_acc) do
     name = String.to_atom(spec["name"])
-    impl_str = spec["impl"] || ""
+    impl = resolve_impl(spec["impl"] || "")
 
-    if MapSet.member?(@stateful_impls, impl_str) do
-      impl = resolve_impl(impl_str)
+    if MapSet.member?(@stateful_impls, impl) do
       neighbors = build_neighbors(refs_acc)
       ctx = build_ctx(spec, params)
-      args = spawn_args(spec, params)
+      args = spawn_args(impl, spec, params)
 
       case Esr.PeerFactory.spawn_peer(session_id, impl, args, neighbors, ctx) do
         {:ok, pid} ->
@@ -410,42 +409,17 @@ defmodule Esr.SessionRouter do
 
   defp build_ctx(_, _params), do: %{}
 
-  defp spawn_args(%{"impl" => "Esr.Peers.FeishuChatProxy"}, params) do
-    %{
-      chat_id: get_param(params, :chat_id) || "",
-      thread_id: get_param(params, :thread_id) || ""
-    }
-  end
-
-  defp spawn_args(%{"impl" => "Esr.Peers.CCProcess"}, params) do
-    %{handler_module: get_param(params, :handler_module) || "cc_adapter_runner"}
-  end
-
-  defp spawn_args(%{"impl" => "Esr.Peers.TmuxProcess"}, params) do
-    name = "esr_cc_#{:erlang.unique_integer([:positive])}"
-    # Optional tmux_socket for test isolation: if caller passes
-    # `tmux_socket: "/tmp/esr-test-N.sock"`, TmuxProcess runs under that
-    # socket (no leaks into user's default tmux server). In production,
-    # omit the param → tmux uses the default socket.
-    base = %{session_name: name, dir: get_param(params, :dir) || "/tmp"}
-
-    case get_param(params, :tmux_socket) do
-      nil -> base
-      path -> Map.put(base, :tmux_socket, path)
+  # Generic per-peer dispatch: each Stateful peer may export
+  # `spawn_args/1` (params -> init_args map). Peers that don't define
+  # it fall through to `Esr.Peer.default_spawn_args/1` (empty map).
+  defp spawn_args(impl_module, _spec, params) do
+    if Code.ensure_loaded?(impl_module) and
+         function_exported?(impl_module, :spawn_args, 1) do
+      impl_module.spawn_args(params)
+    else
+      Esr.Peer.default_spawn_args(params)
     end
   end
-
-  defp spawn_args(%{"impl" => "Esr.Peers.FeishuAppAdapter"}, params) do
-    %{app_id: get_param(params, :app_id) || "default"}
-  end
-
-  # P4a-9: VoiceE2E needs `:session_id`; `PeerFactory.spawn_peer/5`
-  # already merges `session_id` into init_args, so this is technically
-  # a no-op placeholder — kept for explicitness and so future edits can
-  # attach per-agent tuning (turn timeout, engine selection) here.
-  defp spawn_args(%{"impl" => "Esr.Peers.VoiceE2E"}, _params), do: %{}
-
-  defp spawn_args(_, _), do: %{}
 
   defp register(session_id, params, refs_map) do
     Esr.SessionRegistry.register_session(

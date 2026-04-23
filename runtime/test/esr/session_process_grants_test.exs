@@ -131,6 +131,60 @@ defmodule Esr.SessionProcessGrantsTest do
     refute SessionProcess.has?("sgp-noprincipal", "*")
   end
 
+  test "has?/2 does not call into the SessionProcess GenServer (post-A2)" do
+    # P6-A2: has?/2 reads :persistent_term directly from the caller.
+    # Proof: suspend the SessionProcess so it cannot service GenServer
+    # calls, then call has?/2. If the implementation still uses
+    # GenServer.call, it will block and time out; :persistent_term-based
+    # reads bypass the owner process and return immediately.
+    session_id = "a2-no-call-#{System.unique_integer([:positive])}"
+    :ok = Grants.load_snapshot(%{"ou_a2_test" => ["workspace:proj/msg.send"]})
+
+    {:ok, session_sup} =
+      Esr.SessionsSupervisor.start_session(%{
+        session_id: session_id,
+        agent_name: "cc",
+        dir: "/tmp",
+        chat_thread_key: %{
+          chat_id: "oc_a2_#{System.unique_integer([:positive])}",
+          thread_id: "om_a2"
+        },
+        metadata: %{principal_id: "ou_a2_test"}
+      })
+
+    [{sp_pid, _}] = Registry.lookup(Esr.Session.Registry, {:session_process, session_id})
+    assert is_pid(sp_pid)
+
+    :erlang.suspend_process(sp_pid)
+
+    try do
+      task =
+        Task.async(fn ->
+          SessionProcess.has?(session_id, "workspace:proj/msg.send")
+        end)
+
+      # 500ms is orders of magnitude larger than a persistent_term read
+      # (~sub-µs) but smaller than a GenServer.call default timeout.
+      result = Task.yield(task, 500) || Task.shutdown(task, :brutal_kill)
+
+      assert match?({:ok, _}, result),
+             "has?/2 blocked while SessionProcess was suspended — still GenServer.call?"
+    after
+      :erlang.resume_process(sp_pid)
+      :ok = Esr.SessionsSupervisor.stop_session(session_sup)
+    end
+  end
+
+  test "SessionProcess has?/2 reads via :persistent_term after P6-A2 (source gate)" do
+    src = File.read!("lib/esr/session_process.ex")
+
+    refute src =~ ~r/def has\?\([^)]+\) do\s*GenServer\.call\(/,
+           "has?/2 must not be GenServer.call — use :persistent_term"
+
+    assert src =~ ~r/:persistent_term\.get\(\s*[^,]*session_id[^,)]*/,
+           "has?/2 should read via :persistent_term.get(<key including session_id>, default)"
+  end
+
   defp eventually(fun, attempts \\ 20, delay_ms \\ 25)
   defp eventually(_fun, 0, _delay), do: false
 

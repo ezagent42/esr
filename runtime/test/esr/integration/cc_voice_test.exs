@@ -46,20 +46,17 @@ defmodule Esr.Integration.CCVoiceTest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
   import Esr.TestSupport.TmuxIsolation
   setup :isolated_tmux_socket
+  setup :assert_with_grants
+  setup :wipe_sessions_on_exit
   @moduletag :integration
 
   @fixture Path.expand("../fixtures/agents/voice.yaml", __DIR__)
 
   setup do
-    # App-level singletons booted by Esr.Application.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
-    assert is_pid(Process.whereis(Esr.Capabilities.Grants))
-
     # Voice pools must be live (bootstrapped by Esr.Application); if
     # they aren't the test infra regressed and we want to fail loudly
     # rather than paper over the bug.
@@ -69,12 +66,7 @@ defmodule Esr.Integration.CCVoiceTest do
     # "*" grants everything — covers session:default/create,
     # handler:cc_adapter_runner/invoke, peer_pool:voice_asr/acquire,
     # peer_pool:voice_tts/acquire, tmux:default/spawn.
-    prior_grants = snapshot_grants()
-
-    :ok =
-      Esr.Capabilities.Grants.load_snapshot(
-        Map.put(prior_grants, "ou_cc_voice", ["*"])
-      )
+    :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_cc_voice")
 
     :ok = Esr.SessionRegistry.load_agents(@fixture)
 
@@ -89,17 +81,6 @@ defmodule Esr.Integration.CCVoiceTest do
 
     on_exit(fn ->
       Application.delete_env(:esr, :handler_module_override)
-      Esr.Capabilities.Grants.load_snapshot(prior_grants)
-
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        sup ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(sup) do
-            if is_pid(child), do: DynamicSupervisor.terminate_child(sup, child)
-          end
-      end
     end)
 
     :ok
@@ -216,15 +197,5 @@ defmodule Esr.Integration.CCVoiceTest do
 
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id)
-  end
-
-  # ------------------------------------------------------------------
-  # Helpers
-  # ------------------------------------------------------------------
-
-  defp snapshot_grants do
-    :ets.tab2list(:esr_capabilities_grants) |> Map.new()
-  rescue
-    _ -> %{}
   end
 end

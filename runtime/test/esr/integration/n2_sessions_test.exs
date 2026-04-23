@@ -29,15 +29,15 @@ defmodule Esr.Integration.N2SessionsTest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.AppSingletons, only: [assert_app_singletons: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
+
   alias Esr.Peers.FeishuAppAdapter
 
-  setup do
-    # App-level singletons (booted by Esr.Application):
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
+  setup :assert_app_singletons
+  setup :wipe_sessions_on_exit
 
+  setup do
     :ok =
       Esr.SessionRegistry.load_agents(
         Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
@@ -47,18 +47,6 @@ defmodule Esr.Integration.N2SessionsTest do
     {:ok, sup_b} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     on_exit(fn ->
-      # Wipe any Sessions we started so the shared SessionsSupervisor
-      # stays empty for sibling tests.
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        pid ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(pid) do
-            if is_pid(child), do: DynamicSupervisor.terminate_child(pid, child)
-          end
-      end
-
       for sid <- ["n2-session-A", "n2-session-B"] do
         Esr.SessionRegistry.unregister_session(sid)
       end

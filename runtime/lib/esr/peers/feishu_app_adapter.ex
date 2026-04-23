@@ -27,6 +27,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
     GenServer.start_link(__MODULE__, args, name: via(app_id))
   end
 
+  @impl Esr.Peer
+  def spawn_args(params) do
+    %{app_id: Esr.Peer.get_param(params, :app_id) || "default"}
+  end
+
   defp via(app_id), do: String.to_atom("feishu_app_adapter_#{app_id}")
 
   @impl GenServer
@@ -47,8 +52,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:inbound_event, envelope}, state) do
-    chat_id = get_in(envelope, ["payload", "chat_id"])
-    thread_id = get_in(envelope, ["payload", "thread_id"])
+    %{"payload" => %{"chat_id" => chat_id, "thread_id" => thread_id}} = envelope
 
     case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
@@ -92,17 +96,12 @@ defmodule Esr.Peers.FeishuAppAdapter do
   end
 
   # GenServer bridge: inbound messages are routed through the Stateful
-  # callbacks. Same pattern used by the other Stateful peers in PR-2.
+  # callbacks via the shared Esr.Peer.Stateful.dispatch_{upstream,downstream}/3
+  # helpers (PR-6 B1).
   @impl GenServer
-  def handle_info({:inbound_event, _envelope} = msg, state) do
-    case handle_upstream(msg, state) do
-      {:forward, _msgs, new_state} -> {:noreply, new_state}
-      {:drop, _reason, new_state} -> {:noreply, new_state}
-    end
-  end
+  def handle_info({:inbound_event, _envelope} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
 
-  def handle_info({:outbound, _envelope} = msg, state) do
-    {_, _msgs, new_state} = handle_downstream(msg, state)
-    {:noreply, new_state}
-  end
+  def handle_info({:outbound, _envelope} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_downstream(msg, state, __MODULE__)
 end

@@ -10,16 +10,20 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     # :already_started. Reuse the app-level processes.
     assert is_pid(Process.whereis(Esr.SessionRegistry))
     assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: :fab_test_sup)
+    # No `name:` on the supervisor — a hard-coded atom collided across
+    # tests when a previous run's DynamicSupervisor hadn't fully torn
+    # down yet (PR-5 os_cleanup flake). Thread the pid via ctx instead.
+    {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     on_exit(fn -> if Process.alive?(sup), do: Process.exit(sup, :shutdown) end)
-    :ok
+    {:ok, sup: sup}
   end
 
-  test "start_link registers the adapter as :feishu_app_adapter_<app_id> in AdminSessionProcess" do
+  test "start_link registers the adapter as :feishu_app_adapter_<app_id> in AdminSessionProcess",
+       %{sup: sup} do
     {:ok, pid} =
       DynamicSupervisor.start_child(
-        :fab_test_sup,
+        sup,
         {FeishuAppAdapter, %{app_id: "cli_app_test123", neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -27,7 +31,8 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     {:ok, ^pid} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_cli_app_test123)
   end
 
-  test "inbound envelope with chat+thread routes to the matching FeishuChatProxy via SessionRegistry" do
+  test "inbound envelope with chat+thread routes to the matching FeishuChatProxy via SessionRegistry",
+       %{sup: sup} do
     # Arrange: register a fake session with a test-owned "proxy pid"
     test_pid = self()
 
@@ -40,7 +45,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
     {:ok, pid} =
       DynamicSupervisor.start_child(
-        :fab_test_sup,
+        sup,
         {FeishuAppAdapter, %{app_id: "cli_app_test456", neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -57,7 +62,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     assert_receive {:feishu_inbound, ^envelope}, 500
   end
 
-  test "inbound envelope with no matching session emits :new_chat_thread event" do
+  test "inbound envelope with no matching session emits :new_chat_thread event", %{sup: sup} do
     # With no SessionRegistry entry for (chat_id, thread_id),
     # FeishuAppAdapter broadcasts a :new_chat_thread event on the
     # `session_router` PubSub topic for SessionRouter to consume.
@@ -68,7 +73,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
     {:ok, pid} =
       DynamicSupervisor.start_child(
-        :fab_test_sup,
+        sup,
         {FeishuAppAdapter, %{app_id: "cli_app_nomatch", neighbors: [], proxy_ctx: %{}}}
       )
 

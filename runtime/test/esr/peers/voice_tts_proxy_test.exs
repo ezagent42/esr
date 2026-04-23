@@ -11,7 +11,9 @@ defmodule Esr.Peers.VoiceTTSProxyTest do
     use GenServer
     def start_link(_), do: GenServer.start_link(__MODULE__, nil)
     def init(_), do: {:ok, nil}
-    def handle_call({:synthesize, _, _}, _, s), do: {:reply, {:ok, "AUDIO"}, s}
+    # VoiceTTS.synthesize/3 routes via the `{:rpc, payload, timeout}` shape
+    # injected by `Esr.Peer.PyWorker` (PR-6 B2).
+    def handle_call({:rpc, _payload, _timeout}, _, s), do: {:reply, {:ok, "AUDIO"}, s}
   end
 
   setup do

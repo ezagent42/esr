@@ -18,15 +18,19 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
   drops; the user brief for PR-3 explicitly scopes this to auto-create.
   """
   use ExUnit.Case, async: false
+
+  import Esr.TestSupport.AppSingletons, only: [assert_app_singletons: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
+
+  setup :assert_app_singletons
+  setup :wipe_sessions_on_exit
+
   @moduletag :integration
 
   @fixture_path Path.expand("../fixtures/agents/simple.yaml", __DIR__)
 
   setup do
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-
-    Esr.Capabilities.Grants.load_snapshot(%{"ou_alice" => ["*"]})
+    :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
     :ok = Esr.SessionRegistry.load_agents(@fixture_path)
 
     if Process.whereis(Esr.SessionRouter) == nil do
@@ -36,18 +40,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
     {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: :p3_7_sup)
 
     on_exit(fn ->
-      Esr.Capabilities.Grants.load_snapshot(%{})
       if Process.alive?(sup), do: Process.exit(sup, :shutdown)
-
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        s ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(s) do
-            if is_pid(child), do: DynamicSupervisor.terminate_child(s, child)
-          end
-      end
     end)
 
     :ok

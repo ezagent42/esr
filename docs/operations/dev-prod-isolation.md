@@ -202,7 +202,7 @@ The dev worktree's `.git/hooks/post-merge` is not touched by `uninstall.sh`; rem
 
 **Likely causes:**
 
-- `esrd.port` was cached by the client process that started before the reload. The `_resolve_url` resolver (in `py/src/esr/ipc/adapter_runner.py` and `adapters/cc_mcp/src/esr_cc_mcp/channel.py`) is designed to re-read the file on every reconnect; if it's stale, the client's retry loop has been short-circuited.
+- `esrd.port` was cached by the client process that started before the reload. The `resolve_url` resolver (in `py/src/_ipc_common/url.py`) is designed to re-read the file on every reconnect; if it's stale, the client's retry loop has been short-circuited.
 - The new esrd bound a different port AND it wrote the port file AFTER the client tried its first reconnect. The exponential-backoff schedule (200ms → 5s, capped) should recover within ~30s.
 
 **Fix:** wait 60s; if still disconnected, restart the client manually (e.g. close and reopen the Feishu DM). The admin queue will replay any pending `msg_received` work when the peer comes back.

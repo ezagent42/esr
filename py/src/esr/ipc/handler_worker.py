@@ -31,8 +31,8 @@ import logging
 from typing import Any
 
 from _ipc_common.disconnect import watch_disconnect
-from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
-from _ipc_common.url import resolve_url
+from _ipc_common.frame import make_envelope_filter
+from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE, reconnect_loop
 from esr.events import Event
 from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY, all_permissions
 from esr.ipc.envelope import make_handler_hello, serialise_action
@@ -180,18 +180,7 @@ async def run_with_client(client: Any, *, topic: str) -> None:
     """
     await client.connect()
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-    def _on_frame(frame: list[Any]) -> None:
-        if len(frame) < 5:
-            return
-        event, payload = frame[3], frame[4]
-        if event != "envelope" or not isinstance(payload, dict):
-            return
-        if payload.get("kind") != "handler_call":
-            return
-        queue.put_nowait(payload)
-
-    await client.join(topic, _on_frame)
+    await client.join(topic, make_envelope_filter("handler_call", queue))
 
     # Emit the capabilities handler_hello so the Elixir runtime can
     # register the permissions this process declares into
@@ -237,36 +226,20 @@ async def run_with_reconnect(
     """Task 7 (DI-3): wrap :func:`run_with_client` in an exponential-backoff
     reconnect loop that re-reads the port file on every attempt.
 
-    See ``adapter_runner.run_with_reconnect`` for semantics. Handler
-    workers don't carry an adapter instance, so the signature drops that
-    argument.
+    Delegates to :func:`_ipc_common.reconnect.reconnect_loop` which
+    handles URL re-resolution, backoff, and exception protection.
+    Handler workers don't carry an adapter instance, so the signature
+    differs from the adapter_runner version.
     """
-    from esr.ipc.channel_client import ChannelClient
+    async def run_one(client: Any) -> None:
+        await run_with_client(client, topic=topic)
 
-    factory_fn: Any = client_factory or (lambda u: ChannelClient(u))
-
-    attempt = 0
-    while True:
-        url = resolve_url(fallback_url)
-        client = factory_fn(url)
-        try:
-            await run_with_client(client, topic=topic)
-            attempt = 0
-        except asyncio.CancelledError:
-            raise
-        except (ConnectionError, OSError) as exc:
-            logger.warning(
-                "run_with_client disconnected (%s); reconnecting", exc
-            )
-        except Exception as exc:  # noqa: BLE001 — protect the outer loop
-            logger.warning(
-                "run_with_client raised unexpected error (%s); reconnecting",
-                exc,
-            )
-
-        delay = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
-        await asyncio.sleep(delay)
-        attempt += 1
+    await reconnect_loop(
+        run_one,
+        fallback_url=fallback_url,
+        client_factory=client_factory,
+        backoff_schedule=backoff_schedule,
+    )
 
 
 async def run(handler_module: str, worker_id: str, url: str) -> None:
