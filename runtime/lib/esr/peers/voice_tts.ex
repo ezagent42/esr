@@ -21,9 +21,9 @@ defmodule Esr.Peers.VoiceTTS do
 
   # --- public API ---------------------------------------------------------
 
-  @spec start_link(map() | keyword()) :: GenServer.on_start()
-  def start_link(args) when is_map(args), do: GenServer.start_link(__MODULE__, args)
-  def start_link(args) when is_list(args), do: GenServer.start_link(__MODULE__, Map.new(args))
+  # start_link/1 inherits the dual-shape (map | keyword) default from
+  # Esr.Peer.Stateful (PR-6 B1). Esr.PeerPool invokes it as
+  # `worker_mod.start_link([])`; unit tests pass `%{}`.
 
   @doc """
   Synthesize speech audio for `text`. Returns `{:ok, audio_b64}` or
@@ -47,11 +47,8 @@ defmodule Esr.Peers.VoiceTTS do
     {:ok, %{py: py, pending: %{}}}
   end
 
-  @impl Esr.Peer.Stateful
-  def handle_upstream(_msg, state), do: {:forward, [], state}
-
-  @impl Esr.Peer.Stateful
-  def handle_downstream(_msg, state), do: {:forward, [], state}
+  # handle_upstream/2 and handle_downstream/2 inherit the no-op
+  # `{:forward, [], state}` defaults from Esr.Peer.Stateful (PR-6 B1).
 
   # --- GenServer callbacks ------------------------------------------------
 

@@ -20,10 +20,10 @@ defmodule Esr.Peers.VoiceASR do
 
   ## start_link arg shapes
 
-  Accepts `map()` (unit tests pass `%{}`) or keyword-list / `[]` (as
-  invoked by `Esr.PeerPool`'s `worker_mod.start_link([])`). Both
-  normalise to `%{}` — init takes no args of its own; the sidecar is
-  always `python -m voice_asr`.
+  Inherits the dual-shape (`map() | keyword()`) `start_link/1` default
+  from `Esr.Peer.Stateful` (PR-6 B1) — accepts the `%{}` shape used by
+  unit tests and the keyword-list shape passed by `Esr.PeerPool`'s
+  `worker_mod.start_link([])`.
 
   Spec §4.1; expansion P4a-5.
   """
@@ -33,14 +33,6 @@ defmodule Esr.Peers.VoiceASR do
   @default_timeout 5_000
 
   # --- public API ---------------------------------------------------------
-
-  @doc """
-  Start a VoiceASR worker. Accepts both the map shape used in unit tests
-  (`%{}`) and the keyword-list shape passed by `Esr.PeerPool`.
-  """
-  @spec start_link(map() | keyword()) :: GenServer.on_start()
-  def start_link(args) when is_map(args), do: GenServer.start_link(__MODULE__, args)
-  def start_link(args) when is_list(args), do: GenServer.start_link(__MODULE__, Map.new(args))
 
   @doc """
   Transcribe a base64-encoded audio chunk.
@@ -67,11 +59,8 @@ defmodule Esr.Peers.VoiceASR do
     {:ok, %{py: py, pending: %{}}}
   end
 
-  @impl Esr.Peer.Stateful
-  def handle_upstream(_msg, state), do: {:forward, [], state}
-
-  @impl Esr.Peer.Stateful
-  def handle_downstream(_msg, state), do: {:forward, [], state}
+  # handle_upstream/2 and handle_downstream/2 inherit the no-op
+  # `{:forward, [], state}` defaults from Esr.Peer.Stateful (PR-6 B1).
 
   # --- GenServer callbacks ------------------------------------------------
 

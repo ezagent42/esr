@@ -20,6 +20,10 @@ defmodule Esr.Peers.VoiceE2E do
   use Esr.Peer.Stateful
   use GenServer
 
+  # Override the macro's default start_link to inject `:subscriber`
+  # (defaulting to the caller) before handing off to GenServer. Accepts
+  # both map and keyword shapes — same dual shape the macro default
+  # provides; we just need a hook point for the put_new.
   @spec start_link(map() | keyword()) :: GenServer.on_start()
   def start_link(args) when is_map(args) do
     args = Map.put_new(args, :subscriber, self())
@@ -50,11 +54,8 @@ defmodule Esr.Peers.VoiceE2E do
      }}
   end
 
-  @impl Esr.Peer.Stateful
-  def handle_upstream(_msg, state), do: {:forward, [], state}
-
-  @impl Esr.Peer.Stateful
-  def handle_downstream(_msg, state), do: {:forward, [], state}
+  # handle_upstream/2 and handle_downstream/2 inherit the no-op
+  # `{:forward, [], state}` defaults from Esr.Peer.Stateful (PR-6 B1).
 
   @impl GenServer
   def handle_cast({:turn, audio_b64}, state) do

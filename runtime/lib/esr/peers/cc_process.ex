@@ -43,8 +43,8 @@ defmodule Esr.Peers.CCProcess do
   # Public API
   # ------------------------------------------------------------------
 
-  @spec start_link(map()) :: GenServer.on_start()
-  def start_link(args) when is_map(args), do: GenServer.start_link(__MODULE__, args)
+  # start_link/1 inherits the dual-shape (map | keyword) default from
+  # Esr.Peer.Stateful (PR-6 B1). All current callers pass %{}.
 
   @doc """
   Installs a 3-arity fun `(handler_module, payload, timeout)` that
@@ -80,8 +80,10 @@ defmodule Esr.Peers.CCProcess do
   def handle_upstream({:tmux_output, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
   def handle_upstream(_other, state), do: {:drop, :unknown_upstream, state}
 
-  @impl Esr.Peer.Stateful
-  def handle_downstream(_msg, state), do: {:forward, [], state}
+  # handle_downstream/2 inherits the no-op `{:forward, [], state}` default
+  # from Esr.Peer.Stateful (PR-6 B1). PR-3 did not wire a downstream
+  # message through here — upward `:reply` dispatch goes direct to the
+  # cc_proxy neighbor.
 
   # ------------------------------------------------------------------
   # GenServer callbacks
@@ -93,20 +95,17 @@ defmodule Esr.Peers.CCProcess do
   end
 
   @impl GenServer
-  def handle_info({:text, _} = msg, state), do: via_stateful(msg, state, &handle_upstream/2)
-  def handle_info({:tmux_output, _} = msg, state), do: via_stateful(msg, state, &handle_upstream/2)
+  def handle_info({:text, _} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
+
+  def handle_info({:tmux_output, _} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # ------------------------------------------------------------------
   # Internals
   # ------------------------------------------------------------------
-
-  defp via_stateful(msg, state, fun) do
-    case fun.(msg, state) do
-      {:forward, _out, ns} -> {:noreply, ns}
-      {:drop, _reason, ns} -> {:noreply, ns}
-    end
-  end
 
   defp invoke_and_dispatch(event, state) do
     payload = %{

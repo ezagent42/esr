@@ -29,7 +29,8 @@ defmodule Esr.Peers.SlashHandler do
 
   @default_dispatcher Esr.Admin.Dispatcher
 
-  def start_link(args), do: GenServer.start_link(__MODULE__, args)
+  # start_link/1 inherits the dual-shape (map | keyword) default from
+  # Esr.Peer.Stateful (PR-6 B1). All current callers pass %{}.
 
   @impl GenServer
   def init(args) do
@@ -45,11 +46,10 @@ defmodule Esr.Peers.SlashHandler do
     {:ok, state}
   end
 
-  @impl Esr.Peer.Stateful
-  def handle_upstream(_, state), do: {:forward, [], state}
-
-  @impl Esr.Peer.Stateful
-  def handle_downstream(_, state), do: {:forward, [], state}
+  # handle_upstream/2 and handle_downstream/2 inherit the no-op
+  # `{:forward, [], state}` defaults from Esr.Peer.Stateful (PR-6 B1).
+  # SlashHandler never participates in the chain: it's a sink for
+  # `:slash_cmd` handle_info messages from FeishuChatProxy.
 
   @impl GenServer
   def handle_info({:slash_cmd, envelope, reply_to_proxy}, state) do

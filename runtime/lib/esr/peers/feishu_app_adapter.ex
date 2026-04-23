@@ -92,17 +92,12 @@ defmodule Esr.Peers.FeishuAppAdapter do
   end
 
   # GenServer bridge: inbound messages are routed through the Stateful
-  # callbacks. Same pattern used by the other Stateful peers in PR-2.
+  # callbacks via the shared Esr.Peer.Stateful.dispatch_{upstream,downstream}/3
+  # helpers (PR-6 B1).
   @impl GenServer
-  def handle_info({:inbound_event, _envelope} = msg, state) do
-    case handle_upstream(msg, state) do
-      {:forward, _msgs, new_state} -> {:noreply, new_state}
-      {:drop, _reason, new_state} -> {:noreply, new_state}
-    end
-  end
+  def handle_info({:inbound_event, _envelope} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
 
-  def handle_info({:outbound, _envelope} = msg, state) do
-    {_, _msgs, new_state} = handle_downstream(msg, state)
-    {:noreply, new_state}
-  end
+  def handle_info({:outbound, _envelope} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_downstream(msg, state, __MODULE__)
 end
