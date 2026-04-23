@@ -181,8 +181,8 @@ def test_resolve_url_reads_port_file(
     """When ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` exists, the resolver
     rewrites the URL's port — so clients follow an esrd that launchctl
     restarted on a different port."""
+    from _ipc_common.url import resolve_url as handler_resolve
     from esr.ipc.adapter_runner import _resolve_url as adapter_resolve
-    from esr.ipc.handler_worker import _resolve_url as handler_resolve
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "test")
