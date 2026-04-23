@@ -820,11 +820,18 @@ def _stream_telemetry(
                 yield event
 
 
-def _submit_actors(action: str, arg: str | None) -> Any:
-    """Actor-registry queries via ``cli:actors`` topic."""
+def _submit_actors(action: str, arg: str | None, field: str | None = None) -> Any:
+    """Actor-registry queries via ``cli:actors`` topic.
+
+    ``field`` (Task H): when set, inspect returns the value at the
+    dotted path inside the actor's describe map.
+    """
     from esr.cli.runtime_bridge import call_runtime
+    payload: dict[str, Any] = {"arg": arg}
+    if field:
+        payload["field"] = field
     resp = _response(call_runtime(
-        topic=f"cli:actors/{action}", payload={"arg": arg},
+        topic=f"cli:actors/{action}", payload=payload,
     ))
     return resp.get("data")
 
@@ -1208,9 +1215,24 @@ def actors_tree() -> None:
 
 @actors.command("inspect")
 @click.argument("actor_id")
-def actors_inspect(actor_id: str) -> None:
+@click.option(
+    "--field",
+    default=None,
+    help=(
+        "Dotted path into the describe map (e.g. state.session_name). "
+        "When set, echoes only the value at the path — scripts can consume "
+        "stdout directly without JSON parsing."
+    ),
+)
+def actors_inspect(actor_id: str, field: str | None) -> None:
     """Dump one actor's state + metadata."""
-    info = _submit_actors("inspect", actor_id)
+    info = _submit_actors("inspect", actor_id, field=field)
+    if field:
+        # Field-scoped response carries {field, value} or {error, field}.
+        if "error" in info:
+            raise click.ClickException(f"{info['error']}: {field}")
+        click.echo(info.get("value", ""))
+        return
     click.echo(f"{info['actor_id']}  type={info.get('actor_type', '?')}"
                f"  paused={info.get('paused', False)}")
     state = info.get("state", {})
