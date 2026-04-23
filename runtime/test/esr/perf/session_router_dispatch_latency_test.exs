@@ -39,11 +39,8 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
 
   @tag :perf
   test "SessionRouter dispatch latency: 1000 iterations, record p50 / p99" do
-    # App-level singletons booted by Esr.Application:
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
+    # App-level singletons (booted by Esr.Application).
+    :ok = Esr.TestSupport.AppSingletons.assert_app_singletons(%{})
 
     # Agents must be loaded so Session subtree init can resolve the
     # agent_def if any downstream code consults it. Mirrors the setup

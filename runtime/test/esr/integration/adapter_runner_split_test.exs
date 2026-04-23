@@ -19,6 +19,8 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.TmuxIsolation
+
   alias Esr.WorkerSupervisor
 
   @bad_url "ws://127.0.0.1:65535/adapter_hub/socket/websocket?vsn=2.0.0"
@@ -37,9 +39,6 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
 
     :ok
   end
-
-  defp isolated_tmux_socket(ctx),
-    do: Esr.TestSupport.TmuxIsolation.isolated_tmux_socket(ctx)
 
   defp ps_command_line(pid) do
     # `ps -o command=` prints the argv without header. On macOS/Linux

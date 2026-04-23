@@ -47,20 +47,18 @@ defmodule Esr.Integration.NewSessionSmokeTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
+  import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
+
   alias Esr.Peers.SlashHandler
 
   @test_principal "ou_smoke_user"
   @test_principal_nocap "ou_smoke_nocap"
 
-  setup do
-    # App-level singletons (booted by Esr.Application):
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
-    assert is_pid(Process.whereis(Esr.SessionsSupervisor))
-    assert is_pid(Process.whereis(Esr.Session.Registry))
-    assert is_pid(Process.whereis(Grants))
+  setup :assert_with_grants
+  setup :wipe_sessions_on_exit
 
+  setup do
     # `Esr.Admin.Dispatcher` may have been torn down by a prior
     # dispatcher_test.exs that restarts the Admin.Supervisor — mirror
     # its `ensure_admin_dispatcher` shim so we're robust to ordering.
@@ -72,19 +70,17 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    # Snapshot grants so we can restore on exit. The test principal gets
-    # `"*"` (only grant shape that passes the current bare-string-keyed
-    # matcher in `Esr.Capabilities.Grants.matches?/2` for both the
-    # Dispatcher check and the agent_def D18 check). A second principal
-    # gets nothing so we can exercise the unauthorized branch.
-    prior_grants = snapshot_grants()
-
+    # Test principal gets `"*"` (only grant shape that passes the
+    # current bare-string-keyed matcher in
+    # `Esr.Capabilities.Grants.matches?/2` for both the Dispatcher
+    # check and the agent_def D18 check). A second principal gets
+    # nothing so we can exercise the unauthorized branch. The prior
+    # snapshot is restored on exit by `Esr.TestSupport.Grants`.
     :ok =
-      Grants.load_snapshot(
-        prior_grants
-        |> Map.put(@test_principal, ["*"])
-        |> Map.put(@test_principal_nocap, [])
-      )
+      Esr.TestSupport.Grants.with_grants(%{
+        @test_principal => ["*"],
+        @test_principal_nocap => []
+      })
 
     # Esr.Peers.SlashHandler is NOT auto-started by Esr.Application —
     # SessionRouter spawns it per-Session. Start it explicitly under
@@ -98,23 +94,6 @@ defmodule Esr.Integration.NewSessionSmokeTest do
           {SlashHandler, :start_link,
            [%{session_id: "admin", neighbors: [], proxy_ctx: %{}}]}
       })
-
-    on_exit(fn ->
-      Grants.load_snapshot(prior_grants)
-
-      # Wipe any dynamically-started Sessions so tests don't pollute
-      # each other via the shared app-level DynamicSupervisor.
-      case Process.whereis(Esr.SessionsSupervisor) do
-        nil ->
-          :ok
-
-        pid ->
-          for {_, child, _, _} <- DynamicSupervisor.which_children(pid) do
-            if is_pid(child),
-              do: DynamicSupervisor.terminate_child(pid, child)
-          end
-      end
-    end)
 
     {:ok, slash: slash_pid}
   end
@@ -196,12 +175,6 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
     assert text =~ "unauthorized" or text =~ "missing_capabilities",
            "expected unauthorized/missing_capabilities, got: #{text}"
-  end
-
-  defp snapshot_grants do
-    :ets.tab2list(:esr_capabilities_grants) |> Map.new()
-  rescue
-    _ -> %{}
   end
 
   # Borrowed verbatim from `Esr.Admin.DispatcherTest` — tests that
