@@ -98,6 +98,14 @@ defmodule Esr.PeerServer do
     GenServer.call(via(actor_id), :describe)
   end
 
+  @doc false
+  # D2 test hook — exercises the three private emit builders without
+  # standing up a live GenServer. Signature identical to the private
+  # function; callers construct a fake %__MODULE__{} struct.
+  def build_emit_for_tool_for_test(tool, args, state) do
+    build_emit_for_tool(tool, args, state)
+  end
+
   @spec pause(String.t()) :: :ok
   def pause(actor_id) do
     GenServer.call(via(actor_id), :pause)
@@ -706,14 +714,26 @@ defmodule Esr.PeerServer do
     })
   end
 
-  defp build_emit_for_tool("reply", args, _state) do
+  # D2: read the session's bound channel adapter from the thread-state
+  # map. D1 seeds state["channel_adapter"] in FeishuChatProxy.init/1
+  # (and downstream peers copy it forward). Missing slot → "feishu"
+  # fallback (§4.2 deprecated — removed once seeded path is live per
+  # spec §14 item 2).
+  defp session_channel_adapter(%__MODULE__{state: thread_state})
+       when is_map(thread_state) do
+    Map.get(thread_state, "channel_adapter", "feishu")
+  end
+
+  defp session_channel_adapter(_), do: "feishu"
+
+  defp build_emit_for_tool("reply", args, state) do
     case args do
       %{"chat_id" => chat_id, "text" => text}
       when is_binary(chat_id) and is_binary(text) ->
         {:ok,
          %{
            "type" => "emit",
-           "adapter" => "feishu",
+           "adapter" => session_channel_adapter(state),
            "action" => "send_message",
            "args" => %{"chat_id" => chat_id, "content" => text}
          }}
@@ -723,15 +743,18 @@ defmodule Esr.PeerServer do
     end
   end
 
-  defp build_emit_for_tool("react", args, _state) do
+  defp build_emit_for_tool("react", args, state) do
     case args do
       %{"message_id" => mid, "emoji_type" => emoji} ->
         {:ok,
          %{
            "type" => "emit",
-           "adapter" => "feishu",
+           "adapter" => session_channel_adapter(state),
            "action" => "react",
-           "args" => %{"message_id" => mid, "emoji_type" => emoji}
+           # D2: input key "message_id" (CC's MCP tool schema unchanged);
+           # emit arg key "msg_id" (matches adapter.py _react/_pin/_unpin
+           # convention). §5.1 pre-existing bug.
+           "args" => %{"msg_id" => mid, "emoji_type" => emoji}
          }}
 
       _ ->
@@ -739,16 +762,27 @@ defmodule Esr.PeerServer do
     end
   end
 
-  defp build_emit_for_tool("send_file", args, _state) do
+  defp build_emit_for_tool("send_file", args, state) do
     case args do
-      %{"chat_id" => cid, "file_path" => fp} ->
-        {:ok,
-         %{
-           "type" => "emit",
-           "adapter" => "feishu",
-           "action" => "send_file",
-           "args" => %{"chat_id" => cid, "file_path" => fp}
-         }}
+      %{"chat_id" => cid, "file_path" => fp} when is_binary(fp) ->
+        case File.read(fp) do
+          {:ok, bytes} ->
+            {:ok,
+             %{
+               "type" => "emit",
+               "adapter" => session_channel_adapter(state),
+               "action" => "send_file",
+               "args" => %{
+                 "chat_id" => cid,
+                 "file_name" => Path.basename(fp),
+                 "content_b64" => Base.encode64(bytes),
+                 "sha256" => :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+               }
+             }}
+
+          {:error, reason} ->
+            {:error, "send_file cannot read #{fp}: #{inspect(reason)}"}
+        end
 
       _ ->
         {:error, "send_file requires chat_id + file_path"}
