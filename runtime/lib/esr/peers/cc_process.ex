@@ -3,8 +3,8 @@ defmodule Esr.Peers.CCProcess do
   Per-Session `Peer.Stateful` holding CC business state. Invokes Python
   handler code via `Esr.HandlerRouter.call/3` on upstream messages and
   translates handler actions into downstream messages for the
-  `TmuxProcess` neighbor (`:send_input`) or upward replies to
-  `FeishuChatProxy` via `CCProxy` (`:reply`).
+  `TmuxProcess` neighbor (`:send_input`) or upward replies to the
+  upstream chat proxy via `CCProxy` (`:reply`).
 
   State:
 
