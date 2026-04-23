@@ -106,27 +106,25 @@ defmodule Esr.Peers.SlashHandler do
   # Cap check is the Dispatcher's job, not SlashHandler's.
   # --------------------------------------------------------------------
 
-  defp parse_command("/new-session " <> rest), do: parse_new_session(rest)
+  defp parse_command(text) do
+    case String.split(text, " ", parts: 2) do
+      ["/new-session", rest] -> parse_new_session(rest)
+      ["/new-session"] -> {:error, "/new-session requires --agent and --dir"}
+      ["/end-session", rest] -> parse_end_session(rest)
+      ["/end-session"] -> {:error, "/end-session requires <session_id>"}
+      ["/list-sessions"] -> {:ok, "session_list", %{}}
+      ["/sessions"] -> {:ok, "session_list", %{}}
+      ["/list-agents"] -> {:ok, "agent_list", %{}}
+      _ -> {:error, inspect(String.slice(text, 0, 32))}
+    end
+  end
 
-  defp parse_command("/new-session"),
-    do: {:error, "/new-session requires --agent and --dir"}
-
-  defp parse_command("/end-session " <> rest) do
+  defp parse_end_session(rest) do
     case tokenize(rest) do
       [sid | _] -> {:ok, "session_end", %{"session_id" => sid}}
       [] -> {:error, "/end-session requires <session_id>"}
     end
   end
-
-  defp parse_command("/end-session"),
-    do: {:error, "/end-session requires <session_id>"}
-
-  defp parse_command("/list-sessions"), do: {:ok, "session_list", %{}}
-  defp parse_command("/sessions"), do: {:ok, "session_list", %{}}
-  defp parse_command("/list-agents"), do: {:ok, "agent_list", %{}}
-
-  defp parse_command(other),
-    do: {:error, inspect(String.slice(other, 0, 32))}
 
   # --agent <name> --dir <path>; both required per D11/D13.
   defp parse_new_session(rest) do

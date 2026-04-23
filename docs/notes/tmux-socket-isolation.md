@@ -71,3 +71,18 @@ state.
 None. `tmux_socket` is opt-in: prod callers never pass it, so
 `os_cmd/1` omits `-S` and tmux uses its default socket exactly as
 before.
+
+## Why `tmux -C new-session` runs without `-d`
+
+The PR-3 plan originally specified `-d` (detached) after `new-session`,
+but that causes the control-mode client to emit `%exit` immediately
+after session creation — so `send_command/2` writes to an already-dead
+stdin and tmux exits non-zero. For an interactive control-mode session
+we must stay attached (no `-d`); the session itself is still
+non-interactive because there is no controlling TTY.
+
+`-S <socket_path>` isolates this tmux server from the user's default
+socket (`/tmp/tmux-<uid>/default`). Without isolation, leaked test
+sessions accumulate in the user's dev environment. Socket path comes
+from `state.tmux_socket` (set by `start_link/1` via
+`Esr.Paths.tmux_socket/1`).

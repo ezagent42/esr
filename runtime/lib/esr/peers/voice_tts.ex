@@ -1,19 +1,10 @@
 defmodule Esr.Peers.VoiceTTS do
   @moduledoc """
-  Pool-worker `Peer.Stateful` that owns one `voice_tts` Python sidecar.
+  Pool-worker `Esr.Peer.PyWorker` owning one `voice_tts` Python sidecar.
+  Scaling axis: pool size (default 4, `pools.yaml` override) managed by
+  `Esr.PeerPool` registered as `:voice_tts_pool`.
 
-  Spec §4.1 VoiceTTS card + §8.1 JSON-line IPC. Mirror of VoiceASR with
-  data direction inverted: request is `{text: ...}`, reply is
-  `{audio_b64: ...}`. Scaling axis: pool size (default 4, `pools.yaml`
-  overridable) managed by `Esr.PeerPool` registered as `:voice_tts_pool`.
-
-  Kept as a second module rather than parametrising VoiceASR because
-  the pool-worker modules need distinct `worker:` atoms for
-  `Esr.PeerPool.init/1`, and the request/reply shapes diverge when real
-  engines land (PR-5).
-
-  Spec §4.1; expansion P4a-5. PR-6 B2 absorbed the shared init/
-  pending-map/handle_info boilerplate into `Esr.Peer.PyWorker`.
+  Spec §4.1 VoiceTTS card.
   """
   use Esr.Peer.PyWorker, module: "voice_tts"
 

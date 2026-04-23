@@ -12,6 +12,30 @@ defmodule Esr.Peer do
 
   @callback peer_kind() :: peer_kind()
 
+  @doc """
+  Optional: build the `init_args` map a peer needs at spawn time from
+  the session-create `params`. `SessionRouter.spawn_pipeline/3` looks
+  this up generically (via `function_exported?/3`) so adding a new
+  Stateful peer never requires a SessionRouter edit.
+
+  Peers that don't override return `%{}` via `default_spawn_args/1`.
+  """
+  @callback spawn_args(params :: map()) :: map()
+  @optional_callbacks spawn_args: 1
+
+  @doc false
+  def default_spawn_args(_params), do: %{}
+
+  @doc """
+  Fetch a spawn-args param that may be keyed by atom (Elixir callers)
+  or string (yaml/JSON callers). Used by `spawn_args/1` implementations
+  to accept both shapes uniformly.
+  """
+  @spec get_param(map(), atom()) :: any()
+  def get_param(params, key) when is_atom(key) do
+    Map.get(params, key) || Map.get(params, Atom.to_string(key))
+  end
+
   @doc "Common helpers for modules using Peer.Proxy or Peer.Stateful."
   defmacro __using__(opts) do
     kind = Keyword.fetch!(opts, :kind)

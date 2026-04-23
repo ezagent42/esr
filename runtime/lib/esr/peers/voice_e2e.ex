@@ -1,21 +1,14 @@
 defmodule Esr.Peers.VoiceE2E do
   @moduledoc """
-  Per-Session `Peer.Stateful` that owns one `voice_e2e` Python sidecar.
+  Per-Session `Esr.Peer.Stateful` owning one `voice_e2e` Python sidecar.
+  Scaling axis: one per session (not pooled — the sidecar holds
+  conversational state).
 
-  Spec §4.1 VoiceE2E card + §8.1 streaming protocol. Holds
-  conversational state on the Python side (one sidecar per session).
-  Elixir side is a thin pipe: `turn/2` sends a request frame; stream
-  chunks are forwarded to the session's neighbor (or the explicit
-  `:subscriber`) as `{:voice_chunk, audio_b64, seq}` followed by
-  `:voice_end` once `stream_end` arrives.
+  Stream chunks land at the explicit `:subscriber` (or the caller of
+  `start_link/1`) as `{:voice_chunk, audio_b64, seq}` followed by
+  `:voice_end` when `stream_end` arrives.
 
-  Unlike VoiceASR/VoiceTTS, this peer is **not pooled** — each session
-  has its own conversational thread. Start args:
-    * `:session_id` (required) — session this peer belongs to
-    * `:subscriber` (optional) — pid that receives stream tuples;
-      defaults to the caller of `start_link/1`.
-
-  Spec §4.1; expansion P4a-8.
+  Spec §4.1 VoiceE2E card.
   """
   use Esr.Peer.Stateful
   use GenServer

@@ -27,6 +27,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
     GenServer.start_link(__MODULE__, args, name: via(app_id))
   end
 
+  @impl Esr.Peer
+  def spawn_args(params) do
+    %{app_id: Esr.Peer.get_param(params, :app_id) || "default"}
+  end
+
   defp via(app_id), do: String.to_atom("feishu_app_adapter_#{app_id}")
 
   @impl GenServer
@@ -47,8 +52,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:inbound_event, envelope}, state) do
-    chat_id = get_in(envelope, ["payload", "chat_id"])
-    thread_id = get_in(envelope, ["payload", "thread_id"])
+    %{"payload" => %{"chat_id" => chat_id, "thread_id" => thread_id}} = envelope
 
     case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->

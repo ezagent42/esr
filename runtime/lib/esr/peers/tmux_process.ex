@@ -64,6 +64,21 @@ defmodule Esr.Peers.TmuxProcess do
     GenServer.start_link(__MODULE__.OSProcessWorker, args, name: name_for(args))
   end
 
+  @impl Esr.Peer
+  def spawn_args(params) do
+    # Optional tmux_socket for test isolation: if caller passes
+    # `tmux_socket: "/tmp/esr-test-N.sock"`, TmuxProcess runs under that
+    # socket (no leaks into user's default tmux server). In production,
+    # omit the param → tmux uses the default socket.
+    name = "esr_cc_#{:erlang.unique_integer([:positive])}"
+    base = %{session_name: name, dir: Esr.Peer.get_param(params, :dir) || "/tmp"}
+
+    case Esr.Peer.get_param(params, :tmux_socket) do
+      nil -> base
+      path -> Map.put(base, :tmux_socket, path)
+    end
+  end
+
   # Added by P3-6: the full CC-chain `cc` agent in `simple.yaml` now
   # lists `tmux_process` in `pipeline.inbound`, so SessionRouter spawns
   # it via `DynamicSupervisor.start_child(sup, {TmuxProcess, args})`.
@@ -144,17 +159,7 @@ defmodule Esr.Peers.TmuxProcess do
 
   @impl Esr.OSProcess
   def os_cmd(state) do
-    # NOTE: plan originally specified `-d` (detached) after `new-session`, but that
-    # causes the control-mode client to emit `%exit` immediately after session
-    # creation — so `send_command/2` writes to an already-dead stdin and tmux
-    # exits non-zero. For an interactive control-mode session we must stay
-    # attached (no `-d`); the session itself is still non-interactive because
-    # there is no controlling TTY.
-    #
-    # `-S <socket_path>` isolates this tmux server from the user's default
-    # socket (`/tmp/tmux-<uid>/default`). Without isolation, leaked test
-    # sessions accumulate in the user's dev environment. Socket path comes
-    # from `state.tmux_socket` (set by `start_link/1` via `Esr.Paths.tmux_socket/1`).
+    # No `-d` flag — see docs/notes/tmux-socket-isolation.md
     socket_args =
       case Map.get(state, :tmux_socket) do
         nil -> []
@@ -174,29 +179,16 @@ defmodule Esr.Peers.TmuxProcess do
   @impl Esr.OSProcess
   def on_terminate(%{session_name: name} = state) do
     # Per-socket `kill-server` is simpler + more robust than per-session
-    # kill (session may have subshell children). `-S` scopes the kill
-    # to this test's/agent's own socket — user's default socket is untouched.
-    socket_args =
-      case Map.get(state, :tmux_socket) do
-        nil -> []
-        path -> ["-S", path]
-      end
-
-    _ =
-      System.cmd("tmux", socket_args ++ ["kill-session", "-t", name],
-        stderr_to_stdout: true
-      )
-
-    # If an isolated socket was used, also kill-server to guarantee
-    # cleanup even if session name doesn't match (defensive).
+    # kill (session may have subshell children). With an isolated
+    # `-S <path>` socket we also `File.rm/1` it to keep /tmp tidy.
     case Map.get(state, :tmux_socket) do
       nil ->
-        :ok
+        _ = System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true)
 
       path ->
+        _ = System.cmd("tmux", ["-S", path, "kill-session", "-t", name], stderr_to_stdout: true)
         _ = System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
         _ = File.rm(path)
-        :ok
     end
 
     :ok

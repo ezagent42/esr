@@ -46,6 +46,11 @@ defmodule Esr.Peers.CCProcess do
   # start_link/1 inherits the dual-shape (map | keyword) default from
   # Esr.Peer.Stateful (PR-6 B1). All current callers pass %{}.
 
+  @impl Esr.Peer
+  def spawn_args(params) do
+    %{handler_module: Esr.Peer.get_param(params, :handler_module) || "cc_adapter_runner"}
+  end
+
   @doc """
   Installs a 3-arity fun `(handler_module, payload, timeout)` that
   replaces the real `HandlerRouter.call/3` call inside this peer. Used
