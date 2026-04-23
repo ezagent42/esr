@@ -210,4 +210,56 @@ defmodule Esr.Admin.Commands.RegisterAdapterTest do
       assert {:error, %{"type" => "invalid_args"}} = RegisterAdapter.execute(%{})
     end
   end
+
+  describe "execute/2 boot-race resilience (PR-7 e2e discovery)" do
+    @tag :tmp_dir
+    test "default_adapter_ws_url/0 survives EsrWeb.Endpoint's ETS table missing", %{
+      tmp: tmp
+    } do
+      # E2E RCA: admin watcher's orphan-recovery scan fires execute/2
+      # BEFORE EsrWeb.Endpoint has started (Endpoint is the LAST
+      # supervisor child), so EsrWeb.Endpoint.config(:http) raises
+      # ArgumentError "the table identifier does not refer to an
+      # existing ETS table". PR-7 hardened default_adapter_ws_url/0 with
+      # a try/rescue + Application.get_env fallback. This test proves
+      # the fallback kicks in without crashing the command.
+      #
+      # Simulate by running execute/2 with the real dispatch chain — the
+      # try/rescue must return a valid ws:// URL regardless of Endpoint
+      # state.
+      Application.put_env(:esr, :runtime_home, tmp)
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "kind" => "register_adapter",
+        "args" => %{
+          "type" => "feishu",
+          "name" => "endpoint_race_guard",
+          "app_id" => "app_race",
+          "app_secret" => "s"
+        }
+      }
+
+      url_agent = Agent.start_link(fn -> nil end) |> elem(1)
+
+      result =
+        RegisterAdapter.execute(cmd,
+          spawn_fn: fn {_, _, _, url} ->
+            Agent.update(url_agent, fn _ -> url end)
+            :ok
+          end
+        )
+
+      assert {:ok, %{"running" => true}} = result
+
+      captured = Agent.get(url_agent, & &1)
+      Agent.stop(url_agent)
+
+      # URL must be well-formed ws:// with a port, regardless of which
+      # path (Endpoint.config, Application.get_env, or literal 4001)
+      # produced it.
+      assert captured =~ ~r|^ws://127\.0\.0\.1:\d+/adapter_hub/socket/websocket|,
+             "default_adapter_ws_url returned #{inspect(captured)} — expected ws://127.0.0.1:<port>/..."
+    end
+  end
 end

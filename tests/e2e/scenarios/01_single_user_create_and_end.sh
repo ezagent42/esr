@@ -12,22 +12,27 @@ BASELINE=$(e2e_tmp_baseline_snapshot)
 
 # --- setup ------------------------------------------------------------
 load_agent_yaml
+seed_capabilities
 start_mock_feishu
 start_esrd
 register_feishu_adapter
 
 # --- user-step 1: create session --------------------------------------
-uv run --project "${_E2E_REPO_ROOT}/py" esr cmd run \
-  "/new-session esr-dev tag=single app_id=e2e-mock"
-# Wait until the cc:single actor appears.
-for _ in $(seq 1 50); do
-  if uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
-       | grep -q "cc:single"; then
-    break
-  fi
-  sleep 0.1
-done
-assert_actors_list_has "cc:single" "user-step 1: cc:single peer spawned"
+# E2E RCA (2026-04-23): v1.0 used `esr cmd run "/new-session ..."` but that
+# CLI is for .compiled/<name>.yaml artefacts, not slash commands. The
+# correct admin-side path is `esr admin submit session_new --arg ...`.
+SESSION_CREATE_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
+  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_new \
+  --arg agent=cc \
+  --arg dir=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/workdir-single \
+  --wait --timeout 30)
+echo "$SESSION_CREATE_OUT"
+assert_contains "$SESSION_CREATE_OUT" "ok: true" "user-step 1: session_new returned ok"
+# Capture the assigned session_id for later teardown (session_new returns
+# a random ULID since chat binding is deferred to the FeishuChatProxy).
+SESSION_ID=$(echo "$SESSION_CREATE_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+[[ -n "$SESSION_ID" ]] || _fail_with_context "user-step 1: no session_id in output"
+echo "created session ${SESSION_ID}"
 
 # --- user-step 2: inbound plain message → CC replies ------------------
 INBOUND_MSG_ID=$(curl -sS -X POST \

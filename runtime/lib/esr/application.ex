@@ -126,10 +126,37 @@ defmodule Esr.Application do
       # ESR_INSTANCE directly, so the passed value is effectively
       # advisory — set ESRD_HOME to override.
       _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
+      _ = load_agents_from_disk()
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
     end
 
     result
+  end
+
+  @doc """
+  Load `<runtime_home>/agents.yaml` into `Esr.SessionRegistry` at boot.
+  Mirrors `load_workspaces_from_disk/1` — missing file is not an error,
+  parse failures are logged. Exists so e2e scenarios (which drop an
+  agents.yaml at the instance root before `scripts/esrd.sh start`) don't
+  have to reach into ExUnit test support to load agents manually.
+  """
+  @spec load_agents_from_disk() :: :ok
+  def load_agents_from_disk do
+    path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
+
+    if File.exists?(path) do
+      case Esr.SessionRegistry.load_agents(path) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+          Logger.warning("agents.yaml: load failed (#{inspect(reason)}); continuing")
+          :ok
+      end
+    else
+      :ok
+    end
   end
 
   @doc """

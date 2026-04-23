@@ -61,7 +61,12 @@ cmd_start() {
 
   # Command override for tests; otherwise run the real Phoenix server on
   # the selected port (spec §7.1 default 4001; url.py's DEFAULT_*_HUB_URL assumes it).
-  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && PORT=$port exec mix phx.server}"
+  # ESR_INSTANCE must reach the mix process so the admin-queue watcher
+  # (runtime/lib/esr/admin/command_queue/watcher.ex) opens the right
+  # $ESRD_HOME/<instance>/admin_queue/pending/ directory — otherwise
+  # commands submitted under a custom instance (e.g. PR-7's e2e runs)
+  # land in a directory nobody watches and the caller times out.
+  local cmd="${ESRD_CMD_OVERRIDE:-cd runtime && PORT=$port ESR_INSTANCE=$instance ESRD_HOME=$ESRD_HOME exec mix phx.server}"
 
   # Launch detached, redirect output, capture child pid. The subshell's
   # stdout/stderr must be redirected so the parent's captured streams

@@ -25,17 +25,22 @@ clean:
 
 # --- PR-7 end-to-end scenarios ---------------------------------------
 # Run all three scenarios serially. Wall-time budget: <5 min total.
-# Hard timeout wrapper — prevents a hung esrd from holding GitHub Actions.
+# Hard timeout wrapper — prevents a hung esrd from holding CI. Uses
+# `perl -e 'alarm ...'` for portability (macOS ships without GNU
+# `timeout`; CI runners have perl in the base image).
+E2E_TIMEOUT ?= 300
+E2E_RUN = perl -e 'alarm shift; exec @ARGV' $(E2E_TIMEOUT) bash
+
 e2e: e2e-01 e2e-02 e2e-03
 
 e2e-01:
-	timeout 300 bash tests/e2e/scenarios/01_single_user_create_and_end.sh
+	$(E2E_RUN) tests/e2e/scenarios/01_single_user_create_and_end.sh
 
 e2e-02:
-	timeout 300 bash tests/e2e/scenarios/02_two_users_concurrent.sh
+	$(E2E_RUN) tests/e2e/scenarios/02_two_users_concurrent.sh
 
 e2e-03:
-	timeout 300 bash tests/e2e/scenarios/03_tmux_attach_edit.sh
+	$(E2E_RUN) tests/e2e/scenarios/03_tmux_attach_edit.sh
 
 # CI variant: absolute cleanup (§7.2). Same scripts, different env.
 e2e-ci:

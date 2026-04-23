@@ -147,14 +147,36 @@ defmodule Esr.Admin.Commands.RegisterAdapter do
   end
 
   # Mirrors Esr.Application.default_adapter_ws_url/0 (kept private
-  # there). Reading EsrWeb.Endpoint config at runtime so this lines up
-  # with whatever port Phoenix is actually listening on.
+  # there). Prefer EsrWeb.Endpoint config at runtime so this lines up
+  # with whatever port Phoenix is actually listening on — BUT the
+  # admin watcher's orphan-recovery scan can fire this before the
+  # Endpoint has booted (Endpoint is the last supervisor child;
+  # register_adapter.execute is called from Admin.Supervisor's child
+  # init), which would crash with "ETS table not found". Fall back
+  # to the static app config, then 4001.
   defp default_adapter_ws_url do
     port =
-      case EsrWeb.Endpoint.config(:http) do
-        opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
-        _ -> 4001
+      try do
+        case EsrWeb.Endpoint.config(:http) do
+          opts when is_list(opts) -> Keyword.get(opts, :port, nil)
+          _ -> nil
+        end
+      rescue
+        ArgumentError -> nil
       end
+
+    port =
+      port ||
+        case Application.get_env(:esr, EsrWeb.Endpoint, []) do
+          http_opts when is_list(http_opts) ->
+            case Keyword.get(http_opts, :http, []) do
+              http when is_list(http) -> Keyword.get(http, :port, 4001)
+              _ -> 4001
+            end
+
+          _ ->
+            4001
+        end
 
     "ws://127.0.0.1:" <> Integer.to_string(port) <> "/adapter_hub/socket/websocket?vsn=2.0.0"
   end
