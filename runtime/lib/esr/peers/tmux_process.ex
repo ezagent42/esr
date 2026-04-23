@@ -25,23 +25,25 @@ defmodule Esr.Peers.TmuxProcess do
 
   ## Cleanup
 
-  Tmux owns its own session lifecycle, so BEAM SIGKILL protection (via
-  muontrap) is less important than for arbitrary sidecars. We use
-  `wrapper: :none` and rely on `on_terminate/1` — called from
-  `OSProcessWorker.terminate/2` — to run `tmux kill-session -t <name>`
-  when the peer stops normally.
+  Tmux owns its own session lifecycle. `on_terminate/1` — called from
+  `OSProcessWorker.terminate/2` — runs `tmux kill-session -t <name>`
+  when the peer stops normally. The erlexec port program supplements
+  this by reaping the `tmux -C` client on BEAM hard-crash.
+
+  ## Wrapper mode: `:pty`
+
+  Uses `wrapper: :pty` (erlexec with pseudo-terminal). `tmux -C`
+  (control mode) on macOS exits immediately if spawned without a
+  controlling TTY — empirically this was the cause of the
+  `tmux_process_test` integration flakes pre-PR-3. erlexec's native
+  PTY support fixes this without needing `script(1)` or a shell
+  wrapper. See `docs/notes/erlexec-migration.md`.
 
   See spec §3.2 and §4.1 TmuxProcess card; expansion P3-3.
   """
 
   use Esr.Peer.Stateful
-  # NOTE: wrapper: :none bypasses the MuonTrap binary. We cannot use muontrap
-  # here because `--capture-output` (needed to receive tmux's `%begin/%end/...`
-  # events on stdout) also makes muontrap consume its own stdin for ack bytes,
-  # which means writes from send_command/2 would never reach tmux's stdin.
-  # Tmux owns its own session lifecycle (`tmux kill-session`), so
-  # BEAM-SIGKILL orphan protection is less critical than for arbitrary sidecars.
-  use Esr.OSProcess, kind: :tmux, wrapper: :none
+  use Esr.OSProcess, kind: :tmux, wrapper: :pty
 
   @doc """
   Start a tmux control-mode peer.

@@ -24,7 +24,7 @@ defmodule Esr.OSProcessTest do
     def on_os_exit(status, _state), do: {:stop, {:exited, status}}
   end
 
-  test "os_cmd wraps the OS process via MuonTrap and returns pid/os_pid" do
+  test "os_cmd wraps the OS process via erlexec and returns pid/os_pid" do
     {:ok, pid} = GenServer.start_link(SleepPeer.OSProcessWorker, %{dur: 5})
     {:ok, os_pid} = GenServer.call(pid, :os_pid)
     assert is_integer(os_pid) and os_pid > 0
