@@ -56,10 +56,14 @@ defmodule Esr.Peers.FeishuAppAdapter do
         {:forward, [], state}
 
       :not_found ->
+        # P3-7: broadcast on the `session_router` topic with the
+        # canonical tuple shape `{:new_chat_thread, app_id, chat_id,
+        # thread_id, envelope}` (app_id first — matches the wiring
+        # FeishuAppAdapter owns; SessionRouter is the sole subscriber).
         Phoenix.PubSub.broadcast(
           EsrWeb.PubSub,
-          "new_chat_thread",
-          {:new_chat_thread, chat_id, thread_id, state.app_id, envelope}
+          "session_router",
+          {:new_chat_thread, state.app_id, chat_id, thread_id, envelope}
         )
 
         {:drop, :new_chat_thread_pending, state}

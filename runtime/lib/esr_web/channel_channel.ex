@@ -112,7 +112,8 @@ defmodule EsrWeb.ChannelChannel do
   end
 
   # Admin-originated notifications (e.g. `cleanup_check_requested`
-  # from `Esr.Admin.Commands.Session.End` on the non-force path).
+  # from `Esr.Admin.Commands.Session.BranchEnd` on the non-force path;
+  # was `Session.End` before the PR-3 P3-9 rename).
   # `Phoenix.PubSub.broadcast(EsrWeb.PubSub, "cli:channel/<sid>", {:notification, ...})`
   # reaches this channel because Phoenix.Channel auto-subscribes the
   # channel pid to the PubSub topic matching its join topic.

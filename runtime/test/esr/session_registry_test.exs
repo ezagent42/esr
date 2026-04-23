@@ -14,8 +14,9 @@ defmodule Esr.SessionRegistryTest do
 
     assert {:ok, agent_def} = Esr.SessionRegistry.agent_def("cc")
     assert agent_def.description == "Claude Code"
-    assert "cap.session.create" in agent_def.capabilities_required
-    assert length(agent_def.pipeline.inbound) == 2
+    assert "session:default/create" in agent_def.capabilities_required
+    # P3-6: `simple.yaml` now ships the full CC chain (inbound length 4).
+    assert length(agent_def.pipeline.inbound) == 4
   end
 
   test "returns error for unknown agent" do

@@ -52,8 +52,12 @@ defmodule Esr.SessionTest do
     assert state.dir == "/tmp/w2"
   end
 
-  describe "SessionProcess grants (P2-6a scaffold)" do
+  describe "SessionProcess grants (P3-3a local projection)" do
     setup do
+      # Start with a clean slate so prior-test snapshots don't leak in
+      # via the local projection at init time.
+      :ok = Esr.Capabilities.Grants.load_snapshot(%{})
+
       {:ok, _sup} =
         Esr.Session.start_link(%{
           session_id: "g-s1",
@@ -66,33 +70,36 @@ defmodule Esr.SessionTest do
       :ok
     end
 
-    test "SessionProcess.has?/2 passes through to Esr.Capabilities.Grants.has?/2 today" do
-      # With no grants loaded for principal, has? returns false.
+    test "SessionProcess.has?/2 denies when projection is empty" do
       refute Esr.SessionProcess.has?("g-s1", "workspace:*/msg.send")
     end
 
-    test "has? reads principal_id from metadata and calls global Grants" do
-      # Same as above but illustrates the passthrough surface
+    test "SessionProcess.has?/2 agrees with Grants.has?/2 after a snapshot load" do
+      # Cross-check: both sources see the same truth after the
+      # broadcast propagates. The session's local map is refreshed by
+      # the grants_changed broadcast, then the cross-source assertion
+      # holds. Note this is an equality check, not a proof that has?/2
+      # reads the global table — the performance test in
+      # session_process_grants_test.exs covers that.
+      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_test" => ["*"]})
+      Process.sleep(50)
+
       assert Esr.SessionProcess.has?("g-s1", "*") ==
                Esr.Capabilities.Grants.has?("p_test", "*")
     end
 
-    test "has? returns true after seeding grants for principal_id" do
-      # Seed the global Grants ETS — P3-3a will swap this for per-session
-      # projection, but today pass-through means a write here is visible.
-      prior =
-        case :ets.lookup(:esr_capabilities_grants, "p_test") do
-          [] -> nil
-          [{_, held}] -> held
-        end
-
+    test "has? returns true after a matching grant is loaded (broadcast-refreshed)" do
       :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_test" => ["*"]})
 
       try do
+        # Give the PubSub broadcast a moment to reach the session. The
+        # subsequent GenServer.call from has?/2 serialises behind the
+        # handle_info grants_changed, so a small sleep avoids flakes
+        # when the scheduler races the two.
+        Process.sleep(50)
         assert Esr.SessionProcess.has?("g-s1", "workspace:proj/msg.send")
       after
-        snap = if prior, do: %{"p_test" => prior}, else: %{}
-        :ok = Esr.Capabilities.Grants.load_snapshot(snap)
+        :ok = Esr.Capabilities.Grants.load_snapshot(%{})
       end
     end
   end

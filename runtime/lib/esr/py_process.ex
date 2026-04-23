@@ -8,18 +8,18 @@ defmodule Esr.PyProcess do
 
   ## Wrapper mode
 
-  Uses `wrapper: :none` (plain `Port.open/2`) — muontrap's `--capture-output`
-  consumes its own stdin for ack bytes, which would block application writes.
-  Cleanup on BEAM exit is therefore the sidecar's responsibility: when BEAM
-  closes the Port, the child's stdin reaches EOF and a well-behaved Python
-  sidecar (e.g. `for line in sys.stdin: ...`) exits cleanly. See
-  `Esr.OSProcess` moduledoc.
+  Uses `wrapper: :plain` (erlexec without PTY). JSON-line sidecars don't
+  need a controlling TTY; a plain stdin/stdout pair is both faster and
+  less surprising (no pty echo, no `\\r\\n` line endings). BEAM-exit
+  cleanup is provided by the erlexec port program, which kills children
+  when the owning Erlang pid dies. See `Esr.OSProcess` moduledoc and
+  `docs/notes/erlexec-migration.md`.
 
   See spec §3.2 and §8.3.
   """
 
   use Esr.Peer.Stateful
-  use Esr.OSProcess, kind: :python, wrapper: :none
+  use Esr.OSProcess, kind: :python, wrapper: :plain
 
   @doc """
   Start a Python sidecar peer.

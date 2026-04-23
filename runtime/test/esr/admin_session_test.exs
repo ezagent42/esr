@@ -66,10 +66,15 @@ defmodule Esr.AdminSessionTest do
     assert Process.alive?(pid)
   end
 
-  test "AdminSession starts even when Esr.SessionRouter is not loaded", %{admin_process: name} do
-    # Risk F boot-order test: AdminSession must not depend on SessionRouter
-    refute Code.ensure_loaded?(Esr.SessionRouter),
-           "Esr.SessionRouter must not be loaded for this test (it's introduced in PR-3)"
+  test "AdminSession starts without Esr.SessionRouter running (Risk F)", %{admin_process: name} do
+    # Risk F boot-order test (spec §6 Risk F): AdminSession must not
+    # depend on SessionRouter being started. Before PR-3 P3-4 the
+    # module didn't exist at all; now it does, but AdminSession's
+    # boot path still doesn't call into it — the test-local
+    # AdminSession tree spun up in setup/1 came up fine without any
+    # SessionRouter process. That invariant is what Risk F guards.
+    assert Code.ensure_loaded?(Esr.SessionRouter),
+           "SessionRouter should be compiled into the tree after P3-4"
 
     assert Process.alive?(Process.whereis(name))
   end

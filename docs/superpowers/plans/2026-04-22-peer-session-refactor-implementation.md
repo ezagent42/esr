@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor ESR's Elixir runtime to a typed Peer behaviour model with AdminSession + user Sessions, OSProcess底座 via MuonTrap, and yaml-driven agent definitions — eliminating the current ad-hoc routing and the misplaced `SessionRouter`.
+**Goal:** Refactor ESR's Elixir runtime to a typed Peer behaviour model with AdminSession + user Sessions, OSProcess底座 (initially MuonTrap; switched to `:erlexec` in PR-3 `P3-17` for native PTY — see `docs/notes/erlexec-migration.md`), and yaml-driven agent definitions — eliminating the current ad-hoc routing and the misplaced `SessionRouter`.
 
 **Architecture:** Three-tier supervision: (1) `Esr.Supervisor` at top, (2) `Esr.AdminSession` holds global-scope peers (FeishuAppAdapter, SlashHandler, voice pools), (3) `Esr.SessionsSupervisor` dynamically spawns user `Session_<ulid>` supervisors per `/new-session`. Peers communicate via injected neighbor refs (no central router on hot path). Control plane: `Esr.PeerFactory` (creation), `Esr.SessionRouter` (lifecycle decisions), `Esr.SessionRegistry` (yaml-compiled agent definitions + mappings).
 
-**Tech Stack:** Elixir 1.19 / OTP 27 / Phoenix 1.8 / Bandit (HTTP); MuonTrap (Hex pkg, OS process wrapping); tmux `-C` control mode; Python 3.11+ via `uv`; `:file_system` for yaml hot-reload.
+**Tech Stack:** Elixir 1.19 / OTP 27 / Phoenix 1.8 / Bandit (HTTP); `:erlexec` 2.2 (OS process wrapping with native PTY — see `docs/notes/erlexec-migration.md`); tmux `-C` control mode; Python 3.11+ via `uv`; `:file_system` for yaml hot-reload.
 
 **Spec:** `docs/superpowers/specs/2026-04-22-peer-session-refactor-design.md` (v3.1). Read before starting any task.
 
@@ -2231,14 +2231,15 @@ Use `mcp__openclaw-channel__reply` to the chat:
 **Prereq:** PR-2 merged.
 
 **Acceptance gates** (spec §10.5):
-- CCProcess, CCProxy, TmuxProcess (with MuonTrap) all functional
+- CCProcess, CCProxy, TmuxProcess (erlexec底座, `wrapper: :pty`) all functional
 - SessionRouter control-plane boundary test: data-plane messages rejected
 - PubSub broadcast audit clean
 - Full E2E: Feishu inbound → tmux stdin → tmux output → Feishu outbound
 - N=2 tmux independent
-- OS cleanup regression: `kill -9` esrd → all tmux die in 10s
+- OS cleanup regression: `kill -9` esrd → all tmux die in 10s (scaffolded, `@tag :skip` until subprocess-esrd helpers land)
 - `session_new` requires `agent` field
 - Topology module files deleted
+- **OSProcess底座 migrated from MuonTrap+Port to `:erlexec`** (P3-17) — native PTY unblocks `tmux -C` flakes, unified stdin/stdout/cleanup. See `docs/notes/erlexec-migration.md`.
 
 ### Task outlines
 
@@ -2261,9 +2262,10 @@ Use `mcp__openclaw-channel__reply` to the chat:
 | P3-14 | Delete `Esr.Routing.SlashHandler` (renamed misplaced router from PR-0) | file deletion |
 | P3-15 | PubSub audit: grep for free broadcasts; convert to neighbor-ref `send/cast` | manual sweep + test |
 | P3-16 | Delete old CC/tmux code from `peer_server.ex` | `peer_server.ex` |
-| P3-17 | Open PR-3 draft + **Feishu notify** | `gh pr create` + reply |
-| P3-18 | Wait for user review + merge | — |
-| P3-19 | Write PR-3 progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr3-snapshot.md` |
+| P3-17 | **Migrate OSProcess底座 from MuonTrap+Port to `:erlexec`** — native PTY resolves `tmux -C` control-mode flake at `tmux_process_test:162/:175`; unifies stdin/stdout/cleanup in one library. See commit `P3-17` + `docs/notes/erlexec-migration.md`. | `runtime/lib/esr/os_process.ex`, `runtime/lib/esr/peers/tmux_process.ex`, `runtime/lib/esr/py_process.ex`, `runtime/mix.exs`, `docs/notes/erlexec-migration.md`, `.claude/skills/muontrap-elixir/SKILL.md` (marked historical), spec §3.2 |
+| P3-18 | Open PR-3 draft + **Feishu notify** | `gh pr create` + reply |
+| P3-19 | Wait for user review + merge | — |
+| P3-20 | Write PR-3 progress snapshot + **Feishu notify** | `docs/superpowers/progress/<date>-pr3-snapshot.md` |
 
 **When PR-2 merges, expand each P3-N into bite-sized steps. Add Feishu `PR start` notification as first task.**
 

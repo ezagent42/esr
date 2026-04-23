@@ -43,7 +43,7 @@ v3.0 **does not replace** v2.2. The two are complementary:
 ### 1.3 In scope
 
 1. **Peer behaviour layer**: `Esr.Peer`, `Esr.Peer.Proxy`, `Esr.Peer.Stateful` behaviours. `Esr.PeerServer` is retained as one implementation; new Peer types (`FeishuChatProxy`, `CCProxy`, etc.) are added atop the behaviour.
-2. **OSProcess底座**: `Esr.OSProcess` behaviour + `Esr.TmuxProcess` + `Esr.PyProcess` implementations via MuonTrap.
+2. **OSProcess底座**: `Esr.OSProcess` behaviour + `Esr.TmuxProcess` + `Esr.PyProcess` implementations. Initially via MuonTrap; switched to `:erlexec` in PR-3 `P3-17` for native PTY support (see §3.2 + `docs/notes/erlexec-migration.md`).
 3. **Control plane**: three modules with strict separation — `Esr.PeerFactory` (creation mechanics), `Esr.SessionRouter` (lifecycle decisions), `Esr.SessionRegistry` (yaml compiler + mapping queries).
 4. **AdminSession model**: global-scope peers belong to AdminSession; user Sessions access them via PeerProxy.
 5. **Agent definitions**: `agents.yaml` describing composable agents (`cc`, `cc-voice`, `voice-e2e`, future `gemini-cli`). `/new-session --agent <name>` spawns the declared peer pipeline.
@@ -73,7 +73,7 @@ v3.0 **does not replace** v2.2. The two are complementary:
 - **Peer**: an actor (GenServer or Supervisor-of-GenServer) that implements one of the `Esr.Peer.*` behaviours. Every Peer belongs to exactly one Session.
 - **Peer.Proxy**: a Peer subtype that is a stateless forwarder. Compile-time restricted to `forward/2` semantics; cannot hold business state.
 - **Peer.Stateful**: a Peer subtype that owns state (mailbox, in-memory data, optionally an OS process).
-- **OSProcess底座**: `Esr.OSProcess` behaviour providing OS-process lifecycle (spawn via MuonTrap, monitor, signal, kill). Used via composition: `defmodule TmuxProcess, do: use Esr.Peer.Stateful; use Esr.OSProcess, kind: :tmux`.
+- **OSProcess底座**: `Esr.OSProcess` behaviour providing OS-process lifecycle (spawn via [`:erlexec`](https://hexdocs.pm/erlexec/), monitor, signal, kill). Used via composition: `defmodule TmuxProcess, do: use Esr.Peer.Stateful; use Esr.OSProcess, kind: :tmux, wrapper: :pty`. See §3.2.
 - **esr-session** (or just "Session"): a supervisor subtree representing one complete human-AI collaboration workflow. Identified by a ULID (`session_id`). Contains a `SessionProcess` GenServer + the Peer subtree defined by the session's agent.
 - **AdminSession**: the one always-on Session (`session_id = "admin"`) that hosts global-scope peers (FeishuAppAdapter, SlashHandler, voice pools, etc.).
 - **Agent**: a user-facing composite primitive declared in `agents.yaml`. One agent name → one peer pipeline. Examples: `cc`, `cc-voice`, `voice-e2e`.
@@ -92,7 +92,7 @@ Resolved during brainstorming; frozen for this spec.
 | D2 | PR #11 fate | Rename surgery (SessionRouter → SlashHandler) then merge, main refactor on new branch. See §9 PR-0. |
 | D3 | Refactor depth | Full: merge AdapterHub.Registry into SessionRegistry, ban free PubSub broadcasts (except listed sites), introduce OSProcess底座 now. See §2.9. |
 | D4 | Session structure | User Sessions = Supervisor subtrees with private peers; AdminSession holds globals. No "global peer" category. See §3.4. |
-| D5 | Issue #7 scope | Absorbed into this refactor. TmuxProcess + all Python sidecars get MuonTrap-based OSProcess底座. See §3.2 + §8. |
+| D5 | Issue #7 scope | Absorbed into this refactor. TmuxProcess + all Python sidecars get an erlexec-based OSProcess底座 (P3-17, 2026-04-22 — first attempted with MuonTrap, switched after empirical PTY / stdin-ack constraints). See §3.2 + §8 + `docs/notes/erlexec-migration.md`. |
 | D6 | Python sidecar split (S3) | Split `voice-gateway` → voice-asr / voice-tts / voice-e2e; split `adapter_runner` → per-adapter-type. See §8. |
 | D7 | `cc_adapter_runner` lifecycle | **Per-session**, not per-esrd. One Session → one tmux → one cc_adapter_runner Python process. See §8.2. |
 | D8 | PeerFactory / SessionRouter / SessionRegistry separation | Three modules, strict role separation. See §3.3. |
@@ -105,7 +105,7 @@ Resolved during brainstorming; frozen for this spec.
 | D15 | `session_new` Admin command | Breaking change accepted; gains `agent` field; no backwards-compat shim. |
 | D16 | PeerPool default size | **128** workers per pool (in `Esr.PeerPool` module). `pools.yaml` is optional; absent pool entries inherit the default. yaml only appears when overriding. |
 | D17 | SessionsSupervisor max_children | **128** concurrent user Sessions per esrd (`max_children: 128` on DynamicSupervisor). Each user Session owns one tmux → tmux count ≤ 128. |
-| D18 | `capabilities_required` in agents.yaml | Linked to existing capabilities v1. Declaring the capability set an agent needs is **mandatory** per agent entry. Admin.Dispatcher verifies the invoking principal holds all listed capabilities before creating the Session. See §3.5. |
+| D18 | `capabilities_required` in agents.yaml | Linked to existing capabilities v1. Declaring the capability set an agent needs is **mandatory** per agent entry. Admin.Dispatcher verifies the invoking principal holds all listed capabilities before creating the Session. Permissions use the canonical `prefix:name/perm` shape enforced by `Esr.Capabilities.Grants.matches?/2` — e.g. `session:default/create`, `tmux:default/spawn`, `handler:cc_adapter_runner/invoke`, `peer_proxy:feishu/forward`, `peer_pool:voice_asr/acquire`. The dotted `cap.*` form from earlier drafts is not supported. See §3.5 and `docs/notes/capability-name-format-mismatch.md`. |
 | D19 | Reserved field names in agents.yaml | `rate_limits`, `timeout_ms`, `allowed_principals` are reserved. Schema validator warns if they appear (not implemented yet). Prevents future schema-break when these features arrive. |
 | D20 | TmuxProcess mode | Use `tmux -C` control mode (per issue #7 recommendation). TmuxProcess parses tmux control protocol events (`%output`, `%window-close`, `%exit`). See §3.2 + §4.1 TmuxProcess card. |
 | D21 | Per-PR acceptance gates | Each PR has explicit test gates (§10.5). CI must pass each gate before PR is mergeable. |
@@ -248,62 +248,73 @@ Three behaviours define the Peer contract. Each peer module declares exactly one
 
 A Peer.Proxy module **must not** define `handle_call/3`. The `use Esr.Peer.Proxy` macro emits a compile error if one is present. This enforces "proxies never accumulate state".
 
-**Authorisation hook**: every Peer.Proxy automatically wraps `forward/2` in a capability check — `proxy_ctx.session_id` must have `cap.peer_proxy.forward(target=<target_peer>)`. The check happens per-call, using `Esr.Capabilities.has?/2`.
+**Authorisation hook**: every Peer.Proxy automatically wraps `forward/2` in a capability check — the `proxy_ctx.principal_id` must hold the permission declared by the Peer.Proxy module's `@required_cap` attribute (canonical `prefix:name/perm` shape, e.g. `peer_proxy:feishu/forward`). The check happens per-call, using `Esr.Capabilities.has?/2`.
 
 ### 3.2 OSProcess底座
 
 `Esr.OSProcess` is a behaviour (not a Peer type — it is a **composition mixin** used alongside `Peer.Stateful`).
 
 ```elixir
-@callback start_os_process(opts :: keyword()) ::
-  {:ok, pid :: pid(), os_pid :: non_neg_integer()} | {:error, reason :: term()}
 @callback os_cmd(state :: term()) :: [String.t()]
 @callback os_env(state :: term()) :: [{String.t(), String.t()}]
 @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::
   {:restart, new_state :: term()} | {:stop, reason :: term()}
+@callback on_terminate(state :: term()) :: :ok        # optional
 ```
 
-Implementation backs onto MuonTrap:
+**Implementation backs onto [`:erlexec`](https://hexdocs.pm/erlexec/)** (PR-3 `P3-17`, 2026-04-22). The first implementation attempt used `Port.open` with optional MuonTrap wrapper; that底座 is documented in `docs/notes/muontrap-mode3-constraint.md` and was replaced wholesale by erlexec because:
 
-- `Esr.TmuxProcess` — wraps `tmux -C new-session -d -s <name> -c <dir>` (control mode, per D20). Control mode gives a bi-directional protocol with tagged events (`%output`, `%window-close`, `%exit`) instead of raw ANSI escape parsing. MuonTrap owns the stdin/stdout to the control-mode client and guarantees OS cleanup on actor exit.
-- `Esr.PyProcess` — wraps `uv run python -m <sidecar_module>`. Provides stdin/stdout JSON-line protocol to Python code. One `PyProcess` = one Python OS process.
+1. erlexec provides native pseudo-terminal (PTY) support, which `tmux -C` control mode needs on macOS — without a controlling TTY the control-mode client exits immediately after session creation.
+2. erlexec supports bidirectional stdin/stdout simultaneously with BEAM-exit cleanup, which the MuonTrap wrapper binary cannot (its `--capture-output` flag repurposes wrapper stdin as an ack-byte channel, blocking application writes).
+
+See `docs/notes/erlexec-migration.md` for the full migration note.
+
+**Wrapper modes** — `use Esr.OSProcess, kind: :foo, wrapper: :pty | :plain`:
+
+- `:pty` — spawn the child under a real pseudo-terminal. Use for anything that calls `isatty(0)`, requires job control, or emits terminal escape sequences only when attached (`tmux -C`, interactive shells). Stdout arrives with `\r\n` which the底座 normalizes to `\n` before dispatching.
+- `:plain` — no PTY. Use for structured-protocol sidecars (JSON-line RPC, plain text log pipelines).
+
+**Concrete peers:**
+
+- `Esr.Peers.TmuxProcess` — wraps `tmux -C new-session -s <name> -c <dir>` (control mode, per D20). Uses `wrapper: :pty`. Control mode gives a bi-directional protocol with tagged events (`%output`, `%window-close`, `%exit`) instead of raw ANSI escape parsing.
+- `Esr.PyProcess` — wraps `uv run python -m <sidecar_module>`. Uses `wrapper: :plain`. Provides stdin/stdout JSON-line protocol to Python code. One `PyProcess` = one Python OS process.
 
 Composition pattern inside a Peer:
 
 ```elixir
 defmodule Esr.Peers.TmuxProcess do
   use Esr.Peer.Stateful
-  use Esr.OSProcess, kind: :tmux
+  use Esr.OSProcess, kind: :tmux, wrapper: :pty
 
   @impl Esr.Peer.Stateful
   def handle_downstream({:send_input, text}, state) do
     # Control-mode command: send-keys to the active pane
     cmd = "send-keys -t #{state.session_name} \"#{escape(text)}\" Enter\n"
-    :ok = os_write(state, cmd)
+    __MODULE__.OSProcessWorker.write_stdin(self(), cmd)
     {:forward, [], state}
   end
 
   @impl Esr.OSProcess
   def os_cmd(state) do
-    ["tmux", "-C", "new-session", "-d", "-s", state.session_name, "-c", state.dir]
+    ["tmux", "-C", "new-session", "-s", state.session_name, "-c", state.dir]
   end
 
   @impl Esr.OSProcess
   def on_os_exit(0, _state), do: {:stop, :normal}
-  def on_os_exit(status, _state) when status > 0, do: {:stop, {:tmux_crashed, status}}
+  def on_os_exit(status, _state), do: {:stop, {:tmux_crashed, status}}
 
-  # Parse tmux control protocol events from MuonTrap stdout
-  def handle_info({:os_stdout, line}, state) do
-    case parse_control_event(line) do
-      {:output, pane_id, bytes} -> {:forward, [{:tmux_output, bytes}], state}
-      {:exit, _status}          -> {:stop, :tmux_exited}
-      _other                    -> {:forward, [], state}
+  @impl Esr.Peer.Stateful
+  def handle_upstream({:os_stdout, line}, state) do
+    case parse_event(line) do
+      {:output, _pane, bytes} -> {:forward, [{:tmux_output, bytes}], state}
+      {:exit} -> {:stop, :tmux_exited, state}
+      _other -> {:forward, [], state}
     end
   end
 end
 ```
 
-The `use Esr.OSProcess, kind: :tmux` macro injects MuonTrap child-spec handling, monitors, and provides `os_write/2` / `os_signal/2` helpers.
+The `use Esr.OSProcess, kind: :tmux, wrapper: :pty` macro injects an embedded `OSProcessWorker` GenServer that owns the `:exec.run_link/2` call, demultiplexes `{:stdout, os_pid, data}` messages into whole-line `{:os_stdout, line}` events (via `Esr.OSProcess.split_lines/1`), and runs `:exec.stop/1` in `terminate/2` after the optional `on_terminate/1` app-level hook. Cleanup on BEAM hard-crash is handled by erlexec's `exec-port` C++ program (parent-death signaling on macOS/Linux).
 
 **Scope clarification**: every Python sidecar (per §7 S3 split) uses `PyProcess`; tmux uses `TmuxProcess`. Other OS processes (launchd-launched esrd itself, voice-gateway as a whole) are NOT wrapped by OSProcess底座 — they are at a different lifecycle tier (launchd-supervised, not Elixir-supervised).
 
@@ -388,9 +399,9 @@ agents:
   cc:
     description: "Claude Code in tmux, text I/O"
     capabilities_required:                   # mandatory; verified at /new-session time
-      - cap.session.create
-      - cap.tmux.spawn
-      - cap.handler.cc_adapter_runner.invoke
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -422,11 +433,11 @@ agents:
   cc-voice:
     description: "CC + voice I/O (voice in → ASR → CC → TTS → voice out)"
     capabilities_required:
-      - cap.session.create
-      - cap.tmux.spawn
-      - cap.handler.cc_adapter_runner.invoke
-      - cap.peer_pool.voice_asr.acquire
-      - cap.peer_pool.voice_tts.acquire
+      - session:default/create
+      - tmux:default/spawn
+      - handler:cc_adapter_runner/invoke
+      - peer_pool:voice_asr/acquire
+      - peer_pool:voice_tts/acquire
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -463,8 +474,8 @@ agents:
   voice-e2e:
     description: "End-to-end voice LLM; agent as side-input, no CC"
     capabilities_required:
-      - cap.session.create
-      - cap.handler.voice_e2e.invoke
+      - session:default/create
+      - handler:voice_e2e/invoke
     pipeline:
       inbound:
         - name: feishu_chat_proxy
@@ -526,7 +537,7 @@ User Session_<id>:
 
 Properties:
 - **Per-session mailbox**: if FeishuAppAdapter is slow, only the owning session's FeishuAppProxy backs up. Other sessions unaffected.
-- **Capability check hook**: FeishuAppProxy's injected `forward/2` wrapper checks `cap.peer_proxy.forward(target="admin::feishu_app_adapter_${app_id}")` before each forward. Per-session grants are enforced at the proxy boundary.
+- **Capability check hook**: FeishuAppProxy declares `@required_cap "peer_proxy:feishu/forward"`; the injected `forward/2` wrapper calls `Esr.Capabilities.has?(principal_id, "peer_proxy:feishu/forward")` before each forward. Per-session grants are enforced at the proxy boundary. (Runtime target-scoping — e.g. per-app_id — is a future extension; today the permission is a single scope-free string.)
 - **Static target binding**: FeishuAppProxy's `target` string is resolved once at session spawn (substitution happens in `SessionRouter.create_session/2`) and stored in `proxy_ctx`. Runtime forward is either a direct `send/cast` to a stored PID or a pool-acquire operation against a supervisor named in `proxy_ctx`. Arbitrary runtime lookups against SessionRegistry (or any other registry) on the hot path are disallowed. Two narrow exceptions — pool-acquire for voice peers (§4.1 VoiceASRProxy/VoiceTTSProxy) and the slash-handler fallback lookup (§5.3) — are documented where they appear.
 - **Missing-target handling**: if `target` resolves to a dead PID, the forward returns `{:drop, :target_unavailable}` and the owning Session gets a monitor DOWN notification. SessionRouter decides whether to rebuild or tear down the Session.
 
@@ -1066,7 +1077,7 @@ Every PR **must** pass the gates in its column before it can be merged. Gates ar
 - AdminSession boot test: `Supervisor.which_children/1` returns expected set (FeishuAppAdapter, SlashHandler, VoiceASRPool, VoiceTTSPool)
 - FeishuAppAdapter inbound test: fake WS frame → envelope decoded → `SessionRegistry.lookup_by_chat_thread/2` called → correct FeishuChatProxy pid receives message
 - FeishuChatProxy slash detection test: inbound with leading `/` → forwards to SlashHandler; without `/` → forwards downstream
-- FeishuAppProxy capability-check test: principal missing `cap.peer_proxy.forward(...)` → `{:drop, :unauthorized}`; with cap → forward succeeds
+- FeishuAppProxy capability-check test: principal missing `peer_proxy:feishu/forward` → `{:drop, :cap_denied}`; with cap → forward succeeds
 - Session supervisor boot test: spawn `{Session, [id, agent_def, params]}` → supervision tree matches `agents.yaml` declaration
 - **N=2 concurrent sessions test** (covers Risk D): create two sessions (different chat_ids), send message to session A, assert session B's FeishuChatProxy mailbox is untouched
 - E2E smoke: `/new-session --agent cc --dir /tmp/test` via simulated Feishu → Session created → tree shape correct

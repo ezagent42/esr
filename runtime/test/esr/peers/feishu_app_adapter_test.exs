@@ -58,10 +58,13 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
   end
 
   test "inbound envelope with no matching session emits :new_chat_thread event" do
-    # With no SessionRegistry entry for (chat_id, thread_id), FeishuAppAdapter
-    # broadcasts a :new_chat_thread event on PubSub for SessionRouter to consume
-    # (SessionRouter itself is PR-3; in PR-2 we assert the broadcast happens).
-    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "new_chat_thread")
+    # With no SessionRegistry entry for (chat_id, thread_id),
+    # FeishuAppAdapter broadcasts a :new_chat_thread event on the
+    # `session_router` PubSub topic for SessionRouter to consume.
+    # P3-7: topic is `session_router` (was "new_chat_thread"); tuple
+    # order is `{:new_chat_thread, app_id, chat_id, thread_id, envelope}`
+    # (app_id first — FeishuAppAdapter owns the wiring).
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
 
     {:ok, pid} =
       DynamicSupervisor.start_child(
@@ -80,6 +83,6 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
     send(pid, {:inbound_event, envelope})
 
-    assert_receive {:new_chat_thread, "oc_new", "om_new", "cli_app_nomatch", ^envelope}, 500
+    assert_receive {:new_chat_thread, "cli_app_nomatch", "oc_new", "om_new", ^envelope}, 500
   end
 end

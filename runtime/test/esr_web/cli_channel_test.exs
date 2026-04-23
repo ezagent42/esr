@@ -60,27 +60,11 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
-  describe "cli:actors/tree" do
+  describe "cli:actors/tree (post P3-13)" do
+    # P3-13: Topology module deleted. cli:actors/tree now returns an
+    # empty topologies list + a migration error string (Option B
+    # polite degradation, per expansion §P3-13.5).
     setup do
-      {:ok, _handle1} =
-        Esr.Topology.Registry.register(
-          "feishu-thread-session",
-          %{"thread_id" => "tree-a"},
-          ["thread:tree-a", "tmux:tree-a", "cc:tree-a"]
-        )
-
-      {:ok, _handle2} =
-        Esr.Topology.Registry.register(
-          "feishu-app-session",
-          %{"app_id" => "tree-b"},
-          ["feishu-app:tree-b"]
-        )
-
-      on_exit(fn ->
-        Esr.Topology.Registry.list_all()
-        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
-      end)
-
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-tree", %{})
@@ -89,19 +73,12 @@ defmodule EsrWeb.CliChannelTest do
       %{tree_socket: socket}
     end
 
-    test "groups actors by their topology instantiation", %{tree_socket: socket} do
+    test "returns empty topologies + migration error", %{tree_socket: socket} do
       ref = push(socket, "cli_call", %{})
       assert_reply ref, :ok, response
       data = response["data"]
-      assert is_list(data["topologies"])
-
-      thread = Enum.find(data["topologies"], &(&1["name"] == "feishu-thread-session"))
-      app = Enum.find(data["topologies"], &(&1["name"] == "feishu-app-session"))
-
-      assert thread["params"] == %{"thread_id" => "tree-a"}
-      assert Enum.sort(thread["peer_ids"]) == ["cc:tree-a", "thread:tree-a", "tmux:tree-a"]
-      assert app["params"] == %{"app_id" => "tree-b"}
-      assert app["peer_ids"] == ["feishu-app:tree-b"]
+      assert data["topologies"] == []
+      assert data["error"] =~ "topology module removed"
     end
   end
 
@@ -145,13 +122,10 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
-  describe "cli:run/<name>" do
+  describe "cli:run/<name> (post P3-13)" do
+    # P3-13: Topology module deleted. cli:run/* now returns a
+    # migration error; session creation goes through /new-session.
     setup do
-      on_exit(fn ->
-        Esr.Topology.Registry.list_all()
-        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
-      end)
-
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-run", %{})
@@ -160,82 +134,32 @@ defmodule EsrWeb.CliChannelTest do
       %{run_socket: socket}
     end
 
-    test "instantiates a one-node artifact and returns the handle",
+    test "returns migration error regardless of payload",
          %{run_socket: socket} do
-      artifact = %{
-        "name" => "simple-session",
-        "params" => ["thread_id"],
-        "nodes" => [
-          %{
-            "id" => "thread:{{thread_id}}",
-            "actor_type" => "feishu_thread_proxy",
-            "handler" => "feishu_thread.on_msg",
-            "depends_on" => []
-          }
-        ]
-      }
-
       ref =
         push(socket, "cli_call", %{
-          "artifact" => artifact,
+          "artifact" => %{"name" => "simple-session"},
           "params" => %{"thread_id" => "run-a"}
         })
 
       assert_reply ref, :ok, response
+      assert response["data"]["error"] =~ "topology module removed"
       assert response["data"]["name"] == "simple-session"
-      assert response["data"]["peer_ids"] == ["thread:run-a"]
-      assert match?({:ok, _}, Esr.Topology.Registry.lookup("simple-session",
-                                                           %{"thread_id" => "run-a"}))
-    end
-
-    test "missing required param returns structured error",
-         %{run_socket: socket} do
-      artifact = %{
-        "name" => "simple-session",
-        "params" => ["thread_id"],
-        "nodes" => [
-          %{
-            "id" => "thread:{{thread_id}}",
-            "actor_type" => "feishu_thread_proxy",
-            "handler" => "feishu_thread.on_msg",
-            "depends_on" => []
-          }
-        ]
-      }
-
-      ref = push(socket, "cli_call", %{"artifact" => artifact, "params" => %{}})
-      assert_reply ref, :ok, response
-      assert response["data"]["error"] =~ "missing_params"
       assert response["data"]["peer_ids"] == []
     end
   end
 
-  describe "cli:stop/<name>" do
+  describe "cli:stop/<name> (post P3-13)" do
     setup do
-      peer_ids = ["thread:stop-a", "tmux:stop-a", "cc:stop-a"]
-
-      {:ok, _handle} =
-        Esr.Topology.Registry.register(
-          "feishu-thread-session",
-          %{"thread_id" => "a"},
-          peer_ids
-        )
-
-      on_exit(fn ->
-        Esr.Topology.Registry.list_all()
-        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
-      end)
-
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-stop", %{})
         |> subscribe_and_join(EsrWeb.CliChannel, "cli:stop/feishu-thread-session")
 
-      %{stop_socket: socket, peer_ids: peer_ids}
+      %{stop_socket: socket}
     end
 
-    test "deactivates the named topology and returns its stopped peer ids",
-         %{stop_socket: socket, peer_ids: expected_ids} do
+    test "returns migration error", %{stop_socket: socket} do
       ref =
         push(socket, "cli_call", %{
           "name" => "feishu-thread-session",
@@ -243,50 +167,14 @@ defmodule EsrWeb.CliChannelTest do
         })
 
       assert_reply ref, :ok, response
-
+      assert response["data"]["error"] =~ "topology module removed"
       assert response["data"]["name"] == "feishu-thread-session"
-      assert Enum.sort(response["data"]["stopped_peer_ids"]) == Enum.sort(expected_ids)
-
-      refute Enum.any?(
-               Esr.Topology.Registry.list_all(),
-               fn h -> h.name == "feishu-thread-session" end
-             )
-    end
-
-    test "stopping a non-existent instantiation returns structured error",
-         %{stop_socket: socket} do
-      ref =
-        push(socket, "cli_call", %{
-          "name" => "feishu-thread-session",
-          "params" => %{"thread_id" => "does-not-exist"}
-        })
-
-      assert_reply ref, :ok, response
-      assert response["data"]["error"] == "instantiation not found"
       assert response["data"]["stopped_peer_ids"] == []
     end
   end
 
-  describe "cli:drain" do
+  describe "cli:drain (post P3-13)" do
     setup do
-      # register two topology instantiations so drain has work to do
-      :ok =
-        Enum.each(
-          [
-            {"feishu-thread-session", %{"thread_id" => "a"}, ["thread:a", "tmux:a", "cc:a"]},
-            {"feishu-app-session", %{"app_id" => "b"}, ["feishu-app:b"]}
-          ],
-          fn {name, params, peer_ids} ->
-            {:ok, _handle} = Esr.Topology.Registry.register(name, params, peer_ids)
-          end
-        )
-
-      on_exit(fn ->
-        # clear everything the test inserted
-        Esr.Topology.Registry.list_all()
-        |> Enum.each(&Esr.Topology.Registry.deactivate/1)
-      end)
-
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-drain", %{})
@@ -295,21 +183,15 @@ defmodule EsrWeb.CliChannelTest do
       %{drain_socket: socket}
     end
 
-    test "drain deactivates every registered topology", %{drain_socket: socket} do
-      initial = length(Esr.Topology.Registry.list_all())
-      assert initial >= 2
-
+    test "returns migration error + empty drained list", %{drain_socket: socket} do
       ref = push(socket, "cli_call", %{})
       assert_reply ref, :ok, response
 
       data = response["data"]
-      assert length(data["drained"]) == initial
+      assert data["error"] =~ "topology module removed"
+      assert data["drained"] == []
+      assert data["stopped_peer_ids"] == []
       assert data["timeouts"] == []
-      # stopped_peer_ids covers every peer_id from every drained handle,
-      # so scenario sig-B can observe per-peer stop via ``actor_id=``.
-      assert is_list(data["stopped_peer_ids"])
-      assert length(data["stopped_peer_ids"]) >= initial
-      assert Esr.Topology.Registry.list_all() == []
     end
   end
 

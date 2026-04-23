@@ -1,5 +1,12 @@
 # Capability Name Format: Spec Says `cap.*`, Code Requires `prefix:name/perm`
 
+## Status
+
+**RESOLVED 2026-04-23 in PR-3 P3-8.** Spec, agents.yaml fixtures, and
+`@required_cap` strings in code all now use the canonical `prefix:name/perm`
+shape. This note is kept for historical context; see the "Future" section
+below for what changed.
+
 ## Context
 
 Discovered 2026-04-22 during PR-2 P2-13 (E2E smoke test).

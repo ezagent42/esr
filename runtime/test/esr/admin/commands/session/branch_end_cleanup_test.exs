@@ -1,17 +1,18 @@
-defmodule Esr.Admin.Commands.Session.EndCleanupTest do
+defmodule Esr.Admin.Commands.Session.BranchEndCleanupTest do
   @moduledoc """
-  DI-11 Task 25 — `Esr.Admin.Commands.Session.End` non-force path:
-  cleanup-check handshake via `session.signal_cleanup` MCP tool, with
-  a 30-s soft timeout fallback.
+  DI-11 Task 25 — `Esr.Admin.Commands.Session.BranchEnd` (formerly
+  `Session.End` before PR-3 P3-9 rename) non-force path: cleanup-check
+  handshake via `session.signal_cleanup` MCP tool, with a 30-s soft
+  timeout fallback.
 
   The handshake has three pieces:
 
-    1. `Session.End.execute/2` calls
+    1. `Session.BranchEnd.execute/2` calls
        `Esr.Admin.Dispatcher.register_cleanup/2` to advertise its pid
        under `session_id = "<submitter>-<branch>"`.
     2. Its injected `:sender_fn` kicks off the cleanup-check (stubbed
        in these tests — there's no CC-side `cleanup_check` tool
-       today; see `Session.End` module doc).
+       today; see `Session.BranchEnd` module doc).
     3. It blocks on `receive {:cleanup_signal, status, details}` with
        a `:cleanup_timeout_ms` override so the timeout branch can be
        exercised in < 1 s.
@@ -21,23 +22,24 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
        `Esr.Admin.Dispatcher`, which is the exact message shape the
        `session.signal_cleanup` MCP tool (Task 24) produces. The
        Dispatcher's new `handle_info/2` clause forwards it to the
-       registered Session.End Task.
+       registered Session.BranchEnd Task.
 
   ## What is NOT tested here
 
   * The end-to-end pipe from CC's MCP tool_invoke to the Dispatcher —
     that's covered by `Esr.PeerServerSessionCleanupTest` (Task 24).
   * The `--force` happy paths (branches.yaml prune, routing.yaml
-    prune, active fallback) — covered by `Esr.Admin.Commands.Session.EndTest`.
+    prune, active fallback) — covered by
+    `Esr.Admin.Commands.Session.BranchEndTest`.
 
-  Both ends (Dispatcher routing + Session.End blocking receive) are
-  exercised together here, so the cleanup flow is covered end-to-end
-  on the ESR side.
+  Both ends (Dispatcher routing + Session.BranchEnd blocking receive)
+  are exercised together here, so the cleanup flow is covered
+  end-to-end on the ESR side.
   """
 
   use ExUnit.Case, async: false
 
-  alias Esr.Admin.Commands.Session.End, as: SessionEnd
+  alias Esr.Admin.Commands.Session.BranchEnd, as: SessionBranchEnd
   alias Esr.Admin.Dispatcher
 
   setup do
@@ -133,7 +135,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       end
 
       assert {:ok, %{"branch" => "feature-foo"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: stub_spawn,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
@@ -187,7 +189,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
                 "details" => %{"modified" => ["lib/foo.ex"]} = details,
                 "branch" => "feature-bar"
               }} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
@@ -224,7 +226,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
                 "details" => %{"ahead" => 2} = details,
                 "branch" => "feature-baz"
               }} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
@@ -249,7 +251,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       end
 
       assert {:error, %{"type" => "worktree_stashed", "branch" => "feature-qux"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
@@ -281,7 +283,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
                 "timeout_ms" => 80,
                 "hint" => hint
               }} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: silent_sender,
                  cleanup_timeout_ms: 80
@@ -306,7 +308,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       silent_sender = fn _sid, _wpath -> :ok end
 
       assert {:error, %{"type" => "cleanup_timeout"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: fn {_} -> flunk("unreachable") end,
                  sender_fn: silent_sender,
                  cleanup_timeout_ms: 50
@@ -346,7 +348,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       end
 
       assert {:ok, %{"branch" => "feature-forced"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: stub_spawn,
                  sender_fn: sender_guard,
                  cleanup_timeout_ms: 10_000
@@ -378,7 +380,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       t0 = System.monotonic_time(:millisecond)
 
       assert {:error, %{"type" => "cleanup_timeout"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  cleanup_timeout_ms: 120
                )
@@ -439,7 +441,7 @@ defmodule Esr.Admin.Commands.Session.EndCleanupTest do
       }
 
       assert {:error, %{"type" => "cleanup_timeout"}} =
-               SessionEnd.execute(cmd,
+               SessionBranchEnd.execute(cmd,
                  spawn_fn: fn {_} -> flunk("unreachable") end,
                  cleanup_timeout_ms: 80
                )

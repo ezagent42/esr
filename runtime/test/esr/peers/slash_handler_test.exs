@@ -114,7 +114,7 @@ defmodule Esr.Peers.SlashHandlerTest do
     assert text =~ "unknown command"
   end
 
-  test "new-session parses --agent cc --dir /tmp/test into session_agent_new" do
+  test "new-session parses --agent cc --dir /tmp/test into session_new" do
     {:ok, pid} =
       GenServer.start_link(
         SlashHandler,
@@ -136,7 +136,7 @@ defmodule Esr.Peers.SlashHandlerTest do
     assert_receive {:"$gen_cast",
                     {:execute,
                      %{
-                       "kind" => "session_agent_new",
+                       "kind" => "session_new",
                        "args" => %{"agent" => "cc", "dir" => "/tmp/test"}
                      }, {:reply_to, {:pid, ^pid, _ref}}}},
                    500

@@ -22,8 +22,6 @@ defmodule Esr.PeerServer do
 
   alias Esr.HandlerRouter
   alias Esr.Persistence.Ets, as: PersistStore
-  alias Esr.Topology.Instantiator, as: TopoInstantiator
-  alias Esr.Topology.Registry, as: TopoRegistry
 
   @doc """
   Built-in MCP tool names exposed by `build_emit_for_tool/3`
@@ -680,43 +678,9 @@ defmodule Esr.PeerServer do
     %__MODULE__{state | pending_directives: Map.put(state.pending_directives, id, %{action: action})}
   end
 
-  defp dispatch_action(%{"type" => "route", "target" => target, "msg" => msg}, %__MODULE__{} = state) do
-    case Registry.lookup(Esr.PeerRegistry, target) do
-      [{pid, _}] ->
-        send(pid, {:inbound_event, %{"payload" => msg}})
-
-      [] ->
-        :telemetry.execute([:esr, :route, :target_missing], %{}, %{
-          actor_id: state.actor_id,
-          target: target
-        })
-    end
-
-    state
-  end
-
-  defp dispatch_action(%{"type" => "invoke_command"} = action, %__MODULE__{} = state) do
-    name = action["name"]
-    params = Map.get(action, "params", %{})
-
-    case TopoRegistry.get_artifact(name) do
-      {:ok, artifact} ->
-        # Instantiator.instantiate blocks up to directive_timeout per
-        # init_directive node; run it in a fire-and-forget Task so the
-        # PeerServer's mailbox stays responsive (reviewer S2/C5).
-        actor_id = state.actor_id
-
-        _ = Task.start(fn -> run_instantiation(artifact, params, actor_id) end)
-
-      :error ->
-        :telemetry.execute([:esr, :invoke_command, :unknown], %{}, %{
-          actor_id: state.actor_id,
-          name: name
-        })
-    end
-
-    state
-  end
+  # P3-16: `route` action deleted. Spec §2.9 removes cross-esrd
+  # routing — directive-returning handlers now flow through
+  # CCProcess/TmuxProcess peer chains, not a PeerRegistry lookup.
 
   defp dispatch_action(unknown, %__MODULE__{} = state) do
     :telemetry.execute([:esr, :action, :unknown], %{}, %{
@@ -725,25 +689,6 @@ defmodule Esr.PeerServer do
     })
 
     state
-  end
-
-  defp run_instantiation(artifact, params, source_actor) do
-    case TopoInstantiator.instantiate(artifact, params) do
-      {:ok, _handle} ->
-        :telemetry.execute([:esr, :topology, :activated], %{}, %{
-          name: artifact["name"],
-          params: params,
-          invoked_by: source_actor
-        })
-
-      {:error, reason} ->
-        :telemetry.execute([:esr, :topology, :failed], %{}, %{
-          name: artifact["name"],
-          params: params,
-          invoked_by: source_actor,
-          reason: reason
-        })
-    end
   end
 
   defp emit_directive_outcome(actor_id, id, %{"ok" => true}) do
@@ -898,6 +843,15 @@ defmodule Esr.PeerServer do
   # can legitimately omit principal_id — treat anything non-binary as
   # "no grant" so the check always returns a boolean and the deny
   # path records the absent principal clearly.
+  #
+  # P3-3a: this helper still reads the global `Esr.Capabilities.has?/2`
+  # rather than `Esr.SessionProcess.has?/2`. The legacy peer_server
+  # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
+  # to `Esr.Peers.CCProcess` + `Esr.Peers.TmuxProcess` which are
+  # spawned through `PeerFactory.spawn_peer/5` and receive a
+  # `session_process_pid` in their `proxy_ctx`). Leaving the global
+  # read in place here keeps the legacy data plane working during the
+  # cutover; migration happens by deletion, not refactor.
   defp capability_granted?(principal_id, required)
        when is_binary(principal_id) and is_binary(required) do
     Esr.Capabilities.has?(principal_id, required)

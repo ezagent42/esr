@@ -71,20 +71,19 @@ defmodule Esr.Application do
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
       Esr.Admin.Supervisor,
 
-      # 4h. Routing subsystem — SlashHandler parses Feishu slash
-      # commands and forwards them to Esr.Admin.Dispatcher
-      # (dev-prod-isolation spec §6.5). Sits AFTER Esr.Admin.Supervisor
-      # because every slash-command cast targets the Dispatcher by its
-      # registered name — the Router must never start ahead of its
-      # downstream.
-      Esr.Routing.Supervisor,
+      # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
+      # Esr.Routing.SlashHandler removed. The new slash-parsing path
+      # is Esr.Peers.SlashHandler, spawned per-Session under
+      # AdminSessionProcess / SessionProcess (spec §3.5). The old
+      # top-level subsystem was PR-0 scaffolding that got stranded
+      # once the peer/session refactor moved slash parsing into the
+      # peer graph.
 
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
       # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
       # by Esr.SessionRegistry.lookup_by_chat_thread/2 in the new peer chain.
       Esr.HandlerRouter.Supervisor,
-      Esr.Topology.Supervisor,
       Esr.Persistence.Supervisor,
       Esr.Telemetry.Supervisor,
 
@@ -158,49 +157,16 @@ defmodule Esr.Application do
           type = row["type"] || ""
           config = row["config"] || %{}
           _ = spawn_fn.(name, type, config)
-          # Auto-instantiate feishu-app-session topology for feishu adapters
-          # so esr actors list shows feishu-app:<app_id> after a restart
-          # (L0b gate assertion — "auto-restore" means the peer is live
-          # without any manual `esr cmd run`).
-          if type == "feishu" do
-            app_id = config["app_id"] || config[:app_id]
-            if is_binary(app_id) and app_id != "" do
-              _ = restore_feishu_app_session(app_id)
-            end
-          end
+          # Topology auto-restore of feishu-app-session peers was deleted
+          # in P3-13 (Topology module removal). In the peer/session
+          # refactor, FeishuAppAdapter peers are started via
+          # adapters.yaml + WorkerSupervisor above; no separate Elixir
+          # peer needs to be auto-spawned per app_id.
         end
       end
     end
 
     :ok
-  end
-
-  # Instantiate feishu-app-session topology for a given app_id if the
-  # artifact is registered. Deferred via Task so Application.start/2
-  # returns promptly (Topology.Instantiator can block on init_directives).
-  defp restore_feishu_app_session(app_id) do
-    Task.start(fn ->
-      # Small grace period for the Phoenix endpoint to be fully ready to
-      # receive the PeerSupervisor bootstraps.
-      Process.sleep(2_000)
-
-      case Esr.Topology.Registry.get_artifact("feishu-app-session") do
-        {:ok, artifact} ->
-          case Esr.Topology.Instantiator.instantiate(artifact, %{"app_id" => app_id}) do
-            {:ok, _handle} ->
-              require Logger
-              Logger.info("auto-restored feishu-app-session app_id=#{app_id}")
-
-            {:error, reason} ->
-              require Logger
-              Logger.warning("failed to auto-restore feishu-app-session app_id=#{app_id}: #{inspect(reason)}")
-          end
-
-        :error ->
-          require Logger
-          Logger.warning("feishu-app-session artifact not found — cannot auto-restore app_id=#{app_id}")
-      end
-    end)
   end
 
   defp default_adapter_ws_url do
