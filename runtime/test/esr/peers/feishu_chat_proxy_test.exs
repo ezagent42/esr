@@ -64,4 +64,32 @@ defmodule Esr.Peers.FeishuChatProxyTest do
 
     assert log =~ "feishu_chat_proxy: non-slash dropped (PR-3 wires downstream)"
   end
+
+  describe "channel_adapter lifted from ctx (D1)" do
+    test "init/1 stores ctx.channel_adapter under string key in state" do
+      args = %{
+        session_id: "s1",
+        chat_id: "oc_x",
+        thread_id: "tg_x",
+        neighbors: [],
+        proxy_ctx: %{channel_adapter: "feishu_app"}
+      }
+
+      {:ok, state} = Esr.Peers.FeishuChatProxy.init(args)
+      assert Map.get(state, "channel_adapter") == "feishu_app"
+    end
+
+    test "init/1 falls back to feishu when ctx is missing the key" do
+      args = %{
+        session_id: "s1",
+        chat_id: "oc_x",
+        thread_id: "tg_x",
+        neighbors: [],
+        proxy_ctx: %{}
+      }
+
+      {:ok, state} = Esr.Peers.FeishuChatProxy.init(args)
+      assert Map.get(state, "channel_adapter") == "feishu"
+    end
+  end
 end

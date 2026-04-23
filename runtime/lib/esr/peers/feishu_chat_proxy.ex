@@ -24,13 +24,24 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   @impl GenServer
   def init(args) do
-    state = %{
+    ctx = Map.get(args, :proxy_ctx, %{})
+
+    base = %{
       session_id: Map.fetch!(args, :session_id),
       chat_id: Map.fetch!(args, :chat_id),
       thread_id: Map.fetch!(args, :thread_id),
       neighbors: Map.get(args, :neighbors, []),
-      proxy_ctx: Map.get(args, :proxy_ctx, %{})
+      proxy_ctx: ctx
     }
+
+    # D1 new pattern — explicitly lift a ctx field into state under a
+    # string key so downstream peers reading the thread-state map (e.g.
+    # PeerServer.build_emit_for_tool) see a typed, named slot instead of
+    # reaching into the opaque proxy_ctx blob. Fallback "feishu" matches
+    # the top-level spawn_pipeline default (session_router.ex). String
+    # key + mixed-key map requires Map.put (Elixir disallows `key:` /
+    # `"key" =>` in the same literal).
+    state = Map.put(base, "channel_adapter", Map.get(ctx, :channel_adapter) || "feishu")
 
     {:ok, state}
   end

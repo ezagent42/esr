@@ -83,6 +83,57 @@ defmodule Esr.SessionRouter do
   def end_session(session_id),
     do: GenServer.call(__MODULE__, {:end_session_sync, session_id}, 10_000)
 
+  @channel_adapter_regex ~r/^admin::([a-z0-9_]+)_adapter_.*$/
+
+  @doc """
+  Extract the channel adapter family from a proxy target string.
+
+  Regex captures the entire token before `_adapter_`, so
+  `"admin::feishu_app_adapter_default"` returns `"feishu_app"` (the family
+  includes underscored suffixes). Non-matching strings fall back to
+  `"feishu"` and emit a `Logger.warning`.
+  """
+  @spec parse_channel_adapter(String.t()) :: {:ok, String.t()}
+  def parse_channel_adapter(target) when is_binary(target) do
+    case Regex.run(@channel_adapter_regex, target) do
+      [_, family] ->
+        {:ok, family}
+
+      _ ->
+        Logger.warning(
+          "channel_adapter: non-matching proxy target target=#{inspect(target)} " <>
+            "falling back to feishu"
+        )
+
+        {:ok, "feishu"}
+    end
+  end
+
+  @doc false
+  # Test-only shim: lets D1's ExUnit reach the private build_ctx/2
+  # clauses without smuggling in a whole Session. Keep the shim narrow —
+  # delegates directly to the same private function.
+  def build_ctx_for_test(spec, params), do: build_ctx(spec, params)
+
+  @doc false
+  def stamp_channel_adapter_for_test(agent_def, params) do
+    proxies = agent_def.proxies || []
+
+    channel_adapter =
+      proxies
+      |> Enum.find_value(fn
+        %{"target" => tgt} when is_binary(tgt) ->
+          {:ok, fam} = parse_channel_adapter(tgt)
+          fam
+
+        _ ->
+          nil
+      end)
+      |> Kernel.||("feishu")
+
+    Map.put(params, :channel_adapter, channel_adapter)
+  end
+
   # ------------------------------------------------------------------
   # GenServer callbacks
   # ------------------------------------------------------------------
@@ -294,6 +345,9 @@ defmodule Esr.SessionRouter do
   defp spawn_pipeline(session_id, agent_def, params) do
     inbound = agent_def.pipeline.inbound || []
     proxies = agent_def.proxies || []
+    # D1: lift `channel_adapter` from the first matching proxy target so
+    # downstream peers (FeishuChatProxy, CCProcess) see it via their ctx.
+    params = stamp_channel_adapter_for_test(agent_def, params)
 
     try do
       {refs, monitors} =
@@ -376,10 +430,13 @@ defmodule Esr.SessionRouter do
         _ -> nil
       end
 
+    {:ok, channel_adapter} = parse_channel_adapter(expanded)
+
     %{
       principal_id: get_param(params, :principal_id),
       target_pid: target_pid,
-      app_id: app_id
+      app_id: app_id,
+      channel_adapter: channel_adapter
     }
   end
 
@@ -407,7 +464,12 @@ defmodule Esr.SessionRouter do
     }
   end
 
-  defp build_ctx(_, _params), do: %{}
+  defp build_ctx(_, params) do
+    case get_param(params, :channel_adapter) do
+      nil -> %{}
+      family -> %{channel_adapter: family}
+    end
+  end
 
   # Generic per-peer dispatch: each Stateful peer may export
   # `spawn_args/1` (params -> init_args map). Peers that don't define
