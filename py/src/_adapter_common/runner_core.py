@@ -42,7 +42,8 @@ from esr.handler import all_permissions
 from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 
 from _ipc_common.disconnect import watch_disconnect
-from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
+from _ipc_common.frame import make_envelope_filter
+from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE, reconnect_loop
 from _ipc_common.url import resolve_url
 
 logger = logging.getLogger(__name__)
@@ -155,19 +156,7 @@ async def run_with_client(
 
     await client.connect()
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-    def _on_frame(frame: list[Any]) -> None:
-        # frame is [join_ref, ref, topic, event, payload]
-        if len(frame) < 5:
-            return
-        event, payload = frame[3], frame[4]
-        if event != "envelope" or not isinstance(payload, dict):
-            return
-        if payload.get("kind") != "directive":
-            return
-        queue.put_nowait(payload)
-
-    await client.join(topic, _on_frame)
+    await client.join(topic, make_envelope_filter("directive", queue))
     # The envelope builders require an ``esr://`` source (spec §7.5). The
     # channel topic (``adapter:<name>/<id>``) is not a valid URI; derive
     # the source by mapping topic → ``esr://localhost/<topic>`` so acks
@@ -222,48 +211,23 @@ async def run_with_reconnect(
     """Task 7 (DI-3): wrap :func:`run_with_client` in an exponential-backoff
     reconnect loop that re-reads the port file on every attempt.
 
-    Each iteration:
-    1. Re-resolve the URL via :func:`_ipc_common.url.resolve_url`
-       (follows launchctl kickstart when ``esrd.port`` changes).
-    2. Construct a fresh :class:`ChannelClient` (new WS session).
-    3. Delegate to :func:`run_with_client`; a clean return resets the
-       backoff schedule.
-    4. On :class:`ConnectionError` (raised by the disconnect watcher)
-       or :class:`OSError` (WS dial failure), sleep per the backoff
-       schedule and retry.
+    Delegates to :func:`_ipc_common.reconnect.reconnect_loop` which
+    handles URL re-resolution, backoff, and exception protection.
 
     ``client_factory`` is injection-friendly for tests — defaults to
     :class:`ChannelClient` construction, but a test can pass a lambda
     that returns fakes. The factory receives the resolved URL as its
     only argument.
     """
-    from esr.ipc.channel_client import ChannelClient
+    async def run_one(client: Any) -> None:
+        await run_with_client(adapter, client, topic=topic)
 
-    factory_fn: Any = client_factory or (lambda u: ChannelClient(u))
-
-    attempt = 0
-    while True:
-        url = resolve_url(fallback_url)
-        client = factory_fn(url)
-        try:
-            await run_with_client(adapter, client, topic=topic)
-            # Clean return (rare: all loops exited) → reset & retry.
-            attempt = 0
-        except asyncio.CancelledError:
-            raise
-        except (ConnectionError, OSError) as exc:
-            logger.warning(
-                "run_with_client disconnected (%s); reconnecting", exc
-            )
-        except Exception as exc:  # noqa: BLE001 — protect the outer loop
-            logger.warning(
-                "run_with_client raised unexpected error (%s); reconnecting",
-                exc,
-            )
-
-        delay = backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
-        await asyncio.sleep(delay)
-        attempt += 1
+    await reconnect_loop(
+        run_one,
+        fallback_url=fallback_url,
+        client_factory=client_factory,
+        backoff_schedule=backoff_schedule,
+    )
 
 
 async def run(

@@ -12,7 +12,7 @@ Today's Feishu event flow:
 Feishu open-platform
      │ WebSocket (wss://open.feishu.cn/...)
      ▼
-py/src/esr/ipc/adapter_runner.py  [Python process, spawned per adapter instance]
+py/src/feishu_adapter_runner/  [Python process, spawned per adapter instance]
      │ (uses lark.client / MsgBotClient Python SDK for WS frame handling,
      │  signature verification, event routing)
      │
