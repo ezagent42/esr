@@ -53,18 +53,10 @@ defmodule Esr.MixProject do
       {:bandit, "~> 1.5"},
       {:yaml_elixir, "~> 2.11"},
       {:file_system, "~> 1.0"},
-      # PR-3: `:erlexec` is the新底座 for `Esr.OSProcess`. Chosen over
-      # MuonTrap because it provides native PTY support (needed for
-      # `tmux -C` control-mode on macOS where the absence of a
-      # controlling TTY caused flaky immediate-exit behavior) AND
-      # BEAM-exit cleanup AND bidirectional stdin/stdout — all three
-      # at once, which MuonTrap cannot (see the historical
-      # `.claude/skills/muontrap-elixir/SKILL.md`).
+      # `Esr.OSProcess` 底座 — native PTY support (for tmux -C) +
+      # bidirectional stdin/stdout + BEAM-exit cleanup, all in one.
+      # Migration history: docs/notes/erlexec-migration.md.
       {:erlexec, "~> 2.2"},
-      # Kept temporarily; `Esr.OSProcess` no longer references it but
-      # the `MuonTrap` module is still used by a couple of ad-hoc
-      # callsites. Slated for removal once those are audited.
-      {:muontrap, "~> 1.7"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
