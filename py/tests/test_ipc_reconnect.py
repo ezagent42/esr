@@ -1,5 +1,10 @@
 """Task 7 (DI-3): IPC client auto-reconnect with port-file re-read.
 
+Note: ``esr.ipc.adapter_runner`` is the PR-4b deprecation shim. These
+tests intentionally exercise it (reconnect behaviour must survive the
+shim unchanged); the module-level ``filterwarnings`` below suppresses
+the shim's :class:`DeprecationWarning` so the run stays clean.
+
 Verifies :func:`esr.ipc.adapter_runner.run_with_reconnect` and
 :func:`esr.ipc.handler_worker.run_with_reconnect`:
 
@@ -28,6 +33,14 @@ from typing import Any
 
 import pytest
 from aiohttp import WSMsgType, web
+
+# PR-4b: esr.ipc.adapter_runner is a deprecation shim. These tests are
+# the one place we still import from it (reconnect behaviour is the shim's
+# re-exported surface); silence the warning for the whole module so pytest
+# output stays noise-free.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:esr.ipc.adapter_runner is deprecated:DeprecationWarning"
+)
 
 
 @contextlib.asynccontextmanager
