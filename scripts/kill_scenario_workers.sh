@@ -17,7 +17,10 @@ done
 
 # Give TERM a chance; then SIGKILL anything still alive.
 sleep 1
-pgrep -f 'esr\.ipc\.(adapter_runner|handler_worker)' | while read -r pid; do
+# PR-4b: adapter_runner was split into per-type sidecars; the pattern
+# now matches the legacy monolith (during deprecation window) plus the
+# three new sidecar module names.
+pgrep -f 'esr\.ipc\.(adapter_runner|handler_worker)|python -m (feishu|cc|generic)_adapter_runner' | while read -r pid; do
   kill -9 "$pid" 2>/dev/null || true
 done
 

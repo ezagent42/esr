@@ -22,9 +22,13 @@ defmodule Esr.SessionRouterTest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.TmuxIsolation
+
   alias Esr.SessionRouter
 
   @fixture_path Path.expand("fixtures/agents/simple.yaml", __DIR__)
+
+  setup :isolated_tmux_socket
 
   setup do
     # App-level deps exist: SessionRegistry, Session.Registry,
@@ -61,7 +65,8 @@ defmodule Esr.SessionRouterTest do
     :ok
   end
 
-  test "create_session_sync spawns Session supervisor + inbound Stateful peers" do
+  test "create_session_sync spawns Session supervisor + inbound Stateful peers",
+       %{tmux_socket: tmux_sock} do
     assert {:ok, session_id} =
              SessionRouter.create_session(%{
                agent: "cc",
@@ -69,7 +74,8 @@ defmodule Esr.SessionRouterTest do
                principal_id: "ou_alice",
                chat_id: "oc_xx",
                thread_id: "om_yy",
-               app_id: "cli_test"
+               app_id: "cli_test",
+               tmux_socket: tmux_sock
              })
 
     assert is_binary(session_id)
@@ -104,7 +110,8 @@ defmodule Esr.SessionRouterTest do
              })
   end
 
-  test "end_session terminates Session supervisor + unregisters" do
+  test "end_session terminates Session supervisor + unregisters",
+       %{tmux_socket: tmux_sock} do
     {:ok, sid} =
       SessionRouter.create_session(%{
         agent: "cc",
@@ -112,7 +119,8 @@ defmodule Esr.SessionRouterTest do
         principal_id: "ou_alice",
         chat_id: "oc_aa",
         thread_id: "om_bb",
-        app_id: "cli_test"
+        app_id: "cli_test",
+        tmux_socket: tmux_sock
       })
 
     # Precondition: lookup succeeds.
@@ -179,7 +187,8 @@ defmodule Esr.SessionRouterTest do
       assert Process.alive?(router)
     end
 
-    test "P4a-9: cc-voice agent spawns the CC chain + records VoiceASR/TTS as proxy_module" do
+    test "P4a-9: cc-voice agent spawns the CC chain + records VoiceASR/TTS as proxy_module",
+         %{tmux_socket: tmux_sock} do
       # Load the voice fixture on top of the existing agents so both
       # `cc` (simple.yaml) and `cc-voice` (voice.yaml) resolve.
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
@@ -194,7 +203,8 @@ defmodule Esr.SessionRouterTest do
                  principal_id: "ou_alice",
                  chat_id: "oc_voice",
                  thread_id: "om_voice",
-                 app_id: "cli_test"
+                 app_id: "cli_test",
+                 tmux_socket: tmux_sock
                })
 
       assert is_binary(session_id)
@@ -219,7 +229,8 @@ defmodule Esr.SessionRouterTest do
       assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
     end
 
-    test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer" do
+    test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer",
+         %{tmux_socket: tmux_sock} do
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
       :ok = Esr.SessionRegistry.load_agents(voice_fixture)
 
@@ -232,7 +243,8 @@ defmodule Esr.SessionRouterTest do
                  principal_id: "ou_alice",
                  chat_id: "oc_e2e",
                  thread_id: "om_e2e",
-                 app_id: "cli_test"
+                 app_id: "cli_test",
+                 tmux_socket: tmux_sock
                })
 
       {:ok, ^session_id, refs} =
@@ -244,7 +256,8 @@ defmodule Esr.SessionRouterTest do
       assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
     end
 
-    test "telemetry fires on peer_crashed DOWN without crashing the router" do
+    test "telemetry fires on peer_crashed DOWN without crashing the router",
+         %{tmux_socket: tmux_sock} do
       ref =
         :telemetry_test.attach_event_handlers(self(), [
           [:esr, :session_router, :peer_crashed]
@@ -266,7 +279,8 @@ defmodule Esr.SessionRouterTest do
           principal_id: "ou_alice",
           chat_id: "oc_crash",
           thread_id: "om_crash",
-          app_id: "cli_test"
+          app_id: "cli_test",
+          tmux_socket: tmux_sock
         })
 
       # Find one spawned peer and kill it; the router's monitor will

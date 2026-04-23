@@ -148,19 +148,31 @@ defmodule Esr.Peers.TmuxProcessTest do
   end
 
   describe "integration (real tmux)" do
-    @session_name "esr-test-tmux-#{System.system_time(:millisecond)}"
-
+    # Each test uses an isolated socket path so test sessions can never
+    # leak into the user's default tmux server. Defensive `on_exit` kills
+    # the whole server + removes the socket file.
     setup do
+      sock = Path.join(System.tmp_dir!(), "esr-tmux-#{:erlang.unique_integer([:positive])}.sock")
+
       on_exit(fn ->
-        System.cmd("tmux", ["kill-session", "-t", @session_name], stderr_to_stdout: true)
+        System.cmd("tmux", ["-S", sock, "kill-server"], stderr_to_stdout: true)
+        File.rm(sock)
       end)
 
-      :ok
+      {:ok, tmux_socket: sock}
     end
 
     @tag :integration
-    test "starts tmux in -C mode and receives %begin/%end output markers" do
-      {:ok, pid} = TmuxProcess.start_link(%{session_name: @session_name, dir: "/tmp"})
+    test "starts tmux in -C mode and receives %begin/%end output markers", %{tmux_socket: sock} do
+      name = "esr_test_markers_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        TmuxProcess.start_link(%{
+          session_name: name,
+          dir: "/tmp",
+          tmux_socket: sock
+        })
+
       {:ok, _os_pid} = GenServer.call(pid, :os_pid)
 
       :ok = TmuxProcess.send_command(pid, "list-windows")
@@ -172,22 +184,28 @@ defmodule Esr.Peers.TmuxProcessTest do
     end
 
     @tag :integration
-    test "terminate/2 invokes tmux kill-session via on_terminate" do
+    test "terminate/2 invokes tmux kill-session via on_terminate", %{tmux_socket: sock} do
       name = "esr_pr3_term_test_#{System.unique_integer([:positive])}"
-      on_exit(fn -> System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true) end)
 
       {:ok, pid} =
-        TmuxProcess.start_link(%{session_name: name, dir: "/tmp", subscriber: self()})
+        TmuxProcess.start_link(%{
+          session_name: name,
+          dir: "/tmp",
+          subscriber: self(),
+          tmux_socket: sock
+        })
 
       Process.sleep(300)
 
-      {out, 0} = System.cmd("tmux", ["list-sessions"], stderr_to_stdout: true)
+      {out, 0} = System.cmd("tmux", ["-S", sock, "list-sessions"], stderr_to_stdout: true)
       assert out =~ name
 
       GenServer.stop(pid)
       Process.sleep(500)
 
-      {out2, _} = System.cmd("tmux", ["list-sessions"], stderr_to_stdout: true)
+      # After on_terminate: server is killed, socket file removed.
+      # `list-sessions` on the dead socket should NOT see our session.
+      {out2, _} = System.cmd("tmux", ["-S", sock, "list-sessions"], stderr_to_stdout: true)
       refute out2 =~ name
     end
   end

@@ -19,7 +19,7 @@ class AdapterNotFound(LookupError):
     """Raised when no adapter with the requested name is registered."""
 
 
-def load_adapter_factory(name: str) -> Callable[[str, dict[str, Any]], Any]:
+def load_adapter_factory(name: str) -> Callable[..., Any]:
     """Import ``esr_<name>`` and return the registered adapter's factory.
 
     Name normalisation: hyphens in ``name`` become underscores in the
