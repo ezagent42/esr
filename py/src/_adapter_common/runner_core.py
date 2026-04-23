@@ -33,6 +33,7 @@ from typing import Any, Protocol
 from esr.handler import all_permissions
 from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 
+from _ipc_common.disconnect import watch_disconnect
 from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
 from _ipc_common.url import resolve_url
 
@@ -120,27 +121,6 @@ async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
             workspace_name=event_dict.get("workspace_name"),
         )
         await pusher.push_envelope(env)
-
-
-async def watch_disconnect(
-    client: Any, poll_interval: float = 0.1
-) -> None:
-    """Task 7 (DI-3): raise :class:`ConnectionError` when the WS drops.
-
-    Polls ``client.connected`` every ``poll_interval`` seconds. When the
-    flag flips False (e.g. aiohttp's read loop exits because the server
-    closed the socket), raises :class:`ConnectionError` so the enclosing
-    TaskGroup unwinds and :func:`run_with_reconnect` can attempt a
-    fresh connection. The wall-clock ceiling on disconnect detection is
-    ~``poll_interval``.
-
-    Fake test clients without a ``connected`` attribute are tolerated by
-    treating ``getattr`` misses as "still connected".
-    """
-    while True:
-        if not getattr(client, "connected", True):
-            raise ConnectionError("ws disconnected")
-        await asyncio.sleep(poll_interval)
 
 
 async def run_with_client(
