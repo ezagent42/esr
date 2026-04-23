@@ -82,18 +82,28 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         @test_principal_nocap => []
       })
 
-    # Esr.Peers.SlashHandler is NOT auto-started by Esr.Application —
-    # SessionRouter spawns it per-Session. Start it explicitly under
-    # test_supervisor so it registers under :slash_handler in
-    # AdminSessionProcess. (The legacy Routing.SlashHandler was
-    # deleted in PR-3 P3-14.)
-    {:ok, slash_pid} =
-      start_supervised(%{
-        id: :smoke_slash_handler,
-        start:
-          {SlashHandler, :start_link,
-           [%{session_id: "admin", neighbors: [], proxy_ctx: %{}}]}
-      })
+    # PR-8 T1: Esr.Peers.SlashHandler is now auto-started by
+    # `Esr.AdminSession.bootstrap_slash_handler/0` during
+    # `Esr.Application.start/2`, so no manual `start_supervised/1` is
+    # needed here — the production path is the test path. Fall back to
+    # a test-supervised spawn only if a prior test torched the handler
+    # and nothing respawned it.
+    slash_pid =
+      case Esr.AdminSessionProcess.slash_handler_ref() do
+        {:ok, pid} ->
+          pid
+
+        :error ->
+          {:ok, pid} =
+            start_supervised(%{
+              id: :smoke_slash_handler,
+              start:
+                {SlashHandler, :start_link,
+                 [%{session_id: "admin", neighbors: [], proxy_ctx: %{}}]}
+            })
+
+          pid
+      end
 
     {:ok, slash: slash_pid}
   end
