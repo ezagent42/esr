@@ -207,7 +207,7 @@ async def run_with_client(
     watch_task = asyncio.create_task(watch_disconnect(client))
     all_tasks = (directive_task, event_task, watch_task)
     try:
-        done, _pending = await asyncio.wait(
+        done, _ = await asyncio.wait(
             set(all_tasks), return_when=asyncio.FIRST_COMPLETED
         )
         for t in all_tasks:
@@ -251,14 +251,12 @@ async def run_with_reconnect(
     """
     from esr.ipc.channel_client import ChannelClient
 
-    if client_factory is None:
-        def client_factory(u: str) -> Any:
-            return ChannelClient(u)
+    factory_fn: Any = client_factory or (lambda u: ChannelClient(u))
 
     attempt = 0
     while True:
         url = resolve_url(fallback_url)
-        client = client_factory(url)
+        client = factory_fn(url)
         try:
             await run_with_client(adapter, client, topic=topic)
             # Clean return (rare: all loops exited) → reset & retry.
@@ -294,7 +292,7 @@ async def run(
     from esr.adapter import AdapterConfig
     from esr.adapters import load_adapter_factory  # type: ignore[import-not-found]
 
-    factory = load_adapter_factory(adapter_name)
+    factory: Any = load_adapter_factory(adapter_name)
     # Factories declare ``config: AdapterConfig`` — wrap the raw JSON dict
     # so read-only attribute access (``cfg.app_id``) works in adapters like
     # feishu. Tests that pass an AdapterConfig directly stay compatible
