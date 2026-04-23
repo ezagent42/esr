@@ -9,3 +9,5 @@ lark_oapi = "*"
 aiohttp = "*"
 http = ["open.feishu.cn"]
 urllib = ["127.0.0.1", "localhost"]
+base64 = "*"
+hashlib = "*"

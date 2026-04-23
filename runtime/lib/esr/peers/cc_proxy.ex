@@ -1,6 +1,6 @@
 defmodule Esr.Peers.CCProxy do
   @moduledoc """
-  Stateless Peer.Proxy between FeishuChatProxy (upstream) and CCProcess
+  Stateless Peer.Proxy between the upstream chat proxy and CCProcess
   (downstream) within the same Session. In PR-3 this is a pure forwarder;
   the `@required_cap` hook is the first enforcement point for any
   rate-limit / throttle policy between channels and CC agents.

@@ -193,4 +193,115 @@ defmodule Esr.PeerServerTest do
         end
     end
   end
+
+  describe "build_emit_for_tool/3 reads channel_adapter from state (D2)" do
+    test "reply emit uses state.channel_adapter when set" do
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      {:ok, emit} =
+        Esr.PeerServer.build_emit_for_tool_for_test(
+          "reply",
+          %{"chat_id" => "oc_1", "text" => "hi"},
+          state
+        )
+
+      assert emit["adapter"] == "feishu_app"
+      assert emit["action"] == "send_message"
+      assert emit["args"] == %{"chat_id" => "oc_1", "content" => "hi"}
+    end
+
+    test "reply emit falls back to feishu when state lacks the slot" do
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{}
+      }
+
+      {:ok, emit} =
+        Esr.PeerServer.build_emit_for_tool_for_test(
+          "reply",
+          %{"chat_id" => "oc_1", "text" => "hi"},
+          state
+        )
+
+      assert emit["adapter"] == "feishu"
+    end
+
+    test "react emit args key is msg_id (was message_id — §5.1 bug fix)" do
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      {:ok, emit} =
+        Esr.PeerServer.build_emit_for_tool_for_test(
+          "react",
+          %{"message_id" => "om_1", "emoji_type" => "THUMBSUP"},
+          state
+        )
+
+      assert emit["adapter"] == "feishu_app"
+      assert emit["args"] == %{"msg_id" => "om_1", "emoji_type" => "THUMBSUP"}
+    end
+
+    test "send_file emit encodes bytes as base64 with sha256 (α shape)" do
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "d2_probe_#{System.unique_integer([:positive])}.txt"
+        )
+
+      File.write!(tmp, "hello D2")
+
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      {:ok, emit} =
+        Esr.PeerServer.build_emit_for_tool_for_test(
+          "send_file",
+          %{"chat_id" => "oc_1", "file_path" => tmp},
+          state
+        )
+
+      assert emit["adapter"] == "feishu_app"
+      assert emit["args"]["chat_id"] == "oc_1"
+      assert emit["args"]["file_name"] == Path.basename(tmp)
+      assert emit["args"]["content_b64"] == Base.encode64("hello D2")
+
+      assert emit["args"]["sha256"] ==
+               :crypto.hash(:sha256, "hello D2") |> Base.encode16(case: :lower)
+
+      File.rm!(tmp)
+    end
+
+    test "send_file emit returns error tuple when file cannot be read" do
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      assert {:error, msg} =
+               Esr.PeerServer.build_emit_for_tool_for_test(
+                 "send_file",
+                 %{"chat_id" => "oc_1", "file_path" => "/nonexistent/path"},
+                 state
+               )
+
+      assert msg =~ "send_file cannot read"
+    end
+  end
 end

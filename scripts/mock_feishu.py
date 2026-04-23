@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import hashlib
 import json
 import secrets
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -50,8 +53,12 @@ class MockFeishu:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._port: int | None = None
-        # connected WS clients — the feishu adapter opens one of these
+        # connected WS clients — the adapter opens one of these
         self._ws_clients: list[web.WebSocketResponse] = []
+        # reactions + uploaded files (T0 §4)
+        self._reactions: list[dict[str, Any]] = []
+        self._uploaded_files: list[dict[str, Any]] = []
+        self._files_dir: Path | None = None  # set in start()
 
     # -- public API -----------------------------------------------------
 
@@ -85,9 +92,19 @@ class MockFeishu:
         app = web.Application()
         app.router.add_post("/open-apis/im/v1/messages", self._on_create_message)
         app.router.add_get("/open-apis/im/v1/messages", self._on_list_messages)
+        app.router.add_post(
+            "/open-apis/im/v1/messages/{message_id}/reactions",
+            self._on_create_reaction,
+        )
+        app.router.add_get("/reactions", self._on_get_reactions)
+        app.router.add_post("/open-apis/im/v1/files", self._on_upload_file)
+        app.router.add_get("/sent_files", self._on_get_sent_files)
         app.router.add_get("/ws", self._on_ws_connect)
         app.router.add_post("/push_inbound", self._on_push_inbound)
         app.router.add_get("/sent_messages", self._on_get_sent_messages)
+
+        self._files_dir = Path(f"/tmp/mock-feishu-files-{port or 'rand'}")
+        self._files_dir.mkdir(parents=True, exist_ok=True)
 
         self._runner = web.AppRunner(app)
         await self._runner.setup()
@@ -95,6 +112,15 @@ class MockFeishu:
         await self._site.start()
         sockets = self._site._server.sockets  # type: ignore[union-attr]
         self._port = sockets[0].getsockname()[1]
+        if self._files_dir.name.endswith("rand"):
+            new_dir = Path(f"/tmp/mock-feishu-files-{self._port}")
+            # If the target already exists from a prior run, remove it.
+            if new_dir.exists():
+                for child in new_dir.iterdir():
+                    child.unlink()
+                new_dir.rmdir()
+            self._files_dir.rename(new_dir)
+            self._files_dir = new_dir
         return f"http://127.0.0.1:{self._port}"
 
     async def stop(self) -> None:
@@ -168,6 +194,14 @@ class MockFeishu:
         }
         self._sent_messages.append(record)
 
+        if body.get("msg_type") == "file":
+            content = json.loads(body.get("content") or "{}")
+            file_key = content.get("file_key", "")
+            for entry in self._uploaded_files:
+                if entry["file_key"] == file_key and not entry["chat_id"]:
+                    entry["chat_id"] = body.get("receive_id", "")
+                    break
+
         chat_id = body.get("receive_id") or "unknown"
         entry = {
             "message_id": message_id,
@@ -216,6 +250,56 @@ class MockFeishu:
         """GET /sent_messages — scenario helper: return the outbound
         message log as a JSON array for grep-style assertions."""
         return web.json_response(list(self._sent_messages))
+
+    async def _on_create_reaction(self, request: web.Request) -> web.Response:
+        message_id = request.match_info["message_id"]
+        body = await request.json()
+        emoji_type = body.get("reaction_type", {}).get("emoji_type", "")
+        reaction_id = "rc_mock_" + secrets.token_hex(8)
+        self._reactions.append({
+            "message_id": message_id,
+            "emoji_type": emoji_type,
+            "ts_unix_ms": int(time.time() * 1000),
+        })
+        return web.json_response({
+            "code": 0,
+            "msg": "",
+            "data": {"reaction_id": reaction_id, "message_id": message_id},
+        })
+
+    async def _on_get_reactions(self, _request: web.Request) -> web.Response:
+        return web.json_response(self._reactions)
+
+    async def _on_upload_file(self, request: web.Request) -> web.Response:
+        ctype = request.headers.get("content-type", "")
+        if "application/json" in ctype:
+            body = await request.json()
+            file_name = body["file_name"]
+            data = base64.b64decode(body["content_b64"])
+        else:
+            form = await request.post()
+            file_name = form["file_name"]
+            file_field = form["file"]
+            data = file_field.file.read() if hasattr(file_field, "file") else bytes(file_field)
+
+        file_key = "file_mock_" + secrets.token_hex(8)
+        assert self._files_dir is not None
+        (self._files_dir / file_key).write_bytes(data)
+        self._uploaded_files.append({
+            "chat_id": "",  # filled on the send-message call
+            "file_key": file_key,
+            "file_name": file_name,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "ts_unix_ms": int(time.time() * 1000),
+        })
+        return web.json_response({
+            "code": 0, "msg": "", "data": {"file_key": file_key},
+        })
+
+    async def _on_get_sent_files(self, _request: web.Request) -> web.Response:
+        linked = [f for f in self._uploaded_files if f["chat_id"]]
+        return web.json_response(linked)
 
     async def _on_list_messages(self, request: web.Request) -> web.Response:
         """GET /open-apis/im/v1/messages — list chat history."""

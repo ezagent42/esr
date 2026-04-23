@@ -217,4 +217,81 @@ defmodule Esr.Peers.TmuxProcessTest do
         relay(reply_to)
     end
   end
+
+  describe "spawn_args/1 honours :tmux_socket_override app env (J1)" do
+    setup do
+      prev = Application.get_env(:esr, :tmux_socket_override)
+
+      on_exit(fn ->
+        if prev == nil do
+          Application.delete_env(:esr, :tmux_socket_override)
+        else
+          Application.put_env(:esr, :tmux_socket_override, prev)
+        end
+      end)
+
+      :ok
+    end
+
+    test "set override is picked up when params omit :tmux_socket" do
+      Application.put_env(:esr, :tmux_socket_override, "/tmp/override.sock")
+      args = Esr.Peers.TmuxProcess.spawn_args(%{})
+      assert args.tmux_socket == "/tmp/override.sock"
+    end
+
+    test "explicit :tmux_socket in params wins over override" do
+      Application.put_env(:esr, :tmux_socket_override, "/tmp/override.sock")
+      args = Esr.Peers.TmuxProcess.spawn_args(%{tmux_socket: "/tmp/explicit.sock"})
+      assert args.tmux_socket == "/tmp/explicit.sock"
+    end
+
+    test "no override + no param yields no :tmux_socket key" do
+      Application.delete_env(:esr, :tmux_socket_override)
+      args = Esr.Peers.TmuxProcess.spawn_args(%{})
+      refute Map.has_key?(args, :tmux_socket)
+    end
+
+    test "boot-time env reader: ESR_E2E_TMUX_SOCK → :tmux_socket_override" do
+      # Exercise the boot helper directly so we don't need to restart
+      # the Application — Esr.Application.apply_tmux_socket_env/0 is a
+      # pure function exposed for tests.
+      System.put_env("ESR_E2E_TMUX_SOCK", "/tmp/boot.sock")
+
+      try do
+        Esr.Application.apply_tmux_socket_env()
+        assert Application.get_env(:esr, :tmux_socket_override) == "/tmp/boot.sock"
+      after
+        System.delete_env("ESR_E2E_TMUX_SOCK")
+        Application.delete_env(:esr, :tmux_socket_override)
+      end
+    end
+
+    test "boot-time reader: empty ESR_E2E_TMUX_SOCK is a no-op" do
+      System.put_env("ESR_E2E_TMUX_SOCK", "")
+      Application.delete_env(:esr, :tmux_socket_override)
+
+      try do
+        Esr.Application.apply_tmux_socket_env()
+        assert Application.get_env(:esr, :tmux_socket_override) == nil
+      after
+        System.delete_env("ESR_E2E_TMUX_SOCK")
+      end
+    end
+  end
+
+  describe "end-to-end ESR_E2E_TMUX_SOCK observable (J1 integration)" do
+    test "boot + spawn assert the tmux socket path threads into peer state" do
+      path = "/tmp/e2e-tmux-int-#{System.unique_integer([:positive])}.sock"
+      System.put_env("ESR_E2E_TMUX_SOCK", path)
+
+      try do
+        Esr.Application.apply_tmux_socket_env()
+        args = Esr.Peers.TmuxProcess.spawn_args(%{})
+        assert args[:tmux_socket] == path
+      after
+        System.delete_env("ESR_E2E_TMUX_SOCK")
+        Application.delete_env(:esr, :tmux_socket_override)
+      end
+    end
+  end
 end

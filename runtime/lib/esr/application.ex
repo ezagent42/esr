@@ -15,6 +15,8 @@ defmodule Esr.Application do
 
   @impl Application
   def start(_type, _args) do
+    apply_tmux_socket_env()
+
     children = [
       # 1. Cluster / default Phoenix-generated children first.
       {DNSCluster, query: Application.get_env(:esr, :dns_cluster_query) || :ignore},
@@ -128,6 +130,22 @@ defmodule Esr.Application do
     end
 
     result
+  end
+
+  @doc """
+  Read `ESR_E2E_TMUX_SOCK` env var and, when set to a non-empty value,
+  stash it under `{:esr, :tmux_socket_override}`. TmuxProcess.spawn_args/1
+  consults the override when its caller didn't supply `:tmux_socket`.
+
+  Exposed publicly for test access — pure function; idempotent.
+  """
+  @spec apply_tmux_socket_env() :: :ok
+  def apply_tmux_socket_env do
+    case System.get_env("ESR_E2E_TMUX_SOCK") do
+      nil -> :ok
+      "" -> :ok
+      path -> Application.put_env(:esr, :tmux_socket_override, path)
+    end
   end
 
   @doc """

@@ -1,9 +1,12 @@
 """MCP tool schemas for esr-channel (spec §3.1 / §5.3).
 
-Three user-facing tools + one diagnostic tool gated on the
-workspace role. Schema shapes match cc-openclaw's openclaw-channel
-`reply` / `react` / `send_file` tools (API-compatible per spec §1.1
-point 1) so switching CC from one channel to the other is drop-in.
+Three user-facing tools + one diagnostic tool gated on the workspace
+role. Schema shapes match cc-openclaw's openclaw-channel reply / react /
+send_file tools (API-compatible per spec §1.1 point 1) so switching CC
+from one channel to the other is drop-in.
+
+Descriptions are channel-agnostic: the CC chain's abstraction boundary
+(spec §2) forbids this module from naming any specific channel adapter.
 """
 from __future__ import annotations
 
@@ -12,19 +15,25 @@ from mcp.types import Tool
 _REPLY = Tool(
     name="reply",
     description=(
-        "Send a message to a Feishu chat. The user reads Feishu, not this "
-        "session — anything you want them to see must go through this tool. "
-        "chat_id is from the inbound <channel> tag (oc_xxx format). "
-        "Pass edit_message_id to edit an existing message in-place instead of "
-        "sending a new one (covers update_title semantics)."
+        "Send a message to the user's chat channel. The user reads the "
+        "channel, not this session — anything you want them to see must go "
+        "through this tool. chat_id is from the inbound <channel> tag "
+        "(opaque token scoped to the active channel). Pass edit_message_id "
+        "to edit an existing message in-place instead of sending a new one "
+        "(covers update_title semantics)."
     ),
     inputSchema={
         "type": "object",
         "properties": {
-            "chat_id": {"type": "string", "description": "Feishu chat ID (oc_xxx)"},
+            "chat_id": {
+                "type": "string",
+                "description": "Channel chat ID (opaque token scoped to the active channel)",
+            },
             "text": {"type": "string", "description": "Message text"},
-            "edit_message_id": {"type": "string",
-                                "description": "Optional message_id (om_xxx) to edit"},
+            "edit_message_id": {
+                "type": "string",
+                "description": "Optional message_id to edit in-place",
+            },
         },
         "required": ["chat_id", "text"],
     },
@@ -32,13 +41,21 @@ _REPLY = Tool(
 
 _REACT = Tool(
     name="react",
-    description="Add an emoji reaction to a Feishu message",
+    description="Add an emoji reaction to a channel message",
     inputSchema={
         "type": "object",
         "properties": {
-            "message_id": {"type": "string", "description": "Message ID (om_xxx)"},
-            "emoji_type": {"type": "string",
-                           "description": "Feishu emoji (THUMBSUP, DONE, OK)"},
+            "message_id": {
+                "type": "string",
+                "description": "Message ID (opaque token scoped to the active channel)",
+            },
+            "emoji_type": {
+                "type": "string",
+                "description": (
+                    "Emoji code (channel-specific; e.g. THUMBSUP, DONE, OK "
+                    "for common chat channels)"
+                ),
+            },
         },
         "required": ["message_id", "emoji_type"],
     },
@@ -47,13 +64,16 @@ _REACT = Tool(
 _SEND_FILE = Tool(
     name="send_file",
     description=(
-        "Send a file to a Feishu chat. Uploads the local file to Feishu and "
-        "sends it as a file message."
+        "Send a file to the user's chat channel. Uploads the local file "
+        "and sends it as a file message."
     ),
     inputSchema={
         "type": "object",
         "properties": {
-            "chat_id": {"type": "string", "description": "Feishu chat ID (oc_xxx)"},
+            "chat_id": {
+                "type": "string",
+                "description": "Channel chat ID (opaque token scoped to the active channel)",
+            },
             "file_path": {"type": "string", "description": "Absolute path to local file"},
         },
         "required": ["chat_id", "file_path"],

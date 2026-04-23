@@ -60,6 +60,42 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"topologies" => [], "error" => @topology_removed_error}}
   end
 
+  def dispatch(
+        "cli:actors/inspect",
+        %{"arg" => actor_id, "field" => field}
+      )
+      when is_binary(actor_id) and is_binary(field) do
+    case Esr.PeerRegistry.lookup(actor_id) do
+      {:ok, _pid} ->
+        snap = Esr.PeerServer.describe(actor_id)
+        data = %{"actor_id" => snap.actor_id, "state" => stringify_keys(snap.state)}
+        path = String.split(field, ".")
+
+        case get_in_nested(data, path) do
+          nil ->
+            %{
+              "data" => %{
+                "error" => "field not present",
+                "field" => field,
+                "actor_id" => actor_id
+              }
+            }
+
+          value ->
+            %{
+              "data" => %{
+                "actor_id" => actor_id,
+                "field" => field,
+                "value" => value
+              }
+            }
+        end
+
+      :error ->
+        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
+    end
+  end
+
   def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
     case Esr.PeerRegistry.lookup(actor_id) do
       {:ok, _pid} ->
@@ -269,6 +305,36 @@ defmodule EsrWeb.CliChannel do
   defp stringify_keys(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {stringify_key(k), v} end)
   end
+
+  # Task H — read dotted path from a nested map, tolerating atom or
+  # string keys at any level.
+  defp get_in_nested(map, [key]) when is_map(map) do
+    atomic =
+      try do
+        String.to_existing_atom(key)
+      rescue
+        ArgumentError -> nil
+      end
+
+    Map.get(map, key) || (atomic && Map.get(map, atomic))
+  end
+
+  defp get_in_nested(map, [key | rest]) when is_map(map) do
+    atomic =
+      try do
+        String.to_existing_atom(key)
+      rescue
+        ArgumentError -> nil
+      end
+
+    case Map.get(map, key) || (atomic && Map.get(map, atomic)) do
+      nil -> nil
+      nested when is_map(nested) -> get_in_nested(nested, rest)
+      _ -> nil
+    end
+  end
+
+  defp get_in_nested(_, _), do: nil
 
   @spec stringify_key(term()) :: String.t()
   defp stringify_key(k) when is_binary(k), do: k

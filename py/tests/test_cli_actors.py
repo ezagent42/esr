@@ -70,7 +70,7 @@ def test_actors_inspect_dumps_state(ctx_home: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["actors", "inspect", "thread:foo"])
     assert result.exit_code == 0, result.output
-    submit.assert_called_once_with("inspect", "thread:foo")
+    submit.assert_called_once_with("inspect", "thread:foo", field=None)
     assert "thread:foo" in result.output
     assert "counter" in result.output
 
