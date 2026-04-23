@@ -18,11 +18,27 @@ defmodule Esr.SessionProcess do
   from the local map — **no global GenServer call per check** — so the
   data-plane read path doesn't contend with admin-plane writes.
 
+  PR-6 (P6-A2) takes that one step further: the grants snapshot is
+  mirrored into `:persistent_term` under `grants_pt_key(session_id)`
+  so `has?/2` is a **zero-hop direct read** from any caller process —
+  no SessionProcess GenServer round-trip per check. Writes (init,
+  `:grants_changed`) still route through the SessionProcess owner and
+  refresh the persistent term; `terminate/2` erases the key so sessions
+  don't leak persistent-term entries. `:persistent_term.put/2` triggers
+  a full global GC when the term changes, but grants changes are rare
+  (per-session, at start + on explicit `:grants_changed` events) so the
+  cost is amortised.
+
   Spec §3.5.
   """
   use GenServer
 
   defstruct [:session_id, :agent_name, :dir, :chat_thread_key, :metadata, grants: []]
+
+  # :persistent_term key for the per-session grants snapshot.
+  # Reads on the hot path (`has?/2`) go directly through this key; the
+  # owning SessionProcess is the only writer.
+  defp grants_pt_key(session_id), do: {__MODULE__, :grants, session_id}
 
   def start_link(args) do
     sid = Map.fetch!(args, :session_id)
@@ -37,28 +53,34 @@ defmodule Esr.SessionProcess do
   @doc """
   Session-scoped capability check (spec §3.3a).
 
-  Reads from the local `state.grants` map populated at init and
-  refreshed via PubSub `{:grants_changed, principal_id}` broadcasts —
-  no global ETS lookup per call, no GenServer round-trip to
-  `Esr.Capabilities.Grants`.
+  Reads from `:persistent_term` populated at init and refreshed via
+  PubSub `:grants_changed` broadcasts — **zero-hop** (no global ETS
+  lookup, no GenServer round-trip to either `Esr.Capabilities.Grants`
+  _or_ the SessionProcess itself).
 
   Returns `false` when the session has no `principal_id` in its
-  metadata (anonymous sessions can never hold capabilities).
+  metadata (anonymous sessions can never hold capabilities) or when
+  the session is unknown (defaults to an empty grants list).
   """
   def has?(session_id, permission) when is_binary(session_id) and is_binary(permission) do
-    GenServer.call(via(session_id), {:has?, permission})
+    grants = :persistent_term.get(grants_pt_key(session_id), [])
+    local_has?(grants, permission)
   end
 
   @impl true
   def init(args) do
     principal_id = extract_principal_id(Map.get(args, :metadata, %{}))
+    session_id = Map.fetch!(args, :session_id)
 
     grants = fetch_grants(principal_id)
+    # Publish to :persistent_term so has?/2 can be a zero-hop read
+    # from any caller process. See module docstring (P6-A2).
+    :persistent_term.put(grants_pt_key(session_id), grants)
     subscribe_to_grants_changes(principal_id)
 
     {:ok,
      %__MODULE__{
-       session_id: Map.fetch!(args, :session_id),
+       session_id: session_id,
        agent_name: Map.fetch!(args, :agent_name),
        dir: Map.fetch!(args, :dir),
        chat_thread_key: Map.fetch!(args, :chat_thread_key),
@@ -71,18 +93,26 @@ defmodule Esr.SessionProcess do
   def handle_call(:state, _from, state), do: {:reply, state, state}
 
   @impl true
-  def handle_call({:has?, permission}, _from, state) do
-    {:reply, local_has?(state.grants, permission), state}
-  end
-
-  @impl true
   def handle_info(:grants_changed, state) do
     principal_id = extract_principal_id(state.metadata)
-    {:noreply, %{state | grants: fetch_grants(principal_id)}}
+    new_grants = fetch_grants(principal_id)
+    :persistent_term.put(grants_pt_key(state.session_id), new_grants)
+    {:noreply, %{state | grants: new_grants}}
   end
 
   # Ignore unrelated info messages rather than crashing the SessionProcess.
   def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, state) do
+    # Clean up the persistent_term key on normal stop_session/shutdown
+    # so we don't accumulate entries across session churn. Hard crashes
+    # won't run terminate/2 — that's acceptable since the BEAM handles
+    # resource reclaim on process death and grants are re-published on
+    # next init/1 for the same session_id.
+    _ = :persistent_term.erase(grants_pt_key(state.session_id))
+    :ok
+  end
 
   # --- internal ---
 

@@ -107,14 +107,21 @@ defmodule Esr.Peer.Proxy do
         case Map.get(ctx, :session_process_pid) do
           pid when is_pid(pid) ->
             if Process.alive?(pid) do
-              fn _principal_id, permission ->
-                try do
-                  GenServer.call(pid, {:has?, permission})
-                rescue
-                  _ -> false
-                catch
-                  :exit, _ -> false
-                end
+              # P6-A2: has?/2 is a zero-hop :persistent_term read, no
+              # GenServer round-trip. Keep the `Process.alive?` guard
+              # to preserve the "fall back to global when the session
+              # is gone" semantic — on normal shutdown terminate/2
+              # erases the persistent_term entry (so a stale pid
+              # would read `[]` anyway), but hard crashes may leave
+              # stale entries that the global fallback avoids.
+              case Map.get(ctx, :session_id) do
+                sid when is_binary(sid) ->
+                  fn _principal_id, permission ->
+                    Esr.SessionProcess.has?(sid, permission)
+                  end
+
+                _ ->
+                  &Esr.Capabilities.has?/2
               end
             else
               &Esr.Capabilities.has?/2
