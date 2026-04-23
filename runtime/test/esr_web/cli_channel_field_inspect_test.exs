@@ -25,7 +25,13 @@ defmodule EsrWeb.CliChannelFieldInspectTest do
         }
       )
 
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn ->
+      try do
+        if Process.alive?(pid), do: GenServer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
     {:ok, actor_id: actor_id}
   end
 
