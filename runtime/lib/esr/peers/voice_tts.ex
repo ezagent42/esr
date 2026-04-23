@@ -12,14 +12,12 @@ defmodule Esr.Peers.VoiceTTS do
   `Esr.PeerPool.init/1`, and the request/reply shapes diverge when real
   engines land (PR-5).
 
-  Spec §4.1; expansion P4a-5.
+  Spec §4.1; expansion P4a-5. PR-6 B2 absorbed the shared init/
+  pending-map/handle_info boilerplate into `Esr.Peer.PyWorker`.
   """
-  use Esr.Peer.Stateful
-  use GenServer
+  use Esr.Peer.PyWorker, module: "voice_tts"
 
   @default_timeout 5_000
-
-  # --- public API ---------------------------------------------------------
 
   # start_link/1 inherits the dual-shape (map | keyword) default from
   # Esr.Peer.Stateful (PR-6 B1). Esr.PeerPool invokes it as
@@ -31,56 +29,10 @@ defmodule Esr.Peers.VoiceTTS do
   """
   @spec synthesize(pid(), String.t(), pos_integer()) :: {:ok, String.t()} | {:error, term()}
   def synthesize(pid, text, timeout \\ @default_timeout) do
-    GenServer.call(pid, {:synthesize, text, timeout}, timeout + 500)
+    GenServer.call(pid, {:rpc, %{text: text}, timeout}, timeout + 500)
   end
 
-  # --- Peer.Stateful callbacks --------------------------------------------
-
-  @impl GenServer
-  def init(_args) do
-    {:ok, py} =
-      Esr.PyProcess.start_link(%{
-        entry_point: {:module, "voice_tts"},
-        subscriber: self()
-      })
-
-    {:ok, %{py: py, pending: %{}}}
-  end
-
-  # handle_upstream/2 and handle_downstream/2 inherit the no-op
-  # `{:forward, [], state}` defaults from Esr.Peer.Stateful (PR-6 B1).
-
-  # --- GenServer callbacks ------------------------------------------------
-
-  @impl GenServer
-  def handle_call({:synthesize, text, _timeout}, from, state) do
-    id = new_request_id()
-    :ok = Esr.PyProcess.send_request(state.py, %{id: id, payload: %{text: text}})
-    {:noreply, put_in(state.pending[id], from)}
-  end
-
-  @impl GenServer
-  def handle_info({:py_reply, %{"id" => id, "kind" => "reply", "payload" => payload}}, state) do
-    case Map.pop(state.pending, id) do
-      {nil, _} ->
-        {:noreply, state}
-
-      {from, rest} ->
-        reply =
-          case payload do
-            %{"audio_b64" => a} -> {:ok, a}
-            _ -> {:error, {:unexpected_payload, payload}}
-          end
-
-        GenServer.reply(from, reply)
-        {:noreply, %{state | pending: rest}}
-    end
-  end
-
-  def handle_info(_other, state), do: {:noreply, state}
-
-  defp new_request_id do
-    :erlang.unique_integer([:positive, :monotonic])
-    |> Integer.to_string(16)
-  end
+  @impl Esr.Peer.PyWorker
+  def extract_reply(%{"audio_b64" => a}), do: {:ok, a}
+  def extract_reply(other), do: {:error, {:unexpected_payload, other}}
 end
