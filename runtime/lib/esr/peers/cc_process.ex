@@ -62,7 +62,7 @@ defmodule Esr.Peers.CCProcess do
   # Peer.Stateful callbacks
   # ------------------------------------------------------------------
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(args) do
     {:ok,
      %{

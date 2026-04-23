@@ -36,7 +36,7 @@ defmodule Esr.Peers.VoiceTTS do
 
   # --- Peer.Stateful callbacks --------------------------------------------
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(_args) do
     {:ok, py} =
       Esr.PyProcess.start_link(%{

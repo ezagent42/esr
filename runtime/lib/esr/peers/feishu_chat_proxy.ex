@@ -14,7 +14,7 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(args) do
     state = %{
       session_id: Map.fetch!(args, :session_id),

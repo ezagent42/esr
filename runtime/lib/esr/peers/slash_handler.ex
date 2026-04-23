@@ -31,7 +31,7 @@ defmodule Esr.Peers.SlashHandler do
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
-  @impl Esr.Peer.Stateful
+  @impl GenServer
   def init(args) do
     :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, self())
 

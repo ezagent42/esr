@@ -46,7 +46,10 @@ defmodule Esr.PyProcess do
     __MODULE__.OSProcessWorker.write_stdin(pid, line)
   end
 
-  @impl Esr.Peer.Stateful
+  # Called by the generated OSProcessWorker.init/1 (not a GenServer
+  # callback — this module doesn't `use GenServer` directly; the
+  # generated OSProcessWorker child module does). Returns the initial
+  # peer state.
   def init(%{entry_point: entry_point} = args) do
     {:ok,
      %{
