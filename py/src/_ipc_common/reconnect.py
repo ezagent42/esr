@@ -1,9 +1,4 @@
-"""Reconnect backoff schedule shared across all adapter sidecars.
-
-200ms → 400ms → 800ms → 1600ms → 3200ms → capped at 5s. Matches the
-handler_worker schedule so adapter/handler subprocesses recover from
-esrd restarts in lockstep.
-"""
+"""Exponential backoff schedule for IPC reconnects (shared)."""
 from __future__ import annotations
 
 #: Seconds between successive ``run_with_client`` attempts. Indexed by

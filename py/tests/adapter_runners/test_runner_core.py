@@ -280,7 +280,7 @@ def test_resolve_url_reads_port_file(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Port file present → URL port is rewritten."""
-    from _adapter_common.url import resolve_url
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "test")
@@ -298,7 +298,7 @@ def test_resolve_url_reads_port_file(
 def test_resolve_url_absent_port_file_returns_fallback(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from _adapter_common.url import resolve_url
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "nonexistent")
@@ -309,7 +309,7 @@ def test_resolve_url_absent_port_file_returns_fallback(
 def test_resolve_url_malformed_port_file_returns_fallback(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from _adapter_common.url import resolve_url
+    from _ipc_common.url import resolve_url
 
     monkeypatch.setenv("ESRD_HOME", str(tmp_path))
     monkeypatch.setenv("ESR_INSTANCE", "test")

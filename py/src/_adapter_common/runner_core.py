@@ -33,8 +33,8 @@ from typing import Any, Protocol
 from esr.handler import all_permissions
 from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 
-from _adapter_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
-from _adapter_common.url import resolve_url
+from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE
+from _ipc_common.url import resolve_url
 
 logger = logging.getLogger(__name__)
 
