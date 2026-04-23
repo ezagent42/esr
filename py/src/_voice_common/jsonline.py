@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import IO, Iterable
+from collections.abc import Iterable
+from typing import IO
 
 
 def read_requests(stream: IO[str] = sys.stdin) -> Iterable[dict]:
