@@ -99,6 +99,8 @@ def _extract_text(raw_content: str, msg_type: str) -> str:
         "aiohttp": "*",
         "http": ["open.feishu.cn"],
         "urllib": ["127.0.0.1", "localhost"],
+        "base64": "*",
+        "hashlib": "*",
     },
 )
 class FeishuAdapter:
@@ -333,6 +335,10 @@ class FeishuAdapter:
         if action == "send_message":
             return await self._with_ratelimit_retry(lambda: self._send_message(args))
         if action == "react":
+            base_url = getattr(self._config, "base_url", "") or ""
+            if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self._react, args)
             return await self._with_ratelimit_retry(lambda: self._react(args))
         if action == "send_card":
             return await self._with_ratelimit_retry(lambda: self._send_card(args))
@@ -342,6 +348,12 @@ class FeishuAdapter:
             return await self._with_ratelimit_retry(lambda: self._unpin(args))
         if action == "download_file":
             return self._download_file(args)
+        if action == "send_file":
+            # send_file's mock path does sync HTTP; dispatch through the
+            # executor so an in-process aiohttp mock on the same loop can
+            # answer. Parity with _deny_rate_limited.
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._send_file, args)
         return {"ok": False, "error": f"unknown action: {action}"}
 
     async def _with_ratelimit_retry(
@@ -427,11 +439,16 @@ class FeishuAdapter:
             return {"ok": False, "error": f"mock POST failed: {exc}"}
 
     def _react(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Create a reaction on a message via lark_oapi (PRD 04 F08)."""
-        import lark_oapi.api.im.v1 as im_v1
-
+        """Create a reaction on a message. Mock path: POST to mock_feishu
+        when base_url is 127.0.0.1/localhost. Live path: lark_oapi (PRD 04 F08)."""
         msg_id = args["msg_id"]
         emoji_type = args["emoji_type"]
+
+        base_url = getattr(self._config, "base_url", "") or ""
+        if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+            return self._react_mock(base_url, msg_id, emoji_type)
+
+        import lark_oapi.api.im.v1 as im_v1
         request = (
             im_v1.CreateMessageReactionRequest.builder()
             .message_id(msg_id)
@@ -451,6 +468,28 @@ class FeishuAdapter:
             )
             return {"ok": True, "result": {"reaction_id": reaction_id}}
         return _lark_failure(response, "react failed")
+
+    def _react_mock(
+        self, base_url: str, msg_id: str, emoji_type: str
+    ) -> dict[str, Any]:
+        import urllib.error
+        import urllib.request
+
+        body = json.dumps({
+            "reaction_type": {"emoji_type": emoji_type},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/open-apis/im/v1/messages/{msg_id}/reactions",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                return {"ok": True, "result": data.get("data") or {}}
+        except urllib.error.URLError as exc:
+            return {"ok": False, "error": f"mock react failed: {exc}"}
 
     def _send_card(self, args: dict[str, Any]) -> dict[str, Any]:
         """Send an interactive card via lark_oapi im.v1.message.create (PRD 04 F09)."""
@@ -541,6 +580,85 @@ class FeishuAdapter:
         if configured:
             return Path(configured)
         return Path.home() / ".esrd" / "default" / "uploads"
+
+    def _send_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        """α wire shape (spec §6.1): base64 in-band + sha256 check."""
+        import base64 as _b64
+        import hashlib
+
+        chat_id = args["chat_id"]
+        file_name = args["file_name"]
+        content_b64 = args["content_b64"]
+        expected_sha = args["sha256"]
+
+        try:
+            bytes_ = _b64.b64decode(content_b64, validate=True)
+        except Exception as exc:  # noqa: BLE001 — surface any b64 error
+            return {"ok": False, "error": f"b64 decode failed: {exc}"}
+
+        actual_sha = hashlib.sha256(bytes_).hexdigest()
+        if actual_sha != expected_sha:
+            return {"ok": False, "error": "sha256 mismatch"}
+
+        base_url = getattr(self._config, "base_url", "") or ""
+        if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+            return self._send_file_mock(base_url, chat_id, file_name, bytes_)
+
+        return self._send_file_live(chat_id, file_name, bytes_)
+
+    def _send_file_mock(
+        self, base_url: str, chat_id: str, file_name: str, bytes_: bytes
+    ) -> dict[str, Any]:
+        import base64 as _b64
+        import urllib.error
+        import urllib.request
+
+        upload_body = json.dumps({
+            "file_type": "stream",
+            "file_name": file_name,
+            "content_b64": _b64.b64encode(bytes_).decode(),
+        }).encode("utf-8")
+        upload_req = urllib.request.Request(
+            f"{base_url}/open-apis/im/v1/files",
+            data=upload_body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(upload_req, timeout=5) as resp:
+                upload = json.loads(resp.read())
+        except urllib.error.URLError as exc:
+            return {"ok": False, "error": f"mock upload failed: {exc}"}
+
+        file_key = upload.get("data", {}).get("file_key")
+        if not file_key:
+            return {"ok": False, "error": "mock upload did not return file_key"}
+
+        msg_body = json.dumps({
+            "receive_id": chat_id,
+            "msg_type": "file",
+            "content": json.dumps({"file_key": file_key}),
+        }).encode("utf-8")
+        msg_req = urllib.request.Request(
+            f"{base_url}/open-apis/im/v1/messages?receive_id_type=chat_id",
+            data=msg_body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(msg_req, timeout=5) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.URLError as exc:
+            return {"ok": False, "error": f"mock send-file-message failed: {exc}"}
+        return {"ok": True, "result": data.get("data") or {"file_key": file_key}}
+
+    def _send_file_live(
+        self, chat_id: str, file_name: str, bytes_: bytes
+    ) -> dict[str, Any]:
+        """Live path parity with _send_message. Untested in PR-7 (mock-only)."""
+        import lark_oapi.api.im.v1 as im_v1  # noqa: F401 — import guard
+        # Deferred: two-step upload + message create against real Lark.
+        return {"ok": False, "error": "live send_file not yet implemented"}
 
     # --- event emission (PRD 04 F12) ----------------------------------
 
