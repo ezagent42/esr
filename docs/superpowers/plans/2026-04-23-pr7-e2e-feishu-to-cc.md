@@ -1,6 +1,48 @@
 # PR-7 End-to-End Feishu-to-CC Implementation Plan
 
+**Version:** v1.1 (address review findings on top of v1.0 commit `22f6412`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+## v1.1 changelog
+
+Review surfaced seven issues; all addressed in-place without changing
+step structure or task IDs:
+
+1. **[blocking]** Task C test code used `FeishuAdapter(cfg)` — the real
+   ctor signature is `FeishuAdapter(actor_id, config)`. Test code now
+   passes both args; the test `cfg` is constructed as a real
+   `AdapterConfig(dict)` rather than a `SimpleNamespace`.
+2. **[blocking]** Task A `register_feishu_adapter` helper wrote to
+   `${ESRD_HOME}/default/admin_queue/in/<name>.json` with a payload
+   shape the Dispatcher can't parse. Real Watcher reads
+   `${ESRD_HOME}/${ESR_INSTANCE}/admin_queue/pending/<ulid>.yaml` and
+   the Dispatcher expects `{kind, args: {type=feishu, name, app_id,
+   app_secret}}` (see `runtime/lib/esr/admin/commands/register_adapter.ex`).
+   **Fix chosen: Option 2 — use `esr admin submit register_adapter
+   --arg ...`** (the real primitive CLI wizards already use; see
+   `py/src/esr/cli/admin.py`). Avoids re-implementing the atomic
+   `.tmp` + rename dance by hand and insulates us from future Watcher
+   schema changes.
+3. **[non-blocking]** D1 Step 12 line-number drift:
+   `feishu_chat_proxy.ex` `init/1` spans lines 25-36 (starting with
+   `@impl GenServer`), not 26-36.
+4. **[non-blocking]** D1 Step 3 Logger line reference ("line 9 of the
+   current file") was wrong — `require Logger` is at line 55 of
+   `session_router.ex`. Loosened to "already present near the top of
+   the imports block" since the exact line is minor and may drift.
+5. **[non-blocking]** Task H Step 8 `git add py/src/esr_cli/` path
+   doesn't exist. CLI lives at `py/src/esr/cli/main.py` (single file;
+   only `actors_inspect` in `main.py:1209-1223` needs `--field`
+   plumbing).
+6. **[non-blocking]** Task B Step 9 test file reference verified
+   against `scripts/tests/` listing — both `test_mock_feishu.py` and
+   `test_mock_feishu_conformance.py` exist; plan already references
+   both. No change needed (documented here for the reviewer).
+7. **[non-blocking]** Task I gained a dedicated §13 item 4 combined
+   grep step (final acceptance gate) — previously split across K1
+   step 5 + K2 step 4 per-scope greps. The combined grep closes the
+   acceptance loop in one shot.
 
 **Goal:** Deliver three bash e2e scripts + the production-code hooks they need (adapter-agnostic CC channel, `send_file` directive, mock_feishu reaction/file endpoints, tmux-socket env plumbing) so `make e2e` exercises the complete Feishu ↔ CC topology against a running `esrd` + `mock_feishu` with deterministic barrier-based synchronisation.
 
@@ -563,18 +605,32 @@ start_esrd() {
 }
 
 register_feishu_adapter() {
-  # Drop the adapter record so `/new-session` can resolve the proxy target.
-  mkdir -p "${ESRD_HOME}/default/admin_queue/in"
-  cat > "${ESRD_HOME}/default/admin_queue/in/register_adapter_feishu.json" <<JSON
-{
-  "command": "register_adapter",
-  "args": {
-    "adapter_family": "feishu_app",
-    "app_id": "e2e-mock",
-    "base_url": "http://127.0.0.1:${MOCK_FEISHU_PORT}"
-  }
-}
-JSON
+  # Register an adapter record so `/new-session` can resolve the proxy
+  # target. **Blocker fix 2 (v1.1):** prior version wrote
+  # `${ESRD_HOME}/default/admin_queue/in/*.json` with an invented
+  # envelope shape; real Watcher reads
+  # `${ESRD_HOME}/${ESR_INSTANCE}/admin_queue/pending/<ulid>.yaml` and
+  # the Dispatcher expects `{kind, args: {type, name, app_id,
+  # app_secret}}` (see `runtime/lib/esr/admin/commands/register_adapter.ex`).
+  # Use the real `esr admin submit` primitive instead of re-implementing
+  # the atomic write dance — keeps us insulated from Watcher schema
+  # changes and surfaces CLI-side bugs against the live code path.
+  #
+  # `app_secret=mock` is a deliberate placeholder: mock_feishu never
+  # validates tenant_access_tokens, so any non-empty string works.
+  # `base_url` is NOT a register_adapter arg — the adapter consumes
+  # `AdapterConfig.base_url` from a separate path (see `adapters.yaml`
+  # seeded by `load_agent_yaml()` or an `esr adapter add` call before
+  # this helper). If a future test needs `base_url=http://127.0.0.1:…`
+  # wired into the adapter config, add it via `esr adapter add` here
+  # and drop this shell comment.
+  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
+    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit register_adapter \
+      --arg type=feishu \
+      --arg name=feishu_app_e2e-mock \
+      --arg app_id=e2e-mock \
+      --arg app_secret=mock \
+      --wait --timeout 10
 }
 ```
 
@@ -935,16 +991,23 @@ EOF
 Create `py/tests/adapter_runners/test_feishu_send_file.py`:
 
 ```python
-"""Test α-shape send_file directive dispatch (spec §6, T0 §3)."""
+"""Test α-shape send_file directive dispatch (spec §6, T0 §3).
+
+v1.1 blocker fix: constructor is FeishuAdapter(actor_id, config) where
+config is a real AdapterConfig (dict-backed attribute wrapper in
+py/src/esr/adapter.py:74). Prior plan revision passed a single
+SimpleNamespace and one positional arg — TypeError at runtime. Fixed
+per the pattern in adapters/feishu/tests/test_envelope_principal.py.
+"""
 import base64
 import hashlib
 import json
-from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
 import pytest
 
 from scripts.mock_feishu import MockFeishu
+from esr.adapter import AdapterConfig
 from esr_feishu.adapter import FeishuAdapter
 
 
@@ -953,11 +1016,15 @@ async def test_send_file_mock_round_trip() -> None:
     mock = MockFeishu()
     base_url = await mock.start(port=0)
     try:
-        cfg = SimpleNamespace(
-            app_id="e2e-mock", app_secret="s", base_url=base_url,
-            uploads_dir="/tmp",
+        cfg = AdapterConfig(
+            {
+                "app_id": "e2e-mock",
+                "app_secret": "s",
+                "base_url": base_url,
+                "uploads_dir": "/tmp",
+            }
         )
-        adapter = FeishuAdapter(cfg)
+        adapter = FeishuAdapter(actor_id="feishu-app:test", config=cfg)
 
         payload = b"hello PR-7"
         sha = hashlib.sha256(payload).hexdigest()
@@ -985,11 +1052,15 @@ async def test_send_file_sha_mismatch_rejected() -> None:
     mock = MockFeishu()
     base_url = await mock.start(port=0)
     try:
-        cfg = SimpleNamespace(
-            app_id="e2e-mock", app_secret="s", base_url=base_url,
-            uploads_dir="/tmp",
+        cfg = AdapterConfig(
+            {
+                "app_id": "e2e-mock",
+                "app_secret": "s",
+                "base_url": base_url,
+                "uploads_dir": "/tmp",
+            }
         )
-        adapter = FeishuAdapter(cfg)
+        adapter = FeishuAdapter(actor_id="feishu-app:test", config=cfg)
 
         args = {
             "chat_id": "oc_mock_A",
@@ -1121,14 +1192,18 @@ Expected: PASS (2 tests).
 Create `py/tests/adapter_runners/test_feishu_react.py`:
 
 ```python
-"""Test react directive with corrected msg_id key (spec §5.1)."""
+"""Test react directive with corrected msg_id key (spec §5.1).
+
+v1.1 blocker fix: ctor signature is (actor_id, config) with a real
+AdapterConfig — same pattern as test_feishu_send_file.py above.
+"""
 import json
-from types import SimpleNamespace
 from urllib.request import urlopen
 
 import pytest
 
 from scripts.mock_feishu import MockFeishu
+from esr.adapter import AdapterConfig
 from esr_feishu.adapter import FeishuAdapter
 
 
@@ -1137,11 +1212,15 @@ async def test_react_mock_emits_reaction() -> None:
     mock = MockFeishu()
     base_url = await mock.start(port=0)
     try:
-        cfg = SimpleNamespace(
-            app_id="e2e-mock", app_secret="s", base_url=base_url,
-            uploads_dir="/tmp",
+        cfg = AdapterConfig(
+            {
+                "app_id": "e2e-mock",
+                "app_secret": "s",
+                "base_url": base_url,
+                "uploads_dir": "/tmp",
+            }
         )
-        adapter = FeishuAdapter(cfg)
+        adapter = FeishuAdapter(actor_id="feishu-app:test", config=cfg)
 
         # Note: key is "msg_id" (matches Elixir emit post-D2 fix)
         result = await adapter.on_directive(
@@ -1368,7 +1447,7 @@ def parse_channel_adapter(target) when is_binary(target) do
 end
 ```
 
-Ensure `require Logger` is already at the top of the file (it is — line 9 of the current file).
+Ensure `require Logger` is already at the top of the file (it is already present near the top of the imports block).
 
 - [ ] **Step 4: Run test — expect pass**
 
@@ -1586,7 +1665,7 @@ Expected: PASS (8 tests).
 
 - [ ] **Step 12: Update `FeishuChatProxy.init/1` to lift `ctx.channel_adapter` into state (NEW per-peer field-lift pattern)**
 
-In `runtime/lib/esr/peers/feishu_chat_proxy.ex`, replace `init/1` (lines 26-36):
+In `runtime/lib/esr/peers/feishu_chat_proxy.ex`, replace `init/1` (lines 25-36):
 
 ```elixir
 @impl GenServer
@@ -2707,13 +2786,7 @@ assert_actors_list_lacks "cc:tmux" "user-step 12: tmux peer torn down"
 echo "PASS: scenario 03"
 ```
 
-Note: the Python CLI `esr actors inspect <actor_id> --field state.session_name` also needs to forward the `--field` arg to `cli:actors/inspect`. If the Python CLI (under `py/src/esr_cli/`) doesn't yet pass `field`, add the passthrough in the same commit. Check with:
-
-```bash
-grep -n "actors/inspect\|actors inspect" /Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor/py/src/ -r
-```
-
-If the Python side builds the payload from argparse, add `--field` to the `actors inspect` subparser and include it in the payload when non-empty. (Exact file path depends on the CLI module layout; the grep above locates it in < 5 seconds.)
+Note: the Python CLI `esr actors inspect <actor_id> --field state.session_name` also needs to forward the `--field` arg to `cli:actors/inspect`. The actors-inspect command lives at `py/src/esr/cli/main.py:1209-1223` (v1.1 fix — corrected from the placeholder `py/src/esr_cli/`). Add a `--field` click option and thread it through `_submit_actors("inspect", …)` so the payload carries `{"arg": actor_id, "field": field}`. The runtime bridge currently sends only `{"arg": arg}` (see `_submit_actors` near `main.py:823`); widen that to accept an optional `field` and include it in the payload when non-empty.
 
 - [ ] **Step 7: Run**
 
@@ -2730,7 +2803,7 @@ Expected: `PASS: scenario 03`. Wall time ≤ 45 s.
 git add tests/e2e/scenarios/03_tmux_attach_edit.sh \
         runtime/lib/esr_web/cli_channel.ex \
         runtime/test/esr_web/cli_channel_test.exs \
-        py/src/esr_cli/  # whatever paths the --field plumbing touches
+        py/src/esr/cli/main.py
 git commit -m "$(cat <<'EOF'
 feat(e2e): scenario 03 + cli:actors/inspect --field (Task H)
 
@@ -3159,7 +3232,24 @@ cd /Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor && \
 
 Expected: PASS. Confirms the absolute-cleanup branch doesn't break anything on a dev host (nukes only artefacts our scripts could have created).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Spec §13 item 4 — combined grep final acceptance gate (v1.1)**
+
+Run the spec §13 item 4 grep VERBATIM over every CC-reachable scope in
+one shot. Closes the acceptance loop previously split across K1 step 5
+(adapters/cc_mcp/src only) + K2 step 4 (cc_proxy.ex + cc_process.ex
+only); this dedicated step catches any new "Feishu" mention that snuck
+into any of those scopes after K1/K2 committed.
+
+```bash
+grep -irn 'feishu' adapters/cc_mcp/src/ runtime/lib/esr/peers/cc_*.ex \
+  runtime/lib/esr/peers/cc_proxy.ex runtime/lib/esr/peers/cc_process.ex
+```
+
+Expected: 0 matches. Any match fails the PR-7 acceptance gate — fix
+the offending line (follow the K1/K2 sanitization pattern) and rerun
+the grep before proceeding to Step 8.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add Makefile tests/e2e/scenarios/common.sh
