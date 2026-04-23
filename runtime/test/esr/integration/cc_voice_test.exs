@@ -45,6 +45,9 @@ defmodule Esr.Integration.CCVoiceTest do
   today (P4a-1..4); Volcengine deferred to PR-5.
   """
   use ExUnit.Case, async: false
+
+  import Esr.TestSupport.TmuxIsolation
+  setup :isolated_tmux_socket
   @moduletag :integration
 
   @fixture Path.expand("../fixtures/agents/voice.yaml", __DIR__)
@@ -103,7 +106,8 @@ defmodule Esr.Integration.CCVoiceTest do
   end
 
   @tag timeout: 30_000
-  test "cc-voice three-leg chain: VoiceASRProxy → CCProcess → VoiceTTSProxy" do
+  test "cc-voice three-leg chain: VoiceASRProxy → CCProcess → VoiceTTSProxy",
+       %{tmux_socket: tmux_sock} do
     test_pid = self()
     app_id = "ccv_#{System.unique_integer([:positive])}"
     chat_id = "oc_ccv_#{System.unique_integer([:positive])}"
@@ -155,7 +159,8 @@ defmodule Esr.Integration.CCVoiceTest do
         principal_id: "ou_cc_voice",
         chat_id: chat_id,
         thread_id: thread_id,
-        app_id: app_id
+        app_id: app_id,
+        tmux_socket: tmux_sock
       })
 
     assert {:ok, ^sid, refs} =

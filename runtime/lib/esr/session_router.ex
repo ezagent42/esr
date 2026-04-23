@@ -423,7 +423,16 @@ defmodule Esr.SessionRouter do
 
   defp spawn_args(%{"impl" => "Esr.Peers.TmuxProcess"}, params) do
     name = "esr_cc_#{:erlang.unique_integer([:positive])}"
-    %{session_name: name, dir: get_param(params, :dir) || "/tmp"}
+    # Optional tmux_socket for test isolation: if caller passes
+    # `tmux_socket: "/tmp/esr-test-N.sock"`, TmuxProcess runs under that
+    # socket (no leaks into user's default tmux server). In production,
+    # omit the param → tmux uses the default socket.
+    base = %{session_name: name, dir: get_param(params, :dir) || "/tmp"}
+
+    case get_param(params, :tmux_socket) do
+      nil -> base
+      path -> Map.put(base, :tmux_socket, path)
+    end
   end
 
   defp spawn_args(%{"impl" => "Esr.Peers.FeishuAppAdapter"}, params) do

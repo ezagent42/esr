@@ -19,6 +19,9 @@ defmodule Esr.Integration.VoiceE2ETest do
   trip without depending on Volcengine.
   """
   use ExUnit.Case, async: false
+
+  import Esr.TestSupport.TmuxIsolation
+  setup :isolated_tmux_socket
   @moduletag :integration
 
   @fixture Path.expand("../fixtures/agents/voice.yaml", __DIR__)
@@ -68,7 +71,8 @@ defmodule Esr.Integration.VoiceE2ETest do
   end
 
   @tag timeout: 15_000
-  test "voice-e2e session receives 3 stream_chunk messages + :voice_end" do
+  test "voice-e2e session receives 3 stream_chunk messages + :voice_end",
+       %{tmux_socket: tmux_sock} do
     chat_id = "oc_voice_e2e_#{System.unique_integer([:positive])}"
     thread_id = "om_voice_e2e_#{System.unique_integer([:positive])}"
 
@@ -77,7 +81,8 @@ defmodule Esr.Integration.VoiceE2ETest do
         agent: "voice-e2e",
         principal_id: "ou_voice_e2e",
         chat_id: chat_id,
-        thread_id: thread_id
+        thread_id: thread_id,
+        tmux_socket: tmux_sock
       })
 
     # Resolve VoiceE2E pid from SessionRegistry refs.

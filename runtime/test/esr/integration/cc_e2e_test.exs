@@ -63,6 +63,9 @@ defmodule Esr.Integration.CCE2ETest do
   See spec §4.1, §5.1 data flow; expansion P3-10.
   """
   use ExUnit.Case, async: false
+
+  import Esr.TestSupport.TmuxIsolation
+  setup :isolated_tmux_socket
   @moduletag :integration
 
   @fixture_path Path.expand("../fixtures/agents/simple.yaml", __DIR__)
@@ -118,7 +121,8 @@ defmodule Esr.Integration.CCE2ETest do
   end
 
   @tag timeout: 30_000
-  test "Feishu inbound → CCProcess (stubbed handler) → tmux stdin → tmux stdout → FAA outbound broadcast" do
+  test "Feishu inbound → CCProcess (stubbed handler) → tmux stdin → tmux stdout → FAA outbound broadcast",
+       %{tmux_socket: tmux_sock} do
     test_pid = self()
     app_id = "e2e_#{System.unique_integer([:positive])}"
     chat_id = "oc_e2e_#{System.unique_integer([:positive])}"
@@ -195,7 +199,8 @@ defmodule Esr.Integration.CCE2ETest do
         principal_id: "ou_alice",
         chat_id: chat_id,
         thread_id: thread_id,
-        app_id: app_id
+        app_id: app_id,
+        tmux_socket: tmux_sock
       })
 
     # 4. Resolve the spawned peer pids from SessionRegistry.

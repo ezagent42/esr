@@ -46,6 +46,9 @@ defmodule Esr.Integration.N2TmuxTest do
   See spec §6 Risk D; expansion P3-11.
   """
   use ExUnit.Case, async: false
+
+  import Esr.TestSupport.TmuxIsolation
+  setup :isolated_tmux_socket
   @moduletag :integration
 
   @fixture_path Path.expand("../fixtures/agents/simple.yaml", __DIR__)
@@ -92,7 +95,8 @@ defmodule Esr.Integration.N2TmuxTest do
   end
 
   @tag timeout: 30_000
-  test "two concurrent tmux-backed sessions; inbound isolation; terminating A leaves B alive" do
+  test "two concurrent tmux-backed sessions; inbound isolation; terminating A leaves B alive",
+       %{tmux_socket: tmux_sock} do
     test_pid = self()
     app_id = "n2tmux_#{System.unique_integer([:positive])}"
     admin_children_sup = Esr.AdminSession.ChildrenSupervisor
@@ -142,7 +146,8 @@ defmodule Esr.Integration.N2TmuxTest do
         principal_id: "ou_alice",
         chat_id: "oc_a_#{app_id}",
         thread_id: "om_a_#{app_id}",
-        app_id: app_id
+        app_id: app_id,
+        tmux_socket: tmux_sock
       })
 
     # 4. Spawn Session B (Bob / oc_b / om_b) — independent (chat,thread).
@@ -153,7 +158,8 @@ defmodule Esr.Integration.N2TmuxTest do
         principal_id: "ou_bob",
         chat_id: "oc_b_#{app_id}",
         thread_id: "om_b_#{app_id}",
-        app_id: app_id
+        app_id: app_id,
+        tmux_socket: tmux_sock
       })
 
     refute sid_a == sid_b

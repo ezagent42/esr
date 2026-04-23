@@ -97,7 +97,8 @@ defmodule Esr.Peers.TmuxProcess do
        dir: args.dir,
        subscribers: [args[:subscriber] || self()],
        neighbors: Map.get(args, :neighbors, []),
-       proxy_ctx: Map.get(args, :proxy_ctx, %{})
+       proxy_ctx: Map.get(args, :proxy_ctx, %{}),
+       tmux_socket: Map.get(args, :tmux_socket)
      }}
   end
 
@@ -146,7 +147,18 @@ defmodule Esr.Peers.TmuxProcess do
     # exits non-zero. For an interactive control-mode session we must stay
     # attached (no `-d`); the session itself is still non-interactive because
     # there is no controlling TTY.
-    ["tmux", "-C", "new-session", "-s", state.session_name, "-c", state.dir]
+    #
+    # `-S <socket_path>` isolates this tmux server from the user's default
+    # socket (`/tmp/tmux-<uid>/default`). Without isolation, leaked test
+    # sessions accumulate in the user's dev environment. Socket path comes
+    # from `state.tmux_socket` (set by `start_link/1` via `Esr.Paths.tmux_socket/1`).
+    socket_args =
+      case Map.get(state, :tmux_socket) do
+        nil -> []
+        path -> ["-S", path]
+      end
+
+    ["tmux"] ++ socket_args ++ ["-C", "new-session", "-s", state.session_name, "-c", state.dir]
   end
 
   @impl Esr.OSProcess
@@ -157,11 +169,32 @@ defmodule Esr.Peers.TmuxProcess do
   def on_os_exit(status, _state), do: {:stop, {:tmux_crashed, status}}
 
   @impl Esr.OSProcess
-  def on_terminate(%{session_name: name}) do
+  def on_terminate(%{session_name: name} = state) do
+    # Per-socket `kill-server` is simpler + more robust than per-session
+    # kill (session may have subshell children). `-S` scopes the kill
+    # to this test's/agent's own socket — user's default socket is untouched.
+    socket_args =
+      case Map.get(state, :tmux_socket) do
+        nil -> []
+        path -> ["-S", path]
+      end
+
     _ =
-      System.cmd("tmux", ["kill-session", "-t", name],
+      System.cmd("tmux", socket_args ++ ["kill-session", "-t", name],
         stderr_to_stdout: true
       )
+
+    # If an isolated socket was used, also kill-server to guarantee
+    # cleanup even if session name doesn't match (defensive).
+    case Map.get(state, :tmux_socket) do
+      nil ->
+        :ok
+
+      path ->
+        _ = System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
+        _ = File.rm(path)
+        :ok
+    end
 
     :ok
   end

@@ -19,8 +19,12 @@ defmodule Esr.Admin.Commands.Session.EndTest do
   """
   use ExUnit.Case, async: false
 
+  import Esr.TestSupport.TmuxIsolation
+
   alias Esr.Admin.Commands.Session.End, as: SessionEnd
   alias Esr.Capabilities.Grants
+
+  setup :isolated_tmux_socket
 
   setup do
     # App-level singletons must already be up for SessionRouter to
@@ -67,7 +71,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
   end
 
   describe "execute/1 happy path" do
-    test "ends an existing agent-session via SessionRouter" do
+    test "ends an existing agent-session via SessionRouter", %{tmux_socket: tmux_sock} do
       Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
       {:ok, sid} =
@@ -76,7 +80,8 @@ defmodule Esr.Admin.Commands.Session.EndTest do
           dir: "/tmp",
           principal_id: "ou_alice",
           chat_id: "oc_end_happy_#{System.unique_integer([:positive])}",
-          thread_id: "om_end_happy_#{System.unique_integer([:positive])}"
+          thread_id: "om_end_happy_#{System.unique_integer([:positive])}",
+          tmux_socket: tmux_sock
         })
 
       # Supervisor exists pre-teardown.
