@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 load_agent_yaml
+seed_capabilities
 start_mock_feishu
 start_esrd
 register_feishu_adapter

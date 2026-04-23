@@ -13,8 +13,14 @@ set -Eeuo pipefail
 : "${ESR_E2E_UPLOADS_DIR:=${ESRD_HOME}/default/uploads}"
 : "${ESR_E2E_TMUX_SOCK:=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/tmux.sock}"
 
+# Principal identity used by `esr admin submit` (read by py/src/esr/cli/admin.py).
+# Matches ou_admin seeded by seed_capabilities() with wildcard grants so
+# register_adapter / new-session / end-session all pass the cap check.
+: "${ESR_OPERATOR_PRINCIPAL_ID:=ou_admin}"
+
 export ESR_E2E_RUN_ID ESRD_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
 export ESR_E2E_BARRIER_DIR ESR_E2E_UPLOADS_DIR ESR_E2E_TMUX_SOCK
+export ESR_OPERATOR_PRINCIPAL_ID
 
 mkdir -p "${ESR_E2E_BARRIER_DIR}" "${ESRD_HOME}" "$(dirname "${ESR_E2E_TMUX_SOCK}")"
 
@@ -42,17 +48,31 @@ _on_exit() {
 
 _e2e_teardown() {
   # Idempotent teardown — safe to run twice.
+  # `uv run` spawns python3 as a CHILD process; the pidfile captures the
+  # uv wrapper's pid. Kill the wrapper first, then pkill any stray
+  # mock_feishu python pinned to our port (E2E RCA: the wrapper+child
+  # split meant wrapper died but python held :8201 forever).
   [[ -f "/tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid" ]] && {
     kill -9 "$(cat /tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid)" 2>/dev/null || true
     rm -f "/tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid"
   }
+  # Defensive: kill any python3 still bound to our mock_feishu port.
+  # Scoped to our port number so a user's unrelated dev mock_feishu
+  # (on a different port) stays untouched.
+  pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT}" 2>/dev/null || true
   rm -f /tmp/.sidecar.pid 2>/dev/null || true
   rm -f /tmp/esr-worker-*.pid 2>/dev/null || true
   if [[ -S "${ESR_E2E_TMUX_SOCK}" ]]; then
     tmux -S "${ESR_E2E_TMUX_SOCK}" kill-server 2>/dev/null || true
   fi
-  rm -rf "${ESRD_HOME}" "${ESR_E2E_BARRIER_DIR}" \
-         "/tmp/mock-feishu-files-${MOCK_FEISHU_PORT}" 2>/dev/null || true
+  # Preserve state dirs when debugging: ESR_E2E_KEEP_LOGS=1 leaves
+  # ${ESRD_HOME} + barriers + mock-feishu files on disk.
+  if [[ "${ESR_E2E_KEEP_LOGS:-0}" == "1" ]]; then
+    echo "ESR_E2E_KEEP_LOGS=1 — preserving state at ${ESRD_HOME}" >&2
+  else
+    rm -rf "${ESRD_HOME}" "${ESR_E2E_BARRIER_DIR}" \
+           "/tmp/mock-feishu-files-${MOCK_FEISHU_PORT}" 2>/dev/null || true
+  fi
 
   # Best-effort esrd stop.
   ( cd "${_E2E_REPO_ROOT}" && \
@@ -212,9 +232,27 @@ start_mock_feishu() {
 }
 
 load_agent_yaml() {
-  mkdir -p "${ESRD_HOME}/default"
+  # Write to the runtime's instance dir so Esr.Application.load_agents_from_disk/0
+  # (called at boot when :restore_on_start is true) picks it up.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
   cp "${_E2E_REPO_ROOT}/runtime/test/esr/fixtures/agents/simple.yaml" \
-     "${ESRD_HOME}/default/agents.yaml"
+     "${ESRD_HOME}/${ESRD_INSTANCE}/agents.yaml"
+}
+
+seed_capabilities() {
+  # Write the instance-scoped capabilities.yaml BEFORE esrd boots so the
+  # FileLoader picks it up on first tick. ou_admin gets wildcard ["*"]
+  # which satisfies adapter.register / session.create / session.end /
+  # any other permission an e2e scenario will need. Matches the valid
+  # fixture at runtime/test/support/capabilities_fixtures/valid.yaml.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
+  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml" <<'EOF'
+principals:
+  - id: ou_admin
+    kind: feishu_user
+    note: e2e admin (wildcard)
+    capabilities: ["*"]
+EOF
 }
 
 start_esrd() {
