@@ -1,0 +1,39 @@
+{
+  "eval_id": 2,
+  "eval_name": "erlexec-stop-vs-kill-question",
+  "config": "without_skill",
+  "expectations": [
+    {
+      "text": "Recommends :exec.stop for graceful shutdown",
+      "passed": true,
+      "evidence": "substring present"
+    },
+    {
+      "text": "Says the argument is os_pid (the integer), NOT the Erlang pid",
+      "passed": true,
+      "evidence": "substring present"
+    },
+    {
+      "text": "Mentions kill_timeout option for SIGTERM \u2192 SIGKILL delay",
+      "passed": true,
+      "evidence": "substring present"
+    },
+    {
+      "text": "Mentions :exec.kill for arbitrary signals",
+      "passed": true,
+      "evidence": "substring present"
+    },
+    {
+      "text": "Does NOT invent :exec.graceful_stop or :exec.terminate",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Calls out the os_pid vs Erlang pid confusion as a gotcha",
+      "passed": true,
+      "evidence": "substring present"
+    }
+  ],
+  "passed": 6,
+  "total": 6
+}

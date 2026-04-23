@@ -10,16 +10,12 @@ each sidecar is reduced to ~25 lines of glue:
   ``directive_loop``, ``event_loop``, ``run_with_client``,
   ``_watch_disconnect``, ``run_with_reconnect``, and ``run`` (the
   factory-loading orchestration entry point).
-* :mod:`_adapter_common.url` — ``_resolve_url`` (re-reads
-  ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and substitutes into the
-  CLI-supplied URL so launchctl kickstart restarts are followed
-  seamlessly).
-* :mod:`_adapter_common.reconnect` — just re-exports the backoff
-  schedule; kept in its own module so the schedule can be tuned in one
-  place without touching core.
 * :mod:`_adapter_common.main` — ``build_main(allowed_adapters=..., prog=...)``
   factory. Each per-type sidecar wires its own allowlist + program name
   and exposes the returned ``main`` callable as ``__main__``.
+
+Note: URL resolution (``resolve_url``) and reconnect backoff schedule
+were moved to :mod:`_ipc_common` in P5-2.
 
 Decoupling note: these helpers deliberately do **not** import
 ``esr.ipc.adapter_runner`` — the relationship is the other way around.

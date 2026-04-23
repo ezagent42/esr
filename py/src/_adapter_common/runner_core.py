@@ -235,7 +235,7 @@ async def run_with_reconnect(
     reconnect loop that re-reads the port file on every attempt.
 
     Each iteration:
-    1. Re-resolve the URL via :func:`_adapter_common.url.resolve_url`
+    1. Re-resolve the URL via :func:`_ipc_common.url.resolve_url`
        (follows launchctl kickstart when ``esrd.port`` changes).
     2. Construct a fresh :class:`ChannelClient` (new WS session).
     3. Delegate to :func:`run_with_client`; a clean return resets the

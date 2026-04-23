@@ -1,0 +1,59 @@
+{
+  "eval_id": 1,
+  "eval_name": "python-sidecar-json-line",
+  "config": "without_skill",
+  "expectations": [
+    {
+      "text": "Uses :exec.run_link so sidecar dies with caller",
+      "passed": true,
+      "evidence": ":exec.run_link"
+    },
+    {
+      "text": "Does NOT include :pty \u2014 JSON-line protocol doesn't need a terminal",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Includes :stdin and :stdout options",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Uses :exec.send with os_pid",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Sets PYTHONUNBUFFERED=1 in env option",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "env values are charlists (String.to_charlist or ~c\"...\")",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Does NOT use naked Port.open",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Does NOT invent :exec functions",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Handles {:stdout, os_pid, bytes} messages",
+      "passed": true,
+      "evidence": ":stdout, os_pid, data}"
+    },
+    {
+      "text": "Buffers stdout chunks (erlexec doesn't do line framing) and splits on newline",
+      "passed": true,
+      "evidence": "buffer"
+    }
+  ],
+  "passed": 6,
+  "total": 10
+}

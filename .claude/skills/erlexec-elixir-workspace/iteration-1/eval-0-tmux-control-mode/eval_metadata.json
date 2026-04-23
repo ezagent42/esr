@@ -1,0 +1,19 @@
+{
+  "eval_id": 0,
+  "eval_name": "tmux-control-mode",
+  "prompt": "Write an Elixir GenServer wrapping tmux -C control-mode session with stdin commands, stdout event parsing (%begin %end %output %exit), and guaranteed cleanup on BEAM SIGKILL. erlexec ~> 2.2 available.",
+  "assertions": [
+    {"id": "uses_exec_run_link", "text": "Uses :exec.run_link (not :exec.run) so child dies with caller", "type": "regex_in_code", "pattern": ":exec\\.run_link"},
+    {"id": "uses_pty", "text": "Includes :pty in options (critical for tmux -C — isatty check)", "type": "regex_in_code", "pattern": ":pty\\b"},
+    {"id": "uses_stdin", "text": "Includes :stdin option (enables :exec.send)", "type": "regex_in_code", "pattern": ":stdin\\b"},
+    {"id": "uses_stdout", "text": "Includes :stdout option", "type": "regex_in_code", "pattern": ":stdout\\b"},
+    {"id": "uses_exec_send_with_os_pid", "text": "Uses :exec.send with os_pid (not the Erlang pid)", "type": "regex_in_code", "pattern": ":exec\\.send\\(\\s*(state\\.)?os_pid"},
+    {"id": "calls_exec_start", "text": "Calls :exec.start() in init OR adds :erlexec to extra_applications", "type": "regex_in_code", "pattern": ":exec\\.start\\(\\)|extra_applications.*erlexec"},
+    {"id": "no_port_open", "text": "Does NOT use naked Port.open (erlexec subsumes that)", "type": "regex_not_in_code", "pattern": "Port\\.open\\s*\\("},
+    {"id": "no_hallucinated_functions", "text": "Does NOT invent non-existent :exec functions", "type": "regex_not_in_code", "pattern": ":exec\\.(graceful_stop|terminate|spawn|attach|close)\\s*\\("},
+    {"id": "handles_stdout_messages", "text": "Handles {:stdout, os_pid, bytes} messages", "type": "regex_in_code", "pattern": ":stdout,\\s*[a-z_]+(_pid)?,\\s*[a-z_]+\\}"},
+    {"id": "handles_down_messages", "text": "Handles {:DOWN, os_pid, :process, pid, reason} for monitor exit", "type": "regex_in_code", "pattern": ":DOWN.*:process"},
+    {"id": "parses_tmux_events", "text": "Parses tmux control events: %begin/%end/%output/%exit", "type": "regex_in_code", "pattern": "%(begin|end|output|exit)"},
+    {"id": "buffers_stdout", "text": "Buffers partial lines (erlexec doesn't do line framing)", "type": "regex_in_code", "pattern": "buffer|accum|split"}
+  ]
+}

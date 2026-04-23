@@ -9,5 +9,5 @@ lives here.
 Package layout:
   - :mod:`_ipc_common.url`        — port-file-aware URL resolution.
   - :mod:`_ipc_common.reconnect`  — exponential backoff schedule.
-  - :mod:`_ipc_common.disconnect` — cancellable WS disconnect watcher.
+  - :mod:`_ipc_common.disconnect` — cancellable WS disconnect watcher (arriving in P5-3).
 """

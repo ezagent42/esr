@@ -1,0 +1,17 @@
+{
+  "eval_id": 1,
+  "eval_name": "python-sidecar-json-line",
+  "prompt": "Write an Elixir GenServer wrapping python -m sidecar with JSON-line stdin/stdout and BEAM-exit cleanup. erlexec ~> 2.2 available.",
+  "assertions": [
+    {"id": "uses_exec_run_link", "text": "Uses :exec.run_link so sidecar dies with caller", "type": "regex_in_code", "pattern": ":exec\\.run_link"},
+    {"id": "no_pty_for_json", "text": "Does NOT include :pty — JSON-line protocol doesn't need a terminal", "type": "regex_not_in_code", "pattern": "\\[\\s*[^\\]]*:pty\\b"},
+    {"id": "uses_stdin_stdout", "text": "Includes :stdin and :stdout options", "type": "regex_in_code", "pattern": ":stdin\\b.*\\bstdout|:stdout\\b.*\\bstdin"},
+    {"id": "uses_exec_send_with_os_pid", "text": "Uses :exec.send with os_pid", "type": "regex_in_code", "pattern": ":exec\\.send\\(\\s*(state\\.)?os_pid"},
+    {"id": "sets_pythonunbuffered", "text": "Sets PYTHONUNBUFFERED=1 in env option", "type": "regex_in_code", "pattern": "PYTHONUNBUFFERED"},
+    {"id": "env_charlists", "text": "env values are charlists (String.to_charlist or ~c\"...\")", "type": "regex_in_code", "pattern": "String\\.to_charlist|~c\""},
+    {"id": "no_port_open", "text": "Does NOT use naked Port.open", "type": "regex_not_in_code", "pattern": "Port\\.open\\s*\\("},
+    {"id": "no_hallucinated_functions", "text": "Does NOT invent :exec functions", "type": "regex_not_in_code", "pattern": ":exec\\.(graceful_stop|terminate|spawn|attach|close)\\s*\\("},
+    {"id": "handles_stdout_messages", "text": "Handles {:stdout, os_pid, bytes} messages", "type": "regex_in_code", "pattern": ":stdout,\\s*[a-z_]+(_pid)?,\\s*[a-z_]+\\}"},
+    {"id": "buffers_json_lines", "text": "Buffers stdout chunks (erlexec doesn't do line framing) and splits on newline", "type": "regex_in_code", "pattern": "(buffer|accum)|String\\.split.*\\\\n|~r/.*n"}
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "eval_id": 0,
+  "eval_name": "tmux-control-mode",
+  "config": "without_skill",
+  "expectations": [
+    {
+      "text": "Uses :exec.run_link (not :exec.run) so child dies with caller",
+      "passed": true,
+      "evidence": ":exec.run_link"
+    },
+    {
+      "text": "Includes :pty in options (critical for tmux -C \u2014 isatty check)",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Includes :stdin option (enables :exec.send)",
+      "passed": true,
+      "evidence": ":stdin"
+    },
+    {
+      "text": "Includes :stdout option",
+      "passed": true,
+      "evidence": ":stdout"
+    },
+    {
+      "text": "Uses :exec.send with os_pid (not the Erlang pid)",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Calls :exec.start() in init OR adds :erlexec to extra_applications",
+      "passed": false,
+      "evidence": "not found in code"
+    },
+    {
+      "text": "Does NOT use naked Port.open (erlexec subsumes that)",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Does NOT invent non-existent :exec functions",
+      "passed": true,
+      "evidence": "no match (good)"
+    },
+    {
+      "text": "Handles {:stdout, os_pid, bytes} messages",
+      "passed": true,
+      "evidence": ":stdout, os_pid, chunk}"
+    },
+    {
+      "text": "Handles {:DOWN, os_pid, :process, pid, reason} for monitor exit",
+      "passed": true,
+      "evidence": ":DOWN, os_pid, :process"
+    },
+    {
+      "text": "Parses tmux control events: %begin/%end/%output/%exit",
+      "passed": true,
+      "evidence": "%begin"
+    },
+    {
+      "text": "Buffers partial lines (erlexec doesn't do line framing)",
+      "passed": true,
+      "evidence": "buffer"
+    }
+  ],
+  "passed": 9,
+  "total": 12
+}
