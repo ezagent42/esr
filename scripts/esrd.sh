@@ -122,7 +122,9 @@ cmd_stop() {
       mv "$log" "$worker_logs_dir/" 2>/dev/null || true
     done
 
-    pkill -f 'esr\.ipc\.(adapter_runner|handler_worker)' 2>/dev/null || true
+    # PR-4b: adapter_runner was split into per-type sidecars; kill the
+    # legacy monolith (deprecation shim) as well as the new sidecars.
+    pkill -f 'esr\.ipc\.(adapter_runner|handler_worker)|python -m (feishu|cc|generic)_adapter_runner' 2>/dev/null || true
     rm -f /tmp/esr-worker-*.pid 2>/dev/null
     rm -f "$ESRD_HOME/default/adapters.yaml" 2>/dev/null
   fi

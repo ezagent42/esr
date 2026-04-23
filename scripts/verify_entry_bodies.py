@@ -16,8 +16,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_MANIFEST: list[tuple[str, list[str]]] = [
-    ("py/src/esr/ipc/adapter_runner.py", ["run"]),
+    # PR-4b: `esr.ipc.adapter_runner` is now a deprecation shim that
+    # re-exports from `_adapter_common`; its `run` is a re-exported name
+    # (not a FunctionDef), so the AST-walker can't check it directly.
+    # The real body lives in `_adapter_common.runner_core.run`, which we
+    # check instead.
     ("py/src/esr/ipc/handler_worker.py", ["run"]),
+    ("py/src/_adapter_common/runner_core.py", ["run"]),
+    ("py/src/_adapter_common/main.py", ["build_main"]),
+    # Per-sidecar `__main__.py` files assign `main = build_main(...)` at
+    # module scope — they contain no FunctionDef of their own, so they
+    # fall outside the AST-walker's "is this a stub?" check. The real
+    # bodies they delegate to (build_main, runner_core.run) are already
+    # in this manifest, which is sufficient.
     ("py/src/esr/cli/main.py", [
         "_submit_cmd_run", "_submit_cmd_stop", "_submit_actors",
         "_submit_trace", "_stream_telemetry", "_submit_debug",

@@ -66,17 +66,19 @@ for t in "$@"; do
   instance="tmux:${t}"
   slug="adapter-cc_tmux-${t}"
   log="/tmp/esr-worker-${slug}.log"
+  # PR-4b: cc_tmux speaks via cc_adapter_runner (dedicated sidecar).
   spawn_bg "$slug" "$log" \
-    uv run --project py python -m esr.ipc.adapter_runner \
+    uv run --project py python -m cc_adapter_runner \
       --adapter cc_tmux \
       --instance-id "$instance" \
       --url "$ADAPTER_URL" \
       --config-json "$CC_TMUX_CONFIG"
 done
 
-# feishu adapter — shared across all threads.
+# feishu adapter — shared across all threads. PR-4b: feishu speaks via
+# feishu_adapter_runner (dedicated sidecar).
 spawn_bg "adapter-feishu-shared" "/tmp/esr-worker-adapter-feishu-shared.log" \
-  uv run --project py python -m esr.ipc.adapter_runner \
+  uv run --project py python -m feishu_adapter_runner \
     --adapter feishu \
     --instance-id "shared" \
     --url "$ADAPTER_URL" \
