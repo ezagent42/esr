@@ -34,9 +34,33 @@ defmodule Esr.WorkerSupervisor do
 
   @pidfile_dir "/tmp"
 
+  # PR-4b: per-adapter-type sidecar dispatch. Adapters we ship own code
+  # for get a dedicated Python module so their dependency footprint stays
+  # scoped; anything not in the map falls through to generic_adapter_runner
+  # (which emits a DeprecationWarning on stderr at startup so operators
+  # know to add the adapter to a dedicated sidecar's allowlist).
+  @sidecar_dispatch %{
+    "feishu" => "feishu_adapter_runner",
+    "cc_tmux" => "cc_adapter_runner",
+    "cc_mcp" => "cc_adapter_runner"
+  }
+
   # ------------------------------------------------------------------
   # Public API
   # ------------------------------------------------------------------
+
+  @doc """
+  Map an adapter name to the Python module that should host its sidecar.
+
+  Known adapters route to dedicated sidecars (e.g. `feishu_adapter_runner`,
+  `cc_adapter_runner`). Unknown names fall back to `generic_adapter_runner`,
+  which is a migration shim that prints a DeprecationWarning — add new
+  adapters to a dedicated sidecar's allowlist instead of relying on the
+  generic fallback.
+  """
+  @spec sidecar_module(String.t()) :: String.t()
+  def sidecar_module(name) when is_binary(name),
+    do: Map.get(@sidecar_dispatch, name, "generic_adapter_runner")
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -108,7 +132,7 @@ defmodule Esr.WorkerSupervisor do
         fn ->
           spawn_python([
             "-m",
-            "esr.ipc.adapter_runner",
+            sidecar_module(adapter_name),
             "--adapter",
             adapter_name,
             "--instance-id",
@@ -293,9 +317,18 @@ defmodule Esr.WorkerSupervisor do
   end
 
   defp log_path_for(args) do
-    # Mirror the pidfile naming so operators can cross-reference.
+    # Mirror the pidfile naming so operators can cross-reference. PR-4b
+    # split the adapter runner into per-type sidecars, so the module name
+    # in the argv is now one of `{feishu,cc,generic}_adapter_runner` (or
+    # the old `esr.ipc.adapter_runner` shim during the deprecation window).
     case args do
-      ["-m", "esr.ipc.adapter_runner", "--adapter", name, "--instance-id", id | _] ->
+      ["-m", module, "--adapter", name, "--instance-id", id | _]
+      when module in [
+             "esr.ipc.adapter_runner",
+             "feishu_adapter_runner",
+             "cc_adapter_runner",
+             "generic_adapter_runner"
+           ] ->
         Path.join(@pidfile_dir, "esr-worker-adapter-" <> name <> "-" <> slugify(id) <> ".log")
 
       ["-m", "esr.ipc.handler_worker", "--module", module, "--worker-id", wid | _] ->

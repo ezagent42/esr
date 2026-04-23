@@ -23,6 +23,19 @@ defmodule Esr.WorkerSupervisorTest do
     :ok
   end
 
+  describe "sidecar_module/1 (PR-4b dispatch table)" do
+    test "known adapters dispatch to dedicated sidecars" do
+      assert WorkerSupervisor.sidecar_module("feishu") == "feishu_adapter_runner"
+      assert WorkerSupervisor.sidecar_module("cc_tmux") == "cc_adapter_runner"
+      assert WorkerSupervisor.sidecar_module("cc_mcp") == "cc_adapter_runner"
+    end
+
+    test "unknown adapter names fall back to generic_adapter_runner" do
+      assert WorkerSupervisor.sidecar_module("unknown_thing") == "generic_adapter_runner"
+      assert WorkerSupervisor.sidecar_module("brand_new_adapter") == "generic_adapter_runner"
+    end
+  end
+
   describe "ensure_adapter/4" do
     test "second call with same key is a no-op (already_running)" do
       # Use a definitely-nonexistent adapter name; the subprocess will
