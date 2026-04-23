@@ -48,4 +48,57 @@ defmodule Esr.AdminSession do
 
     Supervisor.init(children, strategy: :one_for_one)
   end
+
+  @doc """
+  Start the VoiceASR/VoiceTTS pools under AdminSession's children
+  supervisor. Called from `Esr.Application.start/2` after AdminSession
+  is up (Risk F exception — bootstrap bypasses SessionRouter).
+
+  Pool sizes come from `pools.yaml` via `Esr.Pools.pool_max/2`. Each
+  `Esr.PeerPool` is registered both as a globally-named process
+  (`:voice_asr_pool`, `:voice_tts_pool`) and as an admin peer under
+  AdminSessionProcess so session-local proxies can resolve it
+  symbolically.
+
+  Returns `:ok` on success; `{:error, _}` if any step fails so the
+  caller can decide whether to continue booting with a degraded voice
+  plane (missing voice pools are not fatal — the rest of AdminSession
+  stays up).
+
+  Expansion P4a-7.
+  """
+  @spec bootstrap_voice_pools(Path.t() | nil) :: :ok | {:error, term()}
+  def bootstrap_voice_pools(pools_yaml_path \\ nil) do
+    sup = children_supervisor_name()
+
+    with {:ok, asr_pid} <-
+           DynamicSupervisor.start_child(
+             sup,
+             pool_spec(:voice_asr_pool, Esr.Peers.VoiceASR, pools_yaml_path)
+           ),
+         :ok <- Esr.AdminSessionProcess.register_admin_peer(:voice_asr_pool, asr_pid),
+         {:ok, tts_pid} <-
+           DynamicSupervisor.start_child(
+             sup,
+             pool_spec(:voice_tts_pool, Esr.Peers.VoiceTTS, pools_yaml_path)
+           ),
+         :ok <- Esr.AdminSessionProcess.register_admin_peer(:voice_tts_pool, tts_pid) do
+      :ok
+    else
+      {:ok, _, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, other}
+    end
+  end
+
+  defp pool_spec(name, worker_mod, pools_yaml) do
+    max = Esr.Pools.pool_max(name, pools_yaml)
+
+    %{
+      id: name,
+      start: {Esr.PeerPool, :start_link, [[name: name, worker: worker_mod, max: max]]},
+      restart: :permanent,
+      type: :worker
+    }
+  end
 end

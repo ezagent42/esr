@@ -78,4 +78,23 @@ defmodule Esr.AdminSessionTest do
 
     assert Process.alive?(Process.whereis(name))
   end
+
+  test "bootstrap_voice_pools/1 registers :voice_asr_pool and :voice_tts_pool admin peers (app-level)" do
+    # The app-level bootstrap already ran during `Esr.Application.start/2`
+    # (see application.ex P4a-7 hook); we assert the post-condition. The
+    # test-local AdminSession tree used elsewhere in this file doesn't
+    # touch these names, so the invariant is app-scoped.
+    assert {:ok, asr_pid} = Esr.AdminSessionProcess.admin_peer(:voice_asr_pool)
+    assert is_pid(asr_pid)
+    assert Process.alive?(asr_pid)
+
+    assert {:ok, tts_pid} = Esr.AdminSessionProcess.admin_peer(:voice_tts_pool)
+    assert is_pid(tts_pid)
+    assert Process.alive?(tts_pid)
+
+    # And they're reachable by their `{name: ...}`-registered atom too,
+    # matching the pool_name ctx a proxy would receive.
+    assert Process.whereis(:voice_asr_pool) == asr_pid
+    assert Process.whereis(:voice_tts_pool) == tts_pid
+  end
 end
