@@ -37,8 +37,17 @@ def test_handler_worker_uses_shared_watch_disconnect() -> None:
     )
 
 
-def test_handler_worker_uses_shared_resolve_url() -> None:
-    from _ipc_common.url import resolve_url
+def test_handler_worker_uses_shared_reconnect_loop() -> None:
+    """Post-PR-6 D2, resolve_url lives inside _ipc_common.reconnect_loop;
+    handler_worker no longer imports resolve_url directly. Assert on the
+    new invariant: the run_with_reconnect wrapper delegates to the shared
+    reconnect_loop helper.
+    """
+    from _ipc_common.reconnect import reconnect_loop
     from esr.ipc import handler_worker
 
-    assert handler_worker.resolve_url is resolve_url
+    assert handler_worker.reconnect_loop is reconnect_loop, (
+        "handler_worker.run_with_reconnect must delegate to the shared "
+        "_ipc_common.reconnect.reconnect_loop helper (PR-6 D2); it should "
+        "`from _ipc_common.reconnect import reconnect_loop` at module scope."
+    )
