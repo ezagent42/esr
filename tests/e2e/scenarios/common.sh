@@ -41,7 +41,7 @@ _on_exit() {
 }
 
 _e2e_teardown() {
-  # (full body in Task I; stub here — expanded when Makefile wiring lands)
+  # Idempotent teardown — safe to run twice.
   [[ -f "/tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid" ]] && {
     kill -9 "$(cat /tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid)" 2>/dev/null || true
     rm -f "/tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid"
@@ -53,6 +53,18 @@ _e2e_teardown() {
   fi
   rm -rf "${ESRD_HOME}" "${ESR_E2E_BARRIER_DIR}" \
          "/tmp/mock-feishu-files-${MOCK_FEISHU_PORT}" 2>/dev/null || true
+
+  # Best-effort esrd stop.
+  ( cd "${_E2E_REPO_ROOT}" && \
+    bash scripts/esrd.sh stop --instance="${ESRD_INSTANCE}" 2>/dev/null ) || true
+
+  # CI-only absolute cleanup (§7.2).
+  if [[ "${ESR_E2E_CI:-0}" == "1" ]]; then
+    rm -rf /tmp/esrd-e2e-* /tmp/esr-e2e-* /tmp/mock-feishu-files-* 2>/dev/null || true
+    pkill -f "mock_feishu.py --port 82" 2>/dev/null || true
+    pkill -f "erlexec.*esr" 2>/dev/null || true
+    tmux kill-server 2>/dev/null || true
+  fi
 }
 
 # --- assertion helpers -----------------------------------------------
