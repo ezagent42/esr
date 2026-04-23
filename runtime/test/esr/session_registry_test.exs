@@ -30,6 +30,89 @@ defmodule Esr.SessionRegistryTest do
              Esr.SessionRegistry.lookup_by_chat_thread("c1", "t1")
   end
 
+  test "lookup_by_chat_thread/2 does not call into the SessionRegistry GenServer" do
+    sid = "no-gs-call-#{System.unique_integer([:positive])}"
+
+    chat = %{
+      chat_id: "oc_#{System.unique_integer([:positive])}",
+      thread_id: "om_#{System.unique_integer([:positive])}"
+    }
+
+    :ok =
+      Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: self()})
+
+    # Snapshot the registry's message-queue length before the lookup.
+    # If the lookup is a direct ETS read, it never touches this mailbox.
+    {:message_queue_len, before} =
+      Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
+
+    assert {:ok, ^sid, _refs} =
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+
+    {:message_queue_len, after_lookup} =
+      Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
+
+    assert after_lookup <= before,
+           "lookup_by_chat_thread should not enqueue any message on the SessionRegistry mailbox"
+
+    Esr.SessionRegistry.unregister_session(sid)
+  end
+
+  test "SessionRegistry has no handle_call clause for :lookup_by_chat_thread after P6-A1" do
+    # Authoritative source-grep gate. Post-A1 the function is a direct
+    # ETS read — no `handle_call({:lookup_by_chat_thread, ...}, ...)`
+    # clause must exist.
+    src = File.read!("lib/esr/session_registry.ex")
+
+    refute src =~ ~r/handle_call\(\s*\{:lookup_by_chat_thread/,
+           "lookup_by_chat_thread must be a direct ETS read, not a handle_call"
+  end
+
+  test "unregister_session removes the ETS entry so subsequent lookup returns :not_found" do
+    sid = "unreg-#{System.unique_integer([:positive])}"
+
+    chat = %{
+      chat_id: "oc_unreg_#{System.unique_integer([:positive])}",
+      thread_id: "om_unreg_#{System.unique_integer([:positive])}"
+    }
+
+    :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: self()})
+
+    assert {:ok, ^sid, _} =
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+
+    :ok = Esr.SessionRegistry.unregister_session(sid)
+
+    assert :not_found =
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+  end
+
+  test "re-registering a session overwrites refs in the ETS index" do
+    sid = "rereg-#{System.unique_integer([:positive])}"
+
+    chat = %{
+      chat_id: "oc_rereg_#{System.unique_integer([:positive])}",
+      thread_id: "om_rereg_#{System.unique_integer([:positive])}"
+    }
+
+    pid1 = spawn(fn -> :timer.sleep(:infinity) end)
+    pid2 = spawn(fn -> :timer.sleep(:infinity) end)
+
+    :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid1})
+
+    assert {:ok, ^sid, %{feishu_chat_proxy: ^pid1}} =
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+
+    :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid2})
+
+    assert {:ok, ^sid, %{feishu_chat_proxy: ^pid2}} =
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+
+    Esr.SessionRegistry.unregister_session(sid)
+    Process.exit(pid1, :kill)
+    Process.exit(pid2, :kill)
+  end
+
   test "reserved field names in agents.yaml trigger WARN log" do
     path = Path.join(System.tmp_dir!(), "reserved_test.yaml")
     File.write!(path, ~S"""
