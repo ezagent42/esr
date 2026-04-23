@@ -83,10 +83,13 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   @impl GenServer
   def handle_info({:feishu_inbound, _} = msg, state) do
-    case handle_upstream(msg, state) do
-      {:forward, _, ns} -> {:noreply, ns}
-      {:drop, _, ns} -> {:noreply, ns}
-    end
+    # handle_upstream/2 currently always returns {:drop, _, ns} (slash
+    # routed / non-slash dropped — PR-3's CC chain doesn't wire through
+    # this proxy). If a {:forward, _, ns} path is ever added, this
+    # function_clause crash is the forcing function to decide what to
+    # do with the forward payload.
+    {:drop, _, ns} = handle_upstream(msg, state)
+    {:noreply, ns}
   end
 
   def handle_info({:reply, _} = msg, state) do
