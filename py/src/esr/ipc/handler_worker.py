@@ -33,7 +33,6 @@ from typing import Any
 from _ipc_common.disconnect import watch_disconnect
 from _ipc_common.frame import make_envelope_filter
 from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE, reconnect_loop
-from _ipc_common.url import resolve_url
 from esr.events import Event
 from esr.handler import HANDLER_REGISTRY, STATE_REGISTRY, all_permissions
 from esr.ipc.envelope import make_handler_hello, serialise_action

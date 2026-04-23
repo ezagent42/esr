@@ -44,7 +44,6 @@ from esr.ipc.envelope import make_directive_ack, make_event, make_handler_hello
 from _ipc_common.disconnect import watch_disconnect
 from _ipc_common.frame import make_envelope_filter
 from _ipc_common.reconnect import RECONNECT_BACKOFF_SCHEDULE, reconnect_loop
-from _ipc_common.url import resolve_url
 
 logger = logging.getLogger(__name__)
 
