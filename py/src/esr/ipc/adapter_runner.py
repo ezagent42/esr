@@ -22,8 +22,8 @@ from _adapter_common.runner_core import (
     run_with_client,
     run_with_reconnect,
 )
-from _adapter_common.runner_core import watch_disconnect as _watch_disconnect
-from _adapter_common.url import resolve_url as _resolve_url
+from _ipc_common.disconnect import watch_disconnect as _watch_disconnect
+from _ipc_common.url import resolve_url as _resolve_url
 
 warnings.warn(
     "esr.ipc.adapter_runner is deprecated; use feishu_adapter_runner, "
