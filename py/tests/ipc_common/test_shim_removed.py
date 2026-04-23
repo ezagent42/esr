@@ -10,5 +10,9 @@ import pytest
 
 
 def test_shim_module_removed() -> None:
-    with pytest.raises(ModuleNotFoundError):
+    with pytest.raises(ModuleNotFoundError) as excinfo:
         import esr.ipc.adapter_runner  # noqa: F401
+    assert excinfo.value.name == "esr.ipc.adapter_runner", (
+        f"expected ModuleNotFoundError for 'esr.ipc.adapter_runner' specifically; "
+        f"got {excinfo.value.name!r} — is the shim being re-introduced by accident?"
+    )
