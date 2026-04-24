@@ -86,8 +86,10 @@ done
 assert_actors_list_lacks "thread:${LIVE_SESSION_ID}" "user-step 12: tmux peer torn down"
 
 # tmux session should also be gone (TmuxProcess.on_terminate runs
-# `kill-session` on normal stop).
-for _ in $(seq 1 50); do
+# `kill-session` on normal stop). The SIGTERM → claude cleanup chain
+# can take up to ~15s because claude's MCP shutdown hooks run first;
+# poll generously.
+for _ in $(seq 1 150); do
   if ! tmux -S "${ESR_E2E_TMUX_SOCK}" has-session -t "${TMUX_SESSION_NAME}" 2>/dev/null; then
     break
   fi
