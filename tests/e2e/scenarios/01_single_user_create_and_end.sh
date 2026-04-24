@@ -47,11 +47,15 @@ echo "created session ${SESSION_ID}"
 # Post-T11b.7 the cc_adapter_runner handler no longer composes a canned
 # reply — real CC now runs in tmux with the cc_mcp bridge, sees our
 # inbound as a <channel> tag in its conversation context, and decides
-# the response itself. We instruct CC explicitly to reply with "ack"
-# so the sent_messages assertion can still pin a deterministic substring.
+# the response itself. The prompt covers all three outbound directives
+# scenario 01 asserts on: reply (step 2), react (step 3 — automatic via
+# FCP), and send_file (step 4). T12-comms-3f 2026-04-24: CC also needs
+# the absolute probe-file path, otherwise it invents a non-existent one.
+PROBE_FILE="${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt"
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"Please reply with exactly the three letters: ack"}' \
+  -d "{\"chat_id\":\"oc_mock_single\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROMPT")}" \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" \
   | jq -r '.message_id')
 [[ -n "$INBOUND_MSG_ID" ]] || _fail_with_context "push_inbound did not return message_id"
@@ -84,10 +88,12 @@ done
 assert_mock_feishu_reactions_count "$INBOUND_MSG_ID" 1
 
 # --- user-step 4: CC sends file ---------------------------------------
-EXPECTED_SHA=$(shasum -a 256 "${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt" \
-  | awk '{print $1}')
-# CC invokes send_file via its tool; wait for it to show up.
-for _ in $(seq 1 100); do
+EXPECTED_SHA=$(shasum -a 256 "${PROBE_FILE}" | awk '{print $1}')
+# CC invokes send_file via its tool as step (2) of the combined prompt.
+# Real CC's second action (tool call + round-trip) runs well after the
+# first reply — extend to 60s (the initial 10s was sized for the canned
+# placeholder, not a real model turn).
+for _ in $(seq 1 600); do
   if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_files" \
        | jq -e '.[] | select(.chat_id=="oc_mock_single")' >/dev/null; then
     break
