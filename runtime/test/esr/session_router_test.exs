@@ -101,6 +101,57 @@ defmodule Esr.SessionRouterTest do
     assert Process.alive?(refs.tmux_process)
   end
 
+  test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)",
+       %{tmux_socket: tmux_sock} do
+    # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
+    # resolves to it; peers' init callbacks receive the enriched params.
+    :ok =
+      Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+        name: "T11b2_ws",
+        cwd: "/tmp",
+        start_cmd: "",
+        role: "dev",
+        chats: [%{"chat_id" => "oc_T11b2", "app_id" => "cli_test", "kind" => "dm"}],
+        env: %{}
+      })
+
+    on_exit(fn -> :ets.delete(:esr_workspaces, "T11b2_ws") end)
+
+    assert {:ok, session_id} =
+             SessionRouter.create_session(%{
+               agent: "cc",
+               dir: "/tmp",
+               principal_id: "ou_alice",
+               chat_id: "oc_T11b2",
+               thread_id: "om_T11b2",
+               app_id: "cli_test",
+               tmux_socket: tmux_sock
+             })
+
+    # FeishuChatProxy's state already carries session_id; workspace_name
+    # should be reachable once TmuxProcess reads it in T11b.3.
+    {:ok, ^session_id, refs} =
+      Esr.SessionRegistry.lookup_by_chat_thread("oc_T11b2", "om_T11b2")
+
+    fcp_state = :sys.get_state(refs.feishu_chat_proxy)
+    assert fcp_state.session_id == session_id
+  end
+
+  test "create_session defaults workspace_name to 'default' when no chat binding exists",
+       %{tmux_socket: tmux_sock} do
+    # No workspace seeded for (oc_unbound, cli_test) — fallback kicks in.
+    assert {:ok, _session_id} =
+             SessionRouter.create_session(%{
+               agent: "cc",
+               dir: "/tmp",
+               principal_id: "ou_alice",
+               chat_id: "oc_unbound_#{System.unique_integer([:positive])}",
+               thread_id: "om_unbound",
+               app_id: "cli_test",
+               tmux_socket: tmux_sock
+             })
+  end
+
   test "create_session returns {:error, :unknown_agent} for missing agent_def" do
     assert {:error, :unknown_agent} =
              SessionRouter.create_session(%{
