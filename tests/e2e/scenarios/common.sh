@@ -18,9 +18,17 @@ set -Eeuo pipefail
 # register_adapter / new-session / end-session all pass the cap check.
 : "${ESR_OPERATOR_PRINCIPAL_ID:=ou_admin}"
 
+# PR-9 T11b.0a — first-boot capabilities fallback + ChannelChannel default.
+# Esr.Capabilities.Supervisor seeds capabilities.yaml from this principal
+# when the file is absent; EsrWeb.ChannelChannel uses it as the default
+# principal_id on tool_invoke arriving before session_register. Held
+# identical to ESR_OPERATOR_PRINCIPAL_ID so the same ou_admin row seeded by
+# seed_capabilities covers Lane A + Lane B + cc_mcp tool_invoke paths.
+: "${ESR_BOOTSTRAP_PRINCIPAL_ID:=${ESR_OPERATOR_PRINCIPAL_ID}}"
+
 export ESR_E2E_RUN_ID ESRD_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
 export ESR_E2E_BARRIER_DIR ESR_E2E_UPLOADS_DIR ESR_E2E_TMUX_SOCK
-export ESR_OPERATOR_PRINCIPAL_ID
+export ESR_OPERATOR_PRINCIPAL_ID ESR_BOOTSTRAP_PRINCIPAL_ID
 
 mkdir -p "${ESR_E2E_BARRIER_DIR}" "${ESRD_HOME}" "$(dirname "${ESR_E2E_TMUX_SOCK}")"
 
