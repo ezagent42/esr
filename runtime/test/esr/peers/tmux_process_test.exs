@@ -547,4 +547,106 @@ defmodule Esr.Peers.TmuxProcessTest do
       assert is_nil(state.mcp_config_path)
     end
   end
+
+  describe "PR-9 T12a: send_keys + tmux_send_keys_line" do
+    test "tmux_send_keys_line/2 builds literal-string tokens quoted" do
+      assert TmuxProcess.tmux_send_keys_line("esr_cc_1", ["1"]) ==
+               ~s(send-keys -t esr_cc_1 "1"\n)
+
+      assert TmuxProcess.tmux_send_keys_line("esr_cc_2", ["hello world"]) ==
+               ~s(send-keys -t esr_cc_2 "hello world"\n)
+    end
+
+    test "tmux_send_keys_line/2 maps atoms to named-key tokens" do
+      line = TmuxProcess.tmux_send_keys_line("esr_cc_3", ["1", :enter])
+      assert line == ~s(send-keys -t esr_cc_3 "1" Enter\n)
+    end
+
+    test "tmux_send_keys_line/2 handles all common named keys" do
+      line =
+        TmuxProcess.tmux_send_keys_line("s", [
+          :enter,
+          :escape,
+          :tab,
+          :space,
+          :up,
+          :down,
+          :left,
+          :right,
+          :backspace,
+          :c_c,
+          :c_d
+        ])
+
+      assert line ==
+               "send-keys -t s Enter Escape Tab Space Up Down Left Right BSpace C-c C-d\n"
+    end
+
+    test "tmux_send_keys_line/2 escapes embedded quotes + backslashes in literals" do
+      # Backslash must double; double-quote must prefix with backslash so the
+      # tmux control-mode line parser doesn't terminate the string early.
+      line = TmuxProcess.tmux_send_keys_line("s", ["a\"b\\c"])
+      assert line == "send-keys -t s \"a\\\"b\\\\c\"\n"
+    end
+  end
+
+  describe "PR-9 T12a: schedule_startup_keys auto-confirms trust dialog" do
+    test "init/1 with session_id + tmux_force_claude_launch schedules send_keys_tokens" do
+      Application.put_env(:esr, :tmux_force_claude_launch, true)
+      Application.put_env(:esr, :tmux_startup_keys_delay_ms, 10)
+
+      on_exit(fn ->
+        Application.delete_env(:esr, :tmux_force_claude_launch)
+        Application.delete_env(:esr, :tmux_startup_keys_delay_ms)
+      end)
+
+      test_pid = self()
+
+      # init/1 runs in the caller process for this unit test; schedule
+      # fires Process.send_after(self(), ...) which lands in the same
+      # process's mailbox.
+      spawn_link(fn ->
+        {:ok, _state} =
+          TmuxProcess.init(%{
+            session_name: "trust_test",
+            dir: "/tmp",
+            session_id: "sid_trust"
+          })
+
+        receive do
+          {:send_keys_tokens, keys} = msg ->
+            send(test_pid, {:received, msg})
+            assert keys == ["1", :enter]
+        after
+          200 -> send(test_pid, :timeout)
+        end
+      end)
+
+      assert_receive {:received, {:send_keys_tokens, ["1", :enter]}}, 500
+    end
+
+    test "init/1 in pure :test env (no force flag) does NOT schedule keys" do
+      # Default test env — no force flag, no scheduled keys.
+      Application.delete_env(:esr, :tmux_force_claude_launch)
+
+      test_pid = self()
+
+      spawn_link(fn ->
+        {:ok, _state} =
+          TmuxProcess.init(%{
+            session_name: "no_trust",
+            dir: "/tmp",
+            session_id: "sid_no_trust"
+          })
+
+        receive do
+          msg -> send(test_pid, {:unexpected, msg})
+        after
+          100 -> send(test_pid, :no_keys_scheduled)
+        end
+      end)
+
+      assert_receive :no_keys_scheduled, 500
+    end
+  end
 end
