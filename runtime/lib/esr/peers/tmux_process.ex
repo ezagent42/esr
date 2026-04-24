@@ -221,58 +221,24 @@ defmodule Esr.Peers.TmuxProcess do
   @spec build_capture_pane_argv(String.t(), String.t() | nil, keyword()) :: [String.t()]
   def build_capture_pane_argv(session_name, tmux_socket, opts)
       when is_binary(session_name) and is_list(opts) do
-    socket_args =
-      case tmux_socket do
-        nil -> []
-        "" -> []
-        path when is_binary(path) -> ["-S", path]
-      end
+    socket_args = if tmux_socket in [nil, ""], do: [], else: ["-S", tmux_socket]
 
-    # `-p` prints capture to stdout; `-t` targets session/pane.
-    base = socket_args ++ ["capture-pane", "-p", "-t", session_name]
+    # `-S -` is tmux's "start from oldest history line"; an explicit
+    # :start in opts wins over the :history shortcut.
+    start =
+      Keyword.get(opts, :start) ||
+        if(Keyword.get(opts, :history, false), do: :history_top)
 
-    base
-    |> maybe_add_history(opts)
-    |> maybe_add_bounds(opts)
-    |> maybe_add_escape(opts)
-    |> maybe_add_join(opts)
-  end
+    bounds =
+      (if start, do: ["-S", capture_line_token(start)], else: []) ++
+        (if end_ = Keyword.get(opts, :end), do: ["-E", capture_line_token(end_)], else: [])
 
-  defp maybe_add_history(argv, opts) do
-    if Keyword.get(opts, :history, false) do
-      # `-S -` in tmux capture-pane means "start from the oldest
-      # history line". Explicit start in opts overrides this.
-      if Keyword.has_key?(opts, :start) do
-        argv
-      else
-        argv ++ ["-S", "-"]
-      end
-    else
-      argv
-    end
-  end
-
-  defp maybe_add_bounds(argv, opts) do
-    argv
-    |> append_if(Keyword.get(opts, :start), fn start_arg ->
-      ["-S", capture_line_token(start_arg)]
-    end)
-    |> append_if(Keyword.get(opts, :end), fn end_arg ->
-      ["-E", capture_line_token(end_arg)]
-    end)
-  end
-
-  defp maybe_add_escape(argv, opts) do
-    if Keyword.get(opts, :escape_sequences, false), do: argv ++ ["-e"], else: argv
-  end
-
-  defp maybe_add_join(argv, opts) do
+    escape = if Keyword.get(opts, :escape_sequences, false), do: ["-e"], else: []
     # `-J` joins wrapped lines; default on mirrors libtmux's default.
-    if Keyword.get(opts, :join_wrapped, true), do: argv ++ ["-J"], else: argv
-  end
+    join = if Keyword.get(opts, :join_wrapped, true), do: ["-J"], else: []
 
-  defp append_if(argv, nil, _build), do: argv
-  defp append_if(argv, arg, build), do: argv ++ build.(arg)
+    socket_args ++ ["capture-pane", "-p", "-t", session_name] ++ bounds ++ escape ++ join
+  end
 
   defp capture_line_token(:history_top), do: "-"
   defp capture_line_token(n) when is_integer(n), do: Integer.to_string(n)
@@ -452,13 +418,13 @@ defmodule Esr.Peers.TmuxProcess do
     # per-session (no server-wide side effects). Proven via
     # `env -i PATH=… tmux new-session -e FOO=bar 'sh -c "env"'`.
     env_flags =
-      for {k, v} <- os_env(state), do: ["-e", "#{k}=#{v}"]
+      Enum.flat_map(os_env(state), fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 
     base =
       ["tmux"] ++
         socket_args ++
         ["-C", "new-session"] ++
-        List.flatten(env_flags) ++
+        env_flags ++
         ["-s", state.session_name, "-c", state.dir]
 
     # PR-9 T11b.3 — if we have the session context, append a claude

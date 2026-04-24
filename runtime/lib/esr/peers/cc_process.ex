@@ -155,7 +155,9 @@ defmodule Esr.Peers.CCProcess do
   # couldn't broadcast earlier (no subscribers) and flip the state
   # flag so subsequent send_input actions broadcast immediately.
   def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
-    for envelope <- state.pending_notifications do
+    # pending_notifications was prepended (O(1)); reverse to preserve
+    # the original `send_input` order on flush.
+    for envelope <- Enum.reverse(state.pending_notifications) do
       broadcast_notification(sid, envelope)
     end
 
@@ -242,16 +244,11 @@ defmodule Esr.Peers.CCProcess do
     end
   end
 
-  defp dispatch_actions(actions, state) do
-    # Thread state through so send_input can buffer notifications in
-    # state.pending_notifications when cc_mcp hasn't joined yet.
-    Enum.reduce(actions, state, fn action, acc ->
-      case dispatch_action(action, acc) do
-        {:buffered, new_state} -> new_state
-        _ -> acc
-      end
-    end)
-  end
+  # Every `dispatch_action/2` clause returns the (possibly updated)
+  # state — keeps the reduce trivial. Only `send_input` actually
+  # mutates state today (buffering when cc_mcp hasn't joined yet).
+  defp dispatch_actions(actions, state),
+    do: Enum.reduce(actions, state, &dispatch_action/2)
 
   # PR-9 T11b.6: SendInput now broadcasts a `notifications/claude/channel`-shaped
   # envelope on Phoenix topic `cli:channel/<session_id>` instead of sending
@@ -275,9 +272,10 @@ defmodule Esr.Peers.CCProcess do
     # a first-inbound auto-create. See docs/notes/cc-mcp-pubsub-race.md.
     if state.cc_mcp_ready do
       broadcast_notification(state.session_id, envelope)
-      {:buffered, state}
+      state
     else
-      {:buffered, %{state | pending_notifications: state.pending_notifications ++ [envelope]}}
+      # Prepend (O(1)); flush reverses on join.
+      update_in(state.pending_notifications, &[envelope | &1])
     end
   end
 
@@ -316,6 +314,8 @@ defmodule Esr.Peers.CCProcess do
             "session_id=#{state.session_id}"
         )
     end
+
+    state
   end
 
   defp dispatch_action(unknown, state) do
@@ -323,6 +323,8 @@ defmodule Esr.Peers.CCProcess do
       session_id: state.session_id,
       action: unknown
     })
+
+    state
   end
 
   # `{:notification, envelope}` matches the existing admin-side
