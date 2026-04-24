@@ -693,6 +693,52 @@ One card per Peer type; each lists its role, behaviour, scaling axis, crash poli
 
 ---
 
+### 4.2 PR-9 T11b realization notes (2026-04-24)
+
+PR-9 T11b landed the concrete implementation of the CC pipeline described above. Key clarifications + deltas from the original §4.1 cards:
+
+**TmuxProcess** (`runtime/lib/esr/peers/tmux_process.ex`) — now launches a real `claude` CLI as the pane's initial process:
+
+- `spawn_args/1` threads `session_id`, `workspace_name`, `chat_id`, `app_id`, `start_cmd` from the pipeline params (populated by `SessionRouter.enrich_params/2` via the new `Esr.Workspaces.Registry.workspace_for_chat/2` reverse lookup).
+- `os_env/1` emits `ESR_SESSION_ID`, `ESR_WORKSPACE`, `ESR_CHAT_IDS` (JSON list of `{chat_id, app_id, kind}`), `ESR_ESRD_URL` (pointing at `/channel/socket/websocket?vsn=2.0.0` — NOT `/adapter_hub/socket`).
+- `os_cmd/1` appends a single shell-command string to `tmux new-session`: `claude --permission-mode bypassPermissions --dangerously-load-development-channels server:esr-channel --mcp-config <per-session .mcp.json> --add-dir <workspace.cwd>`. Per-session `.mcp.json` is rendered under `/tmp/esr-mcp-<session_id>.json` pointing at `adapters/cc_mcp`.
+- `--dangerously-load-development-channels server:esr-channel` is REQUIRED — it's not cc-openclaw-specific. Per Claude Code channels docs, any non-allowlisted channel needs the flag. See `docs/notes/claude-code-channels-reference.md`.
+- Test-env guard: `Mix.env() == :test` defaults to a no-op `sh -c "while :; do sleep 1; done"` to prevent unit tests from leaking real claude processes. Opt-in via `Application.put_env(:esr, :tmux_force_claude_launch, true)` in tests that pin the claude-CLI argv shape.
+- `handle_upstream({:tmux_output, _}, state)` returns `{:drop, :tmux_diagnostic, state}` — tmux output is diagnostic-only post-T11b (the conversation path runs through the MCP channel, not stdout capture). Real claude's TUI emits truncated UTF-8 bursts that crashed `Jason.encode!`, closing the earlier path.
+
+**cc_mcp (stdio MCP server)** (`adapters/cc_mcp/src/esr_cc_mcp/channel.py`):
+
+- Declares `experimental_capabilities = {"claude/channel": {}}` so Claude Code registers the `notifications/claude/channel` listener. Without this, cc_mcp is a plain MCP tools server and inbound notifications never surface as `<channel>` tags.
+- Inbound handler for `kind == "notification"` now emits `JSONRPCNotification(method="notifications/claude/channel", params={content, meta})` directly onto the stdio write stream, mirroring cc-openclaw's `inject_message` pattern. Earlier code used `send_log_message` (MCP logging), which CC doesn't route.
+- `instructions` init option names the meta fields (chat_id, message_id, user, thread_id, source) so CC's system prompt knows how to handle the `<channel>` tags + reply routing.
+
+**FeishuChatProxy** (`runtime/lib/esr/peers/feishu_chat_proxy.ex`):
+
+- `init/1` registers under `Esr.PeerRegistry` as `"thread:" <> session_id`. `EsrWeb.ChannelChannel.handle_in/3` looks up the peer by that name on every `tool_invoke` envelope from cc_mcp, then `send(peer_pid, {:tool_invoke, req_id, tool, args, channel_pid, principal_id})` (6-tuple arity pinned by docstring to avoid collision with existing `{:reply, _}` / `{:reply, _, opts}` shapes).
+- New `handle_info({:tool_invoke, ...}, state)` dispatches per tool name: `reply` → outbound `send_message` directive, `react` / `un_react` pass through, `send_file` → `send_file` directive (the Python feishu adapter's `on_directive("send_file", args)` already consumes the shape). Each dispatch routes a `{:push_envelope, %{kind: "tool_result", req_id, ok, data, error}}` back on `channel_pid` so cc_mcp's pending future resolves.
+- Upstream `{:text, text, meta}` 3-tuple (new — T11b.6a) carries `message_id` / `sender_id` / `thread_id` to CCProcess so the `cli:channel/<session_id>` notification broadcast can populate real `<channel>` meta attributes.
+
+**CCProcess** (`runtime/lib/esr/peers/cc_process.ex`):
+
+- `dispatch_action({"type" => "send_input", ...})` broadcasts `{:notification, envelope}` on Phoenix PubSub topic `cli:channel/<session_id>` instead of sending `{:send_input, _}` to the tmux pane's stdin. `EsrWeb.ChannelChannel.handle_info/2` routes the tuple as a push over the MCP socket. Tmux stdin is no longer the inbound-to-CC transport.
+- `invoke_and_dispatch/2` stashes the last-seen upstream meta on state so `dispatch_action` can enrich its broadcast envelope with the original inbound's attribution.
+
+**ChannelChannel dup-join rejection** (`runtime/lib/esr_web/channel_channel.ex`):
+
+- `join/3` rejects a second join on the same `cli:channel/<session_id>` topic while an existing binding is `:online` with a live ws_pid. Returns `{:error, %{reason: "already_joined", existing_ws_pid: <pid>}}`. Closes the orphan-transport hazard documented in `docs/notes/mcp-transport-orphan-session-hazard.md` (cc-openclaw 2026-04-24 incident: two CC clients silently shadowed each other's transport binding, killing one left the other suspended).
+
+**Boot-time spawning** (`runtime/lib/esr/application.ex`):
+
+- `restore_handlers_from_disk/1` (T11a.3) parses `agents.yaml`'s `capabilities_required` for `handler:<mod>/*` entries and boot-spawns a Python handler_worker per unique module. Structural anti-pattern fix: every handler a capability requires has a boot spawn path. No more "nobody spawns X worker" classes of bugs.
+
+**Known open work** (not in T11b):
+
+- Live E2E scenario 01 step 2 green from head (requires real claude CLI turn + cc_mcp round-trip; the Elixir wiring is complete but a smoke-gate run is deferred).
+- Permission relay (`claude/channel/permission` capability) — optional opt-in; deferred pending audit of the Feishu adapter's sender-allowlist (Lane A) covering tool-approval replies.
+- Multi-chat `ESR_CHAT_IDS` — supported by shape but tested only with single chat; revisit alongside scenario 02 (two concurrent users).
+
+---
+
 ## 5. Data Flows
 
 ### 5.1 Inbound (Feishu → user Session)
