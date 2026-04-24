@@ -101,16 +101,46 @@ defmodule Esr.Admin.Commands.Session.New do
 
   defp start_session(agent, agent_def, dir, submitter, chat_id, thread_id, start_session_fn) do
     sid = :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
+    key = %{chat_id: chat_id, thread_id: thread_id}
 
     case start_session_fn.(%{
            session_id: sid,
            agent_name: agent,
            dir: dir,
-           chat_thread_key: %{chat_id: chat_id, thread_id: thread_id},
+           chat_thread_key: key,
            metadata: %{principal_id: submitter, agent_def: agent_def}
          }) do
-      {:ok, _sup} -> {:ok, sid}
-      {:error, reason} -> {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
+      {:ok, _sup} ->
+        :ok = maybe_register(sid, key)
+        {:ok, sid}
+
+      {:error, reason} ->
+        {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
     end
+  end
+
+  # PR-8 T3: bind the session to its chat thread so subsequent Feishu inbound
+  # messages resolve via `SessionRegistry.lookup_by_chat_thread/2` to this
+  # session's FeishuChatProxy. Mirrors `SessionRouter.create_session/2`'s
+  # `register_session/3` call (refs is a plain map, same ETS-backed writer).
+  #
+  # Direct admin-CLI submits (`esr admin submit session_new --arg agent=... --arg dir=...`)
+  # don't carry chat context, so `chat_thread_key` stays `{"pending","pending"}`.
+  # We skip registration in that case — registering the placeholder would
+  # clobber a single global slot and cause spurious hits for the next real
+  # slash command (the ETS table is a `:set`).
+  #
+  # Gap: `SessionsSupervisor.start_session/1` only boots the Session's base
+  # subtree (SessionProcess + empty peers DynamicSupervisor). The pipeline
+  # peers (including `FeishuChatProxy`) are spawned by
+  # `SessionRouter.create_session/2`, which Session.New does not yet call —
+  # so the `refs` map registered here is empty. That's enough for
+  # `lookup_by_chat_thread/2` to _hit_, but `FeishuAppAdapter.handle_upstream/2`
+  # still misses on its `%{feishu_chat_proxy: pid}` pattern until a follow-up
+  # rewires Session.New through SessionRouter or post-hoc enriches refs.
+  defp maybe_register(_sid, %{chat_id: "pending", thread_id: "pending"}), do: :ok
+
+  defp maybe_register(sid, %{chat_id: _, thread_id: _} = key) do
+    Esr.SessionRegistry.register_session(sid, key, %{})
   end
 end
