@@ -124,7 +124,13 @@ assert_actors_list_has "thread:${LIVE_SESSION_ID}" \
   "user-step 5: session persisted after 2nd msg"
 
 # --- user-step 6: end session ----------------------------------------
-uv run --project "${_E2E_REPO_ROOT}/py" esr cmd run "/end-session ${LIVE_SESSION_ID}"
+# T12-comms-3j: `esr cmd run` resolves `.compiled/<name>.yaml` artifacts,
+# not slash commands — same trap the step-1 RCA warns about. The
+# admin-side path for session_end is `esr admin submit session_end`.
+ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
+  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+  --arg "session_id=${LIVE_SESSION_ID}" \
+  --wait --timeout 30
 for _ in $(seq 1 50); do
   if ! uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
          | grep -q "thread:${LIVE_SESSION_ID}"; then
