@@ -82,6 +82,11 @@ defmodule Esr.Peers.CCProcess do
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:text, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
+  # PR-9 T11b.6a: FCP now sends `{:text, text, meta}` (3-tuple) carrying
+  # message_id/sender_id/thread_id so T11b.6's pubsub notification can
+  # populate the `<channel>` meta attributes. Legacy 2-tuple still accepted
+  # for backward compat with unit tests that haven't migrated yet.
+  def handle_upstream({:text, _bytes, _meta} = msg, state), do: invoke_and_dispatch(msg, state)
   def handle_upstream({:tmux_output, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
   def handle_upstream(_other, state), do: {:drop, :unknown_upstream, state}
 
@@ -101,6 +106,9 @@ defmodule Esr.Peers.CCProcess do
 
   @impl GenServer
   def handle_info({:text, _} = msg, state),
+    do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
+
+  def handle_info({:text, _, _meta} = msg, state),
     do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
 
   def handle_info({:tmux_output, _} = msg, state),
@@ -245,8 +253,25 @@ defmodule Esr.Peers.CCProcess do
   # the event dict must carry `event_type` + `args`. Earlier versions of this
   # module emitted `%{kind, text}` which handler_worker rejected as
   # MalformedEnvelope('event_type'). PR-9 T11a aligns the shapes.
+  #
+  # T11b.6a: 3-tuple `{:text, bytes, meta}` carries upstream
+  # message_id/sender_id/thread_id so the handler (and downstream
+  # SendInput/Reply actions in T11b.6) has real attribution.
   defp event_to_map({:text, bytes}),
     do: %{"event_type" => "text", "args" => %{"text" => bytes}}
+
+  defp event_to_map({:text, bytes, meta}) when is_map(meta),
+    do: %{
+      "event_type" => "text",
+      "args" =>
+        %{"text" => bytes}
+        |> Map.merge(
+          meta
+          |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+          |> Enum.map(fn {k, v} -> {Atom.to_string(k), v} end)
+          |> Map.new()
+        )
+    }
 
   defp event_to_map({:tmux_output, bytes}),
     do: %{"event_type" => "tmux_output", "args" => %{"bytes" => bytes}}

@@ -75,12 +75,22 @@ defmodule Esr.Peers.FeishuChatProxy do
     text = args["content"] || ""
     message_id = args["message_id"] || ""
 
+    # PR-9 T11b.6a: propagate `message_id`, `sender_id`, `thread_id`
+    # downstream so CCProcess can build a notifications/claude/channel
+    # meta map with real attributes. T11b.6 consumes these; a 2-tuple
+    # `{:text, text}` would leave CC with `meta.user=""` etc.
+    meta = %{
+      message_id: message_id,
+      sender_id: args["sender_id"] || "",
+      thread_id: args["thread_id"] || ""
+    }
+
     cond do
       slash?(text) ->
         dispatch_slash(envelope, state)
 
       true ->
-        forward_text_and_react(text, message_id, state)
+        forward_text_and_react(text, message_id, meta, state)
     end
   end
 
@@ -140,10 +150,15 @@ defmodule Esr.Peers.FeishuChatProxy do
     end
   end
 
-  defp forward_text_and_react(text, message_id, state) do
+  # PR-9 T11b.6a: upstream tuple is now `{:text, text, meta}` (3-tuple)
+  # so CCProcess has message_id/sender_id/thread_id for the notification
+  # envelope. CCProcess accepts both the new 3-tuple and legacy 2-tuple
+  # `{:text, text}` (for backward compat with any unit-test callers that
+  # haven't been migrated yet).
+  defp forward_text_and_react(text, message_id, meta, state) do
     case Keyword.get(state.neighbors, :cc_process) do
       pid when is_pid(pid) ->
-        send(pid, {:text, text})
+        send(pid, {:text, text, meta})
         new_state = maybe_emit_react(message_id, state)
         {:forward, [], new_state}
 

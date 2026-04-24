@@ -66,7 +66,12 @@ defmodule Esr.Peers.FeishuChatProxyTest do
 
       send(peer, {:feishu_inbound, envelope})
 
-      assert_receive {:relay, :cc, {:text, "hello, not a slash"}}, 500
+      # T11b.6a: 3-tuple carries message_id/sender_id/thread_id
+      # downstream so T11b.6's notification meta has real attribution.
+      assert_receive {:relay, :cc,
+                      {:text, "hello, not a slash",
+                       %{message_id: "om_inbound_abc", sender_id: _, thread_id: _}}},
+                     500
 
       assert_receive {:relay, :app,
                       {:outbound,
@@ -134,7 +139,8 @@ defmodule Esr.Peers.FeishuChatProxyTest do
         "payload" => %{"event_type" => "msg_received", "args" => %{"content" => "hi"}}
       }})
 
-      assert_receive {:relay, :cc, {:text, "hi"}}, 500
+      assert_receive {:relay, :cc, {:text, "hi", meta}}, 500
+      assert is_map(meta)
       refute_receive {:relay, :app, _}, 100
     end
   end
