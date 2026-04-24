@@ -590,8 +590,11 @@ defmodule Esr.Peers.TmuxProcess do
     :ok
   end
 
-  # ws://127.0.0.1:<port>/channel/socket/websocket?vsn=2.0.0 — mirrors
-  # the shape Esr.Application.ws_url_for/1 uses for other sockets.
+  # Base URL (`ws://127.0.0.1:<port>`) — cc_mcp's ws_client appends the
+  # `/channel/socket/websocket?vsn=2.0.0` suffix (mirrors the port-file
+  # fallback shape in `esr_cc_mcp.channel._resolve_from_port_file`).
+  # Passing the fully-qualified URL here double-appends the path and
+  # Phoenix logs "invalid transport version" before rejecting the join.
   defp channel_ws_url do
     port =
       case EsrWeb.Endpoint.config(:http) do
@@ -599,7 +602,7 @@ defmodule Esr.Peers.TmuxProcess do
         _ -> 4001
       end
 
-    "ws://127.0.0.1:" <> Integer.to_string(port) <> "/channel/socket/websocket?vsn=2.0.0"
+    "ws://127.0.0.1:" <> Integer.to_string(port)
   end
 
   # Best-effort: honour ESR_REPO_DIR (set by cc-openclaw + dev scripts),

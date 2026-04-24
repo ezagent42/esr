@@ -369,8 +369,11 @@ defmodule Esr.Peers.TmuxProcessTest do
              ]
 
       {_k, url} = Enum.find(env, fn {k, _} -> k == "ESR_ESRD_URL" end)
-      # /channel/socket, not /adapter_hub/socket — this is the MCP bridge.
-      assert url =~ ~r(\Aws://127\.0\.0\.1:\d+/channel/socket/websocket\?vsn=2\.0\.0\z)
+      # T12-comms-3 follow-up: ESR_ESRD_URL is the BASE URL only —
+      # cc_mcp's ws_client appends `/channel/socket/websocket?vsn=2.0.0`
+      # itself (matching its port-file fallback shape). Double-appending
+      # was the root cause of Phoenix's "invalid transport version" reject.
+      assert url =~ ~r(\Aws://127\.0\.0\.1:\d+\z)
     end
 
     test "no session_id ⇒ empty env (legacy idle-pane path)" do
