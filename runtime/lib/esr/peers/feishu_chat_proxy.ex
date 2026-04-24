@@ -36,9 +36,10 @@ defmodule Esr.Peers.FeishuChatProxy do
   @impl GenServer
   def init(args) do
     ctx = Map.get(args, :proxy_ctx, %{})
+    session_id = Map.fetch!(args, :session_id)
 
     base = %{
-      session_id: Map.fetch!(args, :session_id),
+      session_id: session_id,
       chat_id: Map.fetch!(args, :chat_id),
       thread_id: Map.fetch!(args, :thread_id),
       neighbors: Map.get(args, :neighbors, []),
@@ -58,6 +59,12 @@ defmodule Esr.Peers.FeishuChatProxy do
     # key + mixed-key map requires Map.put (Elixir disallows `key:` /
     # `"key" =>` in the same literal).
     state = Map.put(base, "channel_adapter", Map.get(ctx, :channel_adapter) || "feishu")
+
+    # PR-9 T11b.4: register as `thread:<session_id>` in PeerRegistry so
+    # `EsrWeb.ChannelChannel.handle_in("envelope", {kind: "tool_invoke", ...})`
+    # can route CC's MCP tool calls (reply / react / send_file) here via
+    # `Registry.lookup(Esr.PeerRegistry, "thread:" <> session_id)`.
+    _ = Registry.register(Esr.PeerRegistry, "thread:" <> session_id, nil)
 
     {:ok, state}
   end
@@ -130,9 +137,109 @@ defmodule Esr.Peers.FeishuChatProxy do
     end
   end
 
+  # PR-9 T11b.4: cc_mcp's MCP tool calls (reply / react / send_file)
+  # arrive here via `EsrWeb.ChannelChannel.handle_in("envelope",
+  # %{"kind" => "tool_invoke"}, socket)` → `send(peer_pid,
+  # {:tool_invoke, req_id, tool, args, channel_pid, principal_id})`.
+  # Each tool maps onto an outbound directive via T10's wrap_as_directive
+  # path, then we send the tool_result back on the CC session's channel
+  # so cc_mcp's pending future resolves.
+  #
+  # 6-tuple arity disambiguation (spec §9a): ChannelChannel always sends
+  # 6 positional args; FCP's existing 2-tuple and 3-tuple `:reply` shapes
+  # (from CCProcess upstream) never collide. Docstring-only reminder —
+  # don't add a 4-tuple reply variant that would blur this boundary.
+  def handle_info({:tool_invoke, req_id, tool, args, channel_pid, _principal_id}, state) do
+    state = dispatch_tool_invoke(tool, args, req_id, channel_pid, state)
+    {:noreply, state}
+  end
+
   # ------------------------------------------------------------------
   # Internals
   # ------------------------------------------------------------------
+
+  defp dispatch_tool_invoke("reply", args, req_id, channel_pid, state) do
+    text = Map.get(args, "text") || ""
+
+    state =
+      forward_reply_pass_through(text, Map.get(args, "reply_to_message_id"), state)
+
+    reply_tool_result(channel_pid, req_id, true, %{"delivered" => true})
+    state
+  end
+
+  defp dispatch_tool_invoke("react", args, req_id, channel_pid, state) do
+    _ =
+      emit_to_feishu_app_proxy(
+        %{
+          "kind" => "react",
+          "args" => %{
+            "msg_id" => Map.get(args, "msg_id") || Map.get(args, "message_id") || "",
+            "emoji_type" => Map.get(args, "emoji_type") || @default_react_emoji
+          }
+        },
+        state
+      )
+
+    reply_tool_result(channel_pid, req_id, true, %{"reacted" => true})
+    state
+  end
+
+  defp dispatch_tool_invoke("send_file", args, req_id, channel_pid, state) do
+    _ =
+      emit_to_feishu_app_proxy(
+        %{
+          "kind" => "send_file",
+          "args" => %{
+            "chat_id" => Map.get(args, "chat_id") || state.chat_id,
+            "file_path" => Map.get(args, "file_path") || ""
+          }
+        },
+        state
+      )
+
+    reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+    state
+  end
+
+  defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
+    Logger.warning(
+      "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
+        "session_id=#{state.session_id}"
+    )
+
+    reply_tool_result(
+      channel_pid,
+      req_id,
+      false,
+      nil,
+      %{"type" => "unknown_tool", "message" => "FCP has no handler for #{unknown_tool}"}
+    )
+
+    state
+  end
+
+  # Internal helper: forward a reply without dropping on to the usual
+  # `{:forward, [], state}` Peer.Stateful return — we're invoked from a
+  # `handle_info/2` clause that already `:noreply`s afterwards.
+  defp forward_reply_pass_through(text, reply_to_message_id, state) do
+    case forward_reply(text, reply_to_message_id, state) do
+      {:forward, _, ns} -> ns
+      {:drop, _, ns} -> ns
+    end
+  end
+
+  defp reply_tool_result(channel_pid, req_id, ok?, data, error \\ nil) do
+    payload = %{
+      "kind" => "tool_result",
+      "req_id" => req_id,
+      "ok" => ok?,
+      "data" => data,
+      "error" => error
+    }
+
+    send(channel_pid, {:push_envelope, payload})
+  end
 
   defp dispatch_slash(envelope, state) do
     case Esr.AdminSessionProcess.slash_handler_ref() do
