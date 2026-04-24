@@ -1,19 +1,26 @@
-"""PR-9 T11a placeholder on_msg for the cc_adapter_runner actor_type.
+"""on_msg for the cc_adapter_runner actor_type (PR-9 T11b.7).
 
 Translates a `text` event (user's inbound message forwarded by
-FeishuChatProxy → CCProcess) into a `Reply` action so the full
-inbound→outbound routing chain can be exercised end-to-end without
-requiring a real Claude CLI in tmux yet.
+FeishuChatProxy → CCProcess) into a `SendInput` action that
+`CCProcess.dispatch_action/2` broadcasts on Phoenix pubsub topic
+`cli:channel/<session_id>`. `cc_mcp` — the MCP stdio bridge running
+as a child of the claude CLI in the session's tmux pane — consumes
+the envelope from the WS, emits a `notifications/claude/channel`
+JSON-RPC notification into CC's conversation context as a
+`<channel>` tag, and CC decides whether/how to respond using its
+own `reply` / `react` / `send_file` MCP tools.
 
-Real CC wire-up (claude CLI + cc_mcp stdio bridge + esr-channel WS)
-lands in T11b; that version will likely replace this with a
-`SendInput` action routing the text into the tmux pane, and let CC's
-own MCP `reply` tool produce the outbound reply via a different path.
+Pre-T11b this function returned `[Reply(text=f"ack: {text}")]` as a
+placeholder so the routing chain could be exercised without a real
+Claude CLI in tmux. Now that T11b.3 / T11b.4 / T11b.6 wire the full
+round-trip (claude in tmux + cc_mcp channel + FCP tool_invoke
+dispatch), the handler's job simplifies to "push the user's text
+into CC's context" — CC itself composes the response.
 """
 
 from __future__ import annotations
 
-from esr import Action, Event, Reply, handler
+from esr import Action, Event, SendInput, handler
 
 from esr_handler_cc_adapter_runner.state import CcAdapterRunnerState
 
@@ -26,9 +33,10 @@ def on_msg(
     if event.event_type == "text":
         text = event.args.get("text", "") if isinstance(event.args, dict) else ""
         new_state = CcAdapterRunnerState(message_count=state.message_count + 1)
-        return new_state, [Reply(text=f"ack: {text}")]
+        return new_state, [SendInput(text=text)]
 
-    # tmux_output or unknown events — no-op at this layer. TmuxProcess
-    # already captured them; downstream (cc_proxy/cc_session handler)
-    # closes the loop back to Feishu if routing is wired for that.
+    # tmux_output events — tmux captures CC's TUI chrome (prompts,
+    # formatting). Post-T11b the reply path runs through cc_mcp's
+    # `reply` MCP tool, not tmux stdout, so this handler has nothing
+    # to do here. Drop silently.
     return state, []
