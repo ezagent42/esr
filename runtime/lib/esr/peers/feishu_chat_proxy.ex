@@ -194,20 +194,65 @@ defmodule Esr.Peers.FeishuChatProxy do
   end
 
   defp dispatch_tool_invoke("send_file", args, req_id, channel_pid, state) do
-    _ =
-      emit_to_feishu_app_proxy(
-        %{
-          "kind" => "send_file",
-          "args" => %{
-            "chat_id" => Map.get(args, "chat_id") || state.chat_id,
-            "file_path" => Map.get(args, "file_path") || ""
-          }
-        },
-        state
-      )
+    # T12-comms-3g: CC's MCP tool sends just `chat_id + file_path`. The
+    # feishu adapter's `_send_file` wire shape (spec §6.1) is α: base64
+    # in-band with a sha256 check, needing `file_name + content_b64 +
+    # sha256`. Do the read + hash + encode at the Elixir boundary so
+    # the Python adapter's contract stays uniform across all channel
+    # adapters (only they know how to talk to their platform).
+    file_path = Map.get(args, "file_path") || ""
+    chat_id = Map.get(args, "chat_id") || state.chat_id
 
-    reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+    case read_file_for_send(file_path) do
+      {:ok, file_name, content_b64, sha256} ->
+        _ =
+          emit_to_feishu_app_proxy(
+            %{
+              "kind" => "send_file",
+              "args" => %{
+                "chat_id" => chat_id,
+                "file_name" => file_name,
+                "content_b64" => content_b64,
+                "sha256" => sha256
+              }
+            },
+            state
+          )
+
+        reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+
+      {:error, reason} ->
+        Logger.warning(
+          "feishu_chat_proxy: send_file read failed path=#{inspect(file_path)} " <>
+            "reason=#{inspect(reason)} session_id=#{state.session_id}"
+        )
+
+        reply_tool_result(
+          channel_pid,
+          req_id,
+          false,
+          nil,
+          %{"type" => "read_failed", "message" => inspect(reason)}
+        )
+    end
+
     state
+  end
+
+  # Read the file from disk and prepare the α wire-shape args. Returns
+  # {:ok, file_name, content_b64, sha256} or {:error, reason}. No size
+  # cap here — the feishu adapter enforces that.
+  defp read_file_for_send(""), do: {:error, :empty_path}
+
+  defp read_file_for_send(path) when is_binary(path) do
+    case File.read(path) do
+      {:ok, bytes} ->
+        sha = :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+        {:ok, Path.basename(path), Base.encode64(bytes), sha}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
