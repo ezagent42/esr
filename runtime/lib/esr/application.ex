@@ -57,6 +57,14 @@ defmodule Esr.Application do
       # 4e.3 SessionsSupervisor (DynamicSupervisor, max_children=128).
       Esr.SessionsSupervisor,
 
+      # 4e.4 SessionRouter (PR-8 T4): control-plane GenServer that
+      # `Session.New` and Feishu adapters dispatch through to spawn
+      # the agents.yaml pipeline. Depends on SessionRegistry,
+      # SessionsSupervisor, and Session.Registry (all earlier
+      # children). Without this, production `/new-session` calls
+      # fail with :noproc even though tests pass via start_supervised.
+      Esr.SessionRouter,
+
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,
 

@@ -1,14 +1,15 @@
 defmodule Esr.ApplicationBootTest do
   use ExUnit.Case, async: false
 
-  test "AdminSession starts before SessionsSupervisor, and SessionsSupervisor does not require SessionRouter" do
-    # Both are already started by Esr.Application; verify via whereis.
+  test "AdminSession, SessionsSupervisor, SessionRouter are all booted" do
+    # All should already be started by Esr.Application; verify via whereis.
     assert is_pid(Process.whereis(Esr.AdminSession))
     assert is_pid(Process.whereis(Esr.AdminSessionProcess))
     assert is_pid(Process.whereis(Esr.SessionsSupervisor))
     assert is_pid(Process.whereis(Esr.Session.Registry))
-    # SessionRouter is PR-3; should not be started in PR-2
-    refute Code.ensure_loaded?(Esr.SessionRouter) and Process.whereis(Esr.SessionRouter)
+    # PR-8 T4: SessionRouter now boots with the app (was :noproc in
+    # production because only tests called start_supervised/1).
+    assert is_pid(Process.whereis(Esr.SessionRouter))
   end
 
   test "child order: Esr.Session.Registry < AdminSession < SessionsSupervisor" do
