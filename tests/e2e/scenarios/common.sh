@@ -245,6 +245,10 @@ seed_capabilities() {
   # which satisfies adapter.register / session.create / session.end /
   # any other permission an e2e scenario will need. Matches the valid
   # fixture at runtime/test/support/capabilities_fixtures/valid.yaml.
+  #
+  # ou_e2e gets workspace:e2e/msg.send so mock_feishu /push_inbound from
+  # that sender passes the Feishu adapter's Lane A authorization gate
+  # (see adapters/feishu/src/esr_feishu/adapter.py:_is_authorized).
   mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
   cat > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml" <<'EOF'
 principals:
@@ -252,6 +256,43 @@ principals:
     kind: feishu_user
     note: e2e admin (wildcard)
     capabilities: ["*"]
+  - id: ou_e2e
+    kind: feishu_user
+    note: e2e test user (workspace-scoped msg.send)
+    capabilities:
+      - "workspace:e2e/msg.send"
+  - id: ou_e2e_user_a
+    kind: feishu_user
+    note: scenario-01 user A
+    capabilities:
+      - "workspace:e2e/msg.send"
+  - id: ou_e2e_user_b
+    kind: feishu_user
+    note: scenario-02 user B
+    capabilities:
+      - "workspace:e2e/msg.send"
+EOF
+}
+
+seed_workspaces() {
+  # Write a minimal workspaces.yaml at default/ (Feishu adapter reads
+  # ${ESRD_HOME}/default/workspaces.yaml regardless of ESR_INSTANCE —
+  # see adapter.py:168). Maps the e2e chat_ids to a single "e2e"
+  # workspace so the Feishu adapter's auth gate has something to
+  # resolve against.
+  mkdir -p "${ESRD_HOME}/default"
+  cat > "${ESRD_HOME}/default/workspaces.yaml" <<'EOF'
+workspaces:
+  e2e:
+    cwd: "/tmp/esr-e2e-workspace"
+    start_cmd: ""
+    role: "dev"
+    chats:
+      - oc_mock_single
+      - oc_mock_concurrent_a
+      - oc_mock_concurrent_b
+      - oc_mock_tmux
+    env: {}
 EOF
 }
 

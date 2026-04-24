@@ -217,6 +217,12 @@ defmodule Esr.SessionRouter do
             "thread_id=#{inspect(thread_id)}"
         )
 
+        # PR-9 T7: re-deliver the triggering envelope to the newly
+        # spawned FeishuChatProxy. Without this, the first inbound
+        # message that triggered the auto-create is silently lost —
+        # CC never sees it, user expects a reply they never get.
+        _ = redeliver_triggering_envelope(chat_id, thread_id, envelope)
+
         monitors =
           Enum.reduce(monitor_refs, state.monitors, fn {ref, pid}, acc ->
             Map.put(acc, ref, {sid, pid})
@@ -292,6 +298,30 @@ defmodule Esr.SessionRouter do
     case Process.whereis(EsrWeb.PubSub) do
       nil -> :ok
       _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
+    end
+  end
+
+  # PR-9 T7: after SessionRouter auto-creates a session in response to
+  # :new_chat_thread, re-deliver the triggering envelope to the fresh
+  # session's FeishuChatProxy. The SessionRegistry entry is already
+  # populated because `do_create/1` calls `register_session/3` on its
+  # success path; we just need to look it up and send the message.
+  defp redeliver_triggering_envelope(chat_id, thread_id, envelope) do
+    case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id) do
+      {:ok, _sid, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
+        send(proxy_pid, {:feishu_inbound, envelope})
+        :ok
+
+      _ ->
+        # Degraded: the pipeline didn't spawn a FeishuChatProxy. Log and
+        # continue; the inbound is lost but the session is live so
+        # subsequent messages will route via FAA's normal lookup path.
+        Logger.warning(
+          "session_router: auto-create succeeded but no feishu_chat_proxy " <>
+            "in refs for chat_id=#{inspect(chat_id)} — triggering envelope dropped"
+        )
+
+        :ok
     end
   end
 
