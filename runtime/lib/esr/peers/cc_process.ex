@@ -197,14 +197,38 @@ defmodule Esr.Peers.CCProcess do
     end
   end
 
-  defp dispatch_action(%{"type" => "reply", "text" => text}, state) do
-    case Keyword.get(state.neighbors, :cc_proxy) do
+  defp dispatch_action(%{"type" => "reply", "text" => text} = action, state) do
+    # PR-9 T5c: propagate the optional `reply_to_message_id` so
+    # FeishuChatProxy can un-react the referenced inbound message before
+    # forwarding the reply. When absent (legacy CC handler, or reply
+    # unrelated to a specific inbound) the 2-tuple {:reply, text} is
+    # preserved for backward compat.
+    msg =
+      case Map.get(action, "reply_to_message_id") do
+        mid when is_binary(mid) and mid != "" ->
+          {:reply, text, %{reply_to_message_id: mid}}
+
+        _ ->
+          {:reply, text}
+      end
+
+    # Prefer the feishu_chat_proxy neighbor when it's available — that's
+    # the production upstream-reply target in PR-9 T5's topology (the
+    # proxy converts :reply into `{:outbound, ...}` to feishu_app_proxy).
+    # Fall back to cc_proxy for unit tests that inject a raw test pid.
+    target_pid =
+      case Keyword.get(state.neighbors, :feishu_chat_proxy) do
+        pid when is_pid(pid) -> pid
+        _ -> Keyword.get(state.neighbors, :cc_proxy)
+      end
+
+    case target_pid do
       pid when is_pid(pid) ->
-        send(pid, {:reply, text})
+        send(pid, msg)
 
       _ ->
         Logger.warning(
-          "cc_process: :reply with no cc_proxy neighbor " <>
+          "cc_process: :reply with no feishu_chat_proxy or cc_proxy neighbor " <>
             "session_id=#{state.session_id}"
         )
     end

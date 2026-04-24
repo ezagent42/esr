@@ -25,12 +25,14 @@ defmodule Esr.Permissions.BootstrapTest do
   end
 
   test "handler-declared permissions from Esr.PeerServer are registered" do
-    # PeerServer declares the built-in MCP tools (reply, react,
-    # send_file, _echo, session.signal_cleanup). CAP-4 would deny
-    # every tool_invoke without these in the Registry, so coverage
-    # here guards the happy path.
+    # PeerServer declares the built-in MCP tools (reply, send_file,
+    # _echo, session.signal_cleanup). CAP-4 would deny every
+    # tool_invoke without these in the Registry, so coverage here
+    # guards the happy path. PR-9 T5 removed `react` — it's now a
+    # per-IM-proxy concern emitted by FeishuChatProxy, not a
+    # CC-facing MCP tool.
     assert Registry.declared?("reply")
-    assert Registry.declared?("react")
+    refute Registry.declared?("react")
     assert Registry.declared?("send_file")
     assert Registry.declared?("_echo")
     assert Registry.declared?("session.signal_cleanup")
@@ -50,7 +52,6 @@ defmodule Esr.Permissions.BootstrapTest do
 
     assert Esr.PeerServer.permissions() == [
              "reply",
-             "react",
              "send_file",
              "_echo",
              "session.signal_cleanup"

@@ -31,7 +31,13 @@ defmodule Esr.PeerServer do
   at boot or every tool_invoke would be denied.
   """
   @impl Esr.Handler
-  def permissions, do: ["reply", "react", "send_file", "_echo", "session.signal_cleanup"]
+  # PR-9 T5 D4: `react` is no longer a CC-scoped MCP tool. It is
+  # emitted by FeishuChatProxy on successful delivery of an inbound
+  # message (as a delivery ACK) and un-reacted when CC's reply lands.
+  # The permission name is gone from the CC-facing allowlist; the
+  # underlying adapter-side action shape (`react` / `un_react`) stays
+  # stable since the FeishuAppAdapter still dispatches them.
+  def permissions, do: ["reply", "send_file", "_echo", "session.signal_cleanup"]
 
   @default_handler_timeout 5_000
   @default_directive_timeout 30_000
@@ -730,35 +736,32 @@ defmodule Esr.PeerServer do
     case args do
       %{"chat_id" => chat_id, "text" => text}
       when is_binary(chat_id) and is_binary(text) ->
+        # PR-9 T5c: `reply_to_message_id` is optional. When present,
+        # include it in the emit args so downstream consumers
+        # (FeishuChatProxy in T5c's un_react path) can correlate the
+        # reply with the inbound message to un-react. Absent → emit
+        # shape identical to pre-T5 (backward compat per D4).
+        base_args = %{"chat_id" => chat_id, "content" => text}
+
+        args_out =
+          case Map.get(args, "reply_to_message_id") do
+            mid when is_binary(mid) and mid != "" ->
+              Map.put(base_args, "reply_to_message_id", mid)
+
+            _ ->
+              base_args
+          end
+
         {:ok,
          %{
            "type" => "emit",
            "adapter" => session_channel_adapter(state),
            "action" => "send_message",
-           "args" => %{"chat_id" => chat_id, "content" => text}
+           "args" => args_out
          }}
 
       _ ->
         {:error, "reply requires chat_id + text"}
-    end
-  end
-
-  defp build_emit_for_tool("react", args, state) do
-    case args do
-      %{"message_id" => mid, "emoji_type" => emoji} ->
-        {:ok,
-         %{
-           "type" => "emit",
-           "adapter" => session_channel_adapter(state),
-           "action" => "react",
-           # D2: input key "message_id" (CC's MCP tool schema unchanged);
-           # emit arg key "msg_id" (matches adapter.py _react/_pin/_unpin
-           # convention). §5.1 pre-existing bug.
-           "args" => %{"msg_id" => mid, "emoji_type" => emoji}
-         }}
-
-      _ ->
-        {:error, "react requires message_id + emoji_type"}
     end
   end
 

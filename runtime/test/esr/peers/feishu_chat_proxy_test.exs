@@ -35,34 +35,198 @@ defmodule Esr.Peers.FeishuChatProxyTest do
     assert reply_to == peer
   end
 
-  test "non-slash messages are dropped + logged (PR-2 scope)" do
-    import ExUnit.CaptureLog
+  describe "non-slash text forward to CC (PR-9 T5a)" do
+    test "forwards {:text, bytes} to cc_process neighbor and emits react to feishu_app_proxy" do
+      me = self()
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
 
-    {:ok, peer} =
-      GenServer.start_link(FeishuChatProxy, %{
-        session_id: "s2",
-        chat_id: "oc_y",
-        thread_id: "om_2",
-        neighbors: [],
-        proxy_ctx: %{}
-      })
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_fwd",
+          chat_id: "oc_fwd",
+          thread_id: "om_fwd",
+          neighbors: [cc_process: cc_process, feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
 
-    # Test-only drift from expansion doc: config/test.exs sets the
-    # primary Logger level to :warning, so capture_log alone cannot
-    # see info-level output. Temporarily lower the level inside the
-    # test and restore on exit. The implementation itself is unchanged
-    # (still Logger.info as spec'd).
-    original_level = Logger.level()
-    Logger.configure(level: :info)
-    on_exit(fn -> Logger.configure(level: original_level) end)
+      envelope = %{
+        "payload" => %{
+          "text" => "hello, not a slash",
+          "message_id" => "om_inbound_abc"
+        }
+      }
 
-    log =
-      capture_log(fn ->
-        send(peer, {:feishu_inbound, %{"payload" => %{"text" => "hello, not a slash"}}})
-        Process.sleep(50)
+      send(peer, {:feishu_inbound, envelope})
+
+      assert_receive {:relay, :cc, {:text, "hello, not a slash"}}, 500
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "react",
+                         "args" => %{
+                           "msg_id" => "om_inbound_abc",
+                           "emoji_type" => "EYES"
+                         }
+                       }}},
+                     500
+
+      # Pending react tracked in state so T5c's un_react path has the emoji.
+      assert %{pending_reacts: %{"om_inbound_abc" => "EYES"}} = :sys.get_state(peer)
+    end
+
+    test "drops + warns when no cc_process neighbor is present" do
+      import ExUnit.CaptureLog
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_no_cc",
+          chat_id: "oc_no_cc",
+          thread_id: "om_no_cc",
+          neighbors: [],
+          proxy_ctx: %{}
+        })
+
+      # Lower primary log level so capture_log sees the warning.
+      original_level = Logger.level()
+      Logger.configure(level: :warning)
+      on_exit(fn -> Logger.configure(level: original_level) end)
+
+      log =
+        capture_log(fn ->
+          send(peer, {:feishu_inbound, %{
+            "payload" => %{"text" => "hello", "message_id" => "om_x"}
+          }})
+          Process.sleep(50)
+        end)
+
+      assert log =~ "feishu_chat_proxy: non-slash text but no cc_process neighbor"
+      assert Process.alive?(peer)
+    end
+
+    test "skips react emit when inbound envelope has no message_id" do
+      me = self()
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_no_mid",
+          chat_id: "oc_no_mid",
+          thread_id: "om_no_mid",
+          neighbors: [cc_process: cc_process, feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # No message_id in the envelope payload — nothing to react to.
+      send(peer, {:feishu_inbound, %{"payload" => %{"text" => "hi"}}})
+
+      assert_receive {:relay, :cc, {:text, "hi"}}, 500
+      refute_receive {:relay, :app, _}, 100
+    end
+  end
+
+  describe "CC reply → un_react then forward reply (PR-9 T5c)" do
+    test "{:reply, text, %{reply_to_message_id: mid}} un-reacts then forwards reply" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_un",
+          chat_id: "oc_un",
+          thread_id: "om_un",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # Seed pending_reacts as if a prior inbound had triggered a react.
+      :sys.replace_state(peer, fn s ->
+        Map.put(s, :pending_reacts, %{"om_inbound_42" => "EYES"})
       end)
 
-    assert log =~ "feishu_chat_proxy: non-slash dropped (PR-3 wires downstream)"
+      send(peer, {:reply, "done",
+                  %{reply_to_message_id: "om_inbound_42"}})
+
+      # Un_react fires BEFORE the reply text.
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "un_react",
+                         "args" => %{
+                           "msg_id" => "om_inbound_42",
+                           "emoji_type" => "EYES"
+                         }
+                       }}},
+                     500
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "reply",
+                         "args" => %{"chat_id" => "oc_un", "text" => "done"}
+                       }}},
+                     500
+
+      # Pending react cleared so a retry cannot double-un-react.
+      assert %{pending_reacts: pr} = :sys.get_state(peer)
+      refute Map.has_key?(pr, "om_inbound_42")
+    end
+
+    test "{:reply, text} (no opts) forwards reply without un_react (backward compat)" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_bwc",
+          chat_id: "oc_bwc",
+          thread_id: "om_bwc",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # Pending react exists for a different message — must not be touched.
+      :sys.replace_state(peer, fn s ->
+        Map.put(s, :pending_reacts, %{"om_other" => "EYES"})
+      end)
+
+      send(peer, {:reply, "proactive message"})
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "reply",
+                         "args" => %{"chat_id" => "oc_bwc", "text" => "proactive message"}
+                       }}},
+                     500
+
+      refute_receive {:relay, :app, {:outbound, %{"kind" => "un_react"}}}, 100
+
+      # State unchanged.
+      assert %{pending_reacts: %{"om_other" => "EYES"}} = :sys.get_state(peer)
+    end
+
+    test "reply with reply_to_message_id for an un-tracked message skips un_react" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_untrack",
+          chat_id: "oc_untrack",
+          thread_id: "om_untrack",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # No pending reacts — CC references an inbound we never reacted to.
+      send(peer, {:reply, "x", %{reply_to_message_id: "om_unknown"}})
+
+      assert_receive {:relay, :app, {:outbound, %{"kind" => "reply"}}}, 500
+      refute_receive {:relay, :app, {:outbound, %{"kind" => "un_react"}}}, 100
+    end
   end
 
   describe "channel_adapter lifted from ctx (D1)" do
@@ -90,6 +254,16 @@ defmodule Esr.Peers.FeishuChatProxyTest do
 
       {:ok, state} = Esr.Peers.FeishuChatProxy.init(args)
       assert Map.get(state, "channel_adapter") == "feishu"
+    end
+  end
+
+  # Trivial relay: forward every received message to the test pid, tagged
+  # with a label so tests can distinguish cc_process vs feishu_app_proxy.
+  defp relay(reply_to, label) do
+    receive do
+      msg ->
+        send(reply_to, {:relay, label, msg})
+        relay(reply_to, label)
     end
   end
 end

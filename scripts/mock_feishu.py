@@ -57,6 +57,10 @@ class MockFeishu:
         self._ws_clients: list[web.WebSocketResponse] = []
         # reactions + uploaded files (T0 §4)
         self._reactions: list[dict[str, Any]] = []
+        # PR-9 T5c: un-reactions, recorded so tests can assert that
+        # FeishuChatProxy un-reacted a specific message_id when CC's
+        # reply carried `reply_to_message_id`.
+        self._un_reactions: list[dict[str, Any]] = []
         self._uploaded_files: list[dict[str, Any]] = []
         self._files_dir: Path | None = None  # set in start()
 
@@ -96,7 +100,24 @@ class MockFeishu:
             "/open-apis/im/v1/messages/{message_id}/reactions",
             self._on_create_reaction,
         )
+        # PR-9 T5c: DELETE mirrors Lark Open API
+        # `DELETE /open-apis/im/v1/messages/:message_id/reactions/:reaction_id`.
+        # For v1 we accept un-react by message_id alone (the scenario
+        # helper endpoint below), since FeishuChatProxy tracks reacts
+        # by message_id rather than reaction_id — keeps the emit path
+        # fire-and-forget without an extra round-trip to fetch the
+        # reaction_id. The {reaction_id} path is accepted too so tests
+        # that mirror the Lark shape keep working.
+        app.router.add_delete(
+            "/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}",
+            self._on_delete_reaction_by_id,
+        )
+        app.router.add_delete(
+            "/open-apis/im/v1/messages/{message_id}/reactions",
+            self._on_delete_reactions_by_message,
+        )
         app.router.add_get("/reactions", self._on_get_reactions)
+        app.router.add_get("/un_reactions", self._on_get_un_reactions)
         app.router.add_post("/open-apis/im/v1/files", self._on_upload_file)
         app.router.add_get("/sent_files", self._on_get_sent_files)
         app.router.add_get("/ws", self._on_ws_connect)
@@ -269,6 +290,73 @@ class MockFeishu:
 
     async def _on_get_reactions(self, _request: web.Request) -> web.Response:
         return web.json_response(self._reactions)
+
+    async def _on_delete_reaction_by_id(
+        self, request: web.Request
+    ) -> web.Response:
+        """DELETE /open-apis/im/v1/messages/:message_id/reactions/:reaction_id.
+
+        Mirrors the Lark Open API shape. Records the un-react for test
+        assertions; removes any matching reaction from the active list
+        so downstream `GET /reactions` no longer surfaces it.
+        """
+        message_id = request.match_info["message_id"]
+        reaction_id = request.match_info["reaction_id"]
+        self._un_reactions.append({
+            "message_id": message_id,
+            "reaction_id": reaction_id,
+            "ts_unix_ms": int(time.time() * 1000),
+        })
+        # Remove the first matching reaction (by message_id), if any.
+        for idx, entry in enumerate(self._reactions):
+            if entry["message_id"] == message_id:
+                self._reactions.pop(idx)
+                break
+        return web.json_response({"code": 0, "msg": "", "data": {}})
+
+    async def _on_delete_reactions_by_message(
+        self, request: web.Request
+    ) -> web.Response:
+        """DELETE /open-apis/im/v1/messages/:message_id/reactions.
+
+        V1 best-effort un-react: FeishuChatProxy doesn't track
+        reaction_ids, so it deletes by message_id. Removes ALL
+        reactions on that message and records one un-react entry per
+        removed reaction.
+        """
+        message_id = request.match_info["message_id"]
+        body: dict[str, Any] = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except (ValueError, TypeError):
+                body = {}
+        emoji_type = (body.get("reaction_type") or {}).get("emoji_type", "")
+
+        removed = [r for r in self._reactions if r["message_id"] == message_id]
+        self._reactions = [
+            r for r in self._reactions if r["message_id"] != message_id
+        ]
+        for r in removed:
+            self._un_reactions.append({
+                "message_id": message_id,
+                "emoji_type": emoji_type or r.get("emoji_type", ""),
+                "ts_unix_ms": int(time.time() * 1000),
+            })
+        if not removed:
+            # Still record the un-react attempt so tests can assert the
+            # directive fired even when no live reaction existed (e.g.
+            # race where the inbound react hadn't completed yet).
+            self._un_reactions.append({
+                "message_id": message_id,
+                "emoji_type": emoji_type,
+                "ts_unix_ms": int(time.time() * 1000),
+            })
+        return web.json_response({"code": 0, "msg": "", "data": {}})
+
+    async def _on_get_un_reactions(self, _request: web.Request) -> web.Response:
+        """GET /un_reactions — scenario helper: return the un-react log."""
+        return web.json_response(self._un_reactions)
 
     async def _on_upload_file(self, request: web.Request) -> web.Response:
         ctype = request.headers.get("content-type", "")

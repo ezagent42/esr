@@ -1,12 +1,20 @@
 """MCP tool schemas for esr-channel (spec §3.1 / §5.3).
 
-Three user-facing tools + one diagnostic tool gated on the workspace
-role. Schema shapes match cc-openclaw's openclaw-channel reply / react /
+Two user-facing tools + one diagnostic tool gated on the workspace
+role. Schema shapes match cc-openclaw's openclaw-channel reply /
 send_file tools (API-compatible per spec §1.1 point 1) so switching CC
 from one channel to the other is drop-in.
 
 Descriptions are channel-agnostic: the CC chain's abstraction boundary
 (spec §2) forbids this module from naming any specific channel adapter.
+
+PR-9 T5 note: `react` was removed from the CC-facing tool list. The
+delivery-ack react (and its un-react on reply) is now a per-IM-proxy
+concern — emitted by FeishuChatProxy inside the Elixir runtime when
+an inbound message is successfully forwarded to CC, and un-reacted
+when CC's reply carries `reply_to_message_id`. A hypothetical
+SlackChatProxy would implement its own analogous behaviour without
+touching CC or the MCP tool surface.
 """
 from __future__ import annotations
 
@@ -20,7 +28,10 @@ _REPLY = Tool(
         "through this tool. chat_id is from the inbound <channel> tag "
         "(opaque token scoped to the active channel). Pass edit_message_id "
         "to edit an existing message in-place instead of sending a new one "
-        "(covers update_title semantics)."
+        "(covers update_title semantics). Production callers should always "
+        "include reply_to_message_id when the reply is in response to a "
+        "specific inbound message — the runtime uses it to clean up any "
+        "delivery-ack reaction the per-IM proxy emitted on receive."
     ),
     inputSchema={
         "type": "object",
@@ -34,30 +45,18 @@ _REPLY = Tool(
                 "type": "string",
                 "description": "Optional message_id to edit in-place",
             },
-        },
-        "required": ["chat_id", "text"],
-    },
-)
-
-_REACT = Tool(
-    name="react",
-    description="Add an emoji reaction to a channel message",
-    inputSchema={
-        "type": "object",
-        "properties": {
-            "message_id": {
-                "type": "string",
-                "description": "Message ID (opaque token scoped to the active channel)",
-            },
-            "emoji_type": {
+            "reply_to_message_id": {
                 "type": "string",
                 "description": (
-                    "Emoji code (channel-specific; e.g. THUMBSUP, DONE, OK "
-                    "for common chat channels)"
+                    "Optional message_id of the inbound message this reply "
+                    "responds to. When present, the runtime un-reacts any "
+                    "delivery-ack emoji the per-IM proxy added on inbound "
+                    "receive. Omit for proactive messages not tied to a "
+                    "specific inbound."
                 ),
             },
         },
-        "required": ["message_id", "emoji_type"],
+        "required": ["chat_id", "text"],
     },
 )
 
@@ -97,7 +96,7 @@ _ECHO = Tool(
 
 def list_tool_schemas(*, role: str) -> list[Tool]:
     """Return the tool list CC sees — `_echo` only when role=diagnostic."""
-    tools = [_REPLY, _REACT, _SEND_FILE]
+    tools = [_REPLY, _SEND_FILE]
     if role == "diagnostic":
         tools.append(_ECHO)
     return tools
