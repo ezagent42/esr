@@ -295,4 +295,89 @@ defmodule Esr.SessionRouterTest do
       assert Process.alive?(router)
     end
   end
+
+  # --- PR-9 T6 — bidirectional pipeline-spawn neighbors -----------------
+  #
+  # Pre-T6 `build_neighbors/1` was forward-only: each peer only saw the
+  # peers spawned BEFORE it in the inbound list. That meant
+  # FeishuChatProxy (spawned first) had neither a `cc_process` neighbor
+  # (spawned after) nor a `feishu_app_proxy` neighbor (recorded
+  # symbolically from the proxies block). T5's react-emit path requires
+  # the latter, so without T6 FCP's `emit_to_feishu_app_proxy` warns
+  # `:no_app_proxy_neighbor` and drops the delivery-ack.
+  #
+  # This test locks in the invariant: every Stateful peer spawned by
+  # the pipeline sees the full adjacency — both directions of the
+  # inbound chain AND the proxy-target admin pid (when the proxy's
+  # `target: "admin::..."` resolves).
+  test "pipeline-spawned peers have bidirectional neighbors (PR-9 T6)",
+       %{tmux_socket: tmux_sock} do
+    # Spin up a FeishuAppAdapter for the app_id so the
+    # `admin::feishu_app_adapter_${app_id}` target in simple.yaml
+    # resolves to a real pid (not a proxy_module fallback marker).
+    app_id = "T6_#{System.unique_integer([:positive])}"
+    admin_children_sup = Esr.AdminSession.ChildrenSupervisor
+
+    {:ok, faa} =
+      DynamicSupervisor.start_child(
+        admin_children_sup,
+        {Esr.Peers.FeishuAppAdapter,
+         %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
+      )
+
+    on_exit(fn ->
+      if Process.alive?(faa) do
+        DynamicSupervisor.terminate_child(admin_children_sup, faa)
+      end
+    end)
+
+    {:ok, _sid} =
+      SessionRouter.create_session(%{
+        agent: "cc",
+        dir: "/tmp",
+        principal_id: "ou_alice",
+        chat_id: "oc_T6",
+        thread_id: "om_T6",
+        app_id: app_id,
+        tmux_socket: tmux_sock
+      })
+
+    {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat_thread("oc_T6", "om_T6")
+
+    fcp = refs.feishu_chat_proxy
+    cc = refs.cc_process
+    tmux = refs.tmux_process
+
+    assert is_pid(fcp)
+    assert is_pid(cc)
+    assert is_pid(tmux)
+
+    fcp_state = :sys.get_state(fcp)
+
+    assert is_pid(Keyword.get(fcp_state.neighbors, :cc_process)),
+           "fcp → cc_process neighbor missing"
+
+    # T6: the feishu_app_proxy neighbor must be the live
+    # FeishuAppAdapter pid (not a `{:proxy_module, _}` marker) so
+    # FCP's `emit_to_feishu_app_proxy` can `send(pid, {:outbound, _})`
+    # directly.
+    assert Keyword.get(fcp_state.neighbors, :feishu_app_proxy) == faa,
+           "fcp → feishu_app_proxy neighbor must resolve to FAA pid (PR-9 T6)"
+
+    cc_state = :sys.get_state(cc)
+
+    assert is_pid(Keyword.get(cc_state.neighbors, :tmux_process)),
+           "cc → tmux_process neighbor missing"
+
+    assert is_pid(Keyword.get(cc_state.neighbors, :feishu_chat_proxy)),
+           "cc → feishu_chat_proxy neighbor missing (PR-9 T6)"
+
+    # TmuxProcess is wrapped by OSProcessWorker; its inner
+    # `state.neighbors` lives under `worker_state.state`.
+    tmux_worker_state = :sys.get_state(tmux)
+    tmux_inner = tmux_worker_state.state
+
+    assert is_pid(Keyword.get(tmux_inner.neighbors, :cc_process)),
+           "tmux → cc_process neighbor missing"
+  end
 end
