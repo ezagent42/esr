@@ -294,4 +294,247 @@ defmodule Esr.Peers.TmuxProcessTest do
       end
     end
   end
+
+  # --------------------------------------------------------------------
+  # PR-9 T11b.3 — TmuxProcess injects ESR_* env + launches claude CLI
+  # as the pane's initial process (rather than opening an idle pane).
+  # Spec: docs/superpowers/specs/2026-04-24-pr9-t11b-cc-cli-mcp.md §4.2 A.
+  # --------------------------------------------------------------------
+  describe "PR-9 T11b.3: spawn_args/1 threads session context" do
+    test "reads session_id, workspace_name, chat_id, app_id, start_cmd from params" do
+      params = %{
+        session_id: "SID123",
+        workspace_name: "ws-a",
+        chat_id: "oc_chat_xyz",
+        app_id: "cli_app_1",
+        start_cmd: "claude --custom",
+        dir: "/tmp/repo"
+      }
+
+      args = TmuxProcess.spawn_args(params)
+
+      assert args.session_id == "SID123"
+      assert args.workspace_name == "ws-a"
+      assert args.chat_id == "oc_chat_xyz"
+      assert args.app_id == "cli_app_1"
+      assert args.start_cmd == "claude --custom"
+      assert args.dir == "/tmp/repo"
+    end
+
+    test "tolerates string-keyed params (atom+string dual shape via Peer.get_param/2)" do
+      params = %{
+        "session_id" => "SID999",
+        "workspace_name" => "ws-b",
+        "chat_id" => "cid",
+        "app_id" => "aid"
+      }
+
+      args = TmuxProcess.spawn_args(params)
+
+      assert args.session_id == "SID999"
+      assert args.workspace_name == "ws-b"
+      assert args.chat_id == "cid"
+      assert args.app_id == "aid"
+    end
+
+    test "missing session context yields nil fields (legacy path)" do
+      args = TmuxProcess.spawn_args(%{})
+
+      assert is_nil(args.session_id)
+      assert is_nil(args.workspace_name)
+      assert is_nil(args.chat_id)
+      assert is_nil(args.app_id)
+      assert is_nil(args.start_cmd)
+    end
+  end
+
+  describe "PR-9 T11b.3: os_env/1 produces ESR_* vars" do
+    test "emits four ESR_* env vars when session_id is set" do
+      state = %{
+        session_id: "SID1",
+        workspace_name: "workspace-a",
+        chat_id: "oc_chat_1",
+        app_id: "cli_app_a"
+      }
+
+      env = TmuxProcess.os_env(state)
+
+      assert {"ESR_SESSION_ID", "SID1"} in env
+      assert {"ESR_WORKSPACE", "workspace-a"} in env
+      assert length(env) == 4
+
+      {_k, chat_ids_json} = Enum.find(env, fn {k, _} -> k == "ESR_CHAT_IDS" end)
+      assert Jason.decode!(chat_ids_json) == [
+               %{"chat_id" => "oc_chat_1", "app_id" => "cli_app_a", "kind" => "feishu"}
+             ]
+
+      {_k, url} = Enum.find(env, fn {k, _} -> k == "ESR_ESRD_URL" end)
+      # /channel/socket, not /adapter_hub/socket — this is the MCP bridge.
+      assert url =~ ~r(\Aws://127\.0\.0\.1:\d+/channel/socket/websocket\?vsn=2\.0\.0\z)
+    end
+
+    test "no session_id ⇒ empty env (legacy idle-pane path)" do
+      state = %{session_id: nil}
+      assert TmuxProcess.os_env(state) == []
+    end
+
+    test "empty-string session_id also yields empty env" do
+      state = %{session_id: ""}
+      assert TmuxProcess.os_env(state) == []
+    end
+
+    test "missing workspace_name defaults to \"default\"" do
+      state = %{
+        session_id: "SID2",
+        workspace_name: nil,
+        chat_id: "c",
+        app_id: "a"
+      }
+
+      env = TmuxProcess.os_env(state)
+      assert {"ESR_WORKSPACE", "default"} in env
+    end
+  end
+
+  describe "PR-9 T11b.3: os_cmd/1 appends claude invocation" do
+    test "with session context — trailing arg is a single shell-command string" do
+      state = %{
+        session_name: "esr_cc_test_1",
+        dir: "/tmp/wsrepo",
+        session_id: "SID42",
+        workspace_name: "ws-a",
+        chat_id: "c",
+        app_id: "a",
+        start_cmd: nil,
+        mcp_config_path: "/tmp/esr-mcp-SID42.json",
+        tmux_socket: nil
+      }
+
+      argv = TmuxProcess.os_cmd(state)
+
+      # Core tmux invocation stays intact.
+      assert Enum.take(argv, 6) ==
+               ["tmux", "-C", "new-session", "-s", "esr_cc_test_1", "-c", "/tmp/wsrepo"]
+               |> Enum.take(6)
+
+      # Trailing element is the single shell-command string.
+      claude_cmd = List.last(argv)
+      assert is_binary(claude_cmd)
+      assert claude_cmd =~ "claude --permission-mode bypassPermissions"
+      assert claude_cmd =~ "--dangerously-load-development-channels server:esr-channel"
+      assert claude_cmd =~ "--mcp-config /tmp/esr-mcp-SID42.json"
+      assert claude_cmd =~ "--add-dir /tmp/wsrepo"
+    end
+
+    test "with tmux_socket — socket args come before -C, claude still trails" do
+      state = %{
+        session_name: "esr_cc_test_2",
+        dir: "/tmp",
+        session_id: "SID77",
+        workspace_name: "w",
+        chat_id: "c",
+        app_id: "a",
+        start_cmd: nil,
+        mcp_config_path: "/tmp/esr-mcp-SID77.json",
+        tmux_socket: "/tmp/sock77.sock"
+      }
+
+      argv = TmuxProcess.os_cmd(state)
+
+      # ["tmux", "-S", "/tmp/sock77.sock", "-C", "new-session", "-s", ..., "-c", ..., "<claude cmd>"]
+      assert Enum.take(argv, 3) == ["tmux", "-S", "/tmp/sock77.sock"]
+      assert List.last(argv) =~ "claude --permission-mode bypassPermissions"
+    end
+
+    test "without session context — legacy idle-pane argv (no claude suffix)" do
+      state = %{
+        session_name: "esr_cc_idle",
+        dir: "/tmp",
+        session_id: nil,
+        tmux_socket: nil
+      }
+
+      argv = TmuxProcess.os_cmd(state)
+
+      assert argv == ["tmux", "-C", "new-session", "-s", "esr_cc_idle", "-c", "/tmp"]
+      refute Enum.any?(argv, &(&1 =~ "claude"))
+    end
+
+    test "custom start_cmd overrides the default claude invocation" do
+      state = %{
+        session_name: "esr_cc_custom",
+        dir: "/tmp",
+        session_id: "SID99",
+        workspace_name: "ws",
+        chat_id: "c",
+        app_id: "a",
+        start_cmd: "bash -lc 'echo hi'",
+        mcp_config_path: "/tmp/esr-mcp-SID99.json",
+        tmux_socket: nil
+      }
+
+      argv = TmuxProcess.os_cmd(state)
+      assert List.last(argv) =~ "bash"
+      refute List.last(argv) =~ "--mcp-config"
+    end
+  end
+
+  describe "PR-9 T11b.3: MCP config file rendering" do
+    test "render_mcp_config! writes expected JSON shape" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "esr-mcp-test-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      :ok = TmuxProcess.render_mcp_config!(path)
+
+      assert File.exists?(path)
+      parsed = path |> File.read!() |> Jason.decode!()
+
+      assert %{"mcpServers" => %{"esr-channel" => entry}} = parsed
+      assert entry["command"] == "uv"
+
+      args = entry["args"]
+      assert is_list(args)
+      assert Enum.take(args, 2) == ["run", "--project"]
+      # ["run", "--project", "<repo>/adapters/cc_mcp", "python", "-m", "esr_cc_mcp.channel"]
+      project = Enum.at(args, 2)
+      assert String.ends_with?(project, "/adapters/cc_mcp")
+      assert Enum.drop(args, 3) == ["python", "-m", "esr_cc_mcp.channel"]
+    end
+
+    test "mcp_config_path_for/1 returns /tmp/esr-mcp-<sid>.json" do
+      assert TmuxProcess.mcp_config_path_for("ABCD") ==
+               Path.join(System.tmp_dir!(), "esr-mcp-ABCD.json")
+    end
+
+    test "init/1 with a session_id renders the per-session MCP config file" do
+      sid = "INIT-#{System.unique_integer([:positive])}"
+      path = TmuxProcess.mcp_config_path_for(sid)
+      on_exit(fn -> File.rm(path) end)
+
+      {:ok, state} =
+        TmuxProcess.init(%{
+          session_name: "n",
+          dir: "/tmp",
+          session_id: sid,
+          workspace_name: "ws",
+          chat_id: "c",
+          app_id: "a"
+        })
+
+      assert state.mcp_config_path == path
+      assert File.exists?(path)
+    end
+
+    test "init/1 without session_id leaves mcp_config_path nil + writes no file" do
+      {:ok, state} =
+        TmuxProcess.init(%{session_name: "n", dir: "/tmp"})
+
+      assert is_nil(state.mcp_config_path)
+    end
+  end
 end
