@@ -433,6 +433,9 @@ defmodule Esr.Peers.TmuxProcessTest do
       assert claude_cmd =~ "claude --permission-mode bypassPermissions"
       assert claude_cmd =~ "--dangerously-load-development-channels server:esr-channel"
       assert claude_cmd =~ "--mcp-config /tmp/esr-mcp-SID42.json"
+      # T12b: --settings points at a pre-rendered claude-settings.json
+      assert claude_cmd =~ "--settings"
+      assert claude_cmd =~ "claude-settings.json"
       assert claude_cmd =~ "--add-dir /tmp/wsrepo"
     end
 
@@ -519,6 +522,53 @@ defmodule Esr.Peers.TmuxProcessTest do
     test "mcp_config_path_for/1 returns /tmp/esr-mcp-<sid>.json" do
       assert TmuxProcess.mcp_config_path_for("ABCD") ==
                Path.join(System.tmp_dir!(), "esr-mcp-ABCD.json")
+    end
+
+    # T12b: claude-settings.json in ESRD_HOME/<instance>
+    test "render_claude_settings! writes enableAllProjectMcpServers + channelsEnabled" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "esr-cs-test-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      :ok = TmuxProcess.render_claude_settings!(path)
+
+      assert File.exists?(path)
+      parsed = path |> File.read!() |> Jason.decode!()
+      assert parsed["enableAllProjectMcpServers"] == true
+      assert parsed["channelsEnabled"] == true
+    end
+
+    test "claude_settings_path/0 is idempotent + writes in ESRD_HOME/<instance>/" do
+      # Redirect ESRD_HOME to a tmp dir so we don't touch real state.
+      tmp_home = Path.join(System.tmp_dir!(), "esr-cs-home-#{System.unique_integer([:positive])}")
+      prev_home = System.get_env("ESRD_HOME")
+      prev_instance = System.get_env("ESR_INSTANCE")
+      System.put_env("ESRD_HOME", tmp_home)
+      System.put_env("ESR_INSTANCE", "cs_test")
+
+      on_exit(fn ->
+        File.rm_rf!(tmp_home)
+        if prev_home, do: System.put_env("ESRD_HOME", prev_home), else: System.delete_env("ESRD_HOME")
+
+        if prev_instance,
+          do: System.put_env("ESR_INSTANCE", prev_instance),
+          else: System.delete_env("ESR_INSTANCE")
+      end)
+
+      path1 = TmuxProcess.claude_settings_path()
+      assert path1 == Path.join([tmp_home, "cs_test", "claude-settings.json"])
+      assert File.exists?(path1)
+
+      # Second call: idempotent (no re-render if already present).
+      mtime1 = File.stat!(path1).mtime
+      Process.sleep(1050)
+      path2 = TmuxProcess.claude_settings_path()
+      assert path2 == path1
+      assert File.stat!(path2).mtime == mtime1
     end
 
     test "init/1 with a session_id renders the per-session MCP config file" do

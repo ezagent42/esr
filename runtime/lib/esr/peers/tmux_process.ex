@@ -449,8 +449,15 @@ defmodule Esr.Peers.TmuxProcess do
           ["sh", "-c", "while :; do sleep 1; done"]
         else
           mcp_path = Map.get(state, :mcp_config_path) || mcp_config_path_for(sid)
+          settings_path = claude_settings_path()
           dir = Map.get(state, :dir) || "/tmp"
 
+          # T12b: `--settings` points at a cached claude-settings.json
+          # with `enableAllProjectMcpServers: true` + `channelsEnabled:
+          # true` so MCP servers from --mcp-config are auto-approved
+          # and channel notifications are allowed. (The trust-folder
+          # dialog isn't coverable via settings per upstream docs; T12a
+          # send_keys handles that separately.)
           [
             "claude",
             "--permission-mode",
@@ -459,6 +466,8 @@ defmodule Esr.Peers.TmuxProcess do
             "server:esr-channel",
             "--mcp-config",
             mcp_path,
+            "--settings",
+            settings_path,
             "--add-dir",
             dir
           ]
@@ -511,6 +520,49 @@ defmodule Esr.Peers.TmuxProcess do
   @spec mcp_config_path_for(String.t()) :: Path.t()
   def mcp_config_path_for(session_id) when is_binary(session_id) do
     Path.join(System.tmp_dir!(), "esr-mcp-#{session_id}.json")
+  end
+
+  @doc """
+  Per-instance claude settings path — `<ESRD_HOME>/<instance>/claude-settings.json`.
+  PR-9 T12b. User direction 2026-04-24: "settings.json 放在 $ESRD_HOME 中".
+
+  Idempotently rendered — the contents are static per-instance
+  (`enableAllProjectMcpServers` + `channelsEnabled`), so TmuxProcess
+  just ensures the file exists before claude reads it.
+  """
+  @spec claude_settings_path() :: Path.t()
+  def claude_settings_path do
+    path = Path.join(Esr.Paths.runtime_home(), "claude-settings.json")
+    unless File.exists?(path), do: render_claude_settings!(path)
+    path
+  end
+
+  @doc """
+  Write claude CLI settings JSON to `path`. Shape matches cc-openclaw's
+  `roles/superadmin/settings.json`:
+
+      {"enableAllProjectMcpServers": true, "channelsEnabled": true}
+
+  - `enableAllProjectMcpServers` auto-approves MCP servers loaded via
+    `--mcp-config` without the user needing to accept each one. Without
+    this, claude pops a "Do you want to trust this MCP server?" dialog
+    on every session.
+  - `channelsEnabled` allows the `claude/channel` capability path
+    (cc_mcp needs it enabled for `notifications/claude/channel` to
+    surface as `<channel>` tags).
+
+  See `docs/notes/claude-code-channels-reference.md`.
+  """
+  @spec render_claude_settings!(Path.t()) :: :ok
+  def render_claude_settings!(path) when is_binary(path) do
+    settings = %{
+      "enableAllProjectMcpServers" => true,
+      "channelsEnabled" => true
+    }
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, Jason.encode!(settings))
+    :ok
   end
 
   # ws://127.0.0.1:<port>/channel/socket/websocket?vsn=2.0.0 — mirrors
