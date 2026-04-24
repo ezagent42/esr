@@ -641,20 +641,21 @@ defmodule Esr.Peers.TmuxProcessTest do
   end
 
   describe "PR-9 T12a: schedule_startup_keys auto-confirms trust dialog" do
-    test "init/1 with session_id + tmux_force_claude_launch schedules send_keys_tokens" do
+    test "init/1 with session_id + tmux_force_claude_launch schedules two send_keys_tokens bursts" do
       Application.put_env(:esr, :tmux_force_claude_launch, true)
       Application.put_env(:esr, :tmux_startup_keys_delay_ms, 10)
+      Application.put_env(:esr, :tmux_startup_keys_gap_ms, 20)
 
       on_exit(fn ->
         Application.delete_env(:esr, :tmux_force_claude_launch)
         Application.delete_env(:esr, :tmux_startup_keys_delay_ms)
+        Application.delete_env(:esr, :tmux_startup_keys_gap_ms)
       end)
 
       test_pid = self()
 
-      # init/1 runs in the caller process for this unit test; schedule
-      # fires Process.send_after(self(), ...) which lands in the same
-      # process's mailbox.
+      # T12c: two dialogs (trust-folder + dev-channels) each need
+      # "1 + Enter"; confirmation is scheduled twice with a gap.
       spawn_link(fn ->
         {:ok, _state} =
           TmuxProcess.init(%{
@@ -663,16 +664,20 @@ defmodule Esr.Peers.TmuxProcessTest do
             session_id: "sid_trust"
           })
 
-        receive do
-          {:send_keys_tokens, keys} = msg ->
-            send(test_pid, {:received, msg})
-            assert keys == ["1", :enter]
-        after
-          200 -> send(test_pid, :timeout)
-        end
+        messages =
+          for _ <- 1..2 do
+            receive do
+              {:send_keys_tokens, _} = msg -> msg
+            after
+              200 -> :timeout
+            end
+          end
+
+        send(test_pid, {:messages, messages})
       end)
 
-      assert_receive {:received, {:send_keys_tokens, ["1", :enter]}}, 500
+      assert_receive {:messages, msgs}, 500
+      assert msgs == [{:send_keys_tokens, ["1", :enter]}, {:send_keys_tokens, ["1", :enter]}]
     end
 
     test "init/1 in pure :test env (no force flag) does NOT schedule keys" do

@@ -241,17 +241,25 @@ defmodule Esr.Peers.TmuxProcess do
     {:ok, state}
   end
 
-  # PR-9 T12a: schedule the post-launch auto-confirm keystrokes. For
-  # now we fire a single "1 + Enter" after 5s — covers the trust-folder
-  # dialog. Future dialogs (dev-channels approval, permission prompts)
-  # can extend this list via a param once their shape is known.
+  # PR-9 T12a / T12c: claude CLI shows TWO sequential confirmation
+  # dialogs on first launch in a fresh workspace + with
+  # `--dangerously-load-development-channels`:
+  #
+  #   1. "Is this a project you trust?"   ❯ 1. Yes, I trust this folder
+  #   2. "Loading development channels"    ❯ 1. I am using this for local development
+  #
+  # Both answer "1 + Enter". We schedule the confirmation twice with a
+  # gap — first at ~5s (trust dialog), second at ~8s (dev-channels
+  # dialog). Idempotent: if only one dialog shows, the second "1+Enter"
+  # types into the terminal (claude ignores it).
   defp schedule_startup_keys(%{session_id: sid} = _state)
        when is_binary(sid) and sid != "" do
     if Application.get_env(:esr, :tmux_force_claude_launch, Mix.env() != :test) do
-      # 5s: claude CLI's cold-start + model warm-up + initial render.
-      # Configurable via app env for tests that want to pin faster.
-      delay_ms = Application.get_env(:esr, :tmux_startup_keys_delay_ms, 5_000)
-      Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, delay_ms)
+      base_delay = Application.get_env(:esr, :tmux_startup_keys_delay_ms, 5_000)
+      gap = Application.get_env(:esr, :tmux_startup_keys_gap_ms, 3_000)
+
+      Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, base_delay)
+      Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, base_delay + gap)
     end
 
     :ok
