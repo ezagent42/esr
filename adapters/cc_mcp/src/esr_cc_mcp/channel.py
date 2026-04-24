@@ -32,7 +32,8 @@ import anyio
 import mcp.server.stdio
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-from mcp.types import TextContent, Tool
+from mcp.shared.message import SessionMessage
+from mcp.types import JSONRPCMessage, JSONRPCNotification, TextContent, Tool
 
 from esr_cc_mcp.tools import list_tool_schemas
 from esr_cc_mcp.ws_client import EsrWSClient
@@ -45,6 +46,11 @@ log = logging.getLogger("esr-channel")
 _pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _ws: EsrWSClient | None = None
 _mcp_server: Server | None = None
+# PR-9 T11b.4b: write_stream captured in _run_stdio so _handle_inbound can
+# emit the raw `notifications/claude/channel` JSON-RPC notification that
+# Claude Code's channel registration listens for. Matches the cc-openclaw
+# reference's `inject_message` pattern.
+_stdio_write_stream: Any = None
 
 
 def _resolve_from_port_file() -> str:
@@ -80,24 +86,6 @@ def _resolve_url() -> str:
     return os.environ.get("ESR_ESRD_URL") or _resolve_from_port_file()
 
 
-def _format_channel_tag(envelope: dict[str, Any]) -> str:
-    """Wrap an inbound envelope as a <channel> XML tag matching
-    cc-openclaw's openclaw-channel output. CC's MCP client renders
-    text-content messages with a <channel> tag as an inbound user
-    message for the conversation context.
-    """
-    attrs = {
-        "source": envelope.get("source", ""),
-        "chat_id": envelope.get("chat_id", ""),
-        "message_id": envelope.get("message_id", ""),
-        "user": envelope.get("user", ""),
-        "ts": envelope.get("ts", ""),
-    }
-    attr_str = " ".join(f'{k}="{v}"' for k, v in attrs.items() if v)
-    body = envelope.get("content", "")
-    return f"<channel {attr_str}>\n{body}\n</channel>"
-
-
 async def _handle_inbound(envelope: dict[str, Any]) -> None:
     """Route inbound frames by kind (spec §5.3)."""
     kind = envelope.get("kind")
@@ -107,18 +95,49 @@ async def _handle_inbound(envelope: dict[str, Any]) -> None:
         if fut and not fut.done():
             fut.set_result(envelope)
     elif kind == "notification":
-        # Inject as an MCP-spec notification/logging message so CC sees
-        # it in the conversation context.
-        tag = _format_channel_tag(envelope)
-        log.info("inbound notification from %s, %d bytes",
-                 envelope.get("source", ""), len(tag))
-        if _mcp_server is not None:
-            try:
-                await _mcp_server.request_context.session.send_log_message(
-                    level="info", data=tag, logger="esr-channel"
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("failed to inject notification: %s", exc)
+        # PR-9 T11b.4b: emit a `notifications/claude/channel` JSON-RPC
+        # notification — the exact shape Claude Code listens for when a
+        # server declares the `claude/channel` experimental capability
+        # (see `docs/notes/claude-code-channels-reference.md`). The
+        # frame becomes a `<channel source="..." ...>` tag in CC's
+        # conversation context.
+        #
+        # content = the inbound message body (becomes the tag's inner text)
+        # meta    = tag attributes (keys must be [A-Za-z0-9_]+ — other
+        #           characters are silently dropped by Claude Code)
+        log.info("inbound notification from %s", envelope.get("source", ""))
+        if _stdio_write_stream is None:
+            log.warning("dropping notification: stdio write stream not ready")
+            return
+
+        meta = {
+            k: str(v)
+            for k, v in {
+                "chat_id": envelope.get("chat_id"),
+                "message_id": envelope.get("message_id"),
+                "user": envelope.get("user"),
+                "ts": envelope.get("ts"),
+                "thread_id": envelope.get("thread_id"),
+                "runtime_mode": envelope.get("runtime_mode", "discussion"),
+                "source": envelope.get("source", "feishu"),
+            }.items()
+            if v
+        }
+        params = {
+            "content": envelope.get("content", ""),
+            "meta": meta,
+        }
+
+        try:
+            notification = JSONRPCNotification(
+                jsonrpc="2.0",
+                method="notifications/claude/channel",
+                params=params,
+            )
+            session_msg = SessionMessage(message=JSONRPCMessage(notification))
+            await _stdio_write_stream.send(session_msg)
+        except Exception as exc:  # noqa: BLE001 — stdio write boundary
+            log.warning("failed to inject channel notification: %s", exc)
     elif kind == "session_killed":
         log.warning("session_killed: %s", envelope.get("reason"))
         await asyncio.sleep(0.5)
@@ -203,16 +222,39 @@ async def _main() -> None:
 
 
 async def _run_stdio(server: Server) -> None:
+    global _stdio_write_stream
+
+    # PR-9 T11b.4b: declare the `claude/channel` experimental capability
+    # so Claude Code registers a listener for `notifications/claude/channel`
+    # frames we push from `_handle_inbound`. Without this, CC Code treats
+    # us as a plain MCP tools server and silently drops the notifications
+    # — users' Feishu inbound messages never reach the conversation.
+    # See docs/notes/claude-code-channels-reference.md for the contract.
+    #
+    # Instructions string goes into CC's system prompt so it knows the
+    # meta-field semantics + how to route replies back via tools.
+    instructions = (
+        "Messages from users arrive as <channel source=\"feishu\" "
+        "chat_id=\"...\" message_id=\"...\" user=\"...\"> tags. "
+        "Reply with the `reply` MCP tool, passing the chat_id from the tag. "
+        "For file output, use the `send_file` tool with the same chat_id."
+    )
+
     init_opts = InitializationOptions(
         server_name="esr-channel",
         server_version="0.2.0",
         capabilities=server.get_capabilities(
             notification_options=NotificationOptions(),
-            experimental_capabilities={},
+            experimental_capabilities={"claude/channel": {}},
         ),
+        instructions=instructions,
     )
     async with mcp.server.stdio.stdio_server() as (read, write):
-        await server.run(read, write, init_opts)
+        _stdio_write_stream = write
+        try:
+            await server.run(read, write, init_opts)
+        finally:
+            _stdio_write_stream = None
 
 
 def main() -> int:
