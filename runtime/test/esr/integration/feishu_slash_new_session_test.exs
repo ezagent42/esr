@@ -21,24 +21,23 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   `Esr.AdminSession.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
   full command path runs through `Esr.Admin.Dispatcher` → `Session.New`.
 
-  ## Gap called out
+  ## PR-8 T4 update
 
-  Current `Session.New` registers with an empty `refs` map because it
-  calls `SessionsSupervisor.start_session/1` directly (the Session's peers
-  DynamicSupervisor starts empty — pipeline peer spawning still lives in
-  `SessionRouter.create_session/2`). This is enough to make the registry
-  lookup _hit_ (step 5 above), but `FeishuAppAdapter.handle_upstream/2`
-  will still fall through to the `other` clause because its pattern
-  requires `%{feishu_chat_proxy: pid}`. Rewiring `Session.New` to go
-  through `SessionRouter.create_session/2` (so the pipeline gets spawned
-  and refs carry the real `feishu_chat_proxy` pid) is the obvious
-  follow-up — this test asserts the registry binding only, which is what
-  T3 is scoped to.
+  Post-T4, `Session.New` delegates the chat-bound branch to
+  `Esr.SessionRouter.create_session/1`, which spawns the full
+  `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, TmuxProcess)
+  and registers the session with refs carrying each spawned peer pid.
+  This test still asserts the T3 invariant (`lookup_by_chat_thread/2`
+  returns the newly-created session); the T4-specific assertion —
+  that `refs.feishu_chat_proxy` is a live pid — lives in
+  `Esr.Admin.Commands.Session.NewTest`'s `:t4_session_router` describe
+  block rather than here, to keep each test focused.
   """
   use ExUnit.Case, async: false
 
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
+  import Esr.TestSupport.TmuxIsolation, only: [isolated_tmux_socket: 1]
 
   alias Esr.Peers.SlashHandler
 
@@ -48,8 +47,12 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
   setup :assert_with_grants
   setup :wipe_sessions_on_exit
+  # PR-8 T4: Session.New now routes through SessionRouter, which spawns
+  # the full pipeline — including TmuxProcess. Pin a throwaway socket so
+  # the integration test doesn't touch the user's default tmux socket.
+  setup :isolated_tmux_socket
 
-  setup do
+  setup %{tmux_socket: sock} do
     ensure_admin_dispatcher()
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
@@ -57,6 +60,26 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       Esr.SessionRegistry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
+
+    # PR-8 T4: SessionRouter must be up for the chat-bound Session.New
+    # path to succeed. The router is not (yet) an Esr.Application child,
+    # so tests stand it up under the ExUnit supervisor when absent.
+    if Process.whereis(Esr.SessionRouter) == nil do
+      start_supervised!(Esr.SessionRouter)
+    end
+
+    # TmuxProcess.spawn_args/1 picks up :tmux_socket_override from app
+    # env when no explicit :tmux_socket is threaded through — Session.New
+    # has no dedicated tmux_socket arg, so route via the app env.
+    prior_tmux_override = Application.get_env(:esr, :tmux_socket_override)
+    Application.put_env(:esr, :tmux_socket_override, sock)
+
+    on_exit(fn ->
+      case prior_tmux_override do
+        nil -> Application.delete_env(:esr, :tmux_socket_override)
+        v -> Application.put_env(:esr, :tmux_socket_override, v)
+      end
+    end)
 
     :ok = Esr.TestSupport.Grants.with_grants(%{@test_principal => ["*"]})
 

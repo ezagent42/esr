@@ -1,8 +1,8 @@
 defmodule Esr.Admin.Commands.Session.New do
   @moduledoc """
   `Esr.Admin.Commands.Session.New` — the consolidated agent-session
-  command (spec D15 collapse). Creates an agent-backed Session under
-  `Esr.SessionsSupervisor` from an `agents.yaml` definition.
+  command (spec D15 collapse). Creates an agent-backed Session from an
+  `agents.yaml` definition.
 
   Dispatcher kind: `session_new`. The legacy branch-worktree command
   lives in `Esr.Admin.Commands.Session.BranchNew` (kind
@@ -15,8 +15,23 @@ defmodule Esr.Admin.Commands.Session.New do
     3. Batch-verify `capabilities_required` (D18) via
        `Esr.Capabilities.has_all?/2` — returns every missing cap at once
        so the operator can see the full gap in a single reply.
-    4. Call `Esr.SessionsSupervisor.start_session/1` with the agent def
-       encoded in `metadata.agent_def`.
+    4. Spawn the session. Two branches:
+         * **chat_id + thread_id present** — delegate to
+           `Esr.SessionRouter.create_session/1`, which runs the full
+           `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess,
+           TmuxProcess, …), monitors each peer, and registers the
+           session under the real `{chat_id, thread_id}` key with refs
+           carrying every spawned peer pid. This is the path Feishu
+           slash commands take.
+         * **chat_id/thread_id absent (the "pending" placeholder)** —
+           direct admin-CLI submits
+           (`esr admin submit session_new --arg agent=... --arg dir=...`)
+           have no chat binding. Calling SessionRouter here would register
+           `{"pending","pending"}` in the ETS `:set` and clobber the slot
+           for any real session that later uses the placeholder key.
+           Fall through to `Esr.SessionsSupervisor.start_session/1` (the
+           legacy base subtree) and skip registry binding — no pipeline,
+           no FeishuChatProxy, but also no registry pollution.
     5. Return `{:ok, %{"session_id" => sid, "agent" => agent}}` on
        success, or a structured error otherwise.
 
@@ -24,17 +39,23 @@ defmodule Esr.Admin.Commands.Session.New do
   `prefix:name/perm` shape (see `docs/notes/capability-name-format-mismatch.md`);
   agents.yaml fixtures + spec examples were canonicalized in P3-8.4.
 
-  PR-3 wires the real pipeline spawn via `SessionRouter.create_session/2`.
-  In PR-2 the session start succeeds only when the agent_def has no
-  pipeline peers that require missing modules (CCProcess/CCProxy/…);
-  otherwise a controlled failure is expected (see P2-13).
+  ## PR-8 T4 — SessionRouter rewire
+
+  Prior to T4, Session.New called `SessionsSupervisor.start_session/1`
+  unconditionally, which starts only the SessionProcess + empty peers
+  DynamicSupervisor. Pipeline peers were never spawned, so
+  `FeishuAppAdapter.handle_upstream/2`'s `%{feishu_chat_proxy: pid}`
+  pattern missed and every inbound Feishu message after the first
+  `/new-session` got silently dropped. T4 routes the chat-bound path
+  through `Esr.SessionRouter.create_session/1` to close that loop.
   """
 
   @type result :: {:ok, map()} | {:error, map()}
 
-  # Default start_session hook — injectable in tests via `execute/2 [start_session_fn: ...]`.
-  # Mirrors the `spawn_fn` pattern in `Esr.Admin.Commands.RegisterAdapter.execute/2` so
-  # tests can stub the supervisor call without actually spawning a Session tree.
+  # Default hooks — both injectable via `execute/2` opts. Tests stub
+  # `create_session_fn` to avoid spawning the real pipeline, and
+  # `start_session_fn` to cover the "pending" admin-CLI branch.
+  @default_create_session_fn &Esr.SessionRouter.create_session/1
   @default_start_session_fn &Esr.SessionsSupervisor.start_session/1
 
   @spec execute(map()) :: result()
@@ -45,19 +66,28 @@ defmodule Esr.Admin.Commands.Session.New do
       when is_binary(submitter) and is_map(args) and is_list(opts) do
     agent = args["agent"]
     dir = args["dir"]
-    # PR-8 T2: thread the originating Feishu chat through the supervisor call so
-    # the session is registered under the real {chat_id, thread_id} key (not the
-    # "pending" placeholder). Falls back to "pending" when args don't carry them
-    # (e.g. `esr admin submit session_new --arg agent=... --arg dir=...`).
+    # PR-8 T2: thread the originating Feishu chat through so the session
+    # is registered under the real {chat_id, thread_id}. Falls back to
+    # "pending" when args don't carry them (direct admin CLI submits).
     chat_id = Map.get(args, "chat_id", "pending")
     thread_id = Map.get(args, "thread_id", "pending")
+    create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
     start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
 
     with :ok <- validate_args(agent, dir),
          {:ok, agent_def} <- fetch_agent(agent),
          :ok <- verify_caps(submitter, agent_def.capabilities_required),
          {:ok, sid} <-
-           start_session(agent, agent_def, dir, submitter, chat_id, thread_id, start_session_fn) do
+           spawn_session(
+             agent,
+             agent_def,
+             dir,
+             submitter,
+             chat_id,
+             thread_id,
+             create_session_fn,
+             start_session_fn
+           ) do
       {:ok, %{"session_id" => sid, "agent" => agent}}
     end
   end
@@ -99,7 +129,56 @@ defmodule Esr.Admin.Commands.Session.New do
 
   defp verify_caps(_submitter, _other), do: :ok
 
-  defp start_session(agent, agent_def, dir, submitter, chat_id, thread_id, start_session_fn) do
+  # Chat-bound path (the Feishu slash command path): delegate to
+  # SessionRouter so the full agents.yaml pipeline spawns. SessionRouter
+  # also does its own `register_session/3` internally, so we don't
+  # re-register here.
+  defp spawn_session(
+         agent,
+         agent_def,
+         dir,
+         submitter,
+         chat_id,
+         thread_id,
+         create_session_fn,
+         _start_session_fn
+       )
+       when chat_id != "pending" and thread_id != "pending" do
+    params = %{
+      agent: agent,
+      dir: dir,
+      principal_id: submitter,
+      chat_id: chat_id,
+      thread_id: thread_id,
+      # agent_def is redundant — SessionRouter re-resolves — but keeping
+      # the reference here means call-site readers don't need to jump
+      # two files to see what agent this maps to.
+      agent_def: agent_def
+    }
+
+    case create_session_fn.(params) do
+      {:ok, sid} when is_binary(sid) ->
+        {:ok, sid}
+
+      {:error, reason} ->
+        {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
+    end
+  end
+
+  # Direct admin-CLI submit path: no chat context, so SessionRouter's
+  # register_session call would clobber the "pending" placeholder slot.
+  # Take the legacy SessionsSupervisor route — starts the SessionProcess
+  # base subtree only (no pipeline peers), skips registry binding.
+  defp spawn_session(
+         agent,
+         agent_def,
+         dir,
+         submitter,
+         chat_id,
+         thread_id,
+         _create_session_fn,
+         start_session_fn
+       ) do
     sid = :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
     key = %{chat_id: chat_id, thread_id: thread_id}
 
@@ -111,36 +190,10 @@ defmodule Esr.Admin.Commands.Session.New do
            metadata: %{principal_id: submitter, agent_def: agent_def}
          }) do
       {:ok, _sup} ->
-        :ok = maybe_register(sid, key)
         {:ok, sid}
 
       {:error, reason} ->
         {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
     end
-  end
-
-  # PR-8 T3: bind the session to its chat thread so subsequent Feishu inbound
-  # messages resolve via `SessionRegistry.lookup_by_chat_thread/2` to this
-  # session's FeishuChatProxy. Mirrors `SessionRouter.create_session/2`'s
-  # `register_session/3` call (refs is a plain map, same ETS-backed writer).
-  #
-  # Direct admin-CLI submits (`esr admin submit session_new --arg agent=... --arg dir=...`)
-  # don't carry chat context, so `chat_thread_key` stays `{"pending","pending"}`.
-  # We skip registration in that case — registering the placeholder would
-  # clobber a single global slot and cause spurious hits for the next real
-  # slash command (the ETS table is a `:set`).
-  #
-  # Gap: `SessionsSupervisor.start_session/1` only boots the Session's base
-  # subtree (SessionProcess + empty peers DynamicSupervisor). The pipeline
-  # peers (including `FeishuChatProxy`) are spawned by
-  # `SessionRouter.create_session/2`, which Session.New does not yet call —
-  # so the `refs` map registered here is empty. That's enough for
-  # `lookup_by_chat_thread/2` to _hit_, but `FeishuAppAdapter.handle_upstream/2`
-  # still misses on its `%{feishu_chat_proxy: pid}` pattern until a follow-up
-  # rewires Session.New through SessionRouter or post-hoc enriches refs.
-  defp maybe_register(_sid, %{chat_id: "pending", thread_id: "pending"}), do: :ok
-
-  defp maybe_register(sid, %{chat_id: _, thread_id: _} = key) do
-    Esr.SessionRegistry.register_session(sid, key, %{})
   end
 end
