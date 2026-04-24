@@ -347,7 +347,11 @@ defmodule Esr.Peers.CCProcess do
     %{
       "kind" => "notification",
       "source" => Map.get(ctx, "channel_adapter") || "feishu",
-      "chat_id" => Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
+      # authoritative for this specific inbound. Fall back to proxy_ctx
+      # only for legacy callers that hadn't threaded it through yet.
+      "chat_id" =>
+        Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
       "thread_id" =>
         Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
       "message_id" => Map.get(last, :message_id) || "",

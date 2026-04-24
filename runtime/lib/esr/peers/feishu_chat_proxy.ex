@@ -86,10 +86,18 @@ defmodule Esr.Peers.FeishuChatProxy do
     # downstream so CCProcess can build a notifications/claude/channel
     # meta map with real attributes. T11b.6 consumes these; a 2-tuple
     # `{:text, text}` would leave CC with `meta.user=""` etc.
+    #
+    # T12-comms-3d (2026-04-24): also carry `chat_id`. Without it, the
+    # notification envelope reached claude with `"chat_id" => ""` and
+    # claude refused to call `mcp__esr-channel__reply` ("I couldn't
+    # find a chat_id in the inbound <channel> tag, so I'm replying
+    # here as text"), dropping the ack to the terminal instead of the
+    # reply channel. FCP sees chat_id on every inbound; thread it.
     meta = %{
       message_id: message_id,
       sender_id: args["sender_id"] || "",
-      thread_id: args["thread_id"] || ""
+      thread_id: args["thread_id"] || "",
+      chat_id: args["chat_id"] || ""
     }
 
     cond do
