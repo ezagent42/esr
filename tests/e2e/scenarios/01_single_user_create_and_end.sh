@@ -103,23 +103,36 @@ done
 assert_mock_feishu_file_sha "oc_mock_single" "$EXPECTED_SHA"
 
 # --- user-step 5: second message, same session -----------------------
+# T12-comms-3i: capture the auto-created session_id from the live actor
+# list (post-T11b naming is `thread:<session_id>`; the legacy "cc:single"
+# tag from a pre-T11b architecture no longer exists). We use this
+# session_id both for the step-5 persistence check and the step-6
+# `/end-session` argument.
+LIVE_SESSION_ID=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+  | awk '/^thread:/ { sub("thread:", "", $1); print $1; exit }')
+[[ -n "$LIVE_SESSION_ID" ]] \
+  || _fail_with_context "user-step 5: no thread:<sid> actor found after inbound"
+echo "live session_id captured: ${LIVE_SESSION_ID}"
+
 curl -sS -X POST -H 'content-type: application/json' \
   -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 sleep 1
-# Same peer, so cc:single still present.
-assert_actors_list_has "cc:single" "user-step 5: session persisted after 2nd msg"
+# Same peer must still be present after the 2nd message — session
+# continuity, not chat-id-indexed single-peer-per-chat semantics.
+assert_actors_list_has "thread:${LIVE_SESSION_ID}" \
+  "user-step 5: session persisted after 2nd msg"
 
 # --- user-step 6: end session ----------------------------------------
-uv run --project "${_E2E_REPO_ROOT}/py" esr cmd run "/end-session single"
+uv run --project "${_E2E_REPO_ROOT}/py" esr cmd run "/end-session ${LIVE_SESSION_ID}"
 for _ in $(seq 1 50); do
   if ! uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
-         | grep -q "cc:single"; then
+         | grep -q "thread:${LIVE_SESSION_ID}"; then
     break
   fi
   sleep 0.1
 done
-assert_actors_list_lacks "cc:single" "user-step 6: peer torn down"
+assert_actors_list_lacks "thread:${LIVE_SESSION_ID}" "user-step 6: peer torn down"
 
 # --- user-step 12 (cleanup assertion — deferred until trap runs) ------
 # Trap runs after this script exits; assertion on baseline happens in
