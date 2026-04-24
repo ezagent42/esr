@@ -16,6 +16,14 @@
 # running `mix phx.server`.
 set -u
 
+# Auto-source local env overrides if present. Gitignored .env.local is the
+# supported place for operator secrets like ESR_BOOTSTRAP_PRINCIPAL_ID
+# (user IM id → auto-seeded capabilities.yaml wildcard on first boot).
+# See .env.local.example for the full list. Shell `set -u` is fine — the
+# file is `export`-based so undefined vars never reach this layer.
+_ESRD_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ -f "${_ESRD_REPO_ROOT}/.env.local" ] && . "${_ESRD_REPO_ROOT}/.env.local"
+
 ESRD_HOME="${ESRD_HOME:-$HOME/.esrd}"
 
 fatal() { echo "esrd: $*" >&2; exit 1; }
