@@ -246,10 +246,17 @@ seed_capabilities() {
   # any other permission an e2e scenario will need. Matches the valid
   # fixture at runtime/test/support/capabilities_fixtures/valid.yaml.
   #
-  # ou_e2e gets workspace:e2e/msg.send so mock_feishu /push_inbound from
-  # that sender passes the Feishu adapter's Lane A authorization gate
-  # (see adapters/feishu/src/esr_feishu/adapter.py:_is_authorized).
-  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
+  # Two-path write (PR-9 T9 RCA):
+  # - instance path (${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml):
+  #   consumed by the Elixir admin dispatcher to authorize
+  #   adapter.register / session.create etc.
+  # - default path (${ESRD_HOME}/default/capabilities.yaml):
+  #   consumed by the Python FeishuAdapter (_load_capabilities_checker
+  #   at adapter.py:191) for Lane A msg.send gating. Without this file
+  #   every inbound is denied with 你无权使用此 bot.
+  #
+  # ou_e2e is NOT granted workspace:e2e/msg.send — see TODO below.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}" "${ESRD_HOME}/default"
   # Only ou_admin for v1 — feishu_adapter_runner's handler_hello declares
   # `permissions: []` (see esrd log), so `msg.send` isn't in the runtime
   # permissions registry. If we seed `workspace:e2e/msg.send` grants for
@@ -262,13 +269,13 @@ seed_capabilities() {
   # TODO: Once feishu_adapter_runner declares msg.send in handler_hello
   # (or msg.send is registered as a subsystem-intrinsic permission),
   # re-add the ou_e2e entries.
-  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml" <<'EOF'
-principals:
+  local caps_yaml='principals:
   - id: ou_admin
     kind: feishu_user
     note: e2e admin (wildcard)
-    capabilities: ["*"]
-EOF
+    capabilities: ["*"]'
+  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
+  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/default/capabilities.yaml"
 }
 
 seed_adapters() {
@@ -296,6 +303,10 @@ seed_workspaces() {
   # see adapter.py:168). Maps the e2e chat_ids to a single "e2e"
   # workspace so the Feishu adapter's auth gate has something to
   # resolve against.
+  #
+  # Schema (py/src/esr/workspaces.py): chats is a list of
+  # `{chat_id, app_id, kind}` dicts — raw strings crash the adapter at
+  # `_load_workspace_map` (`.get` on str). PR-9 T9 e2e RCA.
   mkdir -p "${ESRD_HOME}/default"
   cat > "${ESRD_HOME}/default/workspaces.yaml" <<'EOF'
 workspaces:
@@ -304,10 +315,10 @@ workspaces:
     start_cmd: ""
     role: "dev"
     chats:
-      - oc_mock_single
-      - oc_mock_concurrent_a
-      - oc_mock_concurrent_b
-      - oc_mock_tmux
+      - {chat_id: oc_mock_single,       app_id: e2e-mock, kind: dm}
+      - {chat_id: oc_mock_concurrent_a, app_id: e2e-mock, kind: dm}
+      - {chat_id: oc_mock_concurrent_b, app_id: e2e-mock, kind: dm}
+      - {chat_id: oc_mock_tmux,         app_id: e2e-mock, kind: dm}
     env: {}
 EOF
 }
@@ -319,6 +330,33 @@ start_esrd() {
     ESRD_HOME="${ESRD_HOME}" ESRD_INSTANCE="${ESRD_INSTANCE}" \
     ESR_E2E_TMUX_SOCK="${ESR_E2E_TMUX_SOCK}" \
     bash scripts/esrd.sh start --instance="${ESRD_INSTANCE}" )
+}
+
+wait_for_sidecar_ready() {
+  # PR-9 T9: block until the feishu_adapter_runner subprocess has:
+  #   (1) connected to Phoenix /adapter_hub/socket,
+  #   (2) joined adapter:feishu/<id>,
+  #   (3) pushed handler_hello,
+  #   (4) opened its ws_connect to mock_feishu /ws.
+  # Only once (4) happens does `self._ws_clients` on mock_feishu become
+  # non-empty — earlier stages complete serially inside runner_core, so
+  # ws_clients>=1 is a sufficient single-signal probe. Without this wait,
+  # scenario 01 step 2 races the adapter startup and mock_feishu pushes
+  # an empty-client-list inbound, which drops silently.
+  local timeout_s=${1:-30} elapsed=0 count
+  while true; do
+    count=$(curl -sS --fail "http://127.0.0.1:${MOCK_FEISHU_PORT}/ws_clients" 2>/dev/null \
+      | jq -r '.count // 0' 2>/dev/null || echo 0)
+    if [[ "$count" -ge 1 ]]; then
+      return 0
+    fi
+    sleep 0.2
+    elapsed=$(awk "BEGIN {print $elapsed + 0.2}")
+    if awk "BEGIN {exit !($elapsed > $timeout_s)}"; then
+      _fail_with_context "wait_for_sidecar_ready: no /ws client after ${timeout_s}s (count=${count})"
+      return 1
+    fi
+  done
 }
 
 register_feishu_adapter() {

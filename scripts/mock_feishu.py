@@ -121,6 +121,7 @@ class MockFeishu:
         app.router.add_post("/open-apis/im/v1/files", self._on_upload_file)
         app.router.add_get("/sent_files", self._on_get_sent_files)
         app.router.add_get("/ws", self._on_ws_connect)
+        app.router.add_get("/ws_clients", self._on_get_ws_clients)
         app.router.add_post("/push_inbound", self._on_push_inbound)
         app.router.add_get("/sent_messages", self._on_get_sent_messages)
 
@@ -252,6 +253,17 @@ class MockFeishu:
             if ws in self._ws_clients:
                 self._ws_clients.remove(ws)
         return ws
+
+    async def _on_get_ws_clients(self, _request: web.Request) -> web.Response:
+        """GET /ws_clients — return the count of connected /ws subscribers.
+
+        Readiness probe for the PR-9 T9 sidecar-ready check: the feishu
+        adapter subprocess only opens its ws_connect to /ws after
+        Phoenix join + handler_hello succeed, so a non-zero count
+        signals the full start-up chain is up and push_inbound will be
+        delivered.
+        """
+        return web.json_response({"count": len(self._ws_clients)})
 
     async def _on_push_inbound(self, request: web.Request) -> web.Response:
         """POST /push_inbound — scenario helper: inject a Feishu-side

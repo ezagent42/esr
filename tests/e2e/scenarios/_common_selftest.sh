@@ -25,4 +25,10 @@ snap_a=$(e2e_tmp_baseline_snapshot)
 snap_b=$(e2e_tmp_baseline_snapshot)
 [[ "$snap_a" == "$snap_b" ]] || { echo "FAIL: baseline not idempotent"; exit 1; }
 
+# PR-9 T9: wait_for_sidecar_ready must time out with a clear error when
+# the mock_feishu endpoint is unreachable. We deliberately DON'T start
+# mock_feishu here — the helper should bail within the timeout.
+( MOCK_FEISHU_PORT=1 wait_for_sidecar_ready 1 >/dev/null 2>&1 ) && \
+  { echo "FAIL: wait_for_sidecar_ready should time out without mock_feishu"; exit 1; } || true
+
 echo "PASS: common.sh self-test"
