@@ -30,6 +30,38 @@ defmodule Esr.Workspaces.Registry do
   @spec list() :: [Workspace.t()]
   def list, do: :ets.tab2list(@table) |> Enum.map(fn {_n, ws} -> ws end)
 
+  @doc """
+  Reverse-lookup the workspace name that owns a given `(chat_id, app_id)`
+  pair. PR-9 T11b.1.
+
+  Iterates every registered workspace and scans its `chats` list (a list
+  of maps shaped `%{"chat_id" => _, "app_id" => _, "kind" => _}` loaded
+  from `workspaces.yaml`) for an exact `chat_id` + `app_id` match. First
+  match wins. Returns `:not_found` when no workspace binds the pair.
+
+  Symmetric to the Python adapter's `_workspace_of` (see
+  `adapters/feishu/src/esr_feishu/adapter.py:_load_workspace_map`). The
+  Elixir side needs it for `SessionRouter` to thread `workspace_name`
+  into pipeline params at session auto-create time (T11b.2).
+  """
+  @spec workspace_for_chat(String.t(), String.t()) :: {:ok, String.t()} | :not_found
+  def workspace_for_chat(chat_id, app_id)
+      when is_binary(chat_id) and is_binary(app_id) do
+    list()
+    |> Enum.find_value(:not_found, fn %Workspace{name: name, chats: chats} ->
+      if is_list(chats) and chat_matches?(chats, chat_id, app_id) do
+        {:ok, name}
+      end
+    end)
+  end
+
+  defp chat_matches?(chats, chat_id, app_id) do
+    Enum.any?(chats, fn
+      %{"chat_id" => ^chat_id, "app_id" => ^app_id} -> true
+      _ -> false
+    end)
+  end
+
   @spec put(Workspace.t()) :: :ok
   def put(%Workspace{} = ws), do: GenServer.call(__MODULE__, {:put, ws})
 
