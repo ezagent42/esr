@@ -69,12 +69,16 @@ done
 assert_mock_feishu_sent_includes "oc_mock_single" "ack"  # CC's reply per prompt
 
 # --- user-step 3: CC reacts on inbound --------------------------------
-# Depending on agent wiring, CC invokes `react` automatically. Wait for
-# the reaction count to reach 1.
+# Depending on agent wiring, CC invokes `react` automatically. The FCP
+# un-reacts on reply (production design — the reaction signals "working",
+# the un-react signals "done"), so the live /reactions list may be empty
+# by the time we poll. Count live + un_reactions together.
 for _ in $(seq 1 100); do
-  count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
+  live=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
     | jq --arg mid "$INBOUND_MSG_ID" '[.[] | select(.message_id==$mid)] | length')
-  [[ "$count" -ge 1 ]] && break
+  hist=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/un_reactions" \
+    | jq --arg mid "$INBOUND_MSG_ID" '[.[] | select(.message_id==$mid)] | length')
+  (( live + hist >= 1 )) && break
   sleep 0.1
 done
 assert_mock_feishu_reactions_count "$INBOUND_MSG_ID" 1

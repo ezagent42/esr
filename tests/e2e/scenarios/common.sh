@@ -180,11 +180,19 @@ assert_mock_feishu_sent_includes() {
 }
 
 assert_mock_feishu_reactions_count() {
+  # T12-comms-3e: FCP un-reacts on every CC reply (intended production
+  # flow — the reaction signals "working", the un-react signals "done").
+  # By the time this runs, ack has already landed → un-react has already
+  # removed the reaction from /reactions (live list). To assert "CC did
+  # react" we also count historical un-reactions.
   local message_id=$1 expected=$2
-  local count
-  count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
+  local live historical total
+  live=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
     | jq --arg mid "$message_id" '[.[] | select(.message_id==$mid)] | length')
-  assert_eq "$count" "$expected" "reactions for ${message_id}"
+  historical=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/un_reactions" \
+    | jq --arg mid "$message_id" '[.[] | select(.message_id==$mid)] | length')
+  total=$((live + historical))
+  assert_eq "$total" "$expected" "reactions-emitted (live+historical) for ${message_id}"
 }
 
 assert_mock_feishu_file_sha() {
