@@ -384,16 +384,39 @@ defmodule Esr.Peers.TmuxProcess do
 
   @impl Esr.OSProcess
   def on_terminate(%{session_name: name} = state) do
+    require Logger
+
     # Per-socket `kill-server` is simpler + more robust than per-session
     # kill (session may have subshell children). With an isolated
     # `-S <path>` socket we also `File.rm/1` it to keep /tmp tidy.
+    #
+    # T12-comms-3m: log both the out+exit of every tmux call so we can
+    # diagnose cases where session_end completes but the tmux session
+    # survives. Any non-zero exit here is a resource-leak in the making.
     case Map.get(state, :tmux_socket) do
       nil ->
-        _ = System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true)
+        {out, code} =
+          System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true)
+
+        Logger.info(
+          "TmuxProcess.on_terminate: kill-session " <>
+            "name=#{inspect(name)} code=#{code} out=#{inspect(out)}"
+        )
 
       path ->
-        _ = System.cmd("tmux", ["-S", path, "kill-session", "-t", name], stderr_to_stdout: true)
-        _ = System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
+        {out1, code1} =
+          System.cmd("tmux", ["-S", path, "kill-session", "-t", name], stderr_to_stdout: true)
+
+        {out2, code2} =
+          System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
+
+        Logger.info(
+          "TmuxProcess.on_terminate: kill-session " <>
+            "sock=#{inspect(path)} name=#{inspect(name)} " <>
+            "kill-session code=#{code1} out=#{inspect(out1)} " <>
+            "kill-server code=#{code2} out=#{inspect(out2)}"
+        )
+
         _ = File.rm(path)
     end
 
