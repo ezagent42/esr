@@ -241,6 +241,13 @@ defmodule Esr.Peers.CCProcess do
     })
   end
 
-  defp event_to_map({:text, bytes}), do: %{"kind" => "text", "text" => bytes}
-  defp event_to_map({:tmux_output, bytes}), do: %{"kind" => "tmux_output", "bytes" => bytes}
+  # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
+  # the event dict must carry `event_type` + `args`. Earlier versions of this
+  # module emitted `%{kind, text}` which handler_worker rejected as
+  # MalformedEnvelope('event_type'). PR-9 T11a aligns the shapes.
+  defp event_to_map({:text, bytes}),
+    do: %{"event_type" => "text", "args" => %{"text" => bytes}}
+
+  defp event_to_map({:tmux_output, bytes}),
+    do: %{"event_type" => "tmux_output", "args" => %{"bytes" => bytes}}
 end

@@ -64,8 +64,16 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:feishu_inbound, envelope}, state) do
-    text = get_in(envelope, ["payload", "text"]) || ""
-    message_id = get_in(envelope, ["payload", "message_id"]) || ""
+    # Real envelope shape (see py/src/esr/ipc/envelope.py make_event):
+    #   %{"payload" => %{"event_type" => _, "args" => %{
+    #     "chat_id" => _, "content" => _, "message_id" => _, ...}}}
+    # PR-9 T11a RCA: this peer was reading `payload.text` / `payload.message_id`
+    # directly — a shape that never existed on the wire but was pinned by
+    # fixture-based tests that used the same wrong shape. Same class of bug
+    # fixed in FeishuAppAdapter during T10.
+    args = get_in(envelope, ["payload", "args"]) || %{}
+    text = args["content"] || ""
+    message_id = args["message_id"] || ""
 
     cond do
       slash?(text) ->

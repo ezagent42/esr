@@ -528,6 +528,7 @@ dev = [
     { name = "esr-adapter-cc-tmux" },
     { name = "esr-adapter-feishu" },
     { name = "esr-cc-mcp" },
+    { name = "esr-handler-cc-adapter-runner" },
     { name = "esr-handler-cc-session" },
     { name = "esr-handler-feishu-app" },
     { name = "esr-handler-feishu-thread" },
@@ -556,6 +557,7 @@ dev = [
     { name = "esr-adapter-cc-tmux", editable = "../adapters/cc_tmux" },
     { name = "esr-adapter-feishu", editable = "../adapters/feishu" },
     { name = "esr-cc-mcp", editable = "../adapters/cc_mcp" },
+    { name = "esr-handler-cc-adapter-runner", editable = "../handlers/cc_adapter_runner" },
     { name = "esr-handler-cc-session", editable = "../handlers/cc_session" },
     { name = "esr-handler-feishu-app", editable = "../handlers/feishu_app" },
     { name = "esr-handler-feishu-thread", editable = "../handlers/feishu_thread" },
@@ -614,6 +616,17 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
+
+[[package]]
+name = "esr-handler-cc-adapter-runner"
+version = "0.1.0"
+source = { editable = "../handlers/cc_adapter_runner" }
+dependencies = [
+    { name = "esr" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "esr", editable = "." }]
 
 [[package]]
 name = "esr-handler-cc-session"

@@ -162,6 +162,15 @@ defmodule Esr.Application do
       # this, adapter_channel logs "no FeishuAppAdapter for app_id=..."
       # and every inbound frame is silently dropped.
       _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+
+      # PR-9 T11a: spawn a Python handler_worker for every handler
+      # module referenced by any agents.yaml `capabilities_required`
+      # entry. Without this, `Esr.HandlerRouter.call/3` broadcasts
+      # `handler:<module>/default` envelope to an empty topic and
+      # CCProcess times out waiting for a reply. This closes the
+      # "nobody spawns X worker" anti-pattern structurally: every
+      # handler declared in capabilities has a boot-time spawn.
+      _ = restore_handlers_from_disk()
     end
 
     result
@@ -274,15 +283,109 @@ defmodule Esr.Application do
     :ok
   end
 
-  defp default_adapter_ws_url do
+  defp default_adapter_ws_url, do: ws_url_for("/adapter_hub/socket")
+
+  defp default_handler_ws_url, do: ws_url_for("/handler_hub/socket")
+
+  defp ws_url_for(socket_path) do
     port =
       case EsrWeb.Endpoint.config(:http) do
         opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
         _ -> 4001
       end
 
-    "ws://127.0.0.1:" <> Integer.to_string(port) <> "/adapter_hub/socket/websocket?vsn=2.0.0"
+    "ws://127.0.0.1:" <> Integer.to_string(port) <> socket_path <> "/websocket?vsn=2.0.0"
   end
+
+  @doc """
+  Read `<runtime_home>/agents.yaml` and ensure a Python handler_worker
+  subprocess is running for every handler module referenced by any
+  agent's `capabilities_required` list.
+
+  Capability strings follow `handler:<module>/<action>` (spec §5.3);
+  this function extracts the `<module>` segment, deduplicates, and
+  calls `Esr.WorkerSupervisor.ensure_handler(module, "default", url)`
+  for each. `worker_id="default"` matches the single-worker-per-module
+  v0.1 convention already assumed by `Esr.HandlerRouter.call/3`.
+
+  Missing agents.yaml → `:ok` (nothing to bootstrap). Spawn failures
+  are logged but non-fatal so the rest of the runtime stays up with a
+  degraded handler plane — mirrors the policy of
+  `bootstrap_feishu_app_adapters/0` and `bootstrap_slash_handler/0`.
+
+  PR-9 T11a. Addresses the "nobody spawns handler worker"
+  anti-pattern structurally: every handler declared as a capability
+  requirement gets a boot-time spawn.
+  """
+  @spec restore_handlers_from_disk(keyword()) :: :ok
+  def restore_handlers_from_disk(opts \\ []) do
+    require Logger
+
+    spawn_fn =
+      Keyword.get(opts, :spawn_fn, fn module ->
+        case Esr.WorkerSupervisor.ensure_handler(module, "default", default_handler_ws_url()) do
+          :ok -> :ok
+          :already_running -> :ok
+          {:error, _} = err -> err
+        end
+      end)
+
+    path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
+
+    modules =
+      if File.exists?(path) do
+        extract_handler_modules(path)
+      else
+        []
+      end
+
+    for mod <- modules do
+      case spawn_fn.(mod) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "handler bootstrap: ensure_handler failed module=#{inspect(mod)} " <>
+              "reason=#{inspect(reason)}; handler calls to this module will time out"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  # Parse agents.yaml and return the sorted-unique list of handler
+  # module names referenced by any `capabilities_required` entry shaped
+  # `"handler:<module>/<action>"`. Malformed capabilities (unknown
+  # prefix, missing slash) are silently skipped — the
+  # `Esr.Capabilities.Grants` validator catches schema errors at grant
+  # time; this pass only cares about the well-formed handler refs.
+  @spec extract_handler_modules(Path.t()) :: [String.t()]
+  def extract_handler_modules(agents_yaml_path) do
+    with {:ok, content} <- File.read(agents_yaml_path),
+         {:ok, parsed} <- YamlElixir.read_from_string(content) do
+      agents = parsed["agents"] || %{}
+
+      agents
+      |> Map.values()
+      |> Enum.flat_map(&(&1["capabilities_required"] || []))
+      |> Enum.flat_map(&handler_module_from_capability/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+    else
+      _ -> []
+    end
+  end
+
+  defp handler_module_from_capability("handler:" <> rest) do
+    case String.split(rest, "/", parts: 2) do
+      [mod, _action] when mod != "" -> [mod]
+      _ -> []
+    end
+  end
+
+  defp handler_module_from_capability(_), do: []
 
   @impl Application
   def config_change(changed, _new, removed) do

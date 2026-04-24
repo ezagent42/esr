@@ -23,7 +23,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from esr.actions import Action, Emit, InvokeCommand, Route
+from esr.actions import Action, Emit, InvokeCommand, Reply, Route, SendInput
 
 # --- F01: envelope-type constants --------------------------------------
 
@@ -198,6 +198,13 @@ def serialise_action(action: Action) -> dict[str, Any]:
             "name": action.name,
             "params": dict(action.params),
         }
+    if isinstance(action, Reply):
+        out = {"type": "reply", "text": action.text}
+        if action.reply_to_message_id is not None:
+            out["reply_to_message_id"] = action.reply_to_message_id
+        return out
+    if isinstance(action, SendInput):
+        return {"type": "send_input", "text": action.text}
     raise TypeError(f"not an Action: {type(action).__name__}")
 
 
@@ -210,4 +217,8 @@ def deserialise_action(d: dict[str, Any]) -> Action:
         return Route(target=d["target"], msg=d["msg"])
     if t == "invoke_command":
         return InvokeCommand(name=d["name"], params=dict(d.get("params", {})))
+    if t == "reply":
+        return Reply(text=d["text"], reply_to_message_id=d.get("reply_to_message_id"))
+    if t == "send_input":
+        return SendInput(text=d["text"])
     raise ValueError(f"unknown action type {t!r}")
