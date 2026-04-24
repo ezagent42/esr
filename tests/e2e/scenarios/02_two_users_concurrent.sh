@@ -63,7 +63,12 @@ assert_not_contains "$B_BODY" "ack-alpha-uniq" "user-step 7: beta contaminated w
 # --- user-step 8: end both sessions ----------------------------------
 # Capture the two auto-created session_ids from the live actor list.
 ACTORS_OUT=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null)
-readarray -t SIDS < <(echo "$ACTORS_OUT" | awk '/^thread:/ { sub("thread:", "", $1); print $1 }')
+# macOS /bin/bash is 3.2 (no readarray/mapfile). Build the array with
+# a portable while-read loop fed by process substitution.
+SIDS=()
+while IFS= read -r sid; do
+  [[ -n "$sid" ]] && SIDS+=("$sid")
+done < <(echo "$ACTORS_OUT" | awk '/^thread:/ { sub("thread:", "", $1); print $1 }')
 [[ "${#SIDS[@]}" -eq 2 ]] \
   || _fail_with_context "user-step 8: expected 2 thread:<sid> actors, saw ${#SIDS[@]}"
 
