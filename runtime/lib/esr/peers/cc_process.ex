@@ -69,15 +69,38 @@ defmodule Esr.Peers.CCProcess do
 
   @impl GenServer
   def init(args) do
+    sid = Map.fetch!(args, :session_id)
+
+    # PR-9 T12-comms-3c: subscribe to the cc_mcp-ready control topic so
+    # we can flush buffered send_input notifications as soon as cc_mcp
+    # joins cli:channel/<sid>. Phoenix.PubSub drops broadcasts with no
+    # subscribers, so dispatch_action(send_input) fired during the
+    # ~10s window between pipeline spawn and cc_mcp join would be lost
+    # — scenario 01's first user inbound was vanishing this way.
+    # See docs/notes/cc-mcp-pubsub-race.md.
+    _ = maybe_subscribe("cc_mcp_ready/" <> sid)
+
     {:ok,
      %{
-       session_id: Map.fetch!(args, :session_id),
+       session_id: sid,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
        neighbors: Map.get(args, :neighbors, []),
        proxy_ctx: Map.get(args, :proxy_ctx, %{}),
-       handler_override: nil
+       handler_override: nil,
+       pending_notifications: [],
+       cc_mcp_ready: false
      }}
+  end
+
+  # Phoenix.PubSub isn't running in every unit-test setup (some call
+  # init/1 directly without booting EsrWeb.PubSub). Swallow the
+  # :not_running-style errors so tests keep working.
+  defp maybe_subscribe(topic) do
+    case Process.whereis(EsrWeb.PubSub) do
+      nil -> :ok
+      _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    end
   end
 
   @impl Esr.Peer.Stateful
@@ -126,6 +149,19 @@ defmodule Esr.Peers.CCProcess do
   # GenServer boundary too (mirrors the handle_upstream clause above).
   def handle_info({:tmux_output, _}, state), do: {:noreply, state}
 
+  # T12-comms-3c: ChannelChannel's join-for-this-session broadcasts
+  # {:cc_mcp_ready, session_id} on the "cc_mcp_ready/<sid>" topic.
+  # When we receive it, flush every buffered send_input envelope that
+  # couldn't broadcast earlier (no subscribers) and flip the state
+  # flag so subsequent send_input actions broadcast immediately.
+  def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
+    for envelope <- state.pending_notifications do
+      broadcast_notification(sid, envelope)
+    end
+
+    {:noreply, %{state | pending_notifications: [], cc_mcp_ready: true}}
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # ------------------------------------------------------------------
@@ -147,8 +183,8 @@ defmodule Esr.Peers.CCProcess do
 
     case call_handler(state, payload, @default_timeout) do
       {:ok, new_state, actions} when is_map(new_state) and is_list(actions) ->
-        dispatch_actions(actions, state)
-        {:forward, [], %{state | cc_state: new_state}}
+        dispatched_state = dispatch_actions(actions, state)
+        {:forward, [], %{dispatched_state | cc_state: new_state}}
 
       {:error, :handler_timeout} ->
         Logger.warning(
@@ -207,7 +243,14 @@ defmodule Esr.Peers.CCProcess do
   end
 
   defp dispatch_actions(actions, state) do
-    Enum.each(actions, &dispatch_action(&1, state))
+    # Thread state through so send_input can buffer notifications in
+    # state.pending_notifications when cc_mcp hasn't joined yet.
+    Enum.reduce(actions, state, fn action, acc ->
+      case dispatch_action(action, acc) do
+        {:buffered, new_state} -> new_state
+        _ -> acc
+      end
+    end)
   end
 
   # PR-9 T11b.6: SendInput now broadcasts a `notifications/claude/channel`-shaped
@@ -225,46 +268,18 @@ defmodule Esr.Peers.CCProcess do
   defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
     envelope = build_channel_notification(state, text)
 
-    # `{:notification, envelope}` matches the existing admin-side
-    # precedent in `Esr.Admin.Commands.Session.BranchEnd` — ChannelChannel
-    # handle_info/2 routes both `{:push_envelope, _}` and
-    # `{:notification, _}` identically, and sticking with the admin
-    # convention keeps the ops + logs consistent.
-    Phoenix.PubSub.broadcast(
-      EsrWeb.PubSub,
-      "cli:channel/" <> state.session_id,
-      {:notification, envelope}
-    )
-
-    :ok
+    # PR-9 T12-comms-3c: if cc_mcp hasn't joined cli:channel/<sid> yet,
+    # buffer the envelope and let handle_info({:cc_mcp_ready, sid}, …)
+    # flush it on join. Phoenix.PubSub drops broadcasts with zero
+    # subscribers — and cc_mcp takes ~10s to boot under claude for
+    # a first-inbound auto-create. See docs/notes/cc-mcp-pubsub-race.md.
+    if state.cc_mcp_ready do
+      broadcast_notification(state.session_id, envelope)
+      {:buffered, state}
+    else
+      {:buffered, %{state | pending_notifications: state.pending_notifications ++ [envelope]}}
+    end
   end
-
-  defp build_channel_notification(state, text) do
-    ctx = state.proxy_ctx || %{}
-    last = Map.get(state, :last_meta, %{})
-
-    %{
-      "kind" => "notification",
-      "source" => Map.get(ctx, "channel_adapter") || "feishu",
-      "chat_id" => Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
-      "thread_id" =>
-        Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
-      "message_id" => Map.get(last, :message_id) || "",
-      "user" => Map.get(last, :sender_id) || "",
-      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "content" => text
-    }
-  end
-
-  # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
-  # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
-  # builds the notification envelope with real attribution instead of
-  # empty strings.
-  defp stash_upstream_meta(state, {:text, _bytes, meta}) when is_map(meta) do
-    Map.put(state, :last_meta, meta)
-  end
-
-  defp stash_upstream_meta(state, _other), do: state
 
   defp dispatch_action(%{"type" => "reply", "text" => text} = action, state) do
     # PR-9 T5c: propagate the optional `reply_to_message_id` so
@@ -309,6 +324,48 @@ defmodule Esr.Peers.CCProcess do
       action: unknown
     })
   end
+
+  # `{:notification, envelope}` matches the existing admin-side
+  # precedent in `Esr.Admin.Commands.Session.BranchEnd` — ChannelChannel
+  # handle_info/2 routes both `{:push_envelope, _}` and
+  # `{:notification, _}` identically, and sticking with the admin
+  # convention keeps the ops + logs consistent.
+  defp broadcast_notification(session_id, envelope) do
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "cli:channel/" <> session_id,
+      {:notification, envelope}
+    )
+
+    :ok
+  end
+
+  defp build_channel_notification(state, text) do
+    ctx = state.proxy_ctx || %{}
+    last = Map.get(state, :last_meta, %{})
+
+    %{
+      "kind" => "notification",
+      "source" => Map.get(ctx, "channel_adapter") || "feishu",
+      "chat_id" => Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      "thread_id" =>
+        Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
+      "message_id" => Map.get(last, :message_id) || "",
+      "user" => Map.get(last, :sender_id) || "",
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "content" => text
+    }
+  end
+
+  # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
+  # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
+  # builds the notification envelope with real attribution instead of
+  # empty strings.
+  defp stash_upstream_meta(state, {:text, _bytes, meta}) when is_map(meta) do
+    Map.put(state, :last_meta, meta)
+  end
+
+  defp stash_upstream_meta(state, _other), do: state
 
   # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
   # the event dict must carry `event_type` + `args`. Earlier versions of this

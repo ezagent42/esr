@@ -61,6 +61,18 @@ defmodule EsrWeb.ChannelChannel do
       |> assign(:principal_id, nil)
       |> assign(:workspace_name, nil)
 
+    # PR-9 T12-comms-3c: signal CCProcess so it can flush any send_input
+    # notifications buffered during the ~10s window between pipeline
+    # spawn and cc_mcp joining this topic. Without this flush, the
+    # triggering inbound message that auto-created the session would
+    # be lost (Phoenix.PubSub drops broadcasts with zero subscribers).
+    # See docs/notes/cc-mcp-pubsub-race.md.
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "cc_mcp_ready/" <> session_id,
+      {:cc_mcp_ready, session_id}
+    )
+
     {:ok, %{registered: true}, socket}
   end
 

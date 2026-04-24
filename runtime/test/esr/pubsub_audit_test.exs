@@ -23,6 +23,7 @@ defmodule Esr.PubSubAuditTest do
     ~r/^handler_reply:/,
     ~r/^directive_ack:/,
     ~r/^cli:channel\//,
+    ~r/^cc_mcp_ready\//,
     ~r/^session_router$/,
     ~r/^grants_changed:/
   ]
