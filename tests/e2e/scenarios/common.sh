@@ -91,6 +91,18 @@ _e2e_teardown() {
   ( cd "${_E2E_REPO_ROOT}" && \
     bash scripts/esrd.sh stop --instance="${ESRD_INSTANCE}" 2>/dev/null ) || true
 
+  # T12-comms-3n (2026-04-25): kill the Python sidecars spawned by
+  # WorkerSupervisor. `esrd.sh stop` sends SIGTERM to the BEAM but
+  # scripts/spawn_worker.sh daemonises the sidecars, so they survive
+  # and reconnect to mock_feishu in the next scenario — producing a
+  # "stale handler responds to new session" race that flaked
+  # `make e2e` (scenarios running back-to-back). Scoped to this
+  # worktree's venv path so a user's dev sidecars stay untouched.
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*feishu_adapter_runner" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*cc_adapter_runner" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*handler_worker" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/adapters/cc_mcp/.venv.*esr_cc_mcp" 2>/dev/null || true
+
   # CI-only absolute cleanup (§7.2).
   if [[ "${ESR_E2E_CI:-0}" == "1" ]]; then
     rm -rf /tmp/esrd-e2e-* /tmp/esr-e2e-* /tmp/mock-feishu-files-* 2>/dev/null || true
