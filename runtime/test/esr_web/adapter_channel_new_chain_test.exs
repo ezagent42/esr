@@ -26,7 +26,7 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
     {:ok, _fab_pid} =
       DynamicSupervisor.start_child(
         :p2_11_test_sup,
-        {FeishuAppAdapter, %{app_id: "cli_app_p211", neighbors: [], proxy_ctx: %{}}}
+        {FeishuAppAdapter, %{instance_id: "cli_app_p211", neighbors: [], proxy_ctx: %{}}}
       )
 
     on_exit(fn ->
@@ -53,10 +53,12 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
       "principal_id" => "p1",
       "workspace_name" => "w1",
       "payload" => %{
-        "event_type" => "im.message.receive_v1",
-        "chat_id" => "oc_test",
-        "thread_id" => "om_test",
-        "text" => "hi"
+        "event_type" => "msg_received",
+        "args" => %{
+          "chat_id" => "oc_test",
+          "thread_id" => "om_test",
+          "content" => "hi"
+        }
       }
     }
 

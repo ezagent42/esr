@@ -116,13 +116,13 @@ defmodule Esr.Integration.N2SessionsTest do
     {:ok, _fab_a} =
       DynamicSupervisor.start_child(
         sup_a,
-        {FeishuAppAdapter, %{app_id: "app_A", neighbors: [], proxy_ctx: %{}}}
+        {FeishuAppAdapter, %{instance_id: "app_A", neighbors: [], proxy_ctx: %{}}}
       )
 
     {:ok, _fab_b} =
       DynamicSupervisor.start_child(
         sup_b,
-        {FeishuAppAdapter, %{app_id: "app_B", neighbors: [], proxy_ctx: %{}}}
+        {FeishuAppAdapter, %{instance_id: "app_B", neighbors: [], proxy_ctx: %{}}}
       )
 
     # Resolve the adapters via AdminSessionProcess (same path
@@ -131,11 +131,17 @@ defmodule Esr.Integration.N2SessionsTest do
     {:ok, fab_b} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_app_B)
 
     env_a = %{
-      "payload" => %{"chat_id" => "oc_a", "thread_id" => "om_a", "text" => "A-hello"}
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{"chat_id" => "oc_a", "thread_id" => "om_a", "content" => "A-hello"}
+      }
     }
 
     env_b = %{
-      "payload" => %{"chat_id" => "oc_b", "thread_id" => "om_b", "text" => "B-hello"}
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{"chat_id" => "oc_b", "thread_id" => "om_b", "content" => "B-hello"}
+      }
     }
 
     # Fire concurrently.
@@ -143,12 +149,12 @@ defmodule Esr.Integration.N2SessionsTest do
     send(fab_b, {:inbound_event, env_b})
 
     # Assert session A got A-hello, never B-hello.
-    assert_receive {:relay, :a, %{"payload" => %{"text" => "A-hello"}}}, 1_000
-    refute_receive {:relay, :a, %{"payload" => %{"text" => "B-hello"}}}, 200
+    assert_receive {:relay, :a, %{"payload" => %{"args" => %{"content" => "A-hello"}}}}, 1_000
+    refute_receive {:relay, :a, %{"payload" => %{"args" => %{"content" => "B-hello"}}}}, 200
 
     # Assert session B got B-hello, never A-hello.
-    assert_receive {:relay, :b, %{"payload" => %{"text" => "B-hello"}}}, 1_000
-    refute_receive {:relay, :b, %{"payload" => %{"text" => "A-hello"}}}, 200
+    assert_receive {:relay, :b, %{"payload" => %{"args" => %{"content" => "B-hello"}}}}, 1_000
+    refute_receive {:relay, :b, %{"payload" => %{"args" => %{"content" => "A-hello"}}}}, 200
 
     # --- Session termination isolation (Risk D, second limb) ---
     #
@@ -169,11 +175,21 @@ defmodule Esr.Integration.N2SessionsTest do
     :ok = Esr.SessionRegistry.unregister_session("n2-session-A")
 
     env_b2 = %{
-      "payload" => %{"chat_id" => "oc_b", "thread_id" => "om_b", "text" => "B-after-A-dead"}
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{
+          "chat_id" => "oc_b",
+          "thread_id" => "om_b",
+          "content" => "B-after-A-dead"
+        }
+      }
     }
 
     send(fab_b, {:inbound_event, env_b2})
-    assert_receive {:relay, :b, %{"payload" => %{"text" => "B-after-A-dead"}}}, 1_000
+
+    assert_receive {:relay, :b,
+                    %{"payload" => %{"args" => %{"content" => "B-after-A-dead"}}}},
+                   1_000
     refute_receive {:relay, :a, _}, 200
   end
 

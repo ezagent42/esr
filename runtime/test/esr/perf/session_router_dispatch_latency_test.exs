@@ -91,7 +91,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     {:ok, _fab} =
       DynamicSupervisor.start_child(
         fab_sup,
-        {FeishuAppAdapter, %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
+        {FeishuAppAdapter, %{instance_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
     {:ok, fab_pid} =

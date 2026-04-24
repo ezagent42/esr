@@ -599,12 +599,21 @@ One card per Peer type; each lists its role, behaviour, scaling axis, crash poli
 ---
 
 **`Esr.Peers.FeishuAppAdapter`**
-- **Role**: terminate Feishu WebSocket for one app_id; handle inbound frames; translate outbound replies to Feishu API calls.
+- **Role**: Elixir-side consumer of Feishu inbound frames for one adapter instance; route to the owning Session; translate outbound replies to Feishu API calls.
 - **Behaviour**: `Peer.Stateful`.
-- **Scaling axis**: one per Feishu app (`app_id` in `adapters.yaml`). Today = 1 (two apps total but only one active per esrd instance).
+- **Scaling axis**: one per `type: feishu` entry in `adapters.yaml` (the YAML key is the `instance_id`). One deployment may host multiple instances (e.g. primary + fallback bot identities) — not pinned at 1.
 - **Crash policy**: `:permanent` under `AdminSession`. Crash cascades to esrd restart.
-- **OSProcess**: none (pure Elixir WebSocket via Mint).
+- **OSProcess**: none — **but see Reality Note below**.
 - **Free broadcasts**: none. Inbound frames are routed to sessions via `SessionRegistry.lookup_by_chat_thread/2` + `send(session_feishu_chat_proxy, ...)`.
+
+> **Reality Note (PR-9 T10)** — This card originally described the adapter as "terminating the Feishu WebSocket itself (pure Elixir Mint)" with a single `app_id` identifier. The actual design landed differently:
+>
+> - **The WebSocket is owned by a Python subprocess** (`feishu_adapter_runner` / `lark_oapi`), not Elixir. The Elixir peer consumes frames that arrive via `EsrWeb.AdapterChannel` on topic `adapter:feishu/<instance_id>`. PR-2's commit trailer records the drift; the spec was not back-updated until now.
+> - **Two identifiers, not one**:
+>   - `instance_id` — the operator-chosen `adapters.yaml` YAML key (e.g. `"main_bot"`, `"feishu_app_e2e-mock"`). Doubles as the Phoenix topic suffix and the Python `--instance-id`. **This is the AdminSessionProcess registration key** (`:feishu_app_adapter_<instance_id>`).
+>   - `app_id` — the Feishu Open Platform application id (e.g. `"cli_a9563cc03d399cc9"`). Carried in peer state for outbound Lark REST calls and `workspaces.yaml` `chats[].app_id` matching. **Not** the registration key.
+>   - The two can coincide (dev often sets `instance_id = app_id`), which hid the distinction until production-shape e2e was first exercised.
+> - **Boot spawn path**: `Esr.AdminSession.bootstrap_feishu_app_adapters/1` reads `adapters.yaml` and spawns the peer per feishu-type instance. Called from `Esr.Application.start/2` after `bootstrap_slash_handler`. `restore_adapters_from_disk` (launches the Python sidecar) and this helper (launches the Elixir peer) together cover the full adapter surface.
 
 ---
 
