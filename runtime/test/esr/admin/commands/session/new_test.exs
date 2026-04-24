@@ -14,6 +14,12 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       partial miss
     * happy path: Session actually spawned under `SessionsSupervisor`
       with the submitter recorded in `metadata.principal_id`
+    * PR-8 T2: chat_id/thread_id thread through as chat_thread_key
+    * PR-8 T3: SessionRegistry binding for chat-bound sessions
+    * PR-8 T4: chat-bound path dispatches to
+      `Esr.SessionRouter.create_session/1` so the full pipeline spawns
+      (FeishuChatProxy, CCProcess, TmuxProcess); the admin-CLI
+      "pending" branch retains the legacy `SessionsSupervisor` route
   """
   use ExUnit.Case, async: false
 
@@ -31,6 +37,27 @@ defmodule Esr.Admin.Commands.Session.NewTest do
         Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
       )
 
+    # PR-8 T4: SessionRouter is not (yet) a permanent application child,
+    # so tests that exercise the create_session path start it under the
+    # ExUnit supervisor and tear it down per-test. Idempotent — if a
+    # sibling test already stood it up and it survived, reuse it.
+    if Process.whereis(Esr.SessionRouter) == nil do
+      start_supervised!(Esr.SessionRouter)
+    end
+
+    # PR-8 T4: TmuxProcess in the pipeline would otherwise leak into the
+    # user's default tmux socket. Pin a throwaway socket path for the
+    # duration of this test, restore the prior env on exit.
+    prior_tmux_override = Application.get_env(:esr, :tmux_socket_override)
+
+    sock =
+      Path.join(
+        System.tmp_dir!(),
+        "esr-t4-new-#{:erlang.unique_integer([:positive])}.sock"
+      )
+
+    Application.put_env(:esr, :tmux_socket_override, sock)
+
     # Snapshot + restore grants so tests don't bleed into siblings.
     prior =
       try do
@@ -41,6 +68,16 @@ defmodule Esr.Admin.Commands.Session.NewTest do
 
     on_exit(fn ->
       Grants.load_snapshot(prior)
+
+      case prior_tmux_override do
+        nil -> Application.delete_env(:esr, :tmux_socket_override)
+        v -> Application.put_env(:esr, :tmux_socket_override, v)
+      end
+
+      # Defensive tmux cleanup — if any TmuxProcess spawned under this
+      # socket during a test, kill the server + remove the file.
+      System.cmd("tmux", ["-S", sock, "kill-server"], stderr_to_stdout: true)
+      File.rm(sock)
 
       # Clean up any sessions we spawned.
       case Process.whereis(Esr.SessionsSupervisor) do
@@ -54,7 +91,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       end
     end)
 
-    :ok
+    {:ok, tmux_socket: sock}
   end
 
   describe "execute/1 arg validation" do
@@ -170,7 +207,10 @@ defmodule Esr.Admin.Commands.Session.NewTest do
   end
 
   describe "execute/2 chat_thread_key threading (PR-8 T2)" do
-    test "chat_id + thread_id args flow into chat_thread_key" do
+    test "chat_id + thread_id args flow into SessionRouter.create_session params" do
+      # PR-8 T4: the chat-bound path now dispatches via `create_session_fn`
+      # (default `&Esr.SessionRouter.create_session/1`). Stub it so we can
+      # observe the params shape without spawning the real pipeline.
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
       cmd = %{
@@ -185,21 +225,22 @@ defmodule Esr.Admin.Commands.Session.NewTest do
 
       test_pid = self()
 
-      stub = fn args ->
-        send(test_pid, {:start_session_called, args})
-        {:ok, spawn(fn -> :ok end)}
+      stub = fn params ->
+        send(test_pid, {:create_session_called, params})
+        {:ok, "stub-sid-t2"}
       end
 
-      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} =
-               SessionNew.execute(cmd, start_session_fn: stub)
+      assert {:ok, %{"session_id" => "stub-sid-t2", "agent" => "cc"}} =
+               SessionNew.execute(cmd, create_session_fn: stub)
 
-      assert is_binary(sid)
-
-      assert_receive {:start_session_called,
-                      %{chat_thread_key: %{chat_id: "oc_A", thread_id: "om_B"}}}
+      assert_receive {:create_session_called,
+                      %{chat_id: "oc_A", thread_id: "om_B", agent: "cc", dir: "/tmp/t2"}}
     end
 
-    test "omitted chat_id/thread_id falls back to {\"pending\", \"pending\"}" do
+    test "omitted chat_id/thread_id falls back to {\"pending\", \"pending\"} and skips SessionRouter" do
+      # The admin-CLI branch (no chat context) must NOT hit SessionRouter
+      # — that would pollute the registry's pending slot. Stub both hooks
+      # and assert only `start_session_fn` fires.
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
       cmd = %{
@@ -209,49 +250,56 @@ defmodule Esr.Admin.Commands.Session.NewTest do
 
       test_pid = self()
 
-      stub = fn args ->
+      start_stub = fn args ->
         send(test_pid, {:start_session_called, args})
         {:ok, spawn(fn -> :ok end)}
       end
 
+      create_stub = fn params ->
+        send(test_pid, {:create_session_called, params})
+        {:ok, "should-not-fire"}
+      end
+
       assert {:ok, %{"session_id" => _sid}} =
-               SessionNew.execute(cmd, start_session_fn: stub)
+               SessionNew.execute(cmd,
+                 start_session_fn: start_stub,
+                 create_session_fn: create_stub
+               )
 
       assert_receive {:start_session_called,
                       %{chat_thread_key: %{chat_id: "pending", thread_id: "pending"}}}
+
+      refute_received {:create_session_called, _}
     end
 
-    test "real start_session/1 path stores chat_thread_key in SessionProcess state" do
-      # PR-8 T2: end-to-end check through the real SessionsSupervisor path.
-      # SessionRegistry ETS binding is performed by SessionRouter.create_session/2
-      # (not SessionsSupervisor.start_session/1), so this assertion scopes to
-      # the SessionProcess state — the narrowest point where "the chat_id
-      # reached the per-session layer" can be observed without pulling in
-      # PeerFactory / SessionRouter (PR-3+ concerns).
+    test "real path stores chat_thread_key in SessionProcess state (pending branch)" do
+      # PR-8 T2 + T4: end-to-end check through the legacy SessionsSupervisor
+      # path. Without chat context, Session.New still falls through to
+      # `SessionsSupervisor.start_session/1`; SessionProcess should still
+      # record an empty chat_thread_key. The chat-bound path (exercised in
+      # the T4 describe block) covers the SessionRouter leg.
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
       cmd = %{
         "submitted_by" => "ou_admin",
-        "args" => %{
-          "agent" => "cc",
-          "dir" => "/tmp/t2",
-          "chat_id" => "oc_A",
-          "thread_id" => "om_B"
-        }
+        "args" => %{"agent" => "cc", "dir" => "/tmp/t2"}
       }
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       state = Esr.SessionProcess.state(sid)
-      assert state.chat_thread_key == %{chat_id: "oc_A", thread_id: "om_B"}
+      assert state.chat_thread_key == %{chat_id: "pending", thread_id: "pending"}
+      assert state.agent_name == "cc"
     end
   end
 
   describe "execute/1 SessionRegistry binding (PR-8 T3)" do
     test "chat_id + thread_id args register the session in SessionRegistry" do
-      # PR-8 T3: Session.New must call SessionRegistry.register_session/3 so
-      # FeishuAppAdapter.lookup_by_chat_thread/2 resolves to the new session
-      # on the next inbound event for this chat thread.
+      # PR-8 T3: Session.New must register the session so
+      # FeishuAppAdapter.lookup_by_chat_thread/2 resolves to it on the
+      # next inbound event. PR-8 T4: registration is now performed
+      # inside `SessionRouter.create_session/1` (this test still asserts
+      # the visible behaviour — a lookup hits with the right sid).
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
       cmd = %{
@@ -270,10 +318,9 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, ^sid, refs} =
                Esr.SessionRegistry.lookup_by_chat_thread("oc_T3", "om_T3")
 
-      # refs shape mirrors SessionRouter.create_session/2's register/3 call
-      # (a plain map). The FeishuChatProxy pid is only populated when the
-      # pipeline is spawned (SessionRouter path) — the SessionsSupervisor
-      # path leaves the peers DynamicSupervisor empty, so the map is empty.
+      # Post-T4: refs is populated with the spawned pipeline peer pids.
+      # The specific pid assertions live in the T4 describe block; here
+      # we only guard the shape invariant the old T3 behaviour relied on.
       assert is_map(refs)
 
       on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
@@ -334,6 +381,46 @@ defmodule Esr.Admin.Commands.Session.NewTest do
         Esr.SessionRegistry.unregister_session(sid1)
         Esr.SessionRegistry.unregister_session(sid2)
       end)
+    end
+  end
+
+  describe "execute/1 SessionRouter pipeline spawn (PR-8 T4)" do
+    @describetag :t4_session_router
+
+    test "execute/1 routes through SessionRouter.create_session so pipeline peers spawn" do
+      # PR-8 T4: post-rewire, Session.New must delegate to
+      # SessionRouter.create_session/1 when chat context is present. That
+      # path spawns the full agents.yaml `pipeline.inbound` — so the refs
+      # map in SessionRegistry carries a real FeishuChatProxy pid instead
+      # of an empty map. FeishuAppAdapter.handle_upstream/2 pattern-matches
+      # `%{feishu_chat_proxy: pid}` and now actually fires.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t4-router",
+          "chat_id" => "oc_T4",
+          "thread_id" => "om_T4"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      # Post-T4 invariant: refs contains a real feishu_chat_proxy pid
+      # spawned by SessionRouter.spawn_pipeline/3, not an empty map.
+      assert {:ok, ^sid, %{feishu_chat_proxy: proxy_pid} = refs} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T4", "om_T4")
+
+      assert is_pid(proxy_pid)
+      assert Process.alive?(proxy_pid)
+
+      # Sanity: the full CC chain from simple.yaml is present.
+      assert is_pid(refs.cc_process)
+      assert is_pid(refs.tmux_process)
+
+      on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
     end
   end
 end

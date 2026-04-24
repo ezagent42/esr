@@ -49,6 +49,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
+  import Esr.TestSupport.TmuxIsolation, only: [isolated_tmux_socket: 1]
 
   alias Esr.Peers.SlashHandler
 
@@ -57,8 +58,11 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
   setup :assert_with_grants
   setup :wipe_sessions_on_exit
+  # PR-8 T4: the chat-bound /new-session path now spawns the real
+  # pipeline (incl. TmuxProcess). Pin a throwaway tmux socket.
+  setup :isolated_tmux_socket
 
-  setup do
+  setup %{tmux_socket: sock} do
     # `Esr.Admin.Dispatcher` may have been torn down by a prior
     # dispatcher_test.exs that restarts the Admin.Supervisor — mirror
     # its `ensure_admin_dispatcher` shim so we're robust to ordering.
@@ -69,6 +73,22 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       Esr.SessionRegistry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
+
+    # PR-8 T4: SessionRouter is required by the chat-bound Session.New
+    # branch. Start it under ExUnit if the app hasn't.
+    if Process.whereis(Esr.SessionRouter) == nil do
+      start_supervised!(Esr.SessionRouter)
+    end
+
+    prior_tmux_override = Application.get_env(:esr, :tmux_socket_override)
+    Application.put_env(:esr, :tmux_socket_override, sock)
+
+    on_exit(fn ->
+      case prior_tmux_override do
+        nil -> Application.delete_env(:esr, :tmux_socket_override)
+        v -> Application.put_env(:esr, :tmux_socket_override, v)
+      end
+    end)
 
     # Test principal gets `"*"` (only grant shape that passes the
     # current bare-string-keyed matcher in
@@ -134,11 +154,13 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     assert state.dir == "/tmp/test"
     assert state.metadata.principal_id == @test_principal
 
-    # Controlled-failure assertion for PR-2: the agent's pipeline peers
-    # (CCProcess, TmuxProcess) are NOT spawned — they arrive in PR-3.
-    # The peers DynamicSupervisor is therefore empty.
+    # PR-8 T4 update: the chat-bound /new-session path now routes through
+    # SessionRouter.create_session/1, which spawns the full pipeline.inbound
+    # (FeishuChatProxy, CCProcess, TmuxProcess; CCProxy is a stateless
+    # module). The Session's peers DynamicSupervisor therefore carries the
+    # three Stateful peers.
     peers_sup = Esr.Session.supervisor_name(sid)
-    assert DynamicSupervisor.count_children(peers_sup).active == 0
+    assert DynamicSupervisor.count_children(peers_sup).active == 3
   end
 
   test "/new-session without --agent returns a readable error reply" do
