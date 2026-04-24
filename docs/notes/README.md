@@ -16,6 +16,7 @@ Living index of findings surfaced during ESR development that are worth preservi
 | PR-5 perf baseline (2026-04-23) | [pr5-perf-baseline.md](pr5-perf-baseline.md) | SessionRouter dispatch latency p50/p99 — baseline for PR-6 simplify pass to compare against. |
 | MCP transport orphan-session hazard (2026-04-24) | [mcp-transport-orphan-session-hazard.md](mcp-transport-orphan-session-hazard.md) | Two MCP clients registering the same logical address silently shadow each other; killing the shadowing one leaves the actor suspended. cc-openclaw precedent → ESR T11b must reject dup joins. |
 | Claude Code channels reference (2026-04-24) | [claude-code-channels-reference.md](claude-code-channels-reference.md) | Channels = MCP server + `claude/channel` capability → can push notifications as `<channel>` tags. `--dangerously-load-development-channels server:<name>` required for non-allowlisted channels (ESR included). Permission relay is an opt-in capability worth considering post-T11b. |
+| Tmux env propagation (2026-04-24) | [tmux-env-propagation.md](tmux-env-propagation.md) | `tmux new-session` drops non-whitelisted client-process env vars; use `-e VAR=VAL` to pass per-session env to the pane child. Was the root cause of cc_mcp KeyError at startup in scenario 01. |
 
 ---
 
