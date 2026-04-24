@@ -121,6 +121,75 @@ defmodule Esr.AdminSession do
     end
   end
 
+  @doc """
+  Start one `Esr.Peers.FeishuAppAdapter` per `type: feishu` instance
+  declared in `adapters.yaml`. Called from `Esr.Application.start/2`
+  after `bootstrap_slash_handler` (Risk F bootstrap exception — same
+  policy: missing file / spawn failure is logged, not fatal).
+
+  Each peer registers in `Esr.AdminSessionProcess` under
+  `:feishu_app_adapter_<instance_id>` (the YAML key — matching the
+  Phoenix topic suffix `adapter:feishu/<instance_id>` the Python
+  `adapter_runner` joins) so that `EsrWeb.AdapterChannel.forward_to_new_chain/2`
+  can route inbound frames. The peer's state additionally carries the
+  Feishu-platform `app_id` from `config.app_id` (used for outbound Lark
+  REST calls and `workspaces.yaml` `chats[].app_id` matching).
+
+  Idempotent: re-registering an already-running instance is a no-op.
+  Unknown adapter types (`cc_tmux`, `cc_mcp`, …) are skipped.
+
+  PR-9 T10.
+  """
+  @spec bootstrap_feishu_app_adapters(Path.t() | nil) :: :ok
+  def bootstrap_feishu_app_adapters(adapters_yaml_path \\ nil) do
+    path = adapters_yaml_path || Esr.Paths.adapters_yaml()
+    sup = children_supervisor_name()
+    require Logger
+
+    if File.exists?(path) do
+      with {:ok, parsed} <- YamlElixir.read_from_file(path),
+           instances when is_map(instances) <- parsed["instances"] || %{} do
+        for {instance_id, row} <- instances,
+            row["type"] == "feishu" do
+          config = row["config"] || %{}
+          app_id = config["app_id"] || instance_id
+          spawn_feishu_app_adapter(sup, instance_id, app_id)
+        end
+      else
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp spawn_feishu_app_adapter(sup, instance_id, app_id) do
+    require Logger
+
+    args = %{
+      instance_id: instance_id,
+      app_id: app_id,
+      neighbors: [],
+      proxy_ctx: %{}
+    }
+
+    case DynamicSupervisor.start_child(sup, {Esr.Peers.FeishuAppAdapter, args}) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "admin_session: feishu_app_adapter spawn failed " <>
+            "instance_id=#{inspect(instance_id)} reason=#{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
   defp pool_spec(name, worker_mod, pools_yaml) do
     max = Esr.Pools.pool_max(name, pools_yaml)
 

@@ -154,6 +154,14 @@ defmodule Esr.Application do
       _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
+
+      # PR-9 T10: spawn one FeishuAppAdapter (Elixir admin peer) per
+      # `type: feishu` instance in adapters.yaml. Must come AFTER
+      # restore_adapters_from_disk so the Python sidecar and the Elixir
+      # consumer are both up by the time anything pushes inbound. Without
+      # this, adapter_channel logs "no FeishuAppAdapter for app_id=..."
+      # and every inbound frame is silently dropped.
+      _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
     end
 
     result

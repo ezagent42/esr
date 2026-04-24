@@ -322,7 +322,7 @@ defmodule Esr.SessionRouterTest do
       DynamicSupervisor.start_child(
         admin_children_sup,
         {Esr.Peers.FeishuAppAdapter,
-         %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
+         %{instance_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
     on_exit(fn ->
