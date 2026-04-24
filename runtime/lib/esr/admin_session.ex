@@ -91,6 +91,36 @@ defmodule Esr.AdminSession do
     end
   end
 
+  @doc """
+  Start the admin-scope `Esr.Peers.SlashHandler` under AdminSession's
+  children supervisor. Called from `Esr.Application.start/2` after
+  AdminSession is up (Risk F bootstrap exception — same as voice pools).
+
+  SlashHandler's `init/1` already registers itself under
+  `:slash_handler` in `Esr.AdminSessionProcess`, so after this call
+  returns `:ok`, `Esr.AdminSessionProcess.slash_handler_ref/0` returns
+  `{:ok, pid}`. Without this bootstrap, `FeishuChatProxy`'s slash path
+  silently drops every message because no peer is registered.
+
+  Pre-PR-8 T1, SlashHandler was spawned only by integration tests via
+  `start_supervised/1` — production never had one. This function closes
+  that gap.
+
+  PR-8 T1.
+  """
+  @spec bootstrap_slash_handler() :: :ok | {:error, term()}
+  def bootstrap_slash_handler do
+    sup = children_supervisor_name()
+
+    case Esr.PeerFactory.spawn_peer_bootstrap(sup, Esr.Peers.SlashHandler, %{}, []) do
+      {:ok, _pid} -> :ok
+      {:ok, _pid, _info} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, other}
+    end
+  end
+
   defp pool_spec(name, worker_mod, pools_yaml) do
     max = Esr.Pools.pool_max(name, pools_yaml)
 

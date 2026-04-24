@@ -168,4 +168,172 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => _sid}} = SessionNew.execute(cmd)
     end
   end
+
+  describe "execute/2 chat_thread_key threading (PR-8 T2)" do
+    test "chat_id + thread_id args flow into chat_thread_key" do
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t2",
+          "chat_id" => "oc_A",
+          "thread_id" => "om_B"
+        }
+      }
+
+      test_pid = self()
+
+      stub = fn args ->
+        send(test_pid, {:start_session_called, args})
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} =
+               SessionNew.execute(cmd, start_session_fn: stub)
+
+      assert is_binary(sid)
+
+      assert_receive {:start_session_called,
+                      %{chat_thread_key: %{chat_id: "oc_A", thread_id: "om_B"}}}
+    end
+
+    test "omitted chat_id/thread_id falls back to {\"pending\", \"pending\"}" do
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/t2"}
+      }
+
+      test_pid = self()
+
+      stub = fn args ->
+        send(test_pid, {:start_session_called, args})
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      assert {:ok, %{"session_id" => _sid}} =
+               SessionNew.execute(cmd, start_session_fn: stub)
+
+      assert_receive {:start_session_called,
+                      %{chat_thread_key: %{chat_id: "pending", thread_id: "pending"}}}
+    end
+
+    test "real start_session/1 path stores chat_thread_key in SessionProcess state" do
+      # PR-8 T2: end-to-end check through the real SessionsSupervisor path.
+      # SessionRegistry ETS binding is performed by SessionRouter.create_session/2
+      # (not SessionsSupervisor.start_session/1), so this assertion scopes to
+      # the SessionProcess state — the narrowest point where "the chat_id
+      # reached the per-session layer" can be observed without pulling in
+      # PeerFactory / SessionRouter (PR-3+ concerns).
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t2",
+          "chat_id" => "oc_A",
+          "thread_id" => "om_B"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      state = Esr.SessionProcess.state(sid)
+      assert state.chat_thread_key == %{chat_id: "oc_A", thread_id: "om_B"}
+    end
+  end
+
+  describe "execute/1 SessionRegistry binding (PR-8 T3)" do
+    test "chat_id + thread_id args register the session in SessionRegistry" do
+      # PR-8 T3: Session.New must call SessionRegistry.register_session/3 so
+      # FeishuAppAdapter.lookup_by_chat_thread/2 resolves to the new session
+      # on the next inbound event for this chat thread.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t3-bound",
+          "chat_id" => "oc_T3",
+          "thread_id" => "om_T3"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      # Registry now returns the new session for this chat/thread key.
+      assert {:ok, ^sid, refs} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3", "om_T3")
+
+      # refs shape mirrors SessionRouter.create_session/2's register/3 call
+      # (a plain map). The FeishuChatProxy pid is only populated when the
+      # pipeline is spawned (SessionRouter path) — the SessionsSupervisor
+      # path leaves the peers DynamicSupervisor empty, so the map is empty.
+      assert is_map(refs)
+
+      on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
+    end
+
+    test "omitted chat_id/thread_id skips SessionRegistry registration (pending fallback)" do
+      # When submitted via `esr admin submit session_new --arg agent=... --arg dir=...`
+      # there's no chat context, so chat_thread_key stays `{"pending","pending"}`.
+      # Registering those would clobber a single global slot and cause spurious
+      # hits — skip instead.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/t3-pending"}
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      assert :not_found =
+               Esr.SessionRegistry.lookup_by_chat_thread("pending", "pending"),
+             "the pending placeholder must not end up in the registry"
+
+      # The session itself is still up — registration skip doesn't prevent
+      # the session from starting.
+      state = Esr.SessionProcess.state(sid)
+      assert state.agent_name == "cc"
+    end
+
+    test "registration happens after start_session; a second execute with same keys overwrites" do
+      # Re-register semantics: the ETS table is a `:set`, so a second
+      # registration for the same {chat_id, thread_id} overwrites. This
+      # covers the "admin re-runs /new-session in the same thread" corner.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd1 = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t3-first",
+          "chat_id" => "oc_T3_reuse",
+          "thread_id" => "om_T3_reuse"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
+      assert {:ok, ^sid1, _} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3_reuse", "om_T3_reuse")
+
+      cmd2 = put_in(cmd1["args"]["dir"], "/tmp/t3-second")
+      assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
+      refute sid2 == sid1, "second execute yields a fresh session_id"
+
+      assert {:ok, ^sid2, _} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3_reuse", "om_T3_reuse")
+
+      on_exit(fn ->
+        Esr.SessionRegistry.unregister_session(sid1)
+        Esr.SessionRegistry.unregister_session(sid2)
+      end)
+    end
+  end
 end

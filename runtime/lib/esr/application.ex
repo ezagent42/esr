@@ -101,6 +101,11 @@ defmodule Esr.Application do
     # bootstrap resolves the `AdminSession.ChildrenSupervisor` via its
     # registered name. Failures are logged but non-fatal — the rest of
     # the tree keeps running with voice paths degraded.
+    #
+    # PR-8 T1: also bring up the admin-scope SlashHandler so
+    # `FeishuChatProxy` has a peer to forward `:slash_cmd` to. Same
+    # non-fatal policy — a missing SlashHandler degrades the slash
+    # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
         case Esr.AdminSession.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
@@ -113,6 +118,19 @@ defmodule Esr.Application do
             Logger.warning(
               "admin_session: bootstrap_voice_pools failed: #{inspect(reason)}; " <>
                 "voice peers will be unavailable until restart"
+            )
+        end
+
+        case Esr.AdminSession.bootstrap_slash_handler() do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            require Logger
+
+            Logger.warning(
+              "admin_session: bootstrap_slash_handler failed: #{inspect(reason)}; " <>
+                "slash commands will be unavailable until restart"
             )
         end
 

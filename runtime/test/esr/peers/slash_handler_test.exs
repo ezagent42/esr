@@ -142,6 +142,71 @@ defmodule Esr.Peers.SlashHandlerTest do
                    500
   end
 
+  test "new-session threads chat_id/thread_id from envelope into args (PR-8 T2)" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{
+        "text" => "/new-session --agent cc --dir /tmp/test",
+        "chat_id" => "oc_A",
+        "thread_id" => "om_B"
+      }
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:"$gen_cast",
+                    {:execute,
+                     %{
+                       "kind" => "session_new",
+                       "args" => %{
+                         "agent" => "cc",
+                         "dir" => "/tmp/test",
+                         "chat_id" => "oc_A",
+                         "thread_id" => "om_B"
+                       }
+                     }, {:reply_to, {:pid, ^pid, _ref}}}},
+                   500
+  end
+
+  test "new-session without chat_id/thread_id in envelope omits them from args" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{"text" => "/new-session --agent cc --dir /tmp/test"}
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:"$gen_cast",
+                    {:execute, %{"kind" => "session_new", "args" => args},
+                     {:reply_to, {:pid, ^pid, _ref}}}},
+                   500
+
+    refute Map.has_key?(args, "chat_id")
+    refute Map.has_key?(args, "thread_id")
+  end
+
   test "new-session without --agent returns user-facing error" do
     {:ok, pid} =
       GenServer.start_link(
