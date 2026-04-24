@@ -9,7 +9,7 @@ Submodules exist for internal organisation — they are not a stable
 surface and may move between versions.
 """
 
-from esr.actions import Action, Emit, InvokeCommand, Route
+from esr.actions import Action, Emit, InvokeCommand, Reply, Route, SendInput
 from esr.adapter import AdapterConfig, adapter
 from esr.command import command, compile_to_yaml, compile_topology, compose, node, port
 from esr.events import Directive, Event
@@ -26,7 +26,9 @@ __all__ = [
     "EsrURI",
     "Event",
     "InvokeCommand",
+    "Reply",
     "Route",
+    "SendInput",
     "__version__",
     "adapter",
     "command",

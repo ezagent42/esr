@@ -28,7 +28,10 @@ defmodule Esr.Peers.FeishuChatProxyTest do
       })
 
     send(peer, {:feishu_inbound, %{
-      "payload" => %{"text" => "/new-session --agent cc --dir /tmp/w"}
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{"chat_id" => "oc_x", "content" => "/new-session --agent cc --dir /tmp/w"}
+      }
     }})
 
     assert_receive {:slash_cmd, _env, reply_to}, 500
@@ -52,8 +55,12 @@ defmodule Esr.Peers.FeishuChatProxyTest do
 
       envelope = %{
         "payload" => %{
-          "text" => "hello, not a slash",
-          "message_id" => "om_inbound_abc"
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_fwd",
+            "content" => "hello, not a slash",
+            "message_id" => "om_inbound_abc"
+          }
         }
       }
 
@@ -96,7 +103,10 @@ defmodule Esr.Peers.FeishuChatProxyTest do
       log =
         capture_log(fn ->
           send(peer, {:feishu_inbound, %{
-            "payload" => %{"text" => "hello", "message_id" => "om_x"}
+            "payload" => %{
+              "event_type" => "msg_received",
+              "args" => %{"content" => "hello", "message_id" => "om_x"}
+            }
           }})
           Process.sleep(50)
         end)
@@ -120,7 +130,9 @@ defmodule Esr.Peers.FeishuChatProxyTest do
         })
 
       # No message_id in the envelope payload — nothing to react to.
-      send(peer, {:feishu_inbound, %{"payload" => %{"text" => "hi"}}})
+      send(peer, {:feishu_inbound, %{
+        "payload" => %{"event_type" => "msg_received", "args" => %{"content" => "hi"}}
+      }})
 
       assert_receive {:relay, :cc, {:text, "hi"}}, 500
       refute_receive {:relay, :app, _}, 100

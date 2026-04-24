@@ -114,18 +114,78 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
   @impl Esr.Peer.Stateful
   def handle_downstream({:outbound, envelope}, state) do
-    # PR-2 leaves outbound emission wired through the existing adapter
-    # broadcast path. The topic suffix is `instance_id` — matching what
-    # the Python adapter_runner joined with `--instance-id`, NOT the
-    # Feishu-platform `app_id`. PR-3 can move this into CCProcess
-    # directly.
+    # FCP (and other inbound peers) hand us a high-level envelope like
+    # `%{"kind" => "reply"|"react"|"un_react", "args" => ...}`.
+    # The Python feishu_adapter_runner filters inbound frames on
+    # `kind=directive` (see `py/src/_ipc_common/frame.py`), so we must
+    # wrap the high-level shape into a directive envelope the adapter's
+    # `on_directive` can dispatch on. Wrap-not-broadcast-raw closes the
+    # PR-9 T11a e2e RCA where "ack" replies left FCP but never reached
+    # mock_feishu because the adapter's directive filter dropped them.
+    # The topic suffix is `instance_id`, not Feishu-platform `app_id`.
+    directive = wrap_as_directive(envelope, state)
+
     EsrWeb.Endpoint.broadcast(
       "adapter:feishu/#{state.instance_id}",
       "envelope",
-      envelope
+      directive
     )
 
     {:forward, [], state}
+  end
+
+  # Map the peer-chain's high-level envelope kinds onto feishu
+  # `adapter.on_directive/2` actions. `reply` → `send_message` with
+  # args re-keyed to match the adapter's `_send_message` signature
+  # (`chat_id` + `content`); `react` / `un_react` pass through since
+  # their arg shapes already match.
+  defp wrap_as_directive(%{"kind" => "reply", "args" => args}, state) do
+    build_directive(
+      state,
+      "send_message",
+      %{
+        "chat_id" => args["chat_id"],
+        "content" => args["text"] || ""
+      }
+    )
+  end
+
+  defp wrap_as_directive(%{"kind" => kind, "args" => args}, state)
+       when kind in ["react", "un_react"] do
+    build_directive(state, kind, args || %{})
+  end
+
+  defp wrap_as_directive(%{"kind" => "directive"} = already_directive, _state) do
+    # Caller already built a directive envelope (rare but legal path for
+    # peers that want full control over action + args). Trust it.
+    already_directive
+  end
+
+  defp wrap_as_directive(%{"kind" => other_kind} = env, state) do
+    require Logger
+
+    Logger.warning(
+      "FeishuAppAdapter: downstream envelope kind=#{inspect(other_kind)} " <>
+        "not recognised; forwarding as-is (will be dropped by adapter filter)"
+    )
+
+    env
+    |> Map.put_new("source", "esr://localhost/admin/feishu_app_adapter_#{state.instance_id}")
+  end
+
+  defp build_directive(state, action, args) do
+    %{
+      "kind" => "directive",
+      "id" => "d-" <> (:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)),
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "directive",
+      "source" => "esr://localhost/admin/feishu_app_adapter_#{state.instance_id}",
+      "payload" => %{
+        "adapter" => "feishu",
+        "action" => action,
+        "args" => args
+      }
+    }
   end
 
   # GenServer bridge: inbound messages are routed through the Stateful

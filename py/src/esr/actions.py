@@ -59,5 +59,36 @@ class InvokeCommand:
         object.__setattr__(self, "params", MappingProxyType(dict(params)))
 
 
-Action = Emit | Route | InvokeCommand
+@dataclass(frozen=True)
+class Reply:
+    """User-facing reply in the owning session's chat (§4.4, PR-9 T11a).
+
+    Matches the shape `Esr.Peers.CCProcess.dispatch_action/2` already
+    accepts (`%{"type" => "reply", "text" => _, optional
+    "reply_to_message_id" => _}`). CCProcess forwards this to its
+    `:feishu_chat_proxy` neighbor as `{:reply, text}` or
+    `{:reply, text, %{reply_to_message_id: mid}}`, which FeishuChatProxy
+    then emits as an `outbound` envelope to FeishuAppProxy →
+    FeishuAppAdapter → Feishu.
+    """
+
+    text: str
+    reply_to_message_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SendInput:
+    """Write `text` into the tmux pane of the owning session (§4.4, PR-9 T11a).
+
+    `Esr.Peers.CCProcess.dispatch_action/2` already dispatches this
+    shape (`%{"type" => "send_input", "text" => _}`) to the
+    `:tmux_process` neighbor. Used by the T11b wire-up where the CC
+    adapter-runner on_msg handler routes an inbound user text into the
+    CC CLI process via tmux stdin.
+    """
+
+    text: str
+
+
+Action = Emit | Route | InvokeCommand | Reply | SendInput
 """Type alias — the full set of shapes a handler may return."""
