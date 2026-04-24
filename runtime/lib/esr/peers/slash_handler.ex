@@ -59,6 +59,11 @@ defmodule Esr.Peers.SlashHandler do
     case parse_command(text) do
       {:ok, kind, args} ->
         ref = make_ref()
+        # PR-8 T2: thread chat_id + thread_id from the Feishu envelope into
+        # the args dict so Session.New can bind the session to the real
+        # {chat_id, thread_id} key in SessionRegistry. Only merged when
+        # present — direct admin-CLI submits (no chat context) keep working.
+        args = merge_chat_context(args, kind, envelope)
 
         cmd = %{
           "id" => generate_id(),
@@ -96,6 +101,24 @@ defmodule Esr.Peers.SlashHandler do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # Only session_new needs chat_thread_key threading today (the other kinds —
+  # session_list, agent_list, session_end — don't bind a session to a chat).
+  # Keeping this scoped prevents accidental leakage into command args that
+  # already have chat_id/thread_id semantics for something else.
+  defp merge_chat_context(args, "session_new", envelope) do
+    chat_id = get_in(envelope, ["payload", "chat_id"])
+    thread_id = get_in(envelope, ["payload", "thread_id"])
+
+    args
+    |> maybe_put("chat_id", chat_id)
+    |> maybe_put("thread_id", thread_id)
+  end
+
+  defp merge_chat_context(args, _kind, _envelope), do: args
+
+  defp maybe_put(map, _k, nil), do: map
+  defp maybe_put(map, k, v), do: Map.put(map, k, v)
 
   # --------------------------------------------------------------------
   # Parser — D15-compliant tokenization:

@@ -168,4 +168,82 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => _sid}} = SessionNew.execute(cmd)
     end
   end
+
+  describe "execute/2 chat_thread_key threading (PR-8 T2)" do
+    test "chat_id + thread_id args flow into chat_thread_key" do
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t2",
+          "chat_id" => "oc_A",
+          "thread_id" => "om_B"
+        }
+      }
+
+      test_pid = self()
+
+      stub = fn args ->
+        send(test_pid, {:start_session_called, args})
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} =
+               SessionNew.execute(cmd, start_session_fn: stub)
+
+      assert is_binary(sid)
+
+      assert_receive {:start_session_called,
+                      %{chat_thread_key: %{chat_id: "oc_A", thread_id: "om_B"}}}
+    end
+
+    test "omitted chat_id/thread_id falls back to {\"pending\", \"pending\"}" do
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/t2"}
+      }
+
+      test_pid = self()
+
+      stub = fn args ->
+        send(test_pid, {:start_session_called, args})
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      assert {:ok, %{"session_id" => _sid}} =
+               SessionNew.execute(cmd, start_session_fn: stub)
+
+      assert_receive {:start_session_called,
+                      %{chat_thread_key: %{chat_id: "pending", thread_id: "pending"}}}
+    end
+
+    test "real start_session/1 path stores chat_thread_key in SessionProcess state" do
+      # PR-8 T2: end-to-end check through the real SessionsSupervisor path.
+      # SessionRegistry ETS binding is performed by SessionRouter.create_session/2
+      # (not SessionsSupervisor.start_session/1), so this assertion scopes to
+      # the SessionProcess state — the narrowest point where "the chat_id
+      # reached the per-session layer" can be observed without pulling in
+      # PeerFactory / SessionRouter (PR-3+ concerns).
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/t2",
+          "chat_id" => "oc_A",
+          "thread_id" => "om_B"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      state = Esr.SessionProcess.state(sid)
+      assert state.chat_thread_key == %{chat_id: "oc_A", thread_id: "om_B"}
+    end
+  end
 end
