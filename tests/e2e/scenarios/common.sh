@@ -250,27 +250,43 @@ seed_capabilities() {
   # that sender passes the Feishu adapter's Lane A authorization gate
   # (see adapters/feishu/src/esr_feishu/adapter.py:_is_authorized).
   mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
+  # Only ou_admin for v1 — feishu_adapter_runner's handler_hello declares
+  # `permissions: []` (see esrd log), so `msg.send` isn't in the runtime
+  # permissions registry. If we seed `workspace:e2e/msg.send` grants for
+  # ou_e2e, the FileLoader rejects the ENTIRE yaml with
+  # `{:unknown_permission, "msg.send", "ou_e2e"}` and keeps the previous
+  # (empty) snapshot — which means ou_admin also loses its wildcard.
+  # Workaround: stick with ou_admin only; scenarios use ou_admin as
+  # sender (wildcard matches any workspace:*/msg.send).
+  #
+  # TODO: Once feishu_adapter_runner declares msg.send in handler_hello
+  # (or msg.send is registered as a subsystem-intrinsic permission),
+  # re-add the ou_e2e entries.
   cat > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml" <<'EOF'
 principals:
   - id: ou_admin
     kind: feishu_user
     note: e2e admin (wildcard)
     capabilities: ["*"]
-  - id: ou_e2e
-    kind: feishu_user
-    note: e2e test user (workspace-scoped msg.send)
-    capabilities:
-      - "workspace:e2e/msg.send"
-  - id: ou_e2e_user_a
-    kind: feishu_user
-    note: scenario-01 user A
-    capabilities:
-      - "workspace:e2e/msg.send"
-  - id: ou_e2e_user_b
-    kind: feishu_user
-    note: scenario-02 user B
-    capabilities:
-      - "workspace:e2e/msg.send"
+EOF
+}
+
+seed_adapters() {
+  # Boot-seed adapters.yaml so Esr.Application.restore_adapters_from_disk/1
+  # spawns the feishu sidecar with the right base_url pointing at
+  # mock_feishu. register_adapter via admin CLI would build a yaml
+  # WITHOUT base_url (its arg schema doesn't accept it), leaving the
+  # adapter to default to live lark_oapi — which fails silently in
+  # the background. Seeding directly bypasses that gap.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
+  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/adapters.yaml" <<EOF
+instances:
+  feishu_app_e2e-mock:
+    type: feishu
+    config:
+      app_id: e2e-mock
+      app_secret: mock
+      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT}
 EOF
 }
 

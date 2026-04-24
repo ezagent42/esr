@@ -14,9 +14,10 @@ BASELINE=$(e2e_tmp_baseline_snapshot)
 load_agent_yaml
 seed_capabilities
 seed_workspaces
+seed_adapters   # seed adapters.yaml with base_url → boot restore spawns the sidecar
 start_mock_feishu
 start_esrd
-register_feishu_adapter
+# register_feishu_adapter  # replaced by seed_adapters + Application.restore_adapters_from_disk/1
 
 # --- user-step 1: create session --------------------------------------
 # E2E RCA (2026-04-23): v1.0 used `esr cmd run "/new-session ..."` but that
@@ -38,7 +39,7 @@ echo "created session ${SESSION_ID}"
 # --- user-step 2: inbound plain message → CC replies ------------------
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","sender_open_id":"ou_e2e","content_text":"hello"}' \
+  -d '{"chat_id":"oc_mock_single","sender_open_id":"ou_admin","content_text":"hello"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" \
   | jq -r '.message_id')
 [[ -n "$INBOUND_MSG_ID" ]] || _fail_with_context "push_inbound did not return message_id"
@@ -79,7 +80,7 @@ assert_mock_feishu_file_sha "oc_mock_single" "$EXPECTED_SHA"
 
 # --- user-step 5: second message, same session -----------------------
 curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","sender_open_id":"ou_e2e","content_text":"again"}' \
+  -d '{"chat_id":"oc_mock_single","sender_open_id":"ou_admin","content_text":"again"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 sleep 1
 # Same peer, so cc:single still present.
