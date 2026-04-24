@@ -44,22 +44,29 @@ SESSION_ID=$(echo "$SESSION_CREATE_OUT" | awk -F': ' '/^session_id:/ {print $2; 
 echo "created session ${SESSION_ID}"
 
 # --- user-step 2: inbound plain message → CC replies ------------------
+# Post-T11b.7 the cc_adapter_runner handler no longer composes a canned
+# reply — real CC now runs in tmux with the cc_mcp bridge, sees our
+# inbound as a <channel> tag in its conversation context, and decides
+# the response itself. We instruct CC explicitly to reply with "ack"
+# so the sent_messages assertion can still pin a deterministic substring.
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"hello"}' \
+  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"Please reply with exactly the three letters: ack"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" \
   | jq -r '.message_id')
 [[ -n "$INBOUND_MSG_ID" ]] || _fail_with_context "push_inbound did not return message_id"
 
 # Wait for CC's reply to land in mock's sent_messages.
-for _ in $(seq 1 100); do
+# Real CC takes longer than the canned placeholder — allow up to 60s
+# for the model's turn + cc_mcp reply tool dispatch.
+for _ in $(seq 1 600); do
   if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
        | jq -e '.[] | select(.receive_id=="oc_mock_single")' >/dev/null; then
     break
   fi
   sleep 0.1
 done
-assert_mock_feishu_sent_includes "oc_mock_single" "ack"  # handler's ack substring
+assert_mock_feishu_sent_includes "oc_mock_single" "ack"  # CC's reply per prompt
 
 # --- user-step 3: CC reacts on inbound --------------------------------
 # Depending on agent wiring, CC invokes `react` automatically. Wait for

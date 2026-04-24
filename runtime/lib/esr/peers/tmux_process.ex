@@ -341,20 +341,33 @@ defmodule Esr.Peers.TmuxProcess do
         String.split(custom, " ", trim: true)
 
       _ ->
-        mcp_path = Map.get(state, :mcp_config_path) || mcp_config_path_for(sid)
-        dir = Map.get(state, :dir) || "/tmp"
+        # PR-9 T11b.8 leak fix: in :test env the default MUST be a no-op
+        # that keeps the pane alive but does NOT fork real claude
+        # processes. Without this guard, every `SessionRouter.create_session`
+        # in unit tests leaks a real claude process — the test suite on
+        # 2026-04-24 spawned 8+ zombie claude CLIs across one `mix test`
+        # run. Tests that want to exercise the real production argv shape
+        # set `Application.put_env(:esr, :tmux_force_claude_launch, true)`
+        # in their setup.
+        if Mix.env() == :test and
+             not Application.get_env(:esr, :tmux_force_claude_launch, false) do
+          ["sh", "-c", "while :; do sleep 1; done"]
+        else
+          mcp_path = Map.get(state, :mcp_config_path) || mcp_config_path_for(sid)
+          dir = Map.get(state, :dir) || "/tmp"
 
-        [
-          "claude",
-          "--permission-mode",
-          "bypassPermissions",
-          "--dangerously-load-development-channels",
-          "server:esr-channel",
-          "--mcp-config",
-          mcp_path,
-          "--add-dir",
-          dir
-        ]
+          [
+            "claude",
+            "--permission-mode",
+            "bypassPermissions",
+            "--dangerously-load-development-channels",
+            "server:esr-channel",
+            "--mcp-config",
+            mcp_path,
+            "--add-dir",
+            dir
+          ]
+        end
     end
   end
 

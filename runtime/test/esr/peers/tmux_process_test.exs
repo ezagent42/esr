@@ -397,6 +397,16 @@ defmodule Esr.Peers.TmuxProcessTest do
   end
 
   describe "PR-9 T11b.3: os_cmd/1 appends claude invocation" do
+    setup do
+      # T11b.8 leak fix: opt in to the real claude-CLI argv so these
+      # shape-assertion tests don't regress. The default in :test env
+      # is a no-op sh loop that keeps the pane alive without forking
+      # real claude processes.
+      Application.put_env(:esr, :tmux_force_claude_launch, true)
+      on_exit(fn -> Application.delete_env(:esr, :tmux_force_claude_launch) end)
+      :ok
+    end
+
     test "with session context — trailing arg is a single shell-command string" do
       state = %{
         session_name: "esr_cc_test_1",

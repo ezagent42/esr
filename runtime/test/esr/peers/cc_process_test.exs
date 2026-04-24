@@ -52,7 +52,12 @@ defmodule Esr.Peers.CCProcessTest do
                    500
   end
 
-  test "on {:tmux_output, bytes}, invokes handler, forwards :reply upstream" do
+  test "on {:tmux_output, bytes}, drops silently (T11b.8 diagnostic-only)" do
+    # Post-T11b the conversation path runs through cli:channel MCP
+    # notifications, not tmux stdout capture. tmux_output carries CC's
+    # TUI chrome (ANSI, box-drawing, partial-UTF8 bursts when tmux
+    # reads split a multibyte char mid-stream) and must NOT invoke the
+    # handler — Jason.encode!/1 crashed CCProcess on truncated UTF-8.
     me = self()
     tmux = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
@@ -65,13 +70,23 @@ defmodule Esr.Peers.CCProcessTest do
         proxy_ctx: %{}
       })
 
+    handler_called = :atomics.new(1, [])
+
     :ok =
       CCProcess.put_handler_override(pid, fn _mod, _payload, _timeout ->
-        {:ok, %{"history" => ["out"]}, [%{"type" => "reply", "text" => "done"}]}
+        :atomics.add(handler_called, 1, 1)
+        {:ok, %{}, []}
       end)
 
-    send(pid, {:tmux_output, "output from tmux"})
-    assert_receive {:relay, {:reply, "done"}}, 500
+    # Fire tmux_output with a truncated-UTF8 burst similar to what tmux
+    # actually emits (partial box-drawing char) — regression pin for
+    # the 2026-04-24 Jason.EncodeError.
+    send(pid, {:tmux_output, <<59, 50, 50, 48, 109, 226, 148, 128, 226>>})
+
+    Process.sleep(100)
+    assert Process.alive?(pid)
+    assert :atomics.get(handler_called, 1) == 0
+    refute_receive {:relay, _}, 50
   end
 
   test "HandlerRouter timeout drops the message and logs" do
