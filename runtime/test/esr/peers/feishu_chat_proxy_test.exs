@@ -247,6 +247,109 @@ defmodule Esr.Peers.FeishuChatProxyTest do
     end
   end
 
+  describe "tool_invoke from ChannelChannel (PR-9 T11b.4)" do
+    test "registers as thread:<sid> in Esr.PeerRegistry" do
+      sid = "ti_#{System.unique_integer([:positive])}"
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_x",
+          thread_id: "om_x",
+          neighbors: [],
+          proxy_ctx: %{}
+        })
+
+      assert [{^peer, _}] = Registry.lookup(Esr.PeerRegistry, "thread:" <> sid)
+    end
+
+    test "reply tool emits outbound + tool_result back on channel_pid" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_tool_reply",
+          chat_id: "oc_t",
+          thread_id: "om_t",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-1", "reply",
+                  %{"chat_id" => "oc_t", "text" => "hi from CC"},
+                  self(), "ou_admin"})
+
+      # Outbound reply lands on app_proxy.
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "reply",
+                         "args" => %{"chat_id" => "oc_t", "text" => "hi from CC"}
+                       }}},
+                     500
+
+      # Tool result routed back to channel_pid (our test process).
+      assert_receive {:push_envelope,
+                      %{
+                        "kind" => "tool_result",
+                        "req_id" => "req-1",
+                        "ok" => true
+                      }},
+                     500
+    end
+
+    test "send_file tool emits send_file outbound + tool_result" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf",
+          chat_id: "oc_sf",
+          thread_id: "om_sf",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-2", "send_file",
+                  %{"chat_id" => "oc_sf", "file_path" => "/tmp/x.txt"},
+                  self(), "ou_admin"})
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{
+                         "kind" => "send_file",
+                         "args" => %{"chat_id" => "oc_sf", "file_path" => "/tmp/x.txt"}
+                       }}},
+                     500
+
+      assert_receive {:push_envelope, %{"req_id" => "req-2", "ok" => true}}, 500
+    end
+
+    test "unknown tool returns tool_result with ok:false + error" do
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_bad",
+          chat_id: "oc_b",
+          thread_id: "om_b",
+          neighbors: [],
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-err", "pin_message", %{}, self(), "ou_admin"})
+
+      assert_receive {:push_envelope,
+                      %{
+                        "kind" => "tool_result",
+                        "req_id" => "req-err",
+                        "ok" => false,
+                        "error" => %{"type" => "unknown_tool"}
+                      }},
+                     500
+    end
+  end
+
   describe "channel_adapter lifted from ctx (D1)" do
     test "init/1 stores ctx.channel_adapter under string key in state" do
       args = %{
