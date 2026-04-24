@@ -161,6 +161,123 @@ defmodule Esr.Peers.TmuxProcess do
     :ok
   end
 
+  @doc """
+  Capture the pane's textual contents as a string — libtmux-style.
+
+  Options:
+    * `:start` — starting line. Integer (negative = history row
+      offset from visible top, 0 = visible top), or `:history_top`
+      (shorthand for the oldest line still in scrollback), or `nil`
+      (default — start at visible top). libtmux calls this `start`.
+    * `:end` — ending line. Integer (negative offset from visible
+      top), or `nil` (default — visible bottom). libtmux calls this `end`.
+    * `:history` — `true` to include the entire scrollback, short for
+      `start: :history_top, end: nil`. Default `false`.
+    * `:escape_sequences` — `true` to keep ANSI escape codes; default
+      `false` (tmux's `-e` flag OFF, same as libtmux default).
+    * `:join_wrapped` — `true` (default) to join wrapped lines into
+      logical lines; `false` keeps tmux's physical wrap.
+
+  Returns `{:ok, binary}` on success, `{:error, {:capture_failed, code,
+  stderr}}` otherwise.
+
+  Example:
+
+      # visible pane only
+      {:ok, txt} = TmuxProcess.capture_pane(pid)
+
+      # full scrollback
+      {:ok, txt} = TmuxProcess.capture_pane(pid, history: true)
+
+      # last 50 lines of history + visible
+      {:ok, txt} = TmuxProcess.capture_pane(pid, start: -50)
+  """
+  @spec capture_pane(pid(), keyword()) ::
+          {:ok, binary()} | {:error, term()}
+  def capture_pane(pid, opts \\ []) when is_pid(pid) and is_list(opts) do
+    # Read session_name + tmux_socket off the generated OSProcessWorker's
+    # state. :sys.get_state is fine here — the worker isn't holding
+    # anything sensitive in state, and tmux capture-pane is a pure
+    # read-side operation (no coordination with the running pane).
+    try do
+      %{state: peer_state} = :sys.get_state(pid)
+      session_name = Map.fetch!(peer_state, :session_name)
+      tmux_socket = Map.get(peer_state, :tmux_socket)
+      argv = build_capture_pane_argv(session_name, tmux_socket, opts)
+
+      case System.cmd("tmux", argv, stderr_to_stdout: true) do
+        {out, 0} -> {:ok, out}
+        {out, code} -> {:error, {:capture_failed, code, out}}
+      end
+    catch
+      :exit, reason -> {:error, {:peer_gone, reason}}
+    end
+  end
+
+  @doc false
+  # Build the tmux `capture-pane` argv for a session, given the same
+  # opts the public API accepts. Exposed to tests as a pure function
+  # so argv shape can be asserted without spawning a real pane.
+  @spec build_capture_pane_argv(String.t(), String.t() | nil, keyword()) :: [String.t()]
+  def build_capture_pane_argv(session_name, tmux_socket, opts)
+      when is_binary(session_name) and is_list(opts) do
+    socket_args =
+      case tmux_socket do
+        nil -> []
+        "" -> []
+        path when is_binary(path) -> ["-S", path]
+      end
+
+    # `-p` prints capture to stdout; `-t` targets session/pane.
+    base = socket_args ++ ["capture-pane", "-p", "-t", session_name]
+
+    base
+    |> maybe_add_history(opts)
+    |> maybe_add_bounds(opts)
+    |> maybe_add_escape(opts)
+    |> maybe_add_join(opts)
+  end
+
+  defp maybe_add_history(argv, opts) do
+    if Keyword.get(opts, :history, false) do
+      # `-S -` in tmux capture-pane means "start from the oldest
+      # history line". Explicit start in opts overrides this.
+      if Keyword.has_key?(opts, :start) do
+        argv
+      else
+        argv ++ ["-S", "-"]
+      end
+    else
+      argv
+    end
+  end
+
+  defp maybe_add_bounds(argv, opts) do
+    argv
+    |> append_if(Keyword.get(opts, :start), fn start_arg ->
+      ["-S", capture_line_token(start_arg)]
+    end)
+    |> append_if(Keyword.get(opts, :end), fn end_arg ->
+      ["-E", capture_line_token(end_arg)]
+    end)
+  end
+
+  defp maybe_add_escape(argv, opts) do
+    if Keyword.get(opts, :escape_sequences, false), do: argv ++ ["-e"], else: argv
+  end
+
+  defp maybe_add_join(argv, opts) do
+    # `-J` joins wrapped lines; default on mirrors libtmux's default.
+    if Keyword.get(opts, :join_wrapped, true), do: argv ++ ["-J"], else: argv
+  end
+
+  defp append_if(argv, nil, _build), do: argv
+  defp append_if(argv, arg, build), do: argv ++ build.(arg)
+
+  defp capture_line_token(:history_top), do: "-"
+  defp capture_line_token(n) when is_integer(n), do: Integer.to_string(n)
+  defp capture_line_token(s) when is_binary(s), do: s
+
   @doc false
   # Tmux send-keys token normalisation. Strings with whitespace or
   # double quotes get escaped for the tmux control-mode line format.

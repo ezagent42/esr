@@ -551,6 +551,59 @@ defmodule Esr.Peers.TmuxProcessTest do
     end
   end
 
+  describe "PR-9 T12e: capture_pane libtmux-style argv builder" do
+    test "visible-only default — `capture-pane -p -t <name> -J`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess1", nil, [])
+      assert argv == ["capture-pane", "-p", "-t", "sess1", "-J"]
+    end
+
+    test "with socket — prepends `-S <sock>` before capture-pane" do
+      argv = TmuxProcess.build_capture_pane_argv("sess2", "/tmp/s.sock", [])
+      assert argv == ["-S", "/tmp/s.sock", "capture-pane", "-p", "-t", "sess2", "-J"]
+    end
+
+    test "history: true → `-S -` (full scrollback)" do
+      argv = TmuxProcess.build_capture_pane_argv("sess3", nil, history: true)
+      assert "-S" in argv and "-" in argv
+      assert Enum.find_index(argv, &(&1 == "-S")) ==
+               Enum.find_index(argv, &(&1 == "-")) - 1
+    end
+
+    test "explicit :start overrides :history" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess4", nil, history: true, start: -50)
+
+      # start=-50 wins; no `-` token from the history shortcut.
+      refute "-" in argv
+      assert ["-S", "-50"] |> Enum.all?(&(&1 in argv))
+    end
+
+    test "negative :start + :end emit `-S <n>` + `-E <m>`" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess5", nil, start: -30, end: -1)
+
+      assert ["-S", "-30"] |> Enum.all?(&(&1 in argv))
+      assert ["-E", "-1"] |> Enum.all?(&(&1 in argv))
+    end
+
+    test "escape_sequences: true adds `-e`" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess6", nil, escape_sequences: true)
+
+      assert "-e" in argv
+    end
+
+    test "join_wrapped: false omits `-J`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess7", nil, join_wrapped: false)
+      refute "-J" in argv
+    end
+
+    test ":start accepting :history_top atom → `-`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess8", nil, start: :history_top)
+      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-S", "-"])
+    end
+  end
+
   describe "PR-9 T11b.3: MCP config file rendering" do
     test "render_mcp_config! writes expected JSON shape" do
       path =
