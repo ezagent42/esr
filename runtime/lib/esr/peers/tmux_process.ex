@@ -138,6 +138,64 @@ defmodule Esr.Peers.TmuxProcess do
     __MODULE__.OSProcessWorker.write_stdin(pid, line)
   end
 
+  @doc """
+  Send one or more keystrokes to the pane — a public API for answering
+  interactive prompts that block CC startup (trust-folder dialog,
+  `--dangerously-load-development-channels` confirmation, etc.).
+
+  `keys` is a list of tmux key tokens. Each item is either:
+  - a **literal string** like `"1"` or `"yes"` — sent as-is
+  - an atom that tmux recognises as a named key: `:enter`, `:escape`,
+    `:tab`, `:space`, `:up`, `:down`, `:left`, `:right`, `:backspace`.
+    Atoms get converted to tmux's `Enter` / `Escape` / etc. tokens.
+
+  PR-9 T12a: this is the reusable path for dialog auto-confirmation.
+  The common pattern for trust-folder-after-launch is
+  `send_keys(pid, ["1", :enter])` — answer choice 1, confirm with Enter.
+  """
+  @spec send_keys(pid(), [String.t() | atom()]) :: :ok
+  def send_keys(pid, keys) when is_pid(pid) and is_list(keys) do
+    # Delegates to handle_downstream({:send_keys_tokens, _}, _) below,
+    # which has access to state.session_name for the `-t` target.
+    send(pid, {:send_keys_tokens, keys})
+    :ok
+  end
+
+  @doc false
+  # Tmux send-keys token normalisation. Strings with whitespace or
+  # double quotes get escaped for the tmux control-mode line format.
+  # Atoms map to the named-key tokens tmux's send-keys parser accepts.
+  @spec tmux_send_keys_line(String.t(), [String.t() | atom()]) :: String.t()
+  def tmux_send_keys_line(session_name, keys) when is_binary(session_name) and is_list(keys) do
+    tokens =
+      keys
+      |> Enum.map(&key_to_tmux_token/1)
+      |> Enum.join(" ")
+
+    "send-keys -t #{session_name} #{tokens}\n"
+  end
+
+  defp key_to_tmux_token(:enter), do: "Enter"
+  defp key_to_tmux_token(:escape), do: "Escape"
+  defp key_to_tmux_token(:tab), do: "Tab"
+  defp key_to_tmux_token(:space), do: "Space"
+  defp key_to_tmux_token(:up), do: "Up"
+  defp key_to_tmux_token(:down), do: "Down"
+  defp key_to_tmux_token(:left), do: "Left"
+  defp key_to_tmux_token(:right), do: "Right"
+  defp key_to_tmux_token(:backspace), do: "BSpace"
+  defp key_to_tmux_token(:c_c), do: "C-c"
+  defp key_to_tmux_token(:c_d), do: "C-d"
+
+  defp key_to_tmux_token(str) when is_binary(str) do
+    # tmux send-keys takes literal strings in double quotes. Escape
+    # embedded quotes + backslashes so the control-mode parser doesn't
+    # break on values like `"hello" world`. (Backticks and $ are fine —
+    # tmux's send-keys doesn't shell-expand its args.)
+    escaped = str |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")
+    "\"#{escaped}\""
+  end
+
   # Called by the generated OSProcessWorker.init/1 (not a GenServer
   # callback — this module doesn't `use GenServer` directly; the
   # generated OSProcessWorker child module does). Returns the initial
@@ -171,8 +229,35 @@ defmodule Esr.Peers.TmuxProcess do
           state
       end
 
+    # PR-9 T12a: auto-confirm the claude trust-folder dialog that fires
+    # on first use of a new `--add-dir` path. Schedule a delayed
+    # send_keys(["1", :enter]) if we're in production mode (session_id
+    # set + not the test-env nop loop). The 5s delay gives claude time
+    # to boot + render the prompt. Idempotent — pressing "1+Enter"
+    # when there's no dialog just types into the terminal (harmless,
+    # claude doesn't treat prompt-less "1" as a conversation turn).
+    schedule_startup_keys(state)
+
     {:ok, state}
   end
+
+  # PR-9 T12a: schedule the post-launch auto-confirm keystrokes. For
+  # now we fire a single "1 + Enter" after 5s — covers the trust-folder
+  # dialog. Future dialogs (dev-channels approval, permission prompts)
+  # can extend this list via a param once their shape is known.
+  defp schedule_startup_keys(%{session_id: sid} = _state)
+       when is_binary(sid) and sid != "" do
+    if Application.get_env(:esr, :tmux_force_claude_launch, Mix.env() != :test) do
+      # 5s: claude CLI's cold-start + model warm-up + initial render.
+      # Configurable via app env for tests that want to pin faster.
+      delay_ms = Application.get_env(:esr, :tmux_startup_keys_delay_ms, 5_000)
+      Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, delay_ms)
+    end
+
+    :ok
+  end
+
+  defp schedule_startup_keys(_state), do: :ok
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:os_stdout, line}, state) do
@@ -207,6 +292,16 @@ defmodule Esr.Peers.TmuxProcess do
   # existing tmux callers; new code in PR-3 uses `{:send_input, text}`.
   def handle_downstream({:send_keys, text}, state) do
     handle_downstream({:send_input, text}, state)
+  end
+
+  # PR-9 T12a: public `send_keys(pid, [keys])` API lands here. Builds a
+  # tmux `send-keys -t <session> <tokens>` line and writes it via
+  # OSProcessWorker.write_stdin/2. Used by scenario setup + future
+  # dialog auto-confirm.
+  def handle_downstream({:send_keys_tokens, keys}, state) when is_list(keys) do
+    line = tmux_send_keys_line(state.session_name, keys)
+    __MODULE__.OSProcessWorker.write_stdin(self(), line)
+    {:forward, [], state}
   end
 
   def handle_downstream(_msg, state), do: {:forward, [], state}
