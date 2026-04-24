@@ -37,9 +37,19 @@ defmodule Esr.Peers.CCProcessTest do
         {:ok, %{"history" => ["hello"]}, [%{"type" => "send_input", "text" => "hello\n"}]}
       end)
 
+    # PR-9 T11b.6: SendInput broadcasts to Phoenix topic
+    # `cli:channel/<session_id>` as a `{:push_envelope, envelope}`
+    # message. Subscribe to the topic and assert the envelope shape.
+    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cli:channel/sid1")
+
     send(pid, {:text, "hello"})
 
-    assert_receive {:relay, {:send_input, "hello\n"}}, 500
+    assert_receive {:notification,
+                    %{
+                      "kind" => "notification",
+                      "content" => "hello\n"
+                    }},
+                   500
   end
 
   test "on {:tmux_output, bytes}, invokes handler, forwards :reply upstream" do
