@@ -329,11 +329,34 @@ defmodule Esr.SessionRouter do
     with {:ok, agent_name} <- fetch_agent_name(params),
          {:ok, agent_def} <- fetch_agent(agent_name),
          session_id <- gen_id(),
+         params <- enrich_params(params, session_id),
          {:ok, _sup} <- start_session_sup(session_id, agent_name, params, agent_def),
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
          :ok <- register(session_id, params, refs_map) do
       {:ok, session_id, mon}
     end
+  end
+
+  # PR-9 T11b.2: thread `session_id` and `workspace_name` into the params
+  # map so downstream peers' `spawn_args/1` callbacks (specifically
+  # TmuxProcess in T11b.3) can read them without having to re-derive.
+  # `workspace_name` is resolved via `Esr.Workspaces.Registry.workspace_for_chat/2`
+  # when the caller didn't supply one explicitly. Falls back to
+  # `"default"` — not nil — so peers downstream always see a string.
+  defp enrich_params(params, session_id) do
+    chat_id = get_param(params, :chat_id) || ""
+    app_id = get_param(params, :app_id) || "default"
+
+    workspace_name =
+      get_param(params, :workspace_name) ||
+        case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+          {:ok, name} -> name
+          :not_found -> "default"
+        end
+
+    params
+    |> Map.put(:session_id, session_id)
+    |> Map.put(:workspace_name, workspace_name)
   end
 
   defp fetch_agent_name(params) do
