@@ -340,6 +340,16 @@ class FeishuAdapter:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(None, self._react, args)
             return await self._with_ratelimit_retry(lambda: self._react(args))
+        if action == "un_react":
+            # PR-9 T5c: un-react by message_id (v1 best-effort — no
+            # reaction_id tracking on the Elixir side). Mock path POSTs
+            # to the DELETE-by-message_id endpoint; live path uses
+            # lark_oapi's reaction.delete.
+            base_url = getattr(self._config, "base_url", "") or ""
+            if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self._un_react, args)
+            return await self._with_ratelimit_retry(lambda: self._un_react(args))
         if action == "send_card":
             return await self._with_ratelimit_retry(lambda: self._send_card(args))
         if action == "pin":
@@ -490,6 +500,53 @@ class FeishuAdapter:
                 return {"ok": True, "result": data.get("data") or {}}
         except urllib.error.URLError as exc:
             return {"ok": False, "error": f"mock react failed: {exc}"}
+
+    def _un_react(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Remove a reaction from a message. PR-9 T5c.
+
+        v1 shape: delete by ``msg_id`` alone (no reaction_id). Mock path
+        calls the DELETE-by-message_id endpoint; live path enumerates
+        reactions on the message and deletes the first matching one —
+        kept as a stub until the live path is exercised (parity with
+        ``_send_file_live``).
+        """
+        msg_id = args["msg_id"]
+        emoji_type = args.get("emoji_type", "")
+
+        base_url = getattr(self._config, "base_url", "") or ""
+        if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+            return self._un_react_mock(base_url, msg_id, emoji_type)
+
+        import lark_oapi.api.im.v1 as im_v1  # noqa: F401 — import guard
+        # Live path deferred: Lark's DELETE reaction API requires a
+        # reaction_id; FeishuChatProxy's v1 tracking carries only the
+        # message_id + emoji_type. Implementing this live path means
+        # enumerating reactions on the message first. Safe no-op here —
+        # the production un-react path against the real Lark API is a
+        # follow-up (the delivery-ack react itself is cosmetic).
+        return {"ok": False, "error": "live un_react not yet implemented"}
+
+    def _un_react_mock(
+        self, base_url: str, msg_id: str, emoji_type: str
+    ) -> dict[str, Any]:
+        import urllib.error
+        import urllib.request
+
+        body = json.dumps({
+            "reaction_type": {"emoji_type": emoji_type},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/open-apis/im/v1/messages/{msg_id}/reactions",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                return {"ok": True, "result": data.get("data") or {}}
+        except urllib.error.URLError as exc:
+            return {"ok": False, "error": f"mock un_react failed: {exc}"}
 
     def _send_card(self, args: dict[str, Any]) -> dict[str, Any]:
         """Send an interactive card via lark_oapi im.v1.message.create (PRD 04 F09)."""

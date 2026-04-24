@@ -233,7 +233,28 @@ defmodule Esr.PeerServerTest do
       assert emit["adapter"] == "feishu"
     end
 
-    test "react emit args key is msg_id (was message_id — §5.1 bug fix)" do
+    test "react is no longer a CC-facing MCP tool (PR-9 T5 D4)" do
+      # React (and un-react) moved to FeishuChatProxy as a delivery-ack
+      # concern — no longer scoped to CC. A CC handler that still emits
+      # a `react` action hits the unknown-tool error path. The emit-side
+      # assertion lives in FeishuChatProxyTest; see that suite for the
+      # msg_id-keyed arg shape the adapter still consumes.
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      assert {:error, "unknown tool: react"} =
+               Esr.PeerServer.build_emit_for_tool_for_test(
+                 "react",
+                 %{"message_id" => "om_1", "emoji_type" => "THUMBSUP"},
+                 state
+               )
+    end
+
+    test "reply threads optional reply_to_message_id into emit args (PR-9 T5c)" do
       state = %Esr.PeerServer{
         actor_id: "a",
         actor_type: "cc_process",
@@ -243,13 +264,39 @@ defmodule Esr.PeerServerTest do
 
       {:ok, emit} =
         Esr.PeerServer.build_emit_for_tool_for_test(
-          "react",
-          %{"message_id" => "om_1", "emoji_type" => "THUMBSUP"},
+          "reply",
+          %{
+            "chat_id" => "oc_1",
+            "text" => "done",
+            "reply_to_message_id" => "om_inbound_42"
+          },
           state
         )
 
-      assert emit["adapter"] == "feishu_app"
-      assert emit["args"] == %{"msg_id" => "om_1", "emoji_type" => "THUMBSUP"}
+      assert emit["args"] == %{
+               "chat_id" => "oc_1",
+               "content" => "done",
+               "reply_to_message_id" => "om_inbound_42"
+             }
+    end
+
+    test "reply omits reply_to_message_id from emit args when absent (backward compat)" do
+      state = %Esr.PeerServer{
+        actor_id: "a",
+        actor_type: "cc_process",
+        handler_module: "x",
+        state: %{"channel_adapter" => "feishu_app"}
+      }
+
+      {:ok, emit} =
+        Esr.PeerServer.build_emit_for_tool_for_test(
+          "reply",
+          %{"chat_id" => "oc_1", "text" => "done"},
+          state
+        )
+
+      assert emit["args"] == %{"chat_id" => "oc_1", "content" => "done"}
+      refute Map.has_key?(emit["args"], "reply_to_message_id")
     end
 
     test "send_file emit encodes bytes as base64 with sha256 (α shape)" do

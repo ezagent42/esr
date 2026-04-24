@@ -1,16 +1,19 @@
 from esr_cc_mcp.tools import list_tool_schemas
 
 
-def test_returns_3_tools_by_default() -> None:
+def test_returns_2_tools_by_default() -> None:
+    # PR-9 T5 D4: `react` removed — no longer a CC-facing MCP tool;
+    # it's emitted by FeishuChatProxy as a delivery ACK and un-reacted
+    # on CC reply, keeping Feishu-specific semantics out of CC.
     tools = list_tool_schemas(role="dev")
     names = {t.name for t in tools}
-    assert names == {"reply", "react", "send_file"}
+    assert names == {"reply", "send_file"}
 
 
 def test_diagnostic_role_adds_echo_tool() -> None:
     tools = list_tool_schemas(role="diagnostic")
     names = {t.name for t in tools}
-    assert names == {"reply", "react", "send_file", "_echo"}
+    assert names == {"reply", "send_file", "_echo"}
 
 
 def test_reply_schema_has_chat_id_and_text() -> None:
@@ -20,3 +23,14 @@ def test_reply_schema_has_chat_id_and_text() -> None:
     assert "chat_id" in props
     assert "text" in props
     assert props["chat_id"]["type"] == "string"
+
+
+def test_reply_schema_carries_optional_reply_to_message_id() -> None:
+    """PR-9 T5c: optional field; production callers SHOULD include it."""
+    tools = list_tool_schemas(role="dev")
+    reply = next(t for t in tools if t.name == "reply")
+    props = reply.inputSchema["properties"]
+    assert "reply_to_message_id" in props
+    assert props["reply_to_message_id"]["type"] == "string"
+    # NOT in required — backward compat for legacy callers.
+    assert "reply_to_message_id" not in reply.inputSchema["required"]
