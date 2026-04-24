@@ -36,6 +36,41 @@ defmodule EsrWeb.ChannelChannelTest do
     assert row.app_ids == ["cli_x"]
   end
 
+  describe "duplicate-join rejection (PR-9 T11b.4a)" do
+    test "second join on same session_id returns {:error, already_joined}" do
+      topic = "cli:channel/dup-#{System.unique_integer([:positive])}"
+
+      {:ok, _reply, _socket} =
+        EsrWeb.ChannelSocket
+        |> socket("ch-first", %{})
+        |> subscribe_and_join(EsrWeb.ChannelChannel, topic)
+
+      assert {:error, %{reason: "already_joined"}} =
+               EsrWeb.ChannelSocket
+               |> socket("ch-second", %{})
+               |> subscribe_and_join(EsrWeb.ChannelChannel, topic)
+    end
+
+    test "re-join after first client's terminate succeeds" do
+      Process.flag(:trap_exit, true)
+      topic = "cli:channel/rejoin-#{System.unique_integer([:positive])}"
+
+      {:ok, _reply, first} =
+        EsrWeb.ChannelSocket
+        |> socket("ch-first", %{})
+        |> subscribe_and_join(EsrWeb.ChannelChannel, topic)
+
+      close(first)
+      Process.sleep(50)
+
+      # Registry row is now offline; a fresh client must be allowed in.
+      assert {:ok, _reply, _socket} =
+               EsrWeb.ChannelSocket
+               |> socket("ch-second", %{})
+               |> subscribe_and_join(EsrWeb.ChannelChannel, topic)
+    end
+  end
+
   test "terminate marks session offline" do
     Process.flag(:trap_exit, true)
 
