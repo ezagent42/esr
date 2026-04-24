@@ -121,6 +121,12 @@ defmodule Esr.Peers.CCProcess do
   # ------------------------------------------------------------------
 
   defp invoke_and_dispatch(event, state) do
+    # PR-9 T11b.6: capture the upstream meta into cc_state so dispatch
+    # actions (SendInput / Reply) can reference per-event attribution
+    # (message_id, sender_id, thread_id) when building their envelopes.
+    # Handler implementations don't need to echo them back.
+    state = stash_upstream_meta(state, event)
+
     payload = %{
       "handler" => state.handler_module <> ".on_msg",
       "state" => state.cc_state,
@@ -192,18 +198,61 @@ defmodule Esr.Peers.CCProcess do
     Enum.each(actions, &dispatch_action(&1, state))
   end
 
+  # PR-9 T11b.6: SendInput now broadcasts a `notifications/claude/channel`-shaped
+  # envelope on Phoenix topic `cli:channel/<session_id>` instead of sending
+  # `{:send_input, text}` to the tmux pane's stdin. User principle
+  # (2026-04-24): CC reply path goes through esr-channel, not tmux stdout
+  # capture — symmetrically, CC inbound arrives via the MCP channel
+  # notification stream, not tmux stdin. cc_mcp's `_handle_inbound` receives
+  # this envelope and injects the `<channel>` tag into CC's context.
+  #
+  # Envelope shape matches cc_mcp channel.py's consumer: `kind: "notification"`
+  # + `source`, `chat_id`, `message_id`, `user`, `ts`, `thread_id`, `content`.
+  # cc_mcp's inbound handler re-maps these into the `notifications/claude/channel`
+  # params/meta shape CC's channels listener expects.
   defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
-    case Keyword.get(state.neighbors, :tmux_process) do
-      pid when is_pid(pid) ->
-        send(pid, {:send_input, text})
+    envelope = build_channel_notification(state, text)
 
-      _ ->
-        Logger.warning(
-          "cc_process: :send_input with no tmux_process neighbor " <>
-            "session_id=#{state.session_id}"
-        )
-    end
+    # `{:notification, envelope}` matches the existing admin-side
+    # precedent in `Esr.Admin.Commands.Session.BranchEnd` — ChannelChannel
+    # handle_info/2 routes both `{:push_envelope, _}` and
+    # `{:notification, _}` identically, and sticking with the admin
+    # convention keeps the ops + logs consistent.
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "cli:channel/" <> state.session_id,
+      {:notification, envelope}
+    )
+
+    :ok
   end
+
+  defp build_channel_notification(state, text) do
+    ctx = state.proxy_ctx || %{}
+    last = Map.get(state, :last_meta, %{})
+
+    %{
+      "kind" => "notification",
+      "source" => Map.get(ctx, "channel_adapter") || "feishu",
+      "chat_id" => Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      "thread_id" =>
+        Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
+      "message_id" => Map.get(last, :message_id) || "",
+      "user" => Map.get(last, :sender_id) || "",
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "content" => text
+    }
+  end
+
+  # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
+  # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
+  # builds the notification envelope with real attribution instead of
+  # empty strings.
+  defp stash_upstream_meta(state, {:text, _bytes, meta}) when is_map(meta) do
+    Map.put(state, :last_meta, meta)
+  end
+
+  defp stash_upstream_meta(state, _other), do: state
 
   defp dispatch_action(%{"type" => "reply", "text" => text} = action, state) do
     # PR-9 T5c: propagate the optional `reply_to_message_id` so
