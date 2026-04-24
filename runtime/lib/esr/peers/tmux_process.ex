@@ -323,9 +323,26 @@ defmodule Esr.Peers.TmuxProcess do
         path -> ["-S", path]
       end
 
+    # PR-9 T12-comms-3 — inject ESR_* env vars into the *new-session*
+    # via tmux's native `-e VAR=VAL` flag. Without this, tmux silently
+    # drops non-whitelisted client-env vars (only `update-environment`
+    # entries like DISPLAY/SSH_AUTH_SOCK survive), so the claude CLI —
+    # and by extension the cc_mcp subprocess it forks — never sees
+    # `ESR_SESSION_ID` / `ESR_WORKSPACE` / `ESR_CHAT_IDS` / `ESR_ESRD_URL`
+    # and crashes on `os.environ["ESR_SESSION_ID"]` KeyError.
+    #
+    # Passing `-e` on `new-session` is the supported path and applies
+    # per-session (no server-wide side effects). Proven via
+    # `env -i PATH=… tmux new-session -e FOO=bar 'sh -c "env"'`.
+    env_flags =
+      for {k, v} <- os_env(state), do: ["-e", "#{k}=#{v}"]
+
     base =
       ["tmux"] ++
-        socket_args ++ ["-C", "new-session", "-s", state.session_name, "-c", state.dir]
+        socket_args ++
+        ["-C", "new-session"] ++
+        List.flatten(env_flags) ++
+        ["-s", state.session_name, "-c", state.dir]
 
     # PR-9 T11b.3 — if we have the session context, append a claude
     # invocation as a single shell-command positional (tmux hands it
