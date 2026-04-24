@@ -13,6 +13,7 @@ BASELINE=$(e2e_tmp_baseline_snapshot)
 # --- setup ------------------------------------------------------------
 load_agent_yaml
 seed_capabilities
+seed_workspaces
 start_mock_feishu
 start_esrd
 register_feishu_adapter

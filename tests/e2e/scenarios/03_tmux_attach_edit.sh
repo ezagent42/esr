@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 load_agent_yaml
 seed_capabilities
+seed_workspaces
 start_mock_feishu
 start_esrd
 register_feishu_adapter
