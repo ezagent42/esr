@@ -7,6 +7,11 @@ set -Eeuo pipefail
 # --- env bootstrap ---------------------------------------------------
 : "${ESR_E2E_RUN_ID:=pr7-$(date +%s)-$$}"
 : "${ESRD_INSTANCE:=e2e-${ESR_E2E_RUN_ID}}"
+# T12-comms-3h: the CLI-side URL discovery (`esr actors list`,
+# `cli:channel` bridge, etc.) reads `$ESR_INSTANCE`, not ESRD_INSTANCE.
+# Keep the two aligned so every CLI run inside the scenario points at
+# the same per-instance port file under ${ESRD_HOME}/${ESR_INSTANCE}.
+: "${ESR_INSTANCE:=${ESRD_INSTANCE}}"
 : "${ESRD_HOME:=/tmp/esrd-${ESR_E2E_RUN_ID}}"
 : "${MOCK_FEISHU_PORT:=8201}"
 : "${ESR_E2E_BARRIER_DIR:=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/barriers}"
@@ -26,7 +31,7 @@ set -Eeuo pipefail
 # seed_capabilities covers Lane A + Lane B + cc_mcp tool_invoke paths.
 : "${ESR_BOOTSTRAP_PRINCIPAL_ID:=${ESR_OPERATOR_PRINCIPAL_ID}}"
 
-export ESR_E2E_RUN_ID ESRD_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
+export ESR_E2E_RUN_ID ESRD_INSTANCE ESR_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
 export ESR_E2E_BARRIER_DIR ESR_E2E_UPLOADS_DIR ESR_E2E_TMUX_SOCK
 export ESR_OPERATOR_PRINCIPAL_ID ESR_BOOTSTRAP_PRINCIPAL_ID
 
