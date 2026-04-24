@@ -168,19 +168,21 @@ defmodule Esr.Application do
   """
   @spec load_agents_from_disk() :: :ok
   def load_agents_from_disk do
+    require Logger
     path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
 
     if File.exists?(path) do
       case Esr.SessionRegistry.load_agents(path) do
         :ok ->
+          Logger.info("agents.yaml: loaded from #{path}")
           :ok
 
         {:error, reason} ->
-          require Logger
           Logger.warning("agents.yaml: load failed (#{inspect(reason)}); continuing")
           :ok
       end
     else
+      Logger.info("agents.yaml: absent at #{path}; skipping")
       :ok
     end
   end

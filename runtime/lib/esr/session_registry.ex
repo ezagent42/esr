@@ -49,7 +49,25 @@ defmodule Esr.SessionRegistry do
   @impl true
   def init(_opts) do
     :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
-    {:ok, %{agents: %{}, sessions: %{}, chat_to_session: %{}}}
+    # Eagerly load <runtime_home>/agents.yaml at init so agents are
+    # available before Admin.Supervisor starts (and its watcher
+    # dispatches any pre-queued session_new commands). E2E discovered
+    # the race: Application's post-supervisor load_agents_from_disk
+    # ran AFTER Supervisor.start_link, allowing the admin_queue
+    # watcher to fire `session_new agent=cc` before agents were
+    # populated — resulting in `unknown_agent`. Init-time load
+    # eliminates the race (this registry is child #8 in the supervisor
+    # tree, before Admin.Supervisor at #15).
+    #
+    # Missing file is fine — callers can still invoke `load_agents/1`
+    # to reload or load from an alternate path.
+    agents =
+      case parse_agents_file(Path.join(Esr.Paths.runtime_home(), "agents.yaml")) do
+        {:ok, a} -> a
+        _ -> %{}
+      end
+
+    {:ok, %{agents: agents, sessions: %{}, chat_to_session: %{}}}
   end
 
   @impl true
