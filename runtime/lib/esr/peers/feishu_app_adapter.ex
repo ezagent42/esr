@@ -155,6 +155,15 @@ defmodule Esr.Peers.FeishuAppAdapter do
     build_directive(state, kind, args || %{})
   end
 
+  # PR-9 T11b.5: send_file flows through unchanged — the Python feishu
+  # adapter's `on_directive("send_file", args)` already expects
+  # `%{chat_id, file_path}` (verified by
+  # py/tests/adapter_runners/test_feishu_send_file.py). CC's `send_file`
+  # MCP tool invokes this via FCP → FeishuAppProxy → here.
+  defp wrap_as_directive(%{"kind" => "send_file", "args" => args}, state) do
+    build_directive(state, "send_file", args || %{})
+  end
+
   defp wrap_as_directive(%{"kind" => "directive"} = already_directive, _state) do
     # Caller already built a directive envelope (rare but legal path for
     # peers that want full control over action + args). Trust it.
