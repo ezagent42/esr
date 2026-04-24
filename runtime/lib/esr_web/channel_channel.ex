@@ -15,6 +15,37 @@ defmodule EsrWeb.ChannelChannel do
 
   @impl Phoenix.Channel
   def join("cli:channel/" <> session_id, _payload, socket) do
+    # PR-9 T11b.4a: reject duplicate join on the same session_id rather
+    # than silently last-writer-wins. See
+    # `docs/notes/mcp-transport-orphan-session-hazard.md` — cc-openclaw
+    # hit this when two CC clients both registered `cc:linyilun.root`,
+    # and the fix here stops ESR from replicating the hazard.
+    #
+    # A registration with status=:online AND a still-alive ws_pid means
+    # another client is legitimately holding the slot. Reject the new
+    # join — the remote can retry after the owner disconnects (which
+    # flips status=:offline via `ChannelChannel.terminate/2` →
+    # `SessionSocketRegistry.mark_offline/1`).
+    case SessionSocketRegistry.lookup(session_id) do
+      {:ok, %{status: :online, ws_pid: existing_ws}} when is_pid(existing_ws) ->
+        if existing_ws != self() and Process.alive?(existing_ws) do
+          Logger.warning(
+            "channel_channel: rejecting duplicate join for session_id=" <>
+              inspect(session_id) <>
+              " — already held by ws_pid=" <> inspect(existing_ws)
+          )
+
+          {:error, %{reason: "already_joined", existing_ws_pid: inspect(existing_ws)}}
+        else
+          do_join(session_id, socket)
+        end
+
+      _ ->
+        do_join(session_id, socket)
+    end
+  end
+
+  defp do_join(session_id, socket) do
     SessionSocketRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: [],
