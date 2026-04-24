@@ -126,4 +126,81 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     # Tuple's second slot is the Phoenix routing key (instance_id).
     assert_receive {:new_chat_thread, "inst_nomatch", "oc_new", "om_new", ^envelope}, 500
   end
+
+  describe "handle_downstream wrap_as_directive/2 (PR-9 T10/T11b)" do
+    # The downstream path broadcasts on `adapter:feishu/<instance_id>` with
+    # event="envelope" and a *directive*-shaped payload. Subscribe to the
+    # PubSub topic, fire the peer, and assert the directive shape.
+    setup %{sup: sup} do
+      instance_id = "inst_T11b5_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter, %{instance_id: instance_id, neighbors: [], proxy_ctx: %{}}}
+        )
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/#{instance_id}")
+      {:ok, peer: pid, instance_id: instance_id}
+    end
+
+    test "send_file pass-through to directive action=send_file (T11b.5)", %{peer: peer} do
+      envelope = %{
+        "kind" => "send_file",
+        "args" => %{"chat_id" => "oc_target", "file_path" => "/tmp/foo.txt"}
+      }
+
+      send(peer, {:outbound, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "envelope",
+        payload: %{
+          "kind" => "directive",
+          "payload" => %{
+            "adapter" => "feishu",
+            "action" => "send_file",
+            "args" => %{"chat_id" => "oc_target", "file_path" => "/tmp/foo.txt"}
+          }
+        }
+      }, 500
+    end
+
+    test "reply maps to directive action=send_message with text→content rename", %{peer: peer} do
+      envelope = %{
+        "kind" => "reply",
+        "args" => %{"chat_id" => "oc_target", "text" => "ack"}
+      }
+
+      send(peer, {:outbound, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "envelope",
+        payload: %{
+          "payload" => %{
+            "action" => "send_message",
+            "args" => %{"chat_id" => "oc_target", "content" => "ack"}
+          }
+        }
+      }, 500
+    end
+
+    test "react passes through unchanged", %{peer: peer} do
+      envelope = %{
+        "kind" => "react",
+        "args" => %{"msg_id" => "om_foo", "emoji_type" => "EYES"}
+      }
+
+      send(peer, {:outbound, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "envelope",
+        payload: %{
+          "payload" => %{
+            "action" => "react",
+            "args" => %{"msg_id" => "om_foo", "emoji_type" => "EYES"}
+          }
+        }
+      }, 500
+    end
+  end
 end
