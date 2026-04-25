@@ -86,10 +86,18 @@ defmodule Esr.Peers.FeishuChatProxy do
     # downstream so CCProcess can build a notifications/claude/channel
     # meta map with real attributes. T11b.6 consumes these; a 2-tuple
     # `{:text, text}` would leave CC with `meta.user=""` etc.
+    #
+    # T12-comms-3d (2026-04-24): also carry `chat_id`. Without it, the
+    # notification envelope reached claude with `"chat_id" => ""` and
+    # claude refused to call `mcp__esr-channel__reply` ("I couldn't
+    # find a chat_id in the inbound <channel> tag, so I'm replying
+    # here as text"), dropping the ack to the terminal instead of the
+    # reply channel. FCP sees chat_id on every inbound; thread it.
     meta = %{
       message_id: message_id,
       sender_id: args["sender_id"] || "",
-      thread_id: args["thread_id"] || ""
+      thread_id: args["thread_id"] || "",
+      chat_id: args["chat_id"] || ""
     }
 
     cond do
@@ -186,20 +194,89 @@ defmodule Esr.Peers.FeishuChatProxy do
   end
 
   defp dispatch_tool_invoke("send_file", args, req_id, channel_pid, state) do
-    _ =
-      emit_to_feishu_app_proxy(
-        %{
-          "kind" => "send_file",
-          "args" => %{
-            "chat_id" => Map.get(args, "chat_id") || state.chat_id,
-            "file_path" => Map.get(args, "file_path") || ""
-          }
-        },
-        state
-      )
+    # T12-comms-3g: CC's MCP tool sends just `chat_id + file_path`. The
+    # feishu adapter's `_send_file` wire shape (spec §6.1) is α: base64
+    # in-band with a sha256 check, needing `file_name + content_b64 +
+    # sha256`. Do the read + hash + encode at the Elixir boundary so
+    # the Python adapter's contract stays uniform across all channel
+    # adapters (only they know how to talk to their platform).
+    file_path = Map.get(args, "file_path") || ""
+    chat_id = Map.get(args, "chat_id") || state.chat_id
 
-    reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+    case read_file_for_send(file_path) do
+      {:ok, file_name, content_b64, sha256} ->
+        _ =
+          emit_to_feishu_app_proxy(
+            %{
+              "kind" => "send_file",
+              "args" => %{
+                "chat_id" => chat_id,
+                "file_name" => file_name,
+                "content_b64" => content_b64,
+                "sha256" => sha256
+              }
+            },
+            state
+          )
+
+        reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+
+      {:error, reason} ->
+        Logger.warning(
+          "feishu_chat_proxy: send_file read failed path=#{inspect(file_path)} " <>
+            "reason=#{inspect(reason)} session_id=#{state.session_id}"
+        )
+
+        reply_tool_result(
+          channel_pid,
+          req_id,
+          false,
+          nil,
+          %{"type" => "read_failed", "message" => inspect(reason)}
+        )
+    end
+
     state
+  end
+
+  # 30 MiB — the cheapest meaningful cap for the α in-band payload
+  # before base64-blowup makes the channel envelope unwieldy. Feishu's
+  # own /open-apis/im/v1/files limit is 30MB; matching it here means
+  # we reject locally before paying the read+encode cost.
+  @send_file_max_bytes 30 * 1024 * 1024
+
+  # Read the file from disk and prepare the α wire-shape args. Returns
+  # {:ok, file_name, content_b64, sha256} or {:error, reason}.
+  #
+  # Defence-in-depth (T12-comms-3o post-merge review):
+  # - reject empty / non-absolute paths so a relative `../../etc/passwd`
+  #   from a confused tool-call can't traverse out of cwd
+  # - size cap before File.read to avoid blocking the GenServer on a
+  #   100MiB+ read just to have the adapter reject it downstream
+  # The trust boundary is still "CC has admin trust" — a fully
+  # malicious CC can still read any path the BEAM user can; tighter
+  # bounding to the session's workspace dir is tracked as follow-up.
+  defp read_file_for_send(""), do: {:error, :empty_path}
+
+  defp read_file_for_send(path) when is_binary(path) do
+    cond do
+      Path.type(path) != :absolute ->
+        {:error, :path_not_absolute}
+
+      String.contains?(path, "..") ->
+        {:error, :path_contains_traversal}
+
+      true ->
+        with {:ok, %File.Stat{size: size}} when size <= @send_file_max_bytes <-
+               File.stat(path),
+             {:ok, bytes} <- File.read(path) do
+          sha = :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+          {:ok, Path.basename(path), Base.encode64(bytes), sha}
+        else
+          {:ok, %File.Stat{size: size}} -> {:error, {:too_large, size, @send_file_max_bytes}}
+          {:error, reason} -> {:error, reason}
+        end
+    end
   end
 
   defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do

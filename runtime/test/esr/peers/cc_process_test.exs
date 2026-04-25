@@ -18,7 +18,7 @@ defmodule Esr.Peers.CCProcessTest do
 
   @handler_module "cc_adapter_runner"
 
-  test "on {:text, bytes}, calls HandlerRouter and forwards :send_input to tmux neighbor" do
+  test "on {:text, bytes}, buffers send_input until cc_mcp_ready flushes it" do
     me = self()
     tmux = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
@@ -37,12 +37,21 @@ defmodule Esr.Peers.CCProcessTest do
         {:ok, %{"history" => ["hello"]}, [%{"type" => "send_input", "text" => "hello\n"}]}
       end)
 
-    # PR-9 T11b.6: SendInput broadcasts to Phoenix topic
-    # `cli:channel/<session_id>` as a `{:push_envelope, envelope}`
-    # message. Subscribe to the topic and assert the envelope shape.
+    # PR-9 T12-comms-3c: send_input is buffered when cc_mcp hasn't
+    # joined cli:channel/<sid> yet (the common case for the first
+    # auto-created inbound). Subscribe to the topic BEFORE the ready
+    # signal so we only see the flush-on-ready broadcast — verifies
+    # the buffered envelope comes through with correct content.
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cli:channel/sid1")
 
     send(pid, {:text, "hello"})
+
+    # With cc_mcp_ready = false (default), the send_input action is
+    # buffered — nothing should hit the cli:channel topic yet.
+    refute_receive {:notification, _}, 200
+
+    # Simulate ChannelChannel's cc_mcp join → flush buffer.
+    send(pid, {:cc_mcp_ready, "sid1"})
 
     assert_receive {:notification,
                     %{

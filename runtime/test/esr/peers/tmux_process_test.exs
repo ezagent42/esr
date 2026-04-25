@@ -369,8 +369,11 @@ defmodule Esr.Peers.TmuxProcessTest do
              ]
 
       {_k, url} = Enum.find(env, fn {k, _} -> k == "ESR_ESRD_URL" end)
-      # /channel/socket, not /adapter_hub/socket — this is the MCP bridge.
-      assert url =~ ~r(\Aws://127\.0\.0\.1:\d+/channel/socket/websocket\?vsn=2\.0\.0\z)
+      # T12-comms-3 follow-up: ESR_ESRD_URL is the BASE URL only —
+      # cc_mcp's ws_client appends `/channel/socket/websocket?vsn=2.0.0`
+      # itself (matching its port-file fallback shape). Double-appending
+      # was the root cause of Phoenix's "invalid transport version" reject.
+      assert url =~ ~r(\Aws://127\.0\.0\.1:\d+\z)
     end
 
     test "no session_id ⇒ empty env (legacy idle-pane path)" do
@@ -422,10 +425,25 @@ defmodule Esr.Peers.TmuxProcessTest do
 
       argv = TmuxProcess.os_cmd(state)
 
-      # Core tmux invocation stays intact.
-      assert Enum.take(argv, 6) ==
-               ["tmux", "-C", "new-session", "-s", "esr_cc_test_1", "-c", "/tmp/wsrepo"]
-               |> Enum.take(6)
+      # Core tmux invocation stays intact (minus the interleaved `-e` env
+      # flags injected by T12-comms-3 between `new-session` and `-s`).
+      assert Enum.take(argv, 4) == ["tmux", "-C", "new-session", "-e"]
+      # T12-comms-3: ESR_* vars propagate via tmux `-e VAR=VAL` so they
+      # reach claude + cc_mcp. Check as a pair (flag + value) so order
+      # within the -e run is flexible.
+      env_pairs =
+        argv
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.filter(fn [flag, _] -> flag == "-e" end)
+        |> Enum.map(fn [_, v] -> v end)
+
+      assert "ESR_SESSION_ID=SID42" in env_pairs
+      assert "ESR_WORKSPACE=ws-a" in env_pairs
+      assert Enum.any?(env_pairs, &String.starts_with?(&1, "ESR_CHAT_IDS="))
+      assert Enum.any?(env_pairs, &String.starts_with?(&1, "ESR_ESRD_URL=ws://"))
+
+      # -s / -c still present, and in that order after the env flags.
+      assert Enum.slice(argv, -5, 4) == ["-s", "esr_cc_test_1", "-c", "/tmp/wsrepo"]
 
       # Trailing element is the single shell-command string.
       claude_cmd = List.last(argv)
@@ -459,7 +477,7 @@ defmodule Esr.Peers.TmuxProcessTest do
       assert List.last(argv) =~ "claude --permission-mode bypassPermissions"
     end
 
-    test "without session context — legacy idle-pane argv (no claude suffix)" do
+    test "without session context — legacy idle-pane argv (no claude suffix, no -e flags)" do
       state = %{
         session_name: "esr_cc_idle",
         dir: "/tmp",
@@ -469,8 +487,49 @@ defmodule Esr.Peers.TmuxProcessTest do
 
       argv = TmuxProcess.os_cmd(state)
 
+      # T12-comms-3: no session_id ⇒ os_env/1 returns [], so no -e flags emitted.
       assert argv == ["tmux", "-C", "new-session", "-s", "esr_cc_idle", "-c", "/tmp"]
       refute Enum.any?(argv, &(&1 =~ "claude"))
+      refute "-e" in argv
+    end
+
+    test "T12-comms-3: env flags appear BEFORE -s/-c and in pair shape `-e K=V`" do
+      state = %{
+        session_name: "envshape",
+        dir: "/tmp",
+        session_id: "SHAPE",
+        workspace_name: "ws",
+        chat_id: "c",
+        app_id: "a",
+        start_cmd: nil,
+        mcp_config_path: "/tmp/esr-mcp-SHAPE.json",
+        tmux_socket: nil
+      }
+
+      argv = TmuxProcess.os_cmd(state)
+
+      # -e flags must land between `new-session` and `-s` so they apply
+      # to this session, not to a prior one; and each `-e` must be
+      # immediately followed by a `K=V` token.
+      {pre, rest} = Enum.split_while(argv, &(&1 != "-e"))
+      assert pre == ["tmux", "-C", "new-session"]
+
+      {env_block, post} =
+        Enum.split_while(rest, fn arg ->
+          arg == "-e" or not String.starts_with?(arg, "-s")
+        end)
+
+      # env_block length is even (K=V pairs), and each odd-index entry is a K=V string.
+      assert rem(length(env_block), 2) == 0
+
+      env_block
+      |> Enum.chunk_every(2)
+      |> Enum.each(fn [flag, val] ->
+        assert flag == "-e"
+        assert String.contains?(val, "=")
+      end)
+
+      assert Enum.take(post, 4) == ["-s", "envshape", "-c", "/tmp"]
     end
 
     test "custom start_cmd overrides the default claude invocation" do
@@ -489,6 +548,59 @@ defmodule Esr.Peers.TmuxProcessTest do
       argv = TmuxProcess.os_cmd(state)
       assert List.last(argv) =~ "bash"
       refute List.last(argv) =~ "--mcp-config"
+    end
+  end
+
+  describe "PR-9 T12e: capture_pane libtmux-style argv builder" do
+    test "visible-only default — `capture-pane -p -t <name> -J`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess1", nil, [])
+      assert argv == ["capture-pane", "-p", "-t", "sess1", "-J"]
+    end
+
+    test "with socket — prepends `-S <sock>` before capture-pane" do
+      argv = TmuxProcess.build_capture_pane_argv("sess2", "/tmp/s.sock", [])
+      assert argv == ["-S", "/tmp/s.sock", "capture-pane", "-p", "-t", "sess2", "-J"]
+    end
+
+    test "history: true → `-S -` (full scrollback)" do
+      argv = TmuxProcess.build_capture_pane_argv("sess3", nil, history: true)
+      assert "-S" in argv and "-" in argv
+      assert Enum.find_index(argv, &(&1 == "-S")) ==
+               Enum.find_index(argv, &(&1 == "-")) - 1
+    end
+
+    test "explicit :start overrides :history" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess4", nil, history: true, start: -50)
+
+      # start=-50 wins; no `-` token from the history shortcut.
+      refute "-" in argv
+      assert ["-S", "-50"] |> Enum.all?(&(&1 in argv))
+    end
+
+    test "negative :start + :end emit `-S <n>` + `-E <m>`" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess5", nil, start: -30, end: -1)
+
+      assert ["-S", "-30"] |> Enum.all?(&(&1 in argv))
+      assert ["-E", "-1"] |> Enum.all?(&(&1 in argv))
+    end
+
+    test "escape_sequences: true adds `-e`" do
+      argv =
+        TmuxProcess.build_capture_pane_argv("sess6", nil, escape_sequences: true)
+
+      assert "-e" in argv
+    end
+
+    test "join_wrapped: false omits `-J`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess7", nil, join_wrapped: false)
+      refute "-J" in argv
+    end
+
+    test ":start accepting :history_top atom → `-`" do
+      argv = TmuxProcess.build_capture_pane_argv("sess8", nil, start: :history_top)
+      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-S", "-"])
     end
   end
 

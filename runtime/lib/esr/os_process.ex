@@ -89,6 +89,16 @@ defmodule Esr.OSProcess do
 
         @impl true
         def init(init_args) do
+          # T12-comms-3m (2026-04-25): trap exits so the supervisor's
+          # shutdown signal reaches our terminate/2 callback, which is
+          # what invokes the parent peer's on_terminate (e.g.
+          # TmuxProcess.on_terminate → `tmux kill-session`). Without
+          # this flag, supervisors terminate us with a plain
+          # Process.exit(:shutdown) and terminate/2 never runs —
+          # leaving tmux sessions + mcp-config files orphaned after
+          # session_end.
+          Process.flag(:trap_exit, true)
+
           parent = __MODULE__ |> Module.split() |> Enum.drop(-1) |> Module.concat()
           {:ok, state} = parent.init(init_args)
 

@@ -161,6 +161,89 @@ defmodule Esr.Peers.TmuxProcess do
     :ok
   end
 
+  @doc """
+  Capture the pane's textual contents as a string — libtmux-style.
+
+  Options:
+    * `:start` — starting line. Integer (negative = history row
+      offset from visible top, 0 = visible top), or `:history_top`
+      (shorthand for the oldest line still in scrollback), or `nil`
+      (default — start at visible top). libtmux calls this `start`.
+    * `:end` — ending line. Integer (negative offset from visible
+      top), or `nil` (default — visible bottom). libtmux calls this `end`.
+    * `:history` — `true` to include the entire scrollback, short for
+      `start: :history_top, end: nil`. Default `false`.
+    * `:escape_sequences` — `true` to keep ANSI escape codes; default
+      `false` (tmux's `-e` flag OFF, same as libtmux default).
+    * `:join_wrapped` — `true` (default) to join wrapped lines into
+      logical lines; `false` keeps tmux's physical wrap.
+
+  Returns `{:ok, binary}` on success, `{:error, {:capture_failed, code,
+  stderr}}` otherwise.
+
+  Example:
+
+      # visible pane only
+      {:ok, txt} = TmuxProcess.capture_pane(pid)
+
+      # full scrollback
+      {:ok, txt} = TmuxProcess.capture_pane(pid, history: true)
+
+      # last 50 lines of history + visible
+      {:ok, txt} = TmuxProcess.capture_pane(pid, start: -50)
+  """
+  @spec capture_pane(pid(), keyword()) ::
+          {:ok, binary()} | {:error, term()}
+  def capture_pane(pid, opts \\ []) when is_pid(pid) and is_list(opts) do
+    # Read session_name + tmux_socket off the generated OSProcessWorker's
+    # state. :sys.get_state is fine here — the worker isn't holding
+    # anything sensitive in state, and tmux capture-pane is a pure
+    # read-side operation (no coordination with the running pane).
+    try do
+      %{state: peer_state} = :sys.get_state(pid)
+      session_name = Map.fetch!(peer_state, :session_name)
+      tmux_socket = Map.get(peer_state, :tmux_socket)
+      argv = build_capture_pane_argv(session_name, tmux_socket, opts)
+
+      case System.cmd("tmux", argv, stderr_to_stdout: true) do
+        {out, 0} -> {:ok, out}
+        {out, code} -> {:error, {:capture_failed, code, out}}
+      end
+    catch
+      :exit, reason -> {:error, {:peer_gone, reason}}
+    end
+  end
+
+  @doc false
+  # Build the tmux `capture-pane` argv for a session, given the same
+  # opts the public API accepts. Exposed to tests as a pure function
+  # so argv shape can be asserted without spawning a real pane.
+  @spec build_capture_pane_argv(String.t(), String.t() | nil, keyword()) :: [String.t()]
+  def build_capture_pane_argv(session_name, tmux_socket, opts)
+      when is_binary(session_name) and is_list(opts) do
+    socket_args = if tmux_socket in [nil, ""], do: [], else: ["-S", tmux_socket]
+
+    # `-S -` is tmux's "start from oldest history line"; an explicit
+    # :start in opts wins over the :history shortcut.
+    start =
+      Keyword.get(opts, :start) ||
+        if(Keyword.get(opts, :history, false), do: :history_top)
+
+    bounds =
+      (if start, do: ["-S", capture_line_token(start)], else: []) ++
+        (if end_ = Keyword.get(opts, :end), do: ["-E", capture_line_token(end_)], else: [])
+
+    escape = if Keyword.get(opts, :escape_sequences, false), do: ["-e"], else: []
+    # `-J` joins wrapped lines; default on mirrors libtmux's default.
+    join = if Keyword.get(opts, :join_wrapped, true), do: ["-J"], else: []
+
+    socket_args ++ ["capture-pane", "-p", "-t", session_name] ++ bounds ++ escape ++ join
+  end
+
+  defp capture_line_token(:history_top), do: "-"
+  defp capture_line_token(n) when is_integer(n), do: Integer.to_string(n)
+  defp capture_line_token(s) when is_binary(s), do: s
+
   @doc false
   # Tmux send-keys token normalisation. Strings with whitespace or
   # double quotes get escaped for the tmux control-mode line format.
@@ -323,9 +406,26 @@ defmodule Esr.Peers.TmuxProcess do
         path -> ["-S", path]
       end
 
+    # PR-9 T12-comms-3 — inject ESR_* env vars into the *new-session*
+    # via tmux's native `-e VAR=VAL` flag. Without this, tmux silently
+    # drops non-whitelisted client-env vars (only `update-environment`
+    # entries like DISPLAY/SSH_AUTH_SOCK survive), so the claude CLI —
+    # and by extension the cc_mcp subprocess it forks — never sees
+    # `ESR_SESSION_ID` / `ESR_WORKSPACE` / `ESR_CHAT_IDS` / `ESR_ESRD_URL`
+    # and crashes on `os.environ["ESR_SESSION_ID"]` KeyError.
+    #
+    # Passing `-e` on `new-session` is the supported path and applies
+    # per-session (no server-wide side effects). Proven via
+    # `env -i PATH=… tmux new-session -e FOO=bar 'sh -c "env"'`.
+    env_flags =
+      Enum.flat_map(os_env(state), fn {k, v} -> ["-e", "#{k}=#{v}"] end)
+
     base =
       ["tmux"] ++
-        socket_args ++ ["-C", "new-session", "-s", state.session_name, "-c", state.dir]
+        socket_args ++
+        ["-C", "new-session"] ++
+        env_flags ++
+        ["-s", state.session_name, "-c", state.dir]
 
     # PR-9 T11b.3 — if we have the session context, append a claude
     # invocation as a single shell-command positional (tmux hands it
@@ -367,16 +467,39 @@ defmodule Esr.Peers.TmuxProcess do
 
   @impl Esr.OSProcess
   def on_terminate(%{session_name: name} = state) do
+    require Logger
+
     # Per-socket `kill-server` is simpler + more robust than per-session
     # kill (session may have subshell children). With an isolated
     # `-S <path>` socket we also `File.rm/1` it to keep /tmp tidy.
+    #
+    # T12-comms-3m: log both the out+exit of every tmux call so we can
+    # diagnose cases where session_end completes but the tmux session
+    # survives. Any non-zero exit here is a resource-leak in the making.
     case Map.get(state, :tmux_socket) do
       nil ->
-        _ = System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true)
+        {out, code} =
+          System.cmd("tmux", ["kill-session", "-t", name], stderr_to_stdout: true)
+
+        Logger.info(
+          "TmuxProcess.on_terminate: kill-session " <>
+            "name=#{inspect(name)} code=#{code} out=#{inspect(out)}"
+        )
 
       path ->
-        _ = System.cmd("tmux", ["-S", path, "kill-session", "-t", name], stderr_to_stdout: true)
-        _ = System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
+        {out1, code1} =
+          System.cmd("tmux", ["-S", path, "kill-session", "-t", name], stderr_to_stdout: true)
+
+        {out2, code2} =
+          System.cmd("tmux", ["-S", path, "kill-server"], stderr_to_stdout: true)
+
+        Logger.info(
+          "TmuxProcess.on_terminate: kill-session " <>
+            "sock=#{inspect(path)} name=#{inspect(name)} " <>
+            "kill-session code=#{code1} out=#{inspect(out1)} " <>
+            "kill-server code=#{code2} out=#{inspect(out2)}"
+        )
+
         _ = File.rm(path)
     end
 
@@ -573,8 +696,11 @@ defmodule Esr.Peers.TmuxProcess do
     :ok
   end
 
-  # ws://127.0.0.1:<port>/channel/socket/websocket?vsn=2.0.0 — mirrors
-  # the shape Esr.Application.ws_url_for/1 uses for other sockets.
+  # Base URL (`ws://127.0.0.1:<port>`) — cc_mcp's ws_client appends the
+  # `/channel/socket/websocket?vsn=2.0.0` suffix (mirrors the port-file
+  # fallback shape in `esr_cc_mcp.channel._resolve_from_port_file`).
+  # Passing the fully-qualified URL here double-appends the path and
+  # Phoenix logs "invalid transport version" before rejecting the join.
   defp channel_ws_url do
     port =
       case EsrWeb.Endpoint.config(:http) do
@@ -582,7 +708,7 @@ defmodule Esr.Peers.TmuxProcess do
         _ -> 4001
       end
 
-    "ws://127.0.0.1:" <> Integer.to_string(port) <> "/channel/socket/websocket?vsn=2.0.0"
+    "ws://127.0.0.1:" <> Integer.to_string(port)
   end
 
   # Best-effort: honour ESR_REPO_DIR (set by cc-openclaw + dev scripts),

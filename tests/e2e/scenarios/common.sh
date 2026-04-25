@@ -7,6 +7,11 @@ set -Eeuo pipefail
 # --- env bootstrap ---------------------------------------------------
 : "${ESR_E2E_RUN_ID:=pr7-$(date +%s)-$$}"
 : "${ESRD_INSTANCE:=e2e-${ESR_E2E_RUN_ID}}"
+# T12-comms-3h: the CLI-side URL discovery (`esr actors list`,
+# `cli:channel` bridge, etc.) reads `$ESR_INSTANCE`, not ESRD_INSTANCE.
+# Keep the two aligned so every CLI run inside the scenario points at
+# the same per-instance port file under ${ESRD_HOME}/${ESR_INSTANCE}.
+: "${ESR_INSTANCE:=${ESRD_INSTANCE}}"
 : "${ESRD_HOME:=/tmp/esrd-${ESR_E2E_RUN_ID}}"
 : "${MOCK_FEISHU_PORT:=8201}"
 : "${ESR_E2E_BARRIER_DIR:=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/barriers}"
@@ -26,7 +31,7 @@ set -Eeuo pipefail
 # seed_capabilities covers Lane A + Lane B + cc_mcp tool_invoke paths.
 : "${ESR_BOOTSTRAP_PRINCIPAL_ID:=${ESR_OPERATOR_PRINCIPAL_ID}}"
 
-export ESR_E2E_RUN_ID ESRD_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
+export ESR_E2E_RUN_ID ESRD_INSTANCE ESR_INSTANCE ESRD_HOME MOCK_FEISHU_PORT
 export ESR_E2E_BARRIER_DIR ESR_E2E_UPLOADS_DIR ESR_E2E_TMUX_SOCK
 export ESR_OPERATOR_PRINCIPAL_ID ESR_BOOTSTRAP_PRINCIPAL_ID
 
@@ -85,6 +90,18 @@ _e2e_teardown() {
   # Best-effort esrd stop.
   ( cd "${_E2E_REPO_ROOT}" && \
     bash scripts/esrd.sh stop --instance="${ESRD_INSTANCE}" 2>/dev/null ) || true
+
+  # T12-comms-3n (2026-04-25): kill the Python sidecars spawned by
+  # WorkerSupervisor. `esrd.sh stop` sends SIGTERM to the BEAM but
+  # scripts/spawn_worker.sh daemonises the sidecars, so they survive
+  # and reconnect to mock_feishu in the next scenario — producing a
+  # "stale handler responds to new session" race that flaked
+  # `make e2e` (scenarios running back-to-back). Scoped to this
+  # worktree's venv path so a user's dev sidecars stay untouched.
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*feishu_adapter_runner" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*cc_adapter_runner" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/py/.venv.*handler_worker" 2>/dev/null || true
+  pkill -9 -f "${_E2E_REPO_ROOT}/adapters/cc_mcp/.venv.*esr_cc_mcp" 2>/dev/null || true
 
   # CI-only absolute cleanup (§7.2).
   if [[ "${ESR_E2E_CI:-0}" == "1" ]]; then
@@ -180,11 +197,19 @@ assert_mock_feishu_sent_includes() {
 }
 
 assert_mock_feishu_reactions_count() {
+  # T12-comms-3e: FCP un-reacts on every CC reply (intended production
+  # flow — the reaction signals "working", the un-react signals "done").
+  # By the time this runs, ack has already landed → un-react has already
+  # removed the reaction from /reactions (live list). To assert "CC did
+  # react" we also count historical un-reactions.
   local message_id=$1 expected=$2
-  local count
-  count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
+  local live historical total
+  live=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
     | jq --arg mid "$message_id" '[.[] | select(.message_id==$mid)] | length')
-  assert_eq "$count" "$expected" "reactions for ${message_id}"
+  historical=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/un_reactions" \
+    | jq --arg mid "$message_id" '[.[] | select(.message_id==$mid)] | length')
+  total=$((live + historical))
+  assert_eq "$total" "$expected" "reactions-emitted (live+historical) for ${message_id}"
 }
 
 assert_mock_feishu_file_sha() {

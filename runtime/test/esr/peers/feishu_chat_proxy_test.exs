@@ -299,7 +299,15 @@ defmodule Esr.Peers.FeishuChatProxyTest do
                      500
     end
 
-    test "send_file tool emits send_file outbound + tool_result" do
+    test "send_file tool reads file + emits α wire shape (file_name + content_b64 + sha256)" do
+      # T12-comms-3g: FCP translates CC's MCP tool (chat_id + file_path)
+      # into the feishu adapter's α wire shape (file_name + content_b64
+      # + sha256) by reading the local file. Write a temp file so the
+      # read succeeds deterministically.
+      path = Path.join(System.tmp_dir!(), "fcp_sendfile_#{System.unique_integer([:positive])}.txt")
+      File.write!(path, "hello fcp send_file")
+      on_exit(fn -> File.rm(path) end)
+
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -313,18 +321,85 @@ defmodule Esr.Peers.FeishuChatProxyTest do
         })
 
       send(peer, {:tool_invoke, "req-2", "send_file",
-                  %{"chat_id" => "oc_sf", "file_path" => "/tmp/x.txt"},
+                  %{"chat_id" => "oc_sf", "file_path" => path},
                   self(), "ou_admin"})
+
+      expected_b64 = Base.encode64("hello fcp send_file")
+      expected_sha = :crypto.hash(:sha256, "hello fcp send_file") |> Base.encode16(case: :lower)
+      expected_name = Path.basename(path)
 
       assert_receive {:relay, :app,
                       {:outbound,
                        %{
                          "kind" => "send_file",
-                         "args" => %{"chat_id" => "oc_sf", "file_path" => "/tmp/x.txt"}
+                         "args" => %{
+                           "chat_id" => "oc_sf",
+                           "file_name" => ^expected_name,
+                           "content_b64" => ^expected_b64,
+                           "sha256" => ^expected_sha
+                         }
                        }}},
                      500
 
       assert_receive {:push_envelope, %{"req_id" => "req-2", "ok" => true}}, 500
+    end
+
+    test "send_file rejects relative paths + paths containing `..`" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_rel",
+          chat_id: "oc_sfr",
+          thread_id: "om_sfr",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # Relative path → rejected
+      send(peer, {:tool_invoke, "req-rel", "send_file",
+                  %{"chat_id" => "oc_sfr", "file_path" => "etc/passwd"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{"req_id" => "req-rel", "ok" => false}}, 500
+      refute_receive {:relay, :app, _}, 100
+
+      # Absolute but contains `..` → rejected (defence-in-depth even
+      # though Path.expand would resolve it).
+      send(peer, {:tool_invoke, "req-trav", "send_file",
+                  %{"chat_id" => "oc_sfr", "file_path" => "/tmp/foo/../../etc/passwd"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{"req_id" => "req-trav", "ok" => false}}, 500
+      refute_receive {:relay, :app, _}, 100
+    end
+
+    test "send_file with missing file returns tool_result ok:false + read_failed" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_missing",
+          chat_id: "oc_sfm",
+          thread_id: "om_sfm",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-3", "send_file",
+                  %{"chat_id" => "oc_sfm", "file_path" => "/tmp/this-file-does-not-exist-esr-test"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{
+                        "req_id" => "req-3",
+                        "ok" => false,
+                        "error" => %{"type" => "read_failed"}
+                      }},
+                     500
+
+      refute_receive {:relay, :app, _}, 200
     end
 
     test "unknown tool returns tool_result with ok:false + error" do

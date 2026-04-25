@@ -47,11 +47,15 @@ echo "created session ${SESSION_ID}"
 # Post-T11b.7 the cc_adapter_runner handler no longer composes a canned
 # reply — real CC now runs in tmux with the cc_mcp bridge, sees our
 # inbound as a <channel> tag in its conversation context, and decides
-# the response itself. We instruct CC explicitly to reply with "ack"
-# so the sent_messages assertion can still pin a deterministic substring.
+# the response itself. The prompt covers all three outbound directives
+# scenario 01 asserts on: reply (step 2), react (step 3 — automatic via
+# FCP), and send_file (step 4). T12-comms-3f 2026-04-24: CC also needs
+# the absolute probe-file path, otherwise it invents a non-existent one.
+PROBE_FILE="${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt"
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"Please reply with exactly the three letters: ack"}' \
+  -d "{\"chat_id\":\"oc_mock_single\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROMPT")}" \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" \
   | jq -r '.message_id')
 [[ -n "$INBOUND_MSG_ID" ]] || _fail_with_context "push_inbound did not return message_id"
@@ -69,21 +73,27 @@ done
 assert_mock_feishu_sent_includes "oc_mock_single" "ack"  # CC's reply per prompt
 
 # --- user-step 3: CC reacts on inbound --------------------------------
-# Depending on agent wiring, CC invokes `react` automatically. Wait for
-# the reaction count to reach 1.
+# Depending on agent wiring, CC invokes `react` automatically. The FCP
+# un-reacts on reply (production design — the reaction signals "working",
+# the un-react signals "done"), so the live /reactions list may be empty
+# by the time we poll. Count live + un_reactions together.
 for _ in $(seq 1 100); do
-  count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
+  live=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/reactions" \
     | jq --arg mid "$INBOUND_MSG_ID" '[.[] | select(.message_id==$mid)] | length')
-  [[ "$count" -ge 1 ]] && break
+  hist=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/un_reactions" \
+    | jq --arg mid "$INBOUND_MSG_ID" '[.[] | select(.message_id==$mid)] | length')
+  (( live + hist >= 1 )) && break
   sleep 0.1
 done
 assert_mock_feishu_reactions_count "$INBOUND_MSG_ID" 1
 
 # --- user-step 4: CC sends file ---------------------------------------
-EXPECTED_SHA=$(shasum -a 256 "${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt" \
-  | awk '{print $1}')
-# CC invokes send_file via its tool; wait for it to show up.
-for _ in $(seq 1 100); do
+EXPECTED_SHA=$(shasum -a 256 "${PROBE_FILE}" | awk '{print $1}')
+# CC invokes send_file via its tool as step (2) of the combined prompt.
+# Real CC's second action (tool call + round-trip) runs well after the
+# first reply — extend to 60s (the initial 10s was sized for the canned
+# placeholder, not a real model turn).
+for _ in $(seq 1 600); do
   if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_files" \
        | jq -e '.[] | select(.chat_id=="oc_mock_single")' >/dev/null; then
     break
@@ -93,23 +103,42 @@ done
 assert_mock_feishu_file_sha "oc_mock_single" "$EXPECTED_SHA"
 
 # --- user-step 5: second message, same session -----------------------
+# T12-comms-3i: capture the auto-created session_id from the live actor
+# list (post-T11b naming is `thread:<session_id>`; the legacy "cc:single"
+# tag from a pre-T11b architecture no longer exists). We use this
+# session_id both for the step-5 persistence check and the step-6
+# `/end-session` argument.
+LIVE_SESSION_ID=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+  | awk '/^thread:/ { sub("thread:", "", $1); print $1; exit }')
+[[ -n "$LIVE_SESSION_ID" ]] \
+  || _fail_with_context "user-step 5: no thread:<sid> actor found after inbound"
+echo "live session_id captured: ${LIVE_SESSION_ID}"
+
 curl -sS -X POST -H 'content-type: application/json' \
   -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 sleep 1
-# Same peer, so cc:single still present.
-assert_actors_list_has "cc:single" "user-step 5: session persisted after 2nd msg"
+# Same peer must still be present after the 2nd message — session
+# continuity, not chat-id-indexed single-peer-per-chat semantics.
+assert_actors_list_has "thread:${LIVE_SESSION_ID}" \
+  "user-step 5: session persisted after 2nd msg"
 
 # --- user-step 6: end session ----------------------------------------
-uv run --project "${_E2E_REPO_ROOT}/py" esr cmd run "/end-session single"
+# T12-comms-3j: `esr cmd run` resolves `.compiled/<name>.yaml` artifacts,
+# not slash commands — same trap the step-1 RCA warns about. The
+# admin-side path for session_end is `esr admin submit session_end`.
+ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
+  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+  --arg "session_id=${LIVE_SESSION_ID}" \
+  --wait --timeout 30
 for _ in $(seq 1 50); do
   if ! uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
-         | grep -q "cc:single"; then
+         | grep -q "thread:${LIVE_SESSION_ID}"; then
     break
   fi
   sleep 0.1
 done
-assert_actors_list_lacks "cc:single" "user-step 6: peer torn down"
+assert_actors_list_lacks "thread:${LIVE_SESSION_ID}" "user-step 6: peer torn down"
 
 # --- user-step 12 (cleanup assertion — deferred until trap runs) ------
 # Trap runs after this script exits; assertion on baseline happens in
