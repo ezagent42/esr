@@ -115,3 +115,48 @@ async def test_notification_meta_excludes_empty_values(
     assert "chat_id" in meta
     assert "user" not in meta
     assert "message_id" not in meta
+
+
+@pytest.mark.asyncio
+async def test_notification_meta_carries_app_id(
+    _stub_stdio_stream: _FakeStream,
+) -> None:
+    """PR-A T2 fixup: app_id from the upstream envelope must surface as
+    a <channel> tag attribute. T3's `reply` schema requires app_id and
+    its description tells claude to echo it from the inbound tag —
+    without this hop, the tag has no app_id and claude refuses to call
+    the tool. Real e2e regression: scenario 01 step 2 timed out
+    waiting for the 'ack' reply because claude couldn't fulfil
+    the prompt."""
+    await _handle_inbound({
+        "kind": "notification",
+        "source": "feishu",
+        "chat_id": "oc_x",
+        "app_id": "feishu_app_e2e-mock",
+        "message_id": "om_x",
+        "user": "ou_admin",
+        "content": "hi",
+    })
+
+    meta = _stub_stdio_stream.sent[0].message.root.params["meta"]
+    assert meta["app_id"] == "feishu_app_e2e-mock"
+
+
+@pytest.mark.asyncio
+async def test_notification_meta_omits_app_id_when_envelope_misses_it(
+    _stub_stdio_stream: _FakeStream,
+) -> None:
+    """app_id is conditional — pre-T1 envelopes (or any envelope that
+    legitimately has no app_id, e.g. admin-side synthetic events) must
+    not surface a literal 'None' or empty string on the tag."""
+    await _handle_inbound({
+        "kind": "notification",
+        "source": "feishu",
+        "chat_id": "oc_x",
+        "message_id": "om_x",
+        "user": "ou_admin",
+        "content": "hi",
+    })
+
+    meta = _stub_stdio_stream.sent[0].message.root.params["meta"]
+    assert "app_id" not in meta
