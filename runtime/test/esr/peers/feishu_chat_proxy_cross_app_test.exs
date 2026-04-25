@@ -15,6 +15,7 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
       relay registers itself before entering its receive loop.
   """
   use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
   alias Esr.Peers.FeishuChatProxy
 
   setup do
@@ -193,6 +194,45 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
     refute_receive {:relay, :dev, _}, 200
   end
 
+  test "cross-app reply unknown_chat_in_app when workspace_for_chat misses", ctx do
+    # Cap on a workspace that doesn't matter — the workspace lookup
+    # for (chat_id, app_id) fails first because no row was seeded.
+    grant_caps("ou_admin", ["workspace:ws_kanban/msg.send"])
+    # Intentionally do NOT call put_chat_in_workspace — this is the
+    # unknown_chat_in_app trigger (Workspaces.Registry returns :not_found).
+
+    {:ok, peer} =
+      GenServer.start_link(
+        FeishuChatProxy,
+        fcp_args(%{
+          session_id: "S_PRA4_UCHAT",
+          neighbors: [feishu_app_proxy: ctx.dev_pid]
+        })
+      )
+
+    send(
+      peer,
+      {:tool_invoke, "req-uchat", "reply",
+       %{"chat_id" => "oc_unmapped", "app_id" => "feishu_kanban", "text" => "x"},
+       self(), "ou_admin"}
+    )
+
+    assert_receive {:push_envelope,
+                    %{
+                      "req_id" => "req-uchat",
+                      "ok" => false,
+                      "error" => %{
+                        "type" => "unknown_chat_in_app",
+                        "app_id" => "feishu_kanban",
+                        "chat_id" => "oc_unmapped"
+                      }
+                    }},
+                   500
+
+    refute_receive {:relay, :kanban, _}, 200
+    refute_receive {:relay, :dev, _}, 200
+  end
+
   test "cross-app reply unknown_app when no FAA registered for target", ctx do
     grant_caps("ou_admin", ["workspace:ws_unknown/msg.send"])
     put_chat_in_workspace("ws_unknown", "oc_x", "feishu_unregistered")
@@ -241,24 +281,77 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
         })
       )
 
-    send(
-      peer,
-      {:tool_invoke, "req-strip", "reply",
-       %{
-         "chat_id" => "oc_kanban",
-         "app_id" => "feishu_kanban",
-         "text" => "x",
-         "reply_to_message_id" => "om_OLD",
-         "edit_message_id" => "om_OLDER"
-       }, self(), "ou_admin"}
-    )
+    # Lower primary log level so capture_log sees Logger.info — same
+    # pattern as feishu_chat_proxy_test.exs:103-106.
+    original_level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: original_level) end)
 
-    # Directive must NOT carry reply_to_message_id or edit_message_id.
-    assert_receive {:relay, :kanban,
-                    {:outbound, %{"kind" => "reply", "args" => args}}},
-                   500
+    log =
+      capture_log(fn ->
+        send(
+          peer,
+          {:tool_invoke, "req-strip", "reply",
+           %{
+             "chat_id" => "oc_kanban",
+             "app_id" => "feishu_kanban",
+             "text" => "x",
+             "reply_to_message_id" => "om_OLD",
+             "edit_message_id" => "om_OLDER"
+           }, self(), "ou_admin"}
+        )
 
-    refute Map.has_key?(args, "reply_to_message_id")
-    refute Map.has_key?(args, "edit_message_id")
+        # Drain the FCP mailbox + relay roundtrip. By the time the
+        # relay forwards the outbound to us, the Logger.info call has
+        # been issued; the small sleep covers async logger flush.
+        assert_receive {:relay, :kanban,
+                        {:outbound, %{"kind" => "reply", "args" => args}}},
+                       500
+
+        refute Map.has_key?(args, "reply_to_message_id")
+        refute Map.has_key?(args, "edit_message_id")
+
+        Process.sleep(50)
+      end)
+
+    # Beyond the args-shape assertion (which dispatch_to_target_app
+    # satisfies trivially via literal envelope construction), prove
+    # the cross-app strip *branch* fired by checking the info log.
+    assert log =~ "FCP cross-app: stripping reply_to/edit ids"
+    assert log =~ "om_OLD"
+    assert log =~ "om_OLDER"
+  end
+
+  test "cross-app reply does NOT log the strip notice when ids absent", ctx do
+    grant_caps("ou_admin", ["workspace:ws_kanban/msg.send"])
+    put_chat_in_workspace("ws_kanban", "oc_kanban", "feishu_kanban")
+
+    {:ok, peer} =
+      GenServer.start_link(
+        FeishuChatProxy,
+        fcp_args(%{
+          session_id: "S_PRA4_NOSTRIP",
+          neighbors: [feishu_app_proxy: ctx.dev_pid]
+        })
+      )
+
+    original_level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: original_level) end)
+
+    log =
+      capture_log(fn ->
+        send(
+          peer,
+          {:tool_invoke, "req-nostrip", "reply",
+           %{"chat_id" => "oc_kanban", "app_id" => "feishu_kanban", "text" => "x"},
+           self(), "ou_admin"}
+        )
+
+        assert_receive {:relay, :kanban, {:outbound, _}}, 500
+        Process.sleep(50)
+      end)
+
+    refute log =~ "FCP cross-app: stripping reply_to/edit ids"
   end
 end

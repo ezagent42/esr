@@ -282,6 +282,23 @@ defmodule Esr.Peers.FeishuChatProxy do
     state
   end
 
+  defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
+    Logger.warning(
+      "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
+        "session_id=#{state.session_id}"
+    )
+
+    reply_tool_result(
+      channel_pid,
+      req_id,
+      false,
+      nil,
+      %{"type" => "unknown_tool", "message" => "FCP has no handler for #{unknown_tool}"}
+    )
+
+    state
+  end
+
   # 30 MiB — the cheapest meaningful cap for the α in-band payload
   # before base64-blowup makes the channel envelope unwieldy. Feishu's
   # own /open-apis/im/v1/files limit is 30MB; matching it here means
@@ -320,23 +337,6 @@ defmodule Esr.Peers.FeishuChatProxy do
           {:error, reason} -> {:error, reason}
         end
     end
-  end
-
-  defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
-    Logger.warning(
-      "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
-        "session_id=#{state.session_id}"
-    )
-
-    reply_tool_result(
-      channel_pid,
-      req_id,
-      false,
-      nil,
-      %{"type" => "unknown_tool", "message" => "FCP has no handler for #{unknown_tool}"}
-    )
-
-    state
   end
 
   # PR-A T4: cross-app dispatch. Three structured failure modes:
