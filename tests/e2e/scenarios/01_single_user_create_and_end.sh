@@ -52,7 +52,7 @@ echo "created session ${SESSION_ID}"
 # FCP), and send_file (step 4). T12-comms-3f 2026-04-24: CC also needs
 # the absolute probe-file path, otherwise it invents a non-existent one.
 PROBE_FILE="${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt"
-PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation) — for the reply tool, use the app_id you see in the inbound <channel> tag; (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
   -d "{\"chat_id\":\"oc_mock_single\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROMPT")}" \
@@ -115,7 +115,7 @@ LIVE_SESSION_ID=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev
 echo "live session_id captured: ${LIVE_SESSION_ID}"
 
 curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again"}' \
+  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again — if you reply, use the app_id you see in the inbound <channel> tag for the reply tool"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 sleep 1
 # Same peer must still be present after the 2nd message — session

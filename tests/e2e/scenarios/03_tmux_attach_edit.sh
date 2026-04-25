@@ -31,7 +31,7 @@ wait_for_sidecar_ready 30
 
 # --- user-step 10: create session via inbound -----------------------
 curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_tmux","user":"ou_admin","text":"Please reply with exactly the three letters: ack"}' \
+  -d '{"chat_id":"oc_mock_tmux","user":"ou_admin","text":"Please reply with exactly the three letters: ack — for the reply tool, use the app_id you see in the inbound <channel> tag"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 
 # Wait for CC's reply (confirms the pipeline — including TmuxProcess

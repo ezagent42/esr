@@ -34,3 +34,20 @@ def test_reply_schema_carries_optional_reply_to_message_id() -> None:
     assert props["reply_to_message_id"]["type"] == "string"
     # NOT in required — backward compat for legacy callers.
     assert "reply_to_message_id" not in reply.inputSchema["required"]
+
+
+def test_reply_schema_requires_app_id():
+    """T-PR-A: reply tool must require app_id explicitly (no default)."""
+    from esr_cc_mcp.tools import list_tool_schemas
+
+    tools = list_tool_schemas(role="dev")
+    reply = next(t for t in tools if t.name == "reply")
+
+    schema = reply.inputSchema
+    assert "app_id" in schema["properties"], "reply schema missing app_id property"
+    assert "app_id" in schema["required"], (
+        "app_id must be REQUIRED on reply per PR-A spec §2.4 — explicit, no default"
+    )
+    # Description should tell claude where to source the value
+    assert "channel" in schema["properties"]["app_id"]["description"].lower() \
+        or "instance" in schema["properties"]["app_id"]["description"].lower()

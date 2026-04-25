@@ -26,12 +26,19 @@ _REPLY = Tool(
         "Send a message to the user's chat channel. The user reads the "
         "channel, not this session — anything you want them to see must go "
         "through this tool. chat_id is from the inbound <channel> tag "
-        "(opaque token scoped to the active channel). Pass edit_message_id "
-        "to edit an existing message in-place instead of sending a new one "
-        "(covers update_title semantics). Production callers should always "
-        "include reply_to_message_id when the reply is in response to a "
-        "specific inbound message — the runtime uses it to clean up any "
-        "delivery-ack reaction the per-IM proxy emitted on receive."
+        "(opaque token scoped to the active channel). app_id MUST be "
+        "specified explicitly on every call (no default) — take it from "
+        "the inbound <channel> tag's app_id, or from a forward request's "
+        "target app. This is an ESR routing identifier (instance_id), not "
+        "a channel-native app token. Pass edit_message_id to edit an "
+        "existing message in-place instead of sending a new one. "
+        "Production callers should always include reply_to_message_id "
+        "when the reply is in response to a specific inbound message — "
+        "the runtime uses it to clean up any delivery-ack reaction the "
+        "per-IM proxy emitted on receive. (Note: edit_message_id and "
+        "reply_to_message_id are scoped to the source app's message "
+        "space — they're stripped on cross-app reply where target "
+        "app_id != source app_id.)"
     ),
     inputSchema={
         "type": "object",
@@ -39,6 +46,15 @@ _REPLY = Tool(
             "chat_id": {
                 "type": "string",
                 "description": "Channel chat ID (opaque token scoped to the active channel)",
+            },
+            "app_id": {
+                "type": "string",
+                "description": (
+                    "ESR routing identifier (instance_id from adapters.yaml). "
+                    "Required on every call — take it from the inbound "
+                    "<channel> tag's app_id attribute. To forward to a "
+                    "different app, set this to the target app's instance_id."
+                ),
             },
             "text": {"type": "string", "description": "Message text"},
             "edit_message_id": {
@@ -51,12 +67,11 @@ _REPLY = Tool(
                     "Optional message_id of the inbound message this reply "
                     "responds to. When present, the runtime un-reacts any "
                     "delivery-ack emoji the per-IM proxy added on inbound "
-                    "receive. Omit for proactive messages not tied to a "
-                    "specific inbound."
+                    "receive. Stripped automatically on cross-app reply."
                 ),
             },
         },
-        "required": ["chat_id", "text"],
+        "required": ["chat_id", "app_id", "text"],
     },
 )
 

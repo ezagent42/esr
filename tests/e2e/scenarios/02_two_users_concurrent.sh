@@ -23,8 +23,8 @@ start_esrd
 wait_for_sidecar_ready 30
 
 # Distinct content markers so isolation violations are unambiguous.
-PROBE_A="Please reply with exactly: ack-alpha-uniq"
-PROBE_B="Please reply with exactly: ack-beta-uniq"
+PROBE_A="Please reply with exactly: ack-alpha-uniq — for the reply tool, use the app_id you see in the inbound <channel> tag"
+PROBE_B="Please reply with exactly: ack-beta-uniq — for the reply tool, use the app_id you see in the inbound <channel> tag"
 
 # Fire both inbounds in parallel — session_router auto-creates two
 # independent pipelines for oc_mock_concurrent_a and oc_mock_concurrent_b.
