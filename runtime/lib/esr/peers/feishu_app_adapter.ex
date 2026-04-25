@@ -59,6 +59,16 @@ defmodule Esr.Peers.FeishuAppAdapter do
         self()
       )
 
+    # PR-A T4: FCP's cross-app dispatch path looks up the target FAA
+    # via Esr.PeerRegistry under "feishu_app_adapter_<instance_id>"
+    # (string key — distinct from the AdminSessionProcess atom
+    # registration above). The two registrations coexist: admin peers
+    # use atoms (legacy via_tuple style); cross-app peer-to-peer
+    # routing uses the binary-keyed PeerRegistry. Ignore re-register
+    # races so a hot-reload that re-runs init/1 doesn't crash the
+    # GenServer — the existing entry stays valid.
+    _ = Esr.PeerRegistry.register("feishu_app_adapter_#{instance_id}", self())
+
     {:ok,
      %{
        instance_id: instance_id,

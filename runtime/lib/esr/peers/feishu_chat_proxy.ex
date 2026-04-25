@@ -27,9 +27,17 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   @impl Esr.Peer
   def spawn_args(params) do
+    # PR-A T4: thread `app_id` (the source app this FCP serves) and
+    # `principal_id` (the human authenticated for the originating
+    # inbound) into init args. Both are needed by the cross-app
+    # `dispatch_tool_invoke("reply")` branch — `app_id` to detect that
+    # `args.app_id != state.app_id`, `principal_id` to gate on
+    # `workspace:<target>/msg.send`.
     %{
       chat_id: Esr.Peer.get_param(params, :chat_id) || "",
-      thread_id: Esr.Peer.get_param(params, :thread_id) || ""
+      thread_id: Esr.Peer.get_param(params, :thread_id) || "",
+      app_id: Esr.Peer.get_param(params, :app_id) || "",
+      principal_id: Esr.Peer.get_param(params, :principal_id) || ""
     }
   end
 
@@ -42,6 +50,14 @@ defmodule Esr.Peers.FeishuChatProxy do
       session_id: session_id,
       chat_id: Map.fetch!(args, :chat_id),
       thread_id: Map.fetch!(args, :thread_id),
+      # PR-A T4: home app + authenticated principal. Source order:
+      #   args.<key> (set by spawn_args/1 from session_router params)
+      #   proxy_ctx[:<key>] (T1's FAA-side propagation may add it)
+      #   "" (defensive default — keeps test setups that don't thread
+      #     these args from crashing on Map.fetch!)
+      app_id: Map.get(args, :app_id) || Map.get(ctx, :app_id) || "",
+      principal_id:
+        Map.get(args, :principal_id) || Map.get(ctx, :principal_id) || "",
       neighbors: Map.get(args, :neighbors, []),
       proxy_ctx: ctx,
       # PR-9 T5b: track message_ids we've emitted a `react` for so
@@ -173,12 +189,34 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   defp dispatch_tool_invoke("reply", args, req_id, channel_pid, state) do
     text = Map.get(args, "text") || ""
+    chat_id = Map.get(args, "chat_id") || state.chat_id
+    app_id = Map.get(args, "app_id") || state.app_id
+    reply_to_msg_id = Map.get(args, "reply_to_message_id") || ""
+    edit_msg_id = Map.get(args, "edit_message_id") || ""
 
-    state =
-      forward_reply_pass_through(text, Map.get(args, "reply_to_message_id"), state)
+    # PR-A T4: home-app vs cross-app. If the reply targets the same
+    # app this FCP was spawned for, keep the existing pass-through
+    # path (preserves un_react bookkeeping on `reply_to_message_id`).
+    # Otherwise route to the target FAA's pid in PeerRegistry after
+    # gating on `workspace:<target_ws>/msg.send` for the source
+    # session's principal.
+    if app_id == state.app_id do
+      state =
+        forward_reply_pass_through(text, Map.get(args, "reply_to_message_id"), state)
 
-    reply_tool_result(channel_pid, req_id, true, %{"delivered" => true})
-    state
+      reply_tool_result(channel_pid, req_id, true, %{"delivered" => true})
+      state
+    else
+      if reply_to_msg_id != "" or edit_msg_id != "" do
+        Logger.info(
+          "FCP cross-app: stripping reply_to/edit ids " <>
+            "(target_app=#{app_id}, source_app=#{state.app_id}, " <>
+            "reply_to=#{inspect(reply_to_msg_id)}, edit=#{inspect(edit_msg_id)})"
+        )
+      end
+
+      dispatch_cross_app_reply(chat_id, app_id, text, req_id, channel_pid, state)
+    end
   end
 
   defp dispatch_tool_invoke("react", args, req_id, channel_pid, state) do
@@ -299,6 +337,76 @@ defmodule Esr.Peers.FeishuChatProxy do
     )
 
     state
+  end
+
+  # PR-A T4: cross-app dispatch. Three structured failure modes:
+  #   * unknown_chat_in_app — Workspaces.Registry has no row for
+  #     (chat_id, app_id); CC typed the wrong chat or the workspace
+  #     mapping isn't loaded.
+  #   * forbidden — principal lacks `workspace:<target_ws>/msg.send`.
+  #   * unknown_app — no FeishuAppAdapter pid registered in
+  #     PeerRegistry under "feishu_app_adapter_<app_id>".
+  defp dispatch_cross_app_reply(chat_id, app_id, text, req_id, channel_pid, state) do
+    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, target_ws} ->
+        perm = "workspace:#{target_ws}/msg.send"
+
+        if Esr.Capabilities.has?(state.principal_id, perm) do
+          dispatch_to_target_app(chat_id, app_id, text, req_id, channel_pid)
+        else
+          reply_tool_result(channel_pid, req_id, false, nil, %{
+            "type" => "forbidden",
+            "app_id" => app_id,
+            "chat_id" => chat_id,
+            "workspace" => target_ws,
+            "message" => "principal #{state.principal_id} lacks #{perm}"
+          })
+        end
+
+      :not_found ->
+        reply_tool_result(channel_pid, req_id, false, nil, %{
+          "type" => "unknown_chat_in_app",
+          "app_id" => app_id,
+          "chat_id" => chat_id,
+          "message" =>
+            "no workspace mapping for (chat_id=#{chat_id}, app_id=#{app_id})"
+        })
+    end
+
+    state
+  end
+
+  defp dispatch_to_target_app(chat_id, app_id, text, req_id, channel_pid) do
+    case lookup_target_app_proxy(app_id) do
+      {:ok, target_pid} ->
+        send(
+          target_pid,
+          {:outbound,
+           %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
+        )
+
+        reply_tool_result(channel_pid, req_id, true, %{
+          "dispatched" => true,
+          "cross_app" => true
+        })
+
+      :not_found ->
+        reply_tool_result(channel_pid, req_id, false, nil, %{
+          "type" => "unknown_app",
+          "app_id" => app_id,
+          "message" =>
+            "no FeishuAppAdapter registered for app_id=#{inspect(app_id)}"
+        })
+    end
+  end
+
+  # FeishuAppAdapter peers register under
+  # "feishu_app_adapter_<instance_id>" in Esr.PeerRegistry on init.
+  defp lookup_target_app_proxy(app_id) when is_binary(app_id) do
+    case Registry.lookup(Esr.PeerRegistry, "feishu_app_adapter_#{app_id}") do
+      [{pid, _}] when is_pid(pid) -> {:ok, pid}
+      _ -> :not_found
+    end
   end
 
   # Internal helper: forward a reply without dropping on to the usual
