@@ -63,7 +63,7 @@ INBOUND_MSG_ID=$(curl -sS -X POST \
 # Wait for CC's reply to land in mock's sent_messages.
 # Real CC takes longer than the canned placeholder — allow up to 60s
 # for the model's turn + cc_mcp reply tool dispatch.
-for _ in $(seq 1 600); do
+for _ in $(seq 1 1200); do
   if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
        | jq -e '.[] | select(.receive_id=="oc_mock_single")' >/dev/null; then
     break
@@ -93,7 +93,7 @@ EXPECTED_SHA=$(shasum -a 256 "${PROBE_FILE}" | awk '{print $1}')
 # Real CC's second action (tool call + round-trip) runs well after the
 # first reply — extend to 60s (the initial 10s was sized for the canned
 # placeholder, not a real model turn).
-for _ in $(seq 1 600); do
+for _ in $(seq 1 1200); do
   if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_files" \
        | jq -e '.[] | select(.chat_id=="oc_mock_single")' >/dev/null; then
     break
