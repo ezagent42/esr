@@ -1,6 +1,10 @@
-# PR-A Multi-App E2E Implementation Plan
+# PR-A Multi-App E2E Implementation Plan (v1.1)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+### Plan changelog
+- **v1.1 (2026-04-25)** — code-review fixes. M1: T4 test uses real `Esr.PeerRegistry.register/2` from inside the relay (no `register_name/2` API). M2: T4 auth seams use `Esr.Capabilities.Grants.load_snapshot/1` and `Esr.Workspaces.Registry.put/1` (the test seams that actually exist; pattern in `runtime/test/esr/capabilities_has_all_test.exs`). M3: `Capabilities.has?/2` returns `true | false`, not `:ok | {:missing, _}` — T4 production code matches on bool. M4: ETS wipe deleted from T1 (a no-op — `:ets.new` already produces an empty table; the table never survives a BEAM restart). N1: T3 + T10 merged into one task to eliminate the schema-required-but-prompts-not-updated window. N2: §5.4 / §5.5 E2E hard-deferred to `docs/notes/futures/multi-app-deferred.md`. Line-number references replaced with grep patterns.
+- **v1.0 (2026-04-25)** — initial draft.
 
 **Goal:** Add multi-app coexistence + cross-app forward to ESR's existing single-app feishu-to-cc topology, exercised by a new scenario 04 E2E. Existing scenarios 01/02/03 continue to pass against the upgraded mock.
 
@@ -9,6 +13,8 @@
 **Tech Stack:** Elixir 1.19 / OTP 28 (runtime + peers + Phoenix channels); Python 3.11+ (cc_mcp, feishu adapter, mock_feishu); pytest + ExUnit; bash for E2E scenarios.
 
 **Spec:** `/Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor/docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md` (v1.1, all open questions settled). Read it before implementing.
+
+**Total tasks:** 11 (T0 branch setup; T1-T9 implementation; T10 docs sync). T11 from v1.0 was merged into T3 (schema + prompt updates land atomically).
 
 **Branch:** `feature/pr-a-multi-app` off `origin/main` (post-PR #52). The mock-fidelity-audit branch (`feature/multi-app-mock-fidelity-audit`) ships the spec + audit doc; this plan implements them.
 
@@ -186,22 +192,14 @@ def handle_call(
   {:reply, :ok, state}
 end
 
-# Add ETS wipe on init (find init/1 callback ~line 65 and add at top):
-def init(opts) do
-  # T-PR-A: wipe pre-existing rows from any prior boot — they are
-  # 2-tuple keyed and would ghost-collide on first 3-arity lookup.
-  # Safe because the table is in-memory only and is rebuilt by
-  # register_session calls.
-  if :ets.info(@ets_table) != :undefined do
-    :ets.delete_all_objects(@ets_table)
-  else
-    :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
-  end
-  # ... rest of original init unchanged ...
-end
+# NOTE: spec v1.1 §2.1 mentions an "ETS wipe on first boot" but
+# review (v1.1 plan revision) found this is a no-op — `:ets.new`
+# already produces an empty table on every BEAM start. The table
+# does not survive a restart. Hot-code-reload during a release
+# upgrade is a different concern (deferred to
+# `docs/notes/futures/multi-app-deferred.md`). Leave init/1
+# unchanged from current code.
 ```
-
-(Read the current `init/1` first to splice in the wipe correctly. The diff is just adding the `delete_all_objects` line.)
 
 - [ ] **Step 4: Run registry test to confirm PASS**
 
@@ -497,13 +495,16 @@ the reply tool."
 
 ---
 
-### Task 3: cc_mcp `reply` tool requires `app_id`
+### Task 3: cc_mcp `reply` tool requires `app_id` + scenarios 01-03 prompt updates
 
-CC's MCP `reply` tool gets a required `app_id` parameter. The tool's job is forwarding to the FCP via the existing channel WS — no behaviour change here, just schema + a Python schema test.
+This was originally split into T3 (schema) + T10 (prompt updates). Merged in v1.1: the schema change makes `app_id` required, and any scenario whose prompt doesn't mention `app_id` will fail because cc_mcp's tool-call validation rejects calls missing required fields. Landing both in the same commit means `master` never has the "schema requires field, prompt doesn't supply it" gap.
 
 **Files:**
 - Modify: `adapters/cc_mcp/src/esr_cc_mcp/tools.py` (add `app_id` to `_REPLY` schema)
 - Test: `adapters/cc_mcp/tests/test_tools.py` (or `test_tools_schema_language.py` — append, don't create a new file)
+- Modify: `tests/e2e/scenarios/01_single_user_create_and_end.sh` (prompt edits)
+- Modify: `tests/e2e/scenarios/02_two_users_concurrent.sh`
+- Modify: `tests/e2e/scenarios/03_tmux_attach_edit.sh`
 
 - [ ] **Step 1: Write the failing schema test**
 
@@ -604,24 +605,52 @@ uv run --project . pytest tests/test_tools.py -v
 
 Expected: all green, including the new test.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Update scenarios 01-03 prompts to include `app_id` directive**
+
+The schema change makes `app_id` required; scenarios 01-03's prompts must tell CC to source it from the `<channel>` tag, otherwise their `reply` tool calls fail validation.
+
+Edit `tests/e2e/scenarios/01_single_user_create_and_end.sh`. Find each `PROMPT` (or `PROBE`) variable that drives a `reply` call. Append the directive:
+
+```bash
+# Before:
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
+
+# After:
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation) — for the reply tool, use the app_id you see in the inbound <channel> tag; (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
+```
+
+Same edit applied to `02_two_users_concurrent.sh` and `03_tmux_attach_edit.sh` for every prompt that drives a reply.
+
+- [ ] **Step 6: Run scenarios 01-03 to confirm they still pass**
 
 ```bash
 cd /Users/h2oslabs/Workspace/esr/.worktrees/peer-session-refactor
-git add adapters/cc_mcp/src/esr_cc_mcp/tools.py adapters/cc_mcp/tests/test_tools.py
+pkill -f "peer-session-refactor/py/.venv" 2>/dev/null; sleep 1
+E2E_TIMEOUT=360 make e2e-01 e2e-02 e2e-03
+```
 
-git commit -m "PR-A T3: cc_mcp reply tool requires app_id
+Expected: all three pass. If a `reply` is rejected by the schema, you'll see a tool_result `ok: false` in the esrd log; check that the prompt for that scenario actually mentions `<channel>` and `app_id`.
 
-Schema change: app_id is now in required[]. Description directs
-claude to source it from the inbound <channel> tag, with clear
-note that it is the ESR instance_id (never the cli_xxx). Calls
-out that reply_to_message_id and edit_message_id are stripped
-on cross-app reply.
+- [ ] **Step 7: Commit (atomic — schema + prompt updates together)**
 
-This is a wire-incompatible schema bump — scenarios 01-03 prompts
-must be updated in T10 to include app_id explicitly. Doing T10
-later in the plan because their full edit needs scenario 04
-helpers landed first."
+```bash
+git add adapters/cc_mcp/src/esr_cc_mcp/tools.py \
+        adapters/cc_mcp/tests/test_tools.py \
+        tests/e2e/scenarios/01_single_user_create_and_end.sh \
+        tests/e2e/scenarios/02_two_users_concurrent.sh \
+        tests/e2e/scenarios/03_tmux_attach_edit.sh
+
+git commit -m "PR-A T3: reply tool requires app_id + scenarios 01-03 prompt update
+
+Schema change: app_id added to reply tool's required[]. Description
+tells claude to source it from the inbound <channel> tag, calls out
+that reply_to_message_id and edit_message_id are stripped on
+cross-app reply.
+
+Scenarios 01-03 prompts updated atomically — without the directive,
+CC would omit app_id and cc_mcp would reject the tool call. T3
+must land schema + prompt updates together so master never has
+the 'required-field-not-supplied' gap."
 ```
 
 ---
@@ -660,32 +689,50 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
   alias Esr.Peers.FeishuChatProxy
 
   setup do
-    # Two fake adapter peers
+    # Two fake adapter peers. `Esr.PeerRegistry.register/2` only
+    # registers `self()` (returns {:error, :cannot_register_other_pid}
+    # otherwise — see runtime/lib/esr/peer_registry.ex). So each relay
+    # must register itself before entering its receive loop, and we
+    # wait on `:registered` ack from the parent before continuing.
     parent = self()
-    dev_pid = spawn_link(fn -> relay(parent, :dev) end)
-    kanban_pid = spawn_link(fn -> relay(parent, :kanban) end)
 
-    # Register them so FCP's lookup_target_app_proxy/1 can find them
-    Registry.register(Esr.PeerRegistry, "feishu_app_adapter_feishu_dev", nil)
-    # Need to actually register the pid — depends on PeerRegistry semantics
-    # Use Esr.PeerRegistry directly per the production pattern
-    {:ok, _} = Esr.PeerRegistry.register_name("feishu_app_adapter_feishu_dev", dev_pid)
-    {:ok, _} = Esr.PeerRegistry.register_name("feishu_app_adapter_feishu_kanban", kanban_pid)
+    spawn_relay = fn label, registered_name ->
+      spawn_link(fn ->
+        Esr.PeerRegistry.register(registered_name, self())
+        send(parent, {:registered, label})
+        relay_loop(parent, label)
+      end)
+    end
 
-    on_exit(fn ->
-      Esr.PeerRegistry.unregister_name("feishu_app_adapter_feishu_dev")
-      Esr.PeerRegistry.unregister_name("feishu_app_adapter_feishu_kanban")
-    end)
+    dev_pid = spawn_relay.(:dev, "feishu_app_adapter_feishu_dev")
+    kanban_pid = spawn_relay.(:kanban, "feishu_app_adapter_feishu_kanban")
+    assert_receive {:registered, :dev}, 500
+    assert_receive {:registered, :kanban}, 500
 
     %{dev_pid: dev_pid, kanban_pid: kanban_pid}
   end
 
-  defp relay(parent, label) do
+  defp relay_loop(parent, label) do
     receive do
       msg ->
         send(parent, {:relay, label, msg})
-        relay(parent, label)
+        relay_loop(parent, label)
     end
+  end
+
+  # Helper to seed grants for a principal — uses the same load_snapshot
+  # pattern as runtime/test/esr/capabilities_has_all_test.exs.
+  defp grant_caps(principal_id, caps) do
+    Esr.Capabilities.Grants.load_snapshot(%{principal_id => caps})
+  end
+
+  # Helper to seed (chat_id, app_id) → workspace_name. Uses
+  # Workspaces.Registry.put/1 with a Workspace struct.
+  defp put_chat_in_workspace(ws_name, chat_id, app_id) do
+    Esr.Workspaces.Registry.put(%Esr.Workspaces.Workspace{
+      name: ws_name,
+      chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}]
+    })
   end
 
   test "home-app reply routes to home FAA (no cross-app branch)", ctx do
@@ -711,13 +758,8 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
 
   test "cross-app reply routes to target FAA when authorized", ctx do
     # Pre-seed capability for ou_admin to send to ws_kanban
-    Esr.Capabilities.put_principal_caps("ou_admin", ["workspace:ws_kanban/msg.send"])
-    on_exit(fn -> Esr.Capabilities.put_principal_caps("ou_admin", []) end)
-
-    # Pre-seed workspace mapping (chat_id, app_id) → workspace_name
-    Esr.Workspaces.Registry.put_chat_workspace(
-      {"oc_kanban", "feishu_kanban"}, "ws_kanban"
-    )
+    grant_caps("ou_admin", ["workspace:ws_kanban/msg.send"])
+    put_chat_in_workspace("ws_kanban", "oc_kanban", "feishu_kanban")
 
     state = %{
       session_id: "S_PRA4_X",
@@ -743,11 +785,8 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
   end
 
   test "cross-app reply forbidden when principal lacks target ws cap", ctx do
-    Esr.Capabilities.put_principal_caps("ou_admin", [])  # no ws_kanban cap
-
-    Esr.Workspaces.Registry.put_chat_workspace(
-      {"oc_kanban", "feishu_kanban"}, "ws_kanban"
-    )
+    grant_caps("ou_admin", [])  # no ws_kanban cap
+    put_chat_in_workspace("ws_kanban", "oc_kanban", "feishu_kanban")
 
     state = %{
       session_id: "S_PRA4_FORBID",
@@ -774,10 +813,8 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
   end
 
   test "cross-app reply unknown_app when no FAA registered for target", ctx do
-    Esr.Capabilities.put_principal_caps("ou_admin", ["workspace:ws_unknown/msg.send"])
-    Esr.Workspaces.Registry.put_chat_workspace(
-      {"oc_x", "feishu_unregistered"}, "ws_unknown"
-    )
+    grant_caps("ou_admin", ["workspace:ws_unknown/msg.send"])
+    put_chat_in_workspace("ws_unknown", "oc_x", "feishu_unregistered")
 
     state = %{
       session_id: "S_PRA4_UNK",
@@ -834,14 +871,12 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
 end
 ```
 
-> Note: this test uses helpers `Esr.Capabilities.put_principal_caps/2` and
-> `Esr.Workspaces.Registry.put_chat_workspace/2`. If those don't exist with
-> those exact names, find the equivalent test seam (e.g., direct ETS
-> insert) by reading `runtime/lib/esr/capabilities.ex` and
-> `runtime/lib/esr/workspaces/registry.ex`. Adjust the test setup as
-> needed BEFORE running it. **Do not invent a function in the
-> production code just to make the test simpler — wire to whatever
-> the production module actually exposes.**
+> Note: test seams are real existing functions:
+> - `Esr.Capabilities.Grants.load_snapshot/1` — pattern from
+>   `runtime/test/esr/capabilities_has_all_test.exs`
+> - `Esr.Workspaces.Registry.put/1` — accepts `%Esr.Workspaces.Workspace{}`
+> - `Esr.PeerRegistry.register/2` — only registers `self()`, hence the
+>   relay registers itself before entering its receive loop
 
 - [ ] **Step 3: Run the test to confirm FAIL**
 
@@ -883,21 +918,23 @@ defp dispatch_tool_invoke("reply", args, req_id, channel_pid, state) do
 end
 
 defp dispatch_cross_app_reply(chat_id, app_id, text, req_id, channel_pid, state) do
+  # workspace_for_chat/2 returns {:ok, name} | :not_found
+  # Capabilities.has?/2 returns true | false (boolean, NOT :ok | {:missing,_})
   case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
     {:ok, target_ws} ->
-      case Esr.Capabilities.has?(state.principal_id, "workspace:#{target_ws}/msg.send") do
-        :ok ->
-          dispatch_to_target_app(chat_id, app_id, text, target_ws, req_id, channel_pid)
+      perm = "workspace:#{target_ws}/msg.send"
 
-        {:missing, _missing} ->
-          reply_tool_result(channel_pid, req_id, false, nil, %{
-            "type" => "forbidden",
-            "app_id" => app_id,
-            "chat_id" => chat_id,
-            "workspace" => target_ws,
-            "message" =>
-              "principal #{state.principal_id} lacks workspace:#{target_ws}/msg.send"
-          })
+      if Esr.Capabilities.has?(state.principal_id, perm) do
+        dispatch_to_target_app(chat_id, app_id, text, target_ws, req_id, channel_pid)
+      else
+        reply_tool_result(channel_pid, req_id, false, nil, %{
+          "type" => "forbidden",
+          "app_id" => app_id,
+          "chat_id" => chat_id,
+          "workspace" => target_ws,
+          "message" =>
+            "principal #{state.principal_id} lacks #{perm}"
+        })
       end
 
     :not_found ->
@@ -943,7 +980,7 @@ defp lookup_target_app_proxy(app_id) when is_binary(app_id) do
 end
 ```
 
-(Verify the `Esr.Capabilities.has?/2` return signature matches `:ok | {:missing, _}`. If it's `true | false | {:missing, ...}`, adjust the case match accordingly. Read the function before assuming.)
+(Note: pre-verified — `Esr.Capabilities.has?/2` returns `true | false` per `runtime/lib/esr/capabilities/grants.ex:26`. The code above already matches on the boolean.)
 
 - [ ] **Step 5: Run the test to confirm PASS**
 
@@ -1966,16 +2003,15 @@ export _E2E_BASELINE="$BASELINE"
 echo "PASS: scenario 04"
 ```
 
-> **Notes on omitted steps**: Steps 5.4 (forbidden) and 5.5 (non-member) are
-> tested at the **unit level** in T4's `feishu_chat_proxy_cross_app_test.exs`
-> (the structured error shapes are asserted there). The E2E for those is
-> valuable but adds CC-prompt-conditioning fragility (CC must reliably emit
-> a structural failure marker on a deny). To keep scenario 04 deterministic,
-> we land the unit coverage now and defer the E2E step to a follow-up if
-> the unit coverage proves insufficient. **If you (the implementer) feel
-> confident the prompt can be made deterministic, add steps 3 + 4 below
-> step 2 following the §5.4 / §5.5 spec — but only if you can land them
-> green on first try; otherwise leave for a follow-up PR.**
+> **§5.4 + §5.5 are hard-deferred.** The forbidden + non-member error
+> paths are covered at the unit layer by T4's
+> `feishu_chat_proxy_cross_app_test.exs` (asserts the exact structured
+> error shapes). The E2E variant requires CC's prompt to reliably emit
+> a structural failure marker on a deny — that's prompt-conditioning
+> fragility, not a contract test. **Do not add §5.4 / §5.5 E2E steps
+> in T9.** They are tracked in `docs/notes/futures/multi-app-deferred.md`
+> §4 and revisited only if a structured-error regression slips past
+> the unit tests in production.
 
 - [ ] **Step 2: Make the script executable**
 
@@ -2029,60 +2065,7 @@ the unit coverage proves insufficient."
 
 ---
 
-### Task 10: scenarios 01-03 prompt edits
-
-`reply` schema requires `app_id`. Existing scenarios use a prompt that doesn't tell CC about `app_id`. Update.
-
-**Files:**
-- Modify: `tests/e2e/scenarios/01_single_user_create_and_end.sh`
-- Modify: `tests/e2e/scenarios/02_two_users_concurrent.sh`
-- Modify: `tests/e2e/scenarios/03_tmux_attach_edit.sh`
-
-- [ ] **Step 1: Update scenario 01 prompt**
-
-In `tests/e2e/scenarios/01_single_user_create_and_end.sh`, find each prompt that drives a CC reply (typically the first inbound). Add a sentence that tells CC how to source `app_id`:
-
-```bash
-# Before (~line 50):
-PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
-
-# After:
-PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation) — for the reply tool, use the app_id you see in the inbound <channel> tag; (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
-```
-
-(Find every other prompt in scenario 01 that would drive a `reply` tool call and apply the same edit.)
-
-- [ ] **Step 2: Update scenarios 02 and 03 prompts**
-
-Same edit — for every PROBE/PROMPT variable that drives a CC reply, append "for the reply tool, use the app_id you see in the inbound <channel> tag." Or weave it into the existing copy.
-
-- [ ] **Step 3: Run scenarios 01-03**
-
-```bash
-pkill -f "peer-session-refactor/py/.venv" 2>/dev/null; sleep 1
-E2E_TIMEOUT=360 make e2e-01 e2e-02 e2e-03
-```
-
-Expected: All three pass. If CC fails to include `app_id`, mock_feishu won't record the reply (because cc_mcp's tool schema rejects it).
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add tests/e2e/scenarios/01_single_user_create_and_end.sh \
-        tests/e2e/scenarios/02_two_users_concurrent.sh \
-        tests/e2e/scenarios/03_tmux_attach_edit.sh
-
-git commit -m "PR-A T10: scenarios 01-03 prompts include app_id directive
-
-reply tool schema now requires app_id (T3); prompts updated to
-tell CC: 'for the reply tool, use the app_id you see in the
-inbound <channel> tag'. Without this nudge, claude would omit
-app_id and cc_mcp would error on schema validation."
-```
-
----
-
-### Task 11: docs sync
+### Task 10: docs sync
 
 Pin the audit sign-off; add cross-references in the topology guide.
 
@@ -2168,6 +2151,25 @@ prod-ready.
 Fix path: a `make smoke-live` recipe that runs scenario 04 against
 real Feishu credentials (read from `.env.live`). Run on demand,
 not in CI.
+
+## 4. Scenario 04 §5.4 / §5.5 E2E (forbidden + non-member negative paths)
+
+Spec §5.4 / §5.5 describe E2E coverage for the cross-app authorization
+gate (`forbidden`) and mock chat-membership rejection (`non-member`).
+PR-A lands the unit-level coverage in
+`runtime/test/esr/peers/feishu_chat_proxy_cross_app_test.exs` (T4),
+which asserts the exact structured error shapes (`forbidden`,
+`unknown_app`, `unknown_chat_in_app`).
+
+Hard-defer reason: the E2E variant requires CC's prompt to reliably
+emit a structural failure marker on a deny, which is
+prompt-conditioning fragility outside the testing-pyramid sweet spot
+for these structured errors. The unit tests cover the contract; if a
+production regression slips past them, then the E2E gap matters.
+
+Fix path: revisit if a structured-error regression slips past the
+unit tests in production. Until then, the unit coverage is
+authoritative.
 ```
 
 - [ ] **Step 4: Run all e2e tests one final time**
@@ -2186,14 +2188,14 @@ git add docs/notes/mock-feishu-fidelity.md \
         docs/guides/writing-an-agent-topology.md \
         docs/notes/futures/multi-app-deferred.md
 
-git commit -m "PR-A T11: docs — sign-off audit + topology guide xref + deferred items
+git commit -m "PR-A T10: docs — sign-off audit + topology guide xref + deferred items
 
 - mock-feishu-fidelity.md §9 sign-off boxes ticked for PR-A scope
 - writing-an-agent-topology.md §三.5 added: multi-app extension
   reference for future agent authors
-- docs/notes/futures/multi-app-deferred.md tracks 3 known-but-
-  deferred items: ETS wipe race, cross-tenant principal aliasing,
-  live Feishu smoke gate"
+- docs/notes/futures/multi-app-deferred.md tracks 4 known-but-
+  deferred items: ETS wipe race (now no-op per plan v1.1), cross-tenant
+  principal aliasing, live Feishu smoke gate, scenario 04 §5.4/§5.5 E2E"
 ```
 
 - [ ] **Step 6: Push branch + open PR**
