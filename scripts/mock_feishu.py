@@ -254,6 +254,23 @@ class MockFeishu:
         body = await request.json()
         message_id = _new_message_id()
         app_id = request.headers.get("X-App-Id", "default")
+        receive_id = body.get("receive_id")
+
+        # PR-A T7: real-Feishu parity — reject when calling app isn't
+        # a member of the target chat. The "default" bucket bypasses
+        # this check for back-compat with scenarios 01-03 that don't
+        # set X-App-Id.
+        if app_id != "default":
+            members = self._chat_membership.get(app_id, set())
+            if receive_id not in members:
+                return web.json_response({
+                    "code": 230002,
+                    "msg": (
+                        f"app {app_id!r} is not a member of "
+                        f"chat {receive_id!r}"
+                    ),
+                    "data": {},
+                })
 
         record = {
             "message_id": message_id,
