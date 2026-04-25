@@ -680,21 +680,17 @@ Critical path: T1 → T4 → T8 → T9 → T11. Roughly 2 days of work.
 
 ---
 
-## 11. Open questions for user review
+## 11. Open questions — all settled
 
-Only one open question remains after the v1.1 review pass:
+All resolved in v1.1+:
 
-- **Workspace ↔ app coupling**: PR-A treats workspaces as already
-  multi-app-aware (workspaces.yaml `chats: [{chat_id, app_id, ...}]`
-  schema accepts heterogeneous apps in one workspace). Confirm OK to
-  keep this semantics, or do you want PR-A to enforce one-app-per-
-  workspace? The former is what the YAML schema permits today; the
-  latter is a tighter invariant that makes authorization more
-  predictable but breaks any operator config that mixes apps in one
-  workspace.
-
-Settled in v1.1:
-- Mock caller identification: `X-App-Id` request header (locked)
+- **Workspace ↔ app coupling**: keep multi-app per workspace
+  (locked 2026-04-25 user decision). `workspaces.yaml` `chats: [{chat_id,
+  app_id, ...}]` continues to accept heterogeneous apps in one
+  workspace. Authorization gate at §2.5 looks up workspace per
+  `(chat_id, app_id)` pair via `workspace_for_chat/2`, so the schema
+  already supports this — no enforcement work needed.
+- Mock caller identification: `X-App-Id` request header.
 - Forward-failure observability: CC handles via reply with structural
-  marker; FCP does not auto-emit fallback (locked)
-- `app_id` naming contract: ESR `instance_id`, never `cli_xxx` (§2.7)
+  marker; FCP does not auto-emit fallback.
+- `app_id` naming contract: ESR `instance_id`, never `cli_xxx` (§2.7).
