@@ -1,9 +1,10 @@
-# PR-A Multi-App E2E Implementation Plan (v1.1)
+# PR-A Multi-App E2E Implementation Plan (v1.2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 ### Plan changelog
-- **v1.1 (2026-04-25)** — code-review fixes. M1: T4 test uses real `Esr.PeerRegistry.register/2` from inside the relay (no `register_name/2` API). M2: T4 auth seams use `Esr.Capabilities.Grants.load_snapshot/1` and `Esr.Workspaces.Registry.put/1` (the test seams that actually exist; pattern in `runtime/test/esr/capabilities_has_all_test.exs`). M3: `Capabilities.has?/2` returns `true | false`, not `:ok | {:missing, _}` — T4 production code matches on bool. M4: ETS wipe deleted from T1 (a no-op — `:ets.new` already produces an empty table; the table never survives a BEAM restart). N1: T3 + T10 merged into one task to eliminate the schema-required-but-prompts-not-updated window. N2: §5.4 / §5.5 E2E hard-deferred to `docs/notes/futures/multi-app-deferred.md`. Line-number references replaced with grep patterns.
+- **v1.2 (2026-04-25)** — user reverted the v1.1 N2 deferral. Scenario 04 §5.4 / §5.5 E2E (forbidden + non-member) ARE in T9 scope per "E2E faces production topology" principle. T9 now has steps 1, 1b, 2, 3, 4, 5 (was 1, 1b, 2, 5). Prompt instructs CC to emit structural marker `[forward-failed: <type>]` on tool ok:false; assertions match on the marker substring (robust to type variation between `forbidden` / `unknown_chat_in_app`). Futures doc §4 reverted — non-deferred.
+- **v1.1 (2026-04-25)** — code-review fixes. M1: T4 test uses real `Esr.PeerRegistry.register/2` from inside the relay (no `register_name/2` API). M2: T4 auth seams use `Esr.Capabilities.Grants.load_snapshot/1` and `Esr.Workspaces.Registry.put/1` (the test seams that actually exist; pattern in `runtime/test/esr/capabilities_has_all_test.exs`). M3: `Capabilities.has?/2` returns `true | false`, not `:ok | {:missing, _}` — T4 production code matches on bool. M4: ETS wipe deleted from T1 (a no-op — `:ets.new` already produces an empty table; the table never survives a BEAM restart). N1: T3 + T10 merged into one task to eliminate the schema-required-but-prompts-not-updated window. N2 (initial): §5.4 / §5.5 E2E hard-deferred to `docs/notes/futures/multi-app-deferred.md` — REVERTED in v1.2. Line-number references replaced with grep patterns.
 - **v1.0 (2026-04-25)** — initial draft.
 
 **Goal:** Add multi-app coexistence + cross-app forward to ESR's existing single-app feishu-to-cc topology, exercised by a new scenario 04 E2E. Existing scenarios 01/02/03 continue to pass against the upgraded mock.
@@ -1976,6 +1977,90 @@ KAN2=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_i
        | jq -r '.[] | .content' | tr '\n' ' ')
 assert_contains "$KAN2" "dev finished step 1" "step2: kanban received the cross-app forward"
 
+# --- Step 3: forbidden cross-app (negative path) ---------------------
+# Re-seed capabilities: ou_admin loses ws_kanban msg.send.
+# Use ou_restricted (already principal-id seeded; only has ws_dev cap).
+# Wait — Lane A (inbound) gates on the SOURCE workspace's msg.send,
+# so we need ou_restricted to be authorized for ws_dev. seed_two_capabilities
+# already configures this.
+#
+# Push inbound from ou_restricted asking to forward to oc_pra_kanban.
+# CC's prompt instructs it to emit "[forward-failed: <type>]" if the
+# tool returns ok:false — that's the structural marker the test asserts.
+PROBE3='Try to forward to chat oc_pra_kanban (using app_id feishu_app_kanban) the text "unauthorized-attempt". The reply tool may return ok:false with error.type="forbidden". If it does, then on your home chat (use app_id feishu_app_dev) reply with EXACTLY the literal string: [forward-failed: forbidden] — no other text, no quotes, no explanation.'
+curl -sS -X POST -H 'content-type: application/json' \
+  -d "{\"chat_id\":\"oc_pra_dev\",\"user\":\"ou_restricted\",\"text\":$(jq -Rs . <<<"$PROBE3"),\"app_id\":\"feishu_app_dev\"}" \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/push_inbound" >/dev/null
+
+# Wait for the marker to land in the home chat
+for _ in $(seq 1 1200); do
+  if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+       | jq -e '.[] | select(.content | contains("[forward-failed: forbidden]"))' >/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+
+DEV3=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+       | jq -r '.[] | .content' | tr '\n' ' ')
+KAN3=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
+       | jq -r '.[] | .content' | tr '\n' ' ')
+assert_contains    "$DEV3" "[forward-failed: forbidden]" "step3: CC emitted the structural failure marker on home chat"
+assert_not_contains "$KAN3" "unauthorized-attempt"        "step3: kanban did NOT receive forbidden text"
+
+# --- Step 4: non-member chat (mock simulates real-Feishu rejection) --
+# oc_pra_orphan is in workspaces.yaml under ws_dev/feishu_app_dev, but
+# we deliberately did NOT call register_chat_membership for it on
+# either mock_feishu (see start_two_mock_feishus). When CC tries to
+# forward there from feishu_app_kanban, mock_feishu rejects with
+# code 230002, FCP surfaces tool_result error.type="directive_failed"
+# (or similar — confirm during impl), and CC emits the marker.
+#
+# Need ou_admin (full caps) for this so we don't conflate with step 3's
+# forbidden path.
+PROBE4='Try to forward to chat oc_pra_orphan (using app_id feishu_app_kanban) the text "non-member-attempt". The reply tool may return ok:false because feishu_app_kanban is not a member of oc_pra_orphan. If it does, then on your home chat (use app_id feishu_app_dev) reply with EXACTLY the literal string: [forward-failed: not-member] — no other text.'
+curl -sS -X POST -H 'content-type: application/json' \
+  -d "{\"chat_id\":\"oc_pra_dev\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROBE4"),\"app_id\":\"feishu_app_dev\"}" \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/push_inbound" >/dev/null
+
+# For ou_admin to reach the cross-app dispatch path, they need
+# ws_kanban msg.send (they have it via wildcard caps). The auth gate
+# passes; the FAA call reaches mock_feishu_kanban, which returns
+# code 230002 because oc_pra_orphan isn't registered as a member.
+# (For step 4 to need msg.send for ws_kanban, oc_pra_orphan needs to
+# resolve to ws_kanban. But our workspaces.yaml only has oc_pra_orphan
+# under ws_dev. So workspace_for_chat(oc_pra_orphan, feishu_app_kanban)
+# returns :not_found → tool_result error.type="unknown_chat_in_app".
+# That's a SEPARATE failure mode but functionally equivalent for the
+# E2E: forward fails cleanly, marker emitted.)
+#
+# IMPORTANT: this means PROBE4's marker is "[forward-failed: not-member]"
+# but the actual error.type may be "unknown_chat_in_app". Choose ONE
+# during impl and align prompt + assertion. Recommendation: assert on
+# "[forward-failed:" prefix only (not the suffix), so the test is
+# robust to either error type. Update PROBE4 if so:
+#   "If the reply tool returns ok:false ... reply with [forward-failed:
+#    <type>] where <type> is the exact error.type from the tool result."
+
+for _ in $(seq 1 1200); do
+  if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+       | jq -e '.[] | select(.content | contains("[forward-failed: "))' >/dev/null; then
+    # Already had a forbidden marker from step 3; check it now appears at least twice
+    fail_count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+                 | jq '[.[] | select(.content | contains("[forward-failed: "))] | length')
+    [[ "$fail_count" -ge 2 ]] && break
+  fi
+  sleep 0.1
+done
+
+KAN4=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
+       | jq -r '.[] | .content' | tr '\n' ' ')
+assert_not_contains "$KAN4" "non-member-attempt" "step4: kanban did NOT receive non-member text"
+# Two markers total — step 3's "forbidden" + step 4's whatever-type
+fail_count=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+             | jq '[.[] | select(.content | contains("[forward-failed: "))] | length')
+[[ "$fail_count" -ge 2 ]] || _fail_with_context "step4: expected 2 forward-failed markers, got ${fail_count}"
+
 # --- Step 5: cleanup -------------------------------------------------
 ACTORS_OUT=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null)
 SIDS=()
@@ -2003,15 +2088,14 @@ export _E2E_BASELINE="$BASELINE"
 echo "PASS: scenario 04"
 ```
 
-> **§5.4 + §5.5 are hard-deferred.** The forbidden + non-member error
-> paths are covered at the unit layer by T4's
-> `feishu_chat_proxy_cross_app_test.exs` (asserts the exact structured
-> error shapes). The E2E variant requires CC's prompt to reliably emit
-> a structural failure marker on a deny — that's prompt-conditioning
-> fragility, not a contract test. **Do not add §5.4 / §5.5 E2E steps
-> in T9.** They are tracked in `docs/notes/futures/multi-app-deferred.md`
-> §4 and revisited only if a structured-error regression slips past
-> the unit tests in production.
+> **§5.4 + §5.5 ARE in scope** for T9 per "E2E faces production
+> topology" principle (`docs/notes/e2e-pyramid-lessons.md`). Unit
+> coverage in T4 is necessary but not sufficient — production
+> behaviour for the deny path needs end-to-end proof. The
+> prompt-conditioning fragility is real but manageable: instruct CC
+> with a structural marker the test can assert on (`[forward-failed:
+> <type>]`). If CC drifts off-prompt, treat as a CC-prompt-tightening
+> issue, not as a reason to skip the E2E.
 
 - [ ] **Step 2: Make the script executable**
 
@@ -2047,7 +2131,7 @@ Expected (best case): `PASS: scenario 04`. **Realistic case**: 1-3 iterations of
 
 ```bash
 git add tests/e2e/scenarios/04_multi_app_routing.sh Makefile
-git commit -m "PR-A T9: scenario 04 multi-app E2E (steps 1, 1b, 2, 5)
+git commit -m "PR-A T9: scenario 04 multi-app E2E (steps 1, 1b, 2, 3, 4, 5)
 
 Steps:
 1.  app_dev sole inbound, no crossover into app_kanban
@@ -2055,12 +2139,16 @@ Steps:
     isolated reply paths
 2.  cross-app forward: app_dev session calls reply with
     app_id=feishu_app_kanban — assertion on app_kanban's sent_messages
+3.  forbidden (ou_restricted): cross-app reply rejected by FCP auth
+    gate; CC emits structural marker [forward-failed: forbidden]
+    in home chat
+4.  non-member / unknown_chat_in_app: target chat not registered for
+    target app; rejected at FCP or mock; CC emits [forward-failed: <type>]
 5.  end both sessions via admin submit session_end
 
-Steps 3 (forbidden) and 4 (non-member) covered at unit level in
-feishu_chat_proxy_cross_app_test.exs. E2E coverage for those
-deferred — adds prompt-conditioning fragility we can revisit if
-the unit coverage proves insufficient."
+Steps 3 + 4 also covered at unit level in
+feishu_chat_proxy_cross_app_test.exs. E2E here proves end-to-end
+prompt + dispatch + auth + observability."
 ```
 
 ---
@@ -2152,25 +2240,11 @@ Fix path: a `make smoke-live` recipe that runs scenario 04 against
 real Feishu credentials (read from `.env.live`). Run on demand,
 not in CI.
 
-## 4. Scenario 04 §5.4 / §5.5 E2E (forbidden + non-member negative paths)
-
-Spec §5.4 / §5.5 describe E2E coverage for the cross-app authorization
-gate (`forbidden`) and mock chat-membership rejection (`non-member`).
-PR-A lands the unit-level coverage in
-`runtime/test/esr/peers/feishu_chat_proxy_cross_app_test.exs` (T4),
-which asserts the exact structured error shapes (`forbidden`,
-`unknown_app`, `unknown_chat_in_app`).
-
-Hard-defer reason: the E2E variant requires CC's prompt to reliably
-emit a structural failure marker on a deny, which is
-prompt-conditioning fragility outside the testing-pyramid sweet spot
-for these structured errors. The unit tests cover the contract; if a
-production regression slips past them, then the E2E gap matters.
-
-Fix path: revisit if a structured-error regression slips past the
-unit tests in production. Until then, the unit coverage is
-authoritative.
 ```
+
+(Note: scenario 04 §5.4 / §5.5 ARE in PR-A scope per user direction —
+end-to-end coverage of the deny path is required. Tracked in T9
+steps 3 + 4, not in this deferred-items doc.)
 
 - [ ] **Step 4: Run all e2e tests one final time**
 
@@ -2193,9 +2267,9 @@ git commit -m "PR-A T10: docs — sign-off audit + topology guide xref + deferre
 - mock-feishu-fidelity.md §9 sign-off boxes ticked for PR-A scope
 - writing-an-agent-topology.md §三.5 added: multi-app extension
   reference for future agent authors
-- docs/notes/futures/multi-app-deferred.md tracks 4 known-but-
-  deferred items: ETS wipe race (now no-op per plan v1.1), cross-tenant
-  principal aliasing, live Feishu smoke gate, scenario 04 §5.4/§5.5 E2E"
+- docs/notes/futures/multi-app-deferred.md tracks 3 known-but-
+  deferred items: ETS wipe race (now no-op per plan v1.1),
+  cross-tenant principal aliasing, live Feishu smoke gate"
 ```
 
 - [ ] **Step 6: Push branch + open PR**
