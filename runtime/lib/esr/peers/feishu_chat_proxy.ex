@@ -97,7 +97,12 @@ defmodule Esr.Peers.FeishuChatProxy do
       message_id: message_id,
       sender_id: args["sender_id"] || "",
       thread_id: args["thread_id"] || "",
-      chat_id: args["chat_id"] || ""
+      chat_id: args["chat_id"] || "",
+      # T-PR-A T2: thread the originating Feishu app_id downstream so
+      # CCProcess.build_channel_notification can surface it on the
+      # notification envelope cc_mcp ships into claude as a <channel>
+      # tag. T3 will require claude to echo this back on `reply`.
+      app_id: args["app_id"] || ""
     }
 
     cond do
