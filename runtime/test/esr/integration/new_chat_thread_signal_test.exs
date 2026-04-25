@@ -6,12 +6,12 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
   Flow under test:
 
     1. FeishuAppAdapter receives `{:inbound_event, envelope}`.
-    2. `SessionRegistry.lookup_by_chat_thread/2` returns `:not_found`.
+    2. `SessionRegistry.lookup_by_chat_thread/3` returns `:not_found`.
     3. FAA broadcasts `{:new_chat_thread, app_id, chat_id, thread_id,
        envelope}` on the `session_router` PubSub topic.
     4. SessionRouter receives the broadcast and calls
        `do_create/1` (auto-spawn).
-    5. A new session exists in `SessionRegistry.lookup_by_chat_thread/2`.
+    5. A new session exists in `SessionRegistry.lookup_by_chat_thread/3`.
 
   P3-7 promotes this path from **log-only** (PR-3 interim) to
   **auto-create**. The spec expansion originally called for log-only

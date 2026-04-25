@@ -6,7 +6,7 @@ defmodule Esr.Integration.N2SessionsTest do
 
       FeishuAppAdapter(app_A)   FeishuAppAdapter(app_B)
               |                          |
-              +--SessionRegistry.lookup_by_chat_thread/2--+
+              +--SessionRegistry.lookup_by_chat_thread/3--+
               |                          |
         FeishuChatProxy(A)         FeishuChatProxy(B)
 

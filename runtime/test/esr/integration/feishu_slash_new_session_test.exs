@@ -15,7 +15,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
        `SessionRegistry` — this is the T3 loop-closing behaviour.
     5. A second inbound envelope for the same `chat_id`/`thread_id` now
        resolves to the newly-created session via
-       `SessionRegistry.lookup_by_chat_thread/2` — proving the binding loop.
+       `SessionRegistry.lookup_by_chat_thread/3` — proving the binding loop.
 
   The integration test uses the production SlashHandler started by
   `Esr.AdminSession.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
@@ -27,7 +27,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   `Esr.SessionRouter.create_session/1`, which spawns the full
   `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, TmuxProcess)
   and registers the session with refs carrying each spawned peer pid.
-  This test still asserts the T3 invariant (`lookup_by_chat_thread/2`
+  This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
   returns the newly-created session); the T4-specific assertion —
   that `refs.feishu_chat_proxy` is a live pid — lives in
   `Esr.Admin.Commands.Session.NewTest`'s `:t4_session_router` describe

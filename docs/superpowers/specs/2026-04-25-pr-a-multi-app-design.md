@@ -119,7 +119,10 @@ calls.
 yield self._build_msg_received_envelope(
     args={
         "chat_id": chat_id,
-        "app_id": self.app_id,   # ← NEW (was implicit via channel topic)
+        "app_id": self.actor_id,   # ← NEW. ESR instance_id, NOT Feishu cli_xxx.
+                                   # See §2.7 naming contract. self.app_id on
+                                   # the Python adapter holds the Feishu wire
+                                   # cli_xxx — do NOT use that here.
         "message_id": ...,
         ...
     },

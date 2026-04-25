@@ -92,7 +92,7 @@ defmodule Esr.Application do
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
       # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
-      # by Esr.SessionRegistry.lookup_by_chat_thread/2 in the new peer chain.
+      # by Esr.SessionRegistry.lookup_by_chat_thread/3 in the new peer chain.
       Esr.HandlerRouter.Supervisor,
       Esr.Persistence.Supervisor,
       Esr.Telemetry.Supervisor,

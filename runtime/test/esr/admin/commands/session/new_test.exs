@@ -301,7 +301,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
   describe "execute/1 SessionRegistry binding (PR-8 T3)" do
     test "chat_id + thread_id args register the session in SessionRegistry" do
       # PR-8 T3: Session.New must register the session so
-      # FeishuAppAdapter.lookup_by_chat_thread/2 resolves to it on the
+      # FeishuAppAdapter.lookup_by_chat_thread/3 resolves to it on the
       # next inbound event. PR-8 T4: registration is now performed
       # inside `SessionRouter.create_session/1` (this test still asserts
       # the visible behaviour — a lookup hits with the right sid).

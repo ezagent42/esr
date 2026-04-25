@@ -432,7 +432,7 @@ defmodule Esr.SessionRouter do
         end)
 
       # Proxies are stateless modules — no pid, no monitor. Record
-      # them so `lookup_by_chat_thread/2` can surface the wiring for
+      # them so `lookup_by_chat_thread/3` can surface the wiring for
       # callers that need to know "which Proxy module forwards where."
       refs =
         Enum.reduce(proxies, refs, fn spec, acc ->
