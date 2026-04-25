@@ -82,9 +82,10 @@ async def test_inbound_envelope_includes_required_fields() -> None:
 
 @pytest.mark.asyncio
 async def test_inbound_envelope_app_id_overridable() -> None:
-    """PR-A T6 prep: push_inbound accepts an app_id kwarg that lands in
-    header.app_id. T6 will partition routing on this, but T5 must already
-    plumb the value through so T6's partitioning has something to read."""
+    """PR-A T6: push_inbound accepts an app_id kwarg that lands in
+    header.app_id AND selects the per-app routing bucket. The WS
+    consumer must subscribe with the matching `?app_id=` query to
+    receive."""
     mock = MockFeishu()
     base_url = await mock.start(port=0)
 
@@ -92,7 +93,11 @@ async def test_inbound_envelope_app_id_overridable() -> None:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(base_url.replace("http://", "ws://") + "/ws") as ws:
+            ws_url = (
+                base_url.replace("http://", "ws://")
+                + "/ws?app_id=cli_pr_a_t5"
+            )
+            async with session.ws_connect(ws_url) as ws:
                 await asyncio.sleep(0.05)
                 mock.push_inbound(
                     chat_id="oc_x",

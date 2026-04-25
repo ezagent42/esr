@@ -47,20 +47,28 @@ class MockFeishu:
     """In-process mock for Lark Open API endpoints used by ESR v0.1."""
 
     def __init__(self) -> None:
-        self._sent_messages: list[dict[str, Any]] = []
+        # PR-A T6: data model partitioned by app_id. Existing scenarios that
+        # don't carry `app_id` (no `?app_id=` query on /ws, no `X-App-Id`
+        # header on POST) land in the "default" bucket — back-compat for
+        # scenarios 01-03.
+        self._sent_messages: dict[str, list[dict[str, Any]]] = {}
         # per-chat history — newest-first order for each list
         self._chat_history: dict[str, list[dict[str, Any]]] = {}
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._port: int | None = None
-        # connected WS clients — the adapter opens one of these
-        self._ws_clients: list[web.WebSocketResponse] = []
+        # connected WS clients keyed by app_id — adapter opens one per app
+        self._ws_clients: dict[str, list[web.WebSocketResponse]] = {}
         # reactions + uploaded files (T0 §4)
-        self._reactions: list[dict[str, Any]] = []
+        self._reactions: dict[str, list[dict[str, Any]]] = {}
         # PR-9 T5c: un-reactions, recorded so tests can assert that
         # FeishuChatProxy un-reacted a specific message_id when CC's
         # reply carried `reply_to_message_id`.
-        self._un_reactions: list[dict[str, Any]] = []
+        self._un_reactions: dict[str, list[dict[str, Any]]] = {}
+        # PR-A T7 seam: chat membership per app — set populated via
+        # register_chat_membership(); enforced in _on_create_message
+        # only when X-App-Id != "default" (back-compat).
+        self._chat_membership: dict[str, set[str]] = {}
         self._uploaded_files: list[dict[str, Any]] = []
         self._files_dir: Path | None = None  # set in start()
 
@@ -68,7 +76,18 @@ class MockFeishu:
 
     @property
     def sent_messages(self) -> list[dict[str, Any]]:
-        return list(self._sent_messages)
+        # Return the union across all per-app buckets — preserves the
+        # pre-T6 contract for any in-process callers that read this
+        # property (tests etc.). Per-app reads use the GET endpoint.
+        union: list[dict[str, Any]] = []
+        for msgs in self._sent_messages.values():
+            union.extend(msgs)
+        return union
+
+    def register_chat_membership(self, app_id: str, chat_id: str) -> None:
+        """Mark `app_id`'s bot as a member of `chat_id`. T7 uses this to
+        reject outbound from non-member apps."""
+        self._chat_membership.setdefault(app_id, set()).add(chat_id)
 
     def seed_inbound_message(
         self,
@@ -146,9 +165,10 @@ class MockFeishu:
         return f"http://127.0.0.1:{self._port}"
 
     async def stop(self) -> None:
-        for ws in self._ws_clients:
-            if not ws.closed:
-                await ws.close()
+        for clients in self._ws_clients.values():
+            for ws in clients:
+                if not ws.closed:
+                    await ws.close()
         self._ws_clients.clear()
         if self._runner is not None:
             await self._runner.cleanup()
@@ -163,7 +183,7 @@ class MockFeishu:
         sender_open_id: str,
         msg_type: str = "text",
         content_text: str = "",
-        app_id: str = "cli_mock",
+        app_id: str = "default",
         tenant_key: str = "16a9e2384317175f",
     ) -> str:
         """Synthesize a P2ImMessageReceiveV1 envelope and push it to every
@@ -176,7 +196,9 @@ class MockFeishu:
         are safe (lark_oapi ignores them); missing fields cause silent
         drops in consumers, which is what T5 closes.
 
-        T6 will partition routing on `app_id`. T5 just plumbs the value.
+        T6 partitions routing on `app_id`: only WS clients that subscribed
+        with matching `?app_id=<value>` receive the envelope. Clients
+        that didn't pass the query land in the "default" bucket.
         """
         msg_id = _new_message_id()
         now_ms = str(int(time.time() * 1000))
@@ -213,7 +235,7 @@ class MockFeishu:
             },
         }
         data = json.dumps(envelope, ensure_ascii=False)
-        for ws in list(self._ws_clients):
+        for ws in list(self._ws_clients.get(app_id, [])):
             if not ws.closed:
                 # Schedule the send without awaiting — callers use this
                 # from sync test code.
@@ -223,9 +245,15 @@ class MockFeishu:
     # -- handlers -------------------------------------------------------
 
     async def _on_create_message(self, request: web.Request) -> web.Response:
-        """POST /open-apis/im/v1/messages — bot sends a message to a chat."""
+        """POST /open-apis/im/v1/messages — bot sends a message to a chat.
+
+        PR-A T6: caller identifies its app via the `X-App-Id` header.
+        Default ("default") preserves pre-T6 behaviour for scenarios
+        01-03 that don't set the header.
+        """
         body = await request.json()
         message_id = _new_message_id()
+        app_id = request.headers.get("X-App-Id", "default")
 
         record = {
             "message_id": message_id,
@@ -234,8 +262,9 @@ class MockFeishu:
             "msg_type": body.get("msg_type"),
             "content": body.get("content"),
             "ts_unix_ms": int(time.time() * 1000),
+            "app_id": app_id,
         }
-        self._sent_messages.append(record)
+        self._sent_messages.setdefault(app_id, []).append(record)
 
         if body.get("msg_type") == "file":
             content = json.loads(body.get("content") or "{}")
@@ -263,16 +292,23 @@ class MockFeishu:
         })
 
     async def _on_ws_connect(self, request: web.Request) -> web.WebSocketResponse:
-        """GET /ws upgrade — adapter subscribes here for inbound events."""
+        """GET /ws upgrade — adapter subscribes here for inbound events.
+
+        PR-A T6: clients select the per-app routing bucket via the
+        `?app_id=<id>` query. Clients that omit it land in "default" —
+        same-shape behaviour as pre-T6 for scenarios 01-03.
+        """
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-        self._ws_clients.append(ws)
+        app_id = request.query.get("app_id", "default")
+        self._ws_clients.setdefault(app_id, []).append(ws)
         try:
             async for _msg in ws:  # keep the connection open; discard inbound
                 pass
         finally:
-            if ws in self._ws_clients:
-                self._ws_clients.remove(ws)
+            bucket = self._ws_clients.get(app_id)
+            if bucket is not None and ws in bucket:
+                bucket.remove(ws)
         return ws
 
     async def _on_get_ws_clients(self, _request: web.Request) -> web.Response:
@@ -283,37 +319,60 @@ class MockFeishu:
         Phoenix join + handler_hello succeed, so a non-zero count
         signals the full start-up chain is up and push_inbound will be
         delivered.
+
+        PR-A T6: returns the union count across all per-app buckets so
+        wait_for_sidecar_ready (which doesn't know about app_ids)
+        keeps working unchanged.
         """
-        return web.json_response({"count": len(self._ws_clients)})
+        total = sum(len(clients) for clients in self._ws_clients.values())
+        return web.json_response({"count": total})
 
     async def _on_push_inbound(self, request: web.Request) -> web.Response:
         """POST /push_inbound — scenario helper: inject a Feishu-side
         inbound message as if a user typed it. Body JSON shape:
         {"chat_id": "oc_x", "app_id": "cli_x", "user": "ou_user1",
          "text": "/new-session esr-dev tag=root"}
+
+        PR-A T6: optional `app_id` selects the routing bucket; default
+        is "default" so scenarios 01-03 keep working.
         """
         body = await request.json()
-        msg_id = self.push_inbound(
-            chat_id=body.get("chat_id", ""),
-            sender_open_id=body.get("user", "ou_test"),
-            content_text=body.get("text", ""),
-        )
+        kwargs: dict[str, Any] = {
+            "chat_id": body.get("chat_id", ""),
+            "sender_open_id": body.get("user", "ou_test"),
+            "content_text": body.get("text", ""),
+        }
+        if "app_id" in body and body["app_id"]:
+            kwargs["app_id"] = body["app_id"]
+        msg_id = self.push_inbound(**kwargs)
         return web.json_response({"ok": True, "message_id": msg_id})
 
     async def _on_get_sent_messages(self, request: web.Request) -> web.Response:
         """GET /sent_messages — scenario helper: return the outbound
-        message log as a JSON array for grep-style assertions."""
-        return web.json_response(list(self._sent_messages))
+        message log as a JSON array for grep-style assertions.
+
+        PR-A T6: optional `?app_id=` scopes to one app's bucket; absent
+        returns the union across all buckets (back-compat).
+        """
+        app_id = request.query.get("app_id")
+        if app_id is not None:
+            return web.json_response(list(self._sent_messages.get(app_id, [])))
+        union: list[dict[str, Any]] = []
+        for msgs in self._sent_messages.values():
+            union.extend(msgs)
+        return web.json_response(union)
 
     async def _on_create_reaction(self, request: web.Request) -> web.Response:
         message_id = request.match_info["message_id"]
         body = await request.json()
         emoji_type = body.get("reaction_type", {}).get("emoji_type", "")
         reaction_id = "rc_mock_" + secrets.token_hex(8)
-        self._reactions.append({
+        app_id = request.headers.get("X-App-Id", "default")
+        self._reactions.setdefault(app_id, []).append({
             "message_id": message_id,
             "emoji_type": emoji_type,
             "ts_unix_ms": int(time.time() * 1000),
+            "app_id": app_id,
         })
         return web.json_response({
             "code": 0,
@@ -321,8 +380,15 @@ class MockFeishu:
             "data": {"reaction_id": reaction_id, "message_id": message_id},
         })
 
-    async def _on_get_reactions(self, _request: web.Request) -> web.Response:
-        return web.json_response(self._reactions)
+    async def _on_get_reactions(self, request: web.Request) -> web.Response:
+        """PR-A T6: optional `?app_id=` scopes to one bucket; absent → union."""
+        app_id = request.query.get("app_id")
+        if app_id is not None:
+            return web.json_response(list(self._reactions.get(app_id, [])))
+        union: list[dict[str, Any]] = []
+        for entries in self._reactions.values():
+            union.extend(entries)
+        return web.json_response(union)
 
     async def _on_delete_reaction_by_id(
         self, request: web.Request
@@ -335,15 +401,19 @@ class MockFeishu:
         """
         message_id = request.match_info["message_id"]
         reaction_id = request.match_info["reaction_id"]
-        self._un_reactions.append({
+        app_id = request.headers.get("X-App-Id", "default")
+        self._un_reactions.setdefault(app_id, []).append({
             "message_id": message_id,
             "reaction_id": reaction_id,
             "ts_unix_ms": int(time.time() * 1000),
+            "app_id": app_id,
         })
-        # Remove the first matching reaction (by message_id), if any.
-        for idx, entry in enumerate(self._reactions):
+        # Remove the first matching reaction (by message_id) within
+        # this app's bucket, if any.
+        bucket = self._reactions.get(app_id, [])
+        for idx, entry in enumerate(bucket):
             if entry["message_id"] == message_id:
-                self._reactions.pop(idx)
+                bucket.pop(idx)
                 break
         return web.json_response({"code": 0, "msg": "", "data": {}})
 
@@ -365,31 +435,45 @@ class MockFeishu:
             except (ValueError, TypeError):
                 body = {}
         emoji_type = (body.get("reaction_type") or {}).get("emoji_type", "")
+        app_id = request.headers.get("X-App-Id", "default")
 
-        removed = [r for r in self._reactions if r["message_id"] == message_id]
-        self._reactions = [
-            r for r in self._reactions if r["message_id"] != message_id
+        bucket = self._reactions.get(app_id, [])
+        removed = [r for r in bucket if r["message_id"] == message_id]
+        self._reactions[app_id] = [
+            r for r in bucket if r["message_id"] != message_id
         ]
+        un_bucket = self._un_reactions.setdefault(app_id, [])
         for r in removed:
-            self._un_reactions.append({
+            un_bucket.append({
                 "message_id": message_id,
                 "emoji_type": emoji_type or r.get("emoji_type", ""),
                 "ts_unix_ms": int(time.time() * 1000),
+                "app_id": app_id,
             })
         if not removed:
             # Still record the un-react attempt so tests can assert the
             # directive fired even when no live reaction existed (e.g.
             # race where the inbound react hadn't completed yet).
-            self._un_reactions.append({
+            un_bucket.append({
                 "message_id": message_id,
                 "emoji_type": emoji_type,
                 "ts_unix_ms": int(time.time() * 1000),
+                "app_id": app_id,
             })
         return web.json_response({"code": 0, "msg": "", "data": {}})
 
-    async def _on_get_un_reactions(self, _request: web.Request) -> web.Response:
-        """GET /un_reactions — scenario helper: return the un-react log."""
-        return web.json_response(self._un_reactions)
+    async def _on_get_un_reactions(self, request: web.Request) -> web.Response:
+        """GET /un_reactions — scenario helper: return the un-react log.
+
+        PR-A T6: optional `?app_id=` scopes to one bucket; absent → union.
+        """
+        app_id = request.query.get("app_id")
+        if app_id is not None:
+            return web.json_response(list(self._un_reactions.get(app_id, [])))
+        union: list[dict[str, Any]] = []
+        for entries in self._un_reactions.values():
+            union.extend(entries)
+        return web.json_response(union)
 
     async def _on_upload_file(self, request: web.Request) -> web.Response:
         ctype = request.headers.get("content-type", "")
