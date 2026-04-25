@@ -163,31 +163,52 @@ class MockFeishu:
         sender_open_id: str,
         msg_type: str = "text",
         content_text: str = "",
+        app_id: str = "cli_mock",
+        tenant_key: str = "16a9e2384317175f",
     ) -> str:
         """Synthesize a P2ImMessageReceiveV1 envelope and push it to every
-        connected WS client. Returns the synthesised message_id."""
+        connected WS client. Returns the synthesised message_id.
+
+        Envelope shape matches adapters/feishu/tests/fixtures/live-capture/
+        text_message.json (captured 2026-04-19 against real Feishu Open
+        Platform). The Python feishu adapter unpacks header.app_id,
+        sender.sender_id.open_id, and message.* — extras vs the live wire
+        are safe (lark_oapi ignores them); missing fields cause silent
+        drops in consumers, which is what T5 closes.
+
+        T6 will partition routing on `app_id`. T5 just plumbs the value.
+        """
         msg_id = _new_message_id()
+        now_ms = str(int(time.time() * 1000))
         envelope = {
             "schema": "2.0",
             "header": {
                 "event_id": secrets.token_hex(16),
-                "event_type": "im.message.receive_v1",
-                "create_time": str(int(time.time() * 1000)),
                 "token": "",
-                "app_id": "cli_mock",
+                "create_time": now_ms,
+                "event_type": "im.message.receive_v1",
+                "tenant_key": tenant_key,
+                "app_id": app_id,
             },
             "event": {
                 "sender": {
-                    "sender_id": {"open_id": sender_open_id},
+                    "sender_id": {
+                        "user_id": secrets.token_hex(4),
+                        "open_id": sender_open_id,
+                        "union_id": "on_" + secrets.token_hex(16),
+                    },
                     "sender_type": "user",
+                    "tenant_key": tenant_key,
                 },
                 "message": {
                     "message_id": msg_id,
+                    "create_time": now_ms,
+                    "update_time": now_ms,
                     "chat_id": chat_id,
                     "chat_type": "p2p",
                     "message_type": msg_type,
-                    "create_time": str(int(time.time() * 1000)),
                     "content": json.dumps({"text": content_text}, ensure_ascii=False),
+                    "user_agent": "Mozilla/5.0 (mock_feishu) MockFeishuClient/1.0",
                 },
             },
         }
