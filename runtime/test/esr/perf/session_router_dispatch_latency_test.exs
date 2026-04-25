@@ -80,7 +80,9 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     :ok =
       Esr.SessionRegistry.register_session(
         session_id,
-        %{chat_id: chat_id, thread_id: thread_id},
+        # PR-A T1: app_id mirrors instance_id so the FAA fallback path
+        # (state.instance_id when args["app_id"] absent) hits this row.
+        %{chat_id: chat_id, app_id: app_id, thread_id: thread_id},
         %{feishu_chat_proxy: stub_relay, tmux_process: stub_relay}
       )
 

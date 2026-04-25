@@ -180,7 +180,11 @@ defmodule Esr.Admin.Commands.Session.New do
          start_session_fn
        ) do
     sid = :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
-    key = %{chat_id: chat_id, thread_id: thread_id}
+    # PR-A T1: legacy admin-CLI submit path has no chat context, so the
+    # placeholders persist; app_id matches by mirroring the chat_id slot
+    # so the SessionRegistry 3-tuple is well-formed if/when this path
+    # later registers it.
+    key = %{chat_id: chat_id, app_id: chat_id, thread_id: thread_id}
 
     case start_session_fn.(%{
            session_id: sid,

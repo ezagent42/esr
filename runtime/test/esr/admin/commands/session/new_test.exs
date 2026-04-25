@@ -288,7 +288,12 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       state = Esr.SessionProcess.state(sid)
-      assert state.chat_thread_key == %{chat_id: "pending", thread_id: "pending"}
+      # PR-A T1: legacy admin-CLI path (no chat context) carries an
+      # app_id slot that mirrors the chat_id placeholder so the
+      # 3-tuple shape stays well-formed.
+      assert state.chat_thread_key ==
+               %{chat_id: "pending", app_id: "pending", thread_id: "pending"}
+
       assert state.agent_name == "cc"
     end
   end
@@ -315,8 +320,10 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       # Registry now returns the new session for this chat/thread key.
+      # PR-A T1: Session.New doesn't yet thread app_id through, so
+      # SessionRouter defaults it to "default".
       assert {:ok, ^sid, refs} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3", "om_T3")
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3", "default", "om_T3")
 
       # Post-T4: refs is populated with the spawned pipeline peer pids.
       # The specific pid assertions live in the T4 describe block; here
@@ -341,7 +348,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       assert :not_found =
-               Esr.SessionRegistry.lookup_by_chat_thread("pending", "pending"),
+               Esr.SessionRegistry.lookup_by_chat_thread("pending", "pending", "pending"),
              "the pending placeholder must not end up in the registry"
 
       # The session itself is still up — registration skip doesn't prevent
@@ -367,15 +374,24 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       }
 
       assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
+
       assert {:ok, ^sid1, _} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3_reuse", "om_T3_reuse")
+               Esr.SessionRegistry.lookup_by_chat_thread(
+                 "oc_T3_reuse",
+                 "default",
+                 "om_T3_reuse"
+               )
 
       cmd2 = put_in(cmd1["args"]["dir"], "/tmp/t3-second")
       assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
       refute sid2 == sid1, "second execute yields a fresh session_id"
 
       assert {:ok, ^sid2, _} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_T3_reuse", "om_T3_reuse")
+               Esr.SessionRegistry.lookup_by_chat_thread(
+                 "oc_T3_reuse",
+                 "default",
+                 "om_T3_reuse"
+               )
 
       on_exit(fn ->
         Esr.SessionRegistry.unregister_session(sid1)
@@ -411,7 +427,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       # Post-T4 invariant: refs contains a real feishu_chat_proxy pid
       # spawned by SessionRouter.spawn_pipeline/3, not an empty map.
       assert {:ok, ^sid, %{feishu_chat_proxy: proxy_pid} = refs} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_T4", "om_T4")
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_T4", "default", "om_T4")
 
       assert is_pid(proxy_pid)
       assert Process.alive?(proxy_pid)

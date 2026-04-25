@@ -818,6 +818,13 @@ class FeishuAdapter:
                 payload = self._build_msg_received_envelope(
                     args={
                         "chat_id": chat_id,
+                        # PR-A T1: app_id is the ESR instance_id (the
+                        # adapters.yaml `instances:` key, e.g.
+                        # `feishu_app_e2e-mock`), NOT the Feishu wire
+                        # `cli_xxx`. The Elixir FeishuAppAdapter reads
+                        # this to key SessionRegistry's 3-tuple so two
+                        # apps with overlapping chat_ids never collide.
+                        "app_id": self.actor_id,
                         "message_id": getattr(message, "message_id", "") or "",
                         "content": extracted,
                         "raw_content": raw_content,
@@ -983,6 +990,9 @@ class FeishuAdapter:
         return self._build_msg_received_envelope(
             args={
                 "chat_id": chat_id,
+                # PR-A T1: same ESR instance_id semantics as the WS path
+                # in _emit_events_lark.
+                "app_id": self.actor_id,
                 "message_id": getattr(m, "message_id", "") or "",
                 "content": extracted,
                 "raw_content": raw_content,
@@ -1041,6 +1051,11 @@ class FeishuAdapter:
                             yield self._build_msg_received_envelope(
                                 args={
                                     "chat_id": chat_id,
+                                    # PR-A T1: ESR instance_id (the
+                                    # adapters.yaml key); see the
+                                    # parallel _emit_events_lark
+                                    # comment for the locked semantics.
+                                    "app_id": self.actor_id,
                                     "message_id": message.get("message_id", ""),
                                     "content": _extract_text(raw_content, msg_type),
                                     "raw_content": raw_content,

@@ -80,25 +80,28 @@ defmodule Esr.Peers.FeishuAppAdapter do
     args = get_in(envelope, ["payload", "args"]) || %{}
     chat_id = args["chat_id"] || ""
     thread_id = args["thread_id"] || ""
+    # PR-A T1: prefer args["app_id"] (Python adapter sets it post-PR-A);
+    # fall back to state.instance_id for the case where an older Python
+    # sidecar is still running mid-rollout. The fallback lets scenario
+    # 01 still pass against an unchanged Python wire shape.
+    app_id = args["app_id"] || state.instance_id
 
-    case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, thread_id) do
+    case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         {:forward, [], state}
 
       :not_found ->
         # P3-7: broadcast on the `session_router` topic. Tuple's second
-        # slot is the Phoenix-routing key (i.e. `instance_id`) — not
-        # the Feishu-platform `app_id` — because downstream consumers
-        # (SessionRouter → FeishuAppProxy) look the peer up by registry
-        # name `:feishu_app_adapter_<instance_id>`. SessionRouter's
-        # `app_id` local variable is still so-named (PR-9 T10 left the
-        # wider rename for later); the value it carries is this
-        # `instance_id`.
+        # slot is the resolved app_id — args["app_id"] when the Python
+        # adapter populated it, else state.instance_id. Downstream
+        # consumers (SessionRouter → FeishuAppProxy) look the peer up
+        # by registry name `:feishu_app_adapter_<instance_id>`; the
+        # PR-A T1 spec locks app_id == instance_id in our system.
         Phoenix.PubSub.broadcast(
           EsrWeb.PubSub,
           "session_router",
-          {:new_chat_thread, state.instance_id, chat_id, thread_id, envelope}
+          {:new_chat_thread, app_id, chat_id, thread_id, envelope}
         )
 
         {:drop, :new_chat_thread_pending, state}
