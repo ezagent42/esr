@@ -344,6 +344,37 @@ defmodule Esr.Peers.FeishuChatProxyTest do
       assert_receive {:push_envelope, %{"req_id" => "req-2", "ok" => true}}, 500
     end
 
+    test "send_file rejects relative paths + paths containing `..`" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_rel",
+          chat_id: "oc_sfr",
+          thread_id: "om_sfr",
+          neighbors: [feishu_app_proxy: app_proxy],
+          proxy_ctx: %{}
+        })
+
+      # Relative path → rejected
+      send(peer, {:tool_invoke, "req-rel", "send_file",
+                  %{"chat_id" => "oc_sfr", "file_path" => "etc/passwd"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{"req_id" => "req-rel", "ok" => false}}, 500
+      refute_receive {:relay, :app, _}, 100
+
+      # Absolute but contains `..` → rejected (defence-in-depth even
+      # though Path.expand would resolve it).
+      send(peer, {:tool_invoke, "req-trav", "send_file",
+                  %{"chat_id" => "oc_sfr", "file_path" => "/tmp/foo/../../etc/passwd"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{"req_id" => "req-trav", "ok" => false}}, 500
+      refute_receive {:relay, :app, _}, 100
+    end
+
     test "send_file with missing file returns tool_result ok:false + read_failed" do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)

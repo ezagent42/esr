@@ -392,9 +392,12 @@ agents.yaml 里用 `proxies` 加一个 `target: "admin::my_singleton"` 引用
 3. **能力名格式必须是 `prefix:name/perm`** — `cap.foo.bar`、`foo:bar`
    都不会被 `Grants.matches?/2` 解析（见
    `docs/notes/capability-name-format-mismatch.md`）。
-4. **proxies 里 `${var}` 替换从 params 来** — 想引用 session 内任何变
-   量都得先 `params:` 里声明，否则 `target: "admin::xxx_${var}"` 不
-   会被替换。
+4. **proxies 里 `${var}` 替换目前只支持 `${app_id}`** — `target:
+   "admin::feishu_app_adapter_${app_id}"` 中的 `${app_id}` 会被替换为
+   session params 里的 `app_id` 值。其他 token (e.g. `${chat_id}` /
+   `${workspace_name}`) 不会被替换 — `runtime/lib/esr/session_router.ex`
+   的 `build_ctx` 只对 `${app_id}` 做这一步。如果你需要其他参数，
+   要么扩展 build_ctx，要么在 peer 内部从 `state.proxy_ctx` 读。
 5. **Lane A 鉴权门** — Feishu inbound 必须满足 `workspace:<ws>/msg.send`
    才会被 forward（adapter 层就 drop 掉了）。新 chat 第一次发消息前，
    ` capabilities.yaml` 必须把这个 cap 给到对应 principal。
