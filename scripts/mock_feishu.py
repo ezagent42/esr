@@ -143,6 +143,14 @@ class MockFeishu:
         app.router.add_get("/ws_clients", self._on_get_ws_clients)
         app.router.add_post("/push_inbound", self._on_push_inbound)
         app.router.add_get("/sent_messages", self._on_get_sent_messages)
+        # PR-A T8 anticipation: scenarios pre-register chat membership
+        # so T7's outbound rejection only fires when intended (i.e.
+        # cross-app non-member case). Without this, every outbound from
+        # an adapter that sets X-App-Id != "default" gets rejected
+        # because membership is empty.
+        app.router.add_post(
+            "/register_membership", self._on_register_membership
+        )
 
         self._files_dir = Path(f"/tmp/mock-feishu-files-{port or 'rand'}")
         self._files_dir.mkdir(parents=True, exist_ok=True)
@@ -350,19 +358,68 @@ class MockFeishu:
         {"chat_id": "oc_x", "app_id": "cli_x", "user": "ou_user1",
          "text": "/new-session esr-dev tag=root"}
 
-        PR-A T6: optional `app_id` selects the routing bucket; default
-        is "default" so scenarios 01-03 keep working.
+        PR-A T6: optional `app_id` selects the routing bucket. When
+        omitted, the helper fans out to **every currently-connected
+        app bucket** — preserves the pre-T6 implicit "deliver to whoever
+        is listening" semantic that scenarios 01-03 rely on. Once the
+        adapter sends `?app_id=<actor_id>` on its WS connect (PR-A T6
+        follow-up), the only-listener bucket is the adapter's app id,
+        so fanout still goes to exactly one place. Multi-app scenarios
+        (04+) MUST pass `app_id` explicitly to avoid cross-app spillover.
         """
         body = await request.json()
-        kwargs: dict[str, Any] = {
-            "chat_id": body.get("chat_id", ""),
-            "sender_open_id": body.get("user", "ou_test"),
-            "content_text": body.get("text", ""),
-        }
-        if "app_id" in body and body["app_id"]:
-            kwargs["app_id"] = body["app_id"]
-        msg_id = self.push_inbound(**kwargs)
+        chat_id = body.get("chat_id", "")
+        sender_open_id = body.get("user", "ou_test")
+        content_text = body.get("text", "")
+
+        explicit_app_id = body.get("app_id")
+        if explicit_app_id:
+            msg_id = self.push_inbound(
+                chat_id=chat_id,
+                sender_open_id=sender_open_id,
+                content_text=content_text,
+                app_id=explicit_app_id,
+            )
+            return web.json_response({"ok": True, "message_id": msg_id})
+
+        # Fanout: drop into every bucket that has at least one client.
+        # This is back-compat for one-adapter scenarios (only one bucket
+        # exists) and matches the pre-T6 "broadcast to all" behaviour.
+        # Returns the message_id of the first delivery (all deliveries
+        # share the same synthesised id is intentional — same envelope).
+        connected_buckets = [
+            app_id
+            for app_id, clients in self._ws_clients.items()
+            if any(not ws.closed for ws in clients)
+        ]
+        if not connected_buckets:
+            # No clients yet — degrade gracefully like the pre-T6 path
+            # (push to "default" so the message is still recorded for
+            # late-arrival diagnostics, even though nothing receives).
+            connected_buckets = ["default"]
+
+        msg_id = ""
+        for app_id in connected_buckets:
+            msg_id = self.push_inbound(
+                chat_id=chat_id,
+                sender_open_id=sender_open_id,
+                content_text=content_text,
+                app_id=app_id,
+            )
+
         return web.json_response({"ok": True, "message_id": msg_id})
+
+    async def _on_register_membership(self, request: web.Request) -> web.Response:
+        """POST /register_membership — scenario helper: mark `app_id`'s
+        bot as a member of `chat_id`. T7 uses the membership map to
+        reject outbound from non-member apps. Body JSON shape:
+        {"app_id": "feishu_app_dev", "chat_id": "oc_pra_dev"}
+        """
+        body = await request.json()
+        app_id = body.get("app_id", "default")
+        chat_id = body.get("chat_id", "")
+        self.register_chat_membership(app_id, chat_id)
+        return web.json_response({"ok": True})
 
     async def _on_get_sent_messages(self, request: web.Request) -> web.Response:
         """GET /sent_messages — scenario helper: return the outbound

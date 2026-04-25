@@ -257,11 +257,34 @@ start_mock_feishu() {
   # Readiness probe
   for _ in $(seq 1 50); do
     if curl -sSf "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" >/dev/null 2>&1; then
+      _seed_e2e_chat_membership
       return 0
     fi
     sleep 0.1
   done
   _fail_with_context "mock_feishu did not come up on port ${MOCK_FEISHU_PORT}"
+}
+
+# PR-A T6/T7: the feishu adapter now sets `X-App-Id: <actor_id>` on
+# every outbound POST to mock_feishu. T7's membership check rejects
+# the request unless the (app_id, chat_id) pair has been registered.
+# Pre-seed memberships for the e2e adapter ("feishu_app_e2e-mock")
+# against every chat in seed_workspaces so scenarios 01-03 keep
+# passing. Scenario 04 (multi-app) seeds its own memberships in
+# start_two_mock_feishus.
+_seed_e2e_chat_membership() {
+  local chats=(
+    oc_mock_single
+    oc_mock_concurrent_a
+    oc_mock_concurrent_b
+    oc_mock_tmux
+  )
+  for chat in "${chats[@]}"; do
+    curl -sS -X POST -H 'content-type: application/json' \
+      -d "{\"app_id\":\"feishu_app_e2e-mock\",\"chat_id\":\"${chat}\"}" \
+      "http://127.0.0.1:${MOCK_FEISHU_PORT}/register_membership" >/dev/null \
+      || _fail_with_context "register_membership failed for ${chat}"
+  done
 }
 
 load_agent_yaml() {
