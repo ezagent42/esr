@@ -155,7 +155,6 @@ def test_envelope_app_id_discriminates_lookup(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_mock_path_envelope_has_principal_and_workspace(
     workspaces_file: Path,
-    allow_all_capabilities: Path,
 ) -> None:
     """Drive the mock path end-to-end and assert the yielded envelope
     carries both capability fields. This pins the three-site helper
@@ -177,7 +176,6 @@ async def test_mock_path_envelope_has_principal_and_workspace(
                     "app_secret": "s",
                     "base_url": url,
                     "workspaces_path": str(workspaces_file),
-                    "capabilities_path": str(allow_all_capabilities),
                 }
             ),
         )
@@ -186,10 +184,13 @@ async def test_mock_path_envelope_has_principal_and_workspace(
 
         async def _seed_soon() -> None:
             await asyncio.sleep(0.2)
+            # PR-A T6: target adapter's app_id bucket — see
+            # test_emit_events.py for the same pattern + rationale.
             mock.push_inbound(
                 chat_id="oc_bound",
                 sender_open_id="ou_alice",
                 content_text="hi",
+                app_id="feishu-app:test",
             )
 
         seed = asyncio.create_task(_seed_soon())

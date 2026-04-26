@@ -1,24 +1,26 @@
 # ESR Capabilities — E2E Acceptance Specification
 
-**Status:** draft
+**Status:** updated 2026-04-26 (Lane A drop)
 **Maps to:** design spec `docs/superpowers/specs/2026-04-20-esr-capabilities-design.md` §12; implementation plan Phase CAP-9 Task 15.
 **Purpose:** validate the **capability-based access control subsystem** end-to-end. Complements (does NOT replace) `e2e-platform-validation.md` which validates the runtime platform itself.
+
+> **Lane A removal (2026-04-26):** the Python-side adapter gate is gone; auth lives entirely in Lane B (Elixir runtime). Tracks CAP-B, CAP-C, CAP-D have been removed from the executable harness. References to "Lane A" / "`_is_authorized`" / "deny DM rate-limit (Python)" in this document below are **historical** — kept for change-tracking but not load-bearing for current behaviour. The deny-DM dispatch + 10-min rate-limit live in `runtime/lib/esr/peers/feishu_app_adapter.ex` and are unit-tested at `runtime/test/esr/peers/feishu_app_adapter_deny_dm_test.exs` + `runtime/test/esr/peer_server_lane_b_deny_dispatch_test.exs`. Migration note: `docs/notes/auth-lane-a-removal.md`.
 
 ---
 
 ## 0. How to read this document
 
-The capabilities E2E is organised as seven **Tracks** (CAP-A through CAP-G), each focused on one end-to-end property of the cap subsystem:
+The capabilities E2E is organised as **four** Tracks (CAP-A, CAP-E, CAP-F, CAP-G), each focused on one end-to-end property of the cap subsystem:
 
-| Track | Property under test |
-|---|---|
-| CAP-A | Admin flow: bootstrap principal has admin wildcard; both lanes allow |
-| CAP-B | Regular user flow: scoped grants let the user send + spawn |
-| CAP-C | Lane A deny + 10-min rate-limit window |
-| CAP-D | Lane B deny: tool_invoke unauthorized → handler reply "❌ 无权限..." |
-| CAP-E | Workspace scoping: `workspace:proj-a/*` does not match `workspace:proj-b` |
-| CAP-F | Hot reload: `esr cap grant` is live within 2 s — no esrd restart |
-| CAP-G | File corruption: malformed YAML keeps the previous snapshot; log shows error |
+| Track | Property under test | Status |
+|---|---|---|
+| CAP-A | Admin flow: bootstrap principal has admin wildcard; both lanes allow | live |
+| ~~CAP-B~~ | ~~Regular user flow: scoped grants let the user send + spawn~~ | **removed 2026-04-26 (Lane A drop)** |
+| ~~CAP-C~~ | ~~Lane A deny + 10-min rate-limit window~~ | **removed 2026-04-26 — covered by `feishu_app_adapter_deny_dm_test.exs`** |
+| ~~CAP-D~~ | ~~Lane B deny: tool_invoke unauthorized → handler reply "❌ 无权限..."~~ | **removed 2026-04-26 — covered by `peer_server_lane_b_deny_dispatch_test.exs`** |
+| CAP-E | Workspace scoping: `workspace:proj-a/*` does not match `workspace:proj-b` | live |
+| CAP-F | Hot reload: `esr cap grant` is live within 2 s — no esrd restart | live |
+| CAP-G | File corruption: malformed YAML keeps the previous snapshot; log shows error | live |
 
 (Track CAP-H — "CAP-0 rename non-regression" — was proposed in the plan draft but dropped: Task 1 Step 4 and every subsequent `make test` invocation already validates the rename, so a dedicated track is redundant.)
 
@@ -26,7 +28,7 @@ Each track has four sections: **Goal** (one sentence), **Preconditions** (files 
 
 A capabilities E2E "pass" requires every checkbox in every track to be ticked — no cherry-picking. See §9 of this document for the aggregate success gate.
 
-The executable counterpart — `scripts/scenarios/e2e_capabilities.py` — is machine-readable and runs as a **component-level** e2e: each track is a Python function that drives `CapabilitiesChecker`, the CLI via `click.testing.CliRunner`, the FeishuAdapter's Lane A gate directly, and constructs the inbound envelopes that Lane B would see. A fully-orchestrated live e2e (esrd + mock_feishu + mock_cc) is a v2 improvement; v1 focuses on correctness of every enforcement seam individually against realistic fixtures.
+The executable counterpart — `scripts/scenarios/e2e_capabilities.py` — is machine-readable and runs as a **component-level** e2e: each surviving track is a Python function that drives `CapabilitiesChecker` and the CLI via `click.testing.CliRunner`. (Pre-2026-04-26 it also drove `FeishuAdapter._is_authorized` for Lane A coverage; that has moved to ExUnit.) A fully-orchestrated live e2e (esrd + mock_feishu + mock_cc) is a v2 improvement; v1 focuses on correctness of every enforcement seam individually against realistic fixtures.
 
 ---
 

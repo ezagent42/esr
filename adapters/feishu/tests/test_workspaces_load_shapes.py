@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 from esr_feishu.adapter import FeishuAdapter
 
 from esr.adapter import AdapterConfig
@@ -28,14 +27,11 @@ from esr.adapter import AdapterConfig
 def _config(tmp_path: Path, workspaces_yaml: str) -> AdapterConfig:
     ws_path = tmp_path / "workspaces.yaml"
     ws_path.write_text(workspaces_yaml)
-    cap_path = tmp_path / "capabilities.yaml"
-    cap_path.write_text(yaml.safe_dump({"principals": []}))
     return AdapterConfig({
         "app_id": "e2e-mock",
         "app_secret": "mock",
         "base_url": "http://127.0.0.1:1",
         "workspaces_path": str(ws_path),
-        "capabilities_path": str(cap_path),
     })
 
 
