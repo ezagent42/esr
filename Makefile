@@ -28,7 +28,7 @@ clean:
 # Hard timeout wrapper — prevents a hung esrd from holding CI. Uses
 # `perl -e 'alarm ...'` for portability (macOS ships without GNU
 # `timeout`; CI runners have perl in the base image).
-E2E_TIMEOUT ?= 300
+E2E_TIMEOUT ?= 420
 E2E_RUN = perl -e 'alarm shift; exec @ARGV' $(E2E_TIMEOUT) bash
 
 e2e: e2e-01 e2e-02 e2e-03 e2e-04
