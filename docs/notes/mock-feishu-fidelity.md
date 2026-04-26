@@ -267,18 +267,31 @@ In order, smallest work to highest leverage:
 
 ## 9. Sign-off criteria for "mock fidelity good enough for PR-A"
 
-- [ ] Mock inbound envelope matches the captured `text_message.json`
-  field-for-field (extras OK, missing fields not OK)
-- [ ] Mock supports per-app namespacing on `_ws_clients` and
-  `_sent_messages`
-- [ ] Mock rejects outbound `POST /im/v1/messages` if calling app
-  isn't a "member" of `receive_id` chat (membership = a
-  registration step in test setup)
-- [ ] Existing scenarios 01/02/03 still pass against the upgraded
-  mock with the same expectations (= mock changes are additive,
-  not breaking)
-- [ ] `docs/notes/` has an updated entry describing the
-  mock's new contract
+- [x] Mock inbound envelope matches the captured `text_message.json`
+  field-for-field (extras OK, missing fields not OK) — landed in
+  PR-A T5 (`scripts/mock_feishu.py:push_inbound`); regression
+  test at `py/tests/scripts/test_mock_feishu_envelope_shape.py`.
+- [x] Mock supports per-app namespacing on `_ws_clients` and
+  `_sent_messages` — landed in PR-A T6
+  (`scripts/mock_feishu.py:_ws_clients` is now `dict[str,
+  list[...]]` keyed on `app_id`; `_sent_messages` partitioned the
+  same way; `_on_get_sent_messages` accepts `?app_id=` to scope
+  the response). Regression test at
+  `py/tests/scripts/test_mock_feishu_multi_app.py`.
+- [x] Mock rejects outbound `POST /im/v1/messages` if calling app
+  isn't a "member" of `receive_id` chat — landed in PR-A T7
+  (`_on_create_message` checks `_chat_membership[X-App-Id]`;
+  returns Lark code 230002 on miss). Membership is registered
+  via `POST /register_membership`. Regression test at
+  `py/tests/scripts/test_mock_feishu_membership.py`.
+- [x] Existing scenarios 01/02/03 still pass against the upgraded
+  mock — verified at PR-A T6/T7 follow-up (commit `54b834b`).
+  Required: feishu adapter sets `?app_id=<actor_id>` on /ws and
+  `X-App-Id: <actor_id>` on POST so the per-app routing has a
+  key; e2e common.sh seeds chat membership for the e2e chat set.
+- [x] `docs/notes/` has an updated entry describing the
+  mock's new contract — this file (§3 + §6 + §7 already document
+  the post-T6/T7 contract).
 
 For PR-B and beyond, raise the bar incrementally per row 3+ of §8.
 
