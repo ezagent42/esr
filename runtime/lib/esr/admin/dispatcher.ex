@@ -110,7 +110,11 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
     "session_list" => Esr.Admin.Commands.Session.List,
     "grant" => Esr.Admin.Commands.Cap.Grant,
-    "revoke" => Esr.Admin.Commands.Cap.Revoke
+    "revoke" => Esr.Admin.Commands.Cap.Revoke,
+    # PR-A T9: e2e-only test-harness command — synthesizes a
+    # tool_invoke into FCP, bypassing claude. See
+    # Esr.Admin.Commands.CrossAppTest for rationale.
+    "cross_app_test" => Esr.Admin.Commands.CrossAppTest
   }
 
   # ------------------------------------------------------------------

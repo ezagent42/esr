@@ -75,8 +75,9 @@ _e2e_teardown() {
   pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT}" 2>/dev/null || true
 
   # PR-A T8 — extend teardown for the two-mock scenario 04 setup.
-  # Both pidfiles + both mocks pkill'd by their distinct port numbers
-  # so single-mock scenarios (01-03) remain untouched.
+  # `uv run` spawns python3 as a CHILD; killing the uv wrapper leaves
+  # the child python orphaned (still bound to port). Match the python
+  # arg pattern directly to catch both uv wrapper AND its child.
   for _mock_suffix in dev kanban; do
     local _mpid="/tmp/mock-feishu-${ESR_E2E_RUN_ID}-${_mock_suffix}.pid"
     if [[ -f "${_mpid}" ]]; then
@@ -86,6 +87,17 @@ _e2e_teardown() {
   done
   pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT_DEV:-8211}" 2>/dev/null || true
   pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT_KANBAN:-8212}" 2>/dev/null || true
+  # Belt-and-suspenders: any python that mentions mock_feishu in argv.
+  # Scoped to mock_feishu.py so user's unrelated python procs survive.
+  pkill -9 -f "python.*mock_feishu\.py" 2>/dev/null || true
+  # Wait briefly for port release — TIME_WAIT can persist a few seconds.
+  for _i in 1 2 3 4 5; do
+    if ! lsof -i :"${MOCK_FEISHU_PORT_DEV:-8211}" -i :"${MOCK_FEISHU_PORT_KANBAN:-8212}" \
+           >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
   rm -f /tmp/.sidecar.pid 2>/dev/null || true
   rm -f /tmp/esr-worker-*.pid 2>/dev/null || true
   if [[ -S "${ESR_E2E_TMUX_SOCK}" ]]; then
