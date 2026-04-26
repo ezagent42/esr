@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
-"""E2E capabilities scenario harness — 7 tracks (CAP-A..CAP-G).
+"""E2E capabilities scenario harness — 4 tracks (CAP-A, CAP-E, CAP-F, CAP-G).
 
 This is the **component-level** E2E for ESR's capability-based access
-control subsystem. It validates every enforcement seam individually
-(CapabilitiesChecker, FeishuAdapter Lane A gate, `esr cap` CLI, file
-loader log-line contract, runtime Lane B witness test) against
-realistic fixtures, without requiring a running esrd / mock_feishu /
-mock_cc.
+control subsystem. Validates the enforcement seams that survive the
+Lane A drop (2026-04-26):
 
-A fully-orchestrated live E2E (spawn esrd, drive WebSocket frames
-through the Phoenix channel, assert teardown-safe log lines) is a v2
-improvement — the component-level harness catches every regression a
-live run would surface at the enforcement points, with none of the
-orchestration flakiness.
+- CAP-A: admin/bootstrap principal capability resolution
+- CAP-E: workspace-scoped pattern matching (no cross-workspace leak)
+- CAP-F: hot reload via FileLoader mtime gate
+- CAP-G: file-corruption resilience (bad yaml → keep prior snapshot)
+
+CAP-B / CAP-C / CAP-D were removed alongside Lane A. They exercised
+`adapter._is_authorized` / `_should_send_deny` / "Lane A passes,
+Lane B denies" cross-lane semantics — none of which exist anymore.
+Lane B's gate + deny-DM dispatch are covered by ExUnit tests at:
+  runtime/test/esr/peer_server_lane_b_deny_dispatch_test.exs
+  runtime/test/esr/peers/feishu_app_adapter_deny_dm_test.exs
 
 Usage::
 
-    cd /Users/h2oslabs/Workspace/esr/.worktrees/esr-capabilities
     uv run --project py python scripts/scenarios/e2e_capabilities.py
 
-Exit 0 with ``"7 tracks PASSED"`` iff every track asserts cleanly;
-exit 1 on the first failure, printing the failing track + details.
+Exit 0 iff every surviving track asserts cleanly; exit 1 on first
+failure with track + details.
 
 Maps to: ``docs/superpowers/tests/e2e-capabilities.md`` (track-by-track
-human spec); implementation plan Phase CAP-9 Task 15.
+human spec; updated post Lane A drop).
 """
 from __future__ import annotations
 
@@ -179,262 +181,25 @@ def track_cap_a(tmp: Path) -> TrackResult:
         return TrackResult("CAP-A", False, f"exception:\n{traceback.format_exc()}")
 
 
-# --- Track CAP-B — Regular user flow ------------------------------------
-
-
-def track_cap_b(tmp: Path) -> TrackResult:
-    """`ou_alice` holds msg.send + session.create for `coord-prod`; both
-    Lane A (adapter `_is_authorized`) and Lane B (checker for
-    session.create) allow.
-    """
-    from esr_feishu.adapter import FeishuAdapter
-
-    from esr.adapter import AdapterConfig
-    from esr.capabilities import CapabilitiesChecker
-
-    try:
-        esrd_home = tmp / "cap-b"
-        caps = esrd_home / "default" / "capabilities.yaml"
-        ws = esrd_home / "default" / "workspaces.yaml"
-
-        _write_caps(
-            caps,
-            [
-                {
-                    "id": "ou_alice",
-                    "kind": "feishu_user",
-                    "capabilities": [
-                        "workspace:coord-prod/msg.send",
-                        "workspace:coord-prod/session.create",
-                    ],
-                }
-            ],
-        )
-        _write_workspaces(
-            ws,
-            [
-                {
-                    "name": "coord-prod",
-                    "cwd": "/tmp/coord-prod",
-                    "start_cmd": "esr-cc",
-                    "role": "ops",
-                    "chats": [
-                        {
-                            "chat_id": "oc_alice_chat",
-                            "app_id": "cli_prod",
-                            "kind": "dm",
-                        }
-                    ],
-                }
-            ],
-        )
-
-        checker = CapabilitiesChecker(caps)
-        _assert(
-            checker.has("ou_alice", "workspace:coord-prod/msg.send") is True,
-            "B-1 Lane A check failed",
-        )
-        _assert(
-            checker.has("ou_alice", "workspace:coord-prod/session.create") is True,
-            "B-2 Lane B session.create check failed",
-        )
-
-        adapter = FeishuAdapter(
-            actor_id="feishu-app:test",
-            config=AdapterConfig(
-                {
-                    "app_id": "cli_prod",
-                    "app_secret": "s",
-                    "workspaces_path": str(ws),
-                    "capabilities_path": str(caps),
-                }
-            ),
-        )
-        _assert(
-            adapter._is_authorized("ou_alice", "oc_alice_chat") is True,
-            "B-3 adapter _is_authorized denied a valid principal",
-        )
-
-        return TrackResult("CAP-B", True, "scoped user passes Lane A + Lane B")
-    except AssertionError as e:
-        return TrackResult("CAP-B", False, f"assertion: {e}")
-    except Exception:
-        return TrackResult("CAP-B", False, f"exception:\n{traceback.format_exc()}")
-
-
-# --- Track CAP-C — Lane A deny + rate limit ------------------------------
-
-
-def track_cap_c(tmp: Path) -> TrackResult:
-    """`ou_rando` has no grants; adapter denies and sends exactly one deny
-    DM within the 10-minute window. Cycling the monotonic clock past the
-    window allows a second DM.
-    """
-    from unittest.mock import patch
-
-    from esr_feishu.adapter import FeishuAdapter
-
-    from esr.adapter import AdapterConfig
-
-    try:
-        esrd_home = tmp / "cap-c"
-        caps = esrd_home / "default" / "capabilities.yaml"
-        ws = esrd_home / "default" / "workspaces.yaml"
-
-        _write_caps(caps, [])  # no one is granted
-        _write_workspaces(
-            ws,
-            [
-                {
-                    "name": "coord-prod",
-                    "cwd": "/tmp/coord-prod",
-                    "start_cmd": "esr-cc",
-                    "role": "ops",
-                    "chats": [
-                        {
-                            "chat_id": "oc_rando_chat",
-                            "app_id": "cli_prod",
-                            "kind": "dm",
-                        }
-                    ],
-                }
-            ],
-        )
-
-        adapter = FeishuAdapter(
-            actor_id="feishu-app:test",
-            config=AdapterConfig(
-                {
-                    "app_id": "cli_prod",
-                    "app_secret": "s",
-                    "workspaces_path": str(ws),
-                    "capabilities_path": str(caps),
-                }
-            ),
-        )
-
-        # C-1: deny
-        _assert(
-            adapter._is_authorized("ou_rando", "oc_rando_chat") is False,
-            "C-1 ungranted user should be denied",
-        )
-
-        # Drive the rate-limit gate directly, using a patched monotonic
-        # clock — the existing test_lane_a.py test suite uses the same
-        # technique (see ``test_deny_rate_limit_expires_after_window``)
-        # because pinning a 600 s boundary with real time would stall CI.
-        clock = [1000.0]
-        with patch("esr_feishu.adapter.time.monotonic", lambda: clock[0]):
-            # C-2: first DM allowed
-            _assert(
-                adapter._should_send_deny("ou_rando") is True,
-                "C-2 first deny DM should fire",
-            )
-            # C-3: second DM within window is silent
-            clock[0] = 1200.0  # +200s, still < 600s window
-            _assert(
-                adapter._should_send_deny("ou_rando") is False,
-                "C-3 second deny DM within window should be silent",
-            )
-            # C-4: after window, deny fires again
-            clock[0] = 1601.0  # +601s from t=1000 → outside 600s window
-            _assert(
-                adapter._should_send_deny("ou_rando") is True,
-                "C-4 deny DM should fire again after window elapses",
-            )
-
-        return TrackResult(
-            "CAP-C", True, "Lane A deny + 10-min rate-limit window honoured"
-        )
-    except AssertionError as e:
-        return TrackResult("CAP-C", False, f"assertion: {e}")
-    except Exception:
-        return TrackResult("CAP-C", False, f"exception:\n{traceback.format_exc()}")
-
-
-# --- Track CAP-D — Lane B deny (tool_invoke unauthorized) ---------------
-
-
-def track_cap_d(tmp: Path) -> TrackResult:
-    """`ou_reader` holds msg.send but not session.create; Lane A passes
-    but Lane B denies. Runtime witness: the BEAM test ``peer_server_lane_b_test.exs``
-    proves the deny branch emits an unauthorized tool_result; this
-    harness asserts the witness file exists with the correct literals.
-    """
-    from esr.capabilities import CapabilitiesChecker
-
-    try:
-        esrd_home = tmp / "cap-d"
-        caps = esrd_home / "default" / "capabilities.yaml"
-        _write_caps(
-            caps,
-            [
-                {
-                    "id": "ou_reader",
-                    "kind": "feishu_user",
-                    "capabilities": ["workspace:coord-prod/msg.send"],
-                }
-            ],
-        )
-
-        checker = CapabilitiesChecker(caps)
-
-        # D-1: Lane A passes
-        _assert(
-            checker.has("ou_reader", "workspace:coord-prod/msg.send") is True,
-            "D-1 reader should pass Lane A",
-        )
-        # D-2: Lane B (session.create) denies
-        _assert(
-            checker.has("ou_reader", "workspace:coord-prod/session.create") is False,
-            "D-2 reader should be denied session.create",
-        )
-
-        # D-3: runtime witness test exists with required literals
-        witness = _REPO / "runtime" / "test" / "esr" / "peer_server_lane_b_test.exs"
-        _assert(witness.exists(), f"D-3 witness file missing: {witness}")
-        witness_text = witness.read_text()
-        _assert(
-            "unauthorized" in witness_text,
-            "D-3 witness file missing 'unauthorized' literal",
-        )
-        _assert(
-            "required_perm" in witness_text,
-            "D-3 witness file missing 'required_perm' literal",
-        )
-
-        # D-4: handler-facing reply shape documented by the witness
-        _assert(
-            'result["ok"] == false' in witness_text
-            or "result[\"ok\"] == false" in witness_text,
-            "D-4 witness file doesn't assert tool_result.ok == false",
-        )
-
-        return TrackResult(
-            "CAP-D",
-            True,
-            "Lane B denies session.create; witness test validated",
-        )
-    except AssertionError as e:
-        return TrackResult("CAP-D", False, f"assertion: {e}")
-    except Exception:
-        return TrackResult("CAP-D", False, f"exception:\n{traceback.format_exc()}")
-
 
 # --- Track CAP-E — Workspace scoping ------------------------------------
 
 
 def track_cap_e(tmp: Path) -> TrackResult:
-    """`ou_dev` holds `workspace:proj-a/*` — denies in `proj-b`."""
-    from esr_feishu.adapter import FeishuAdapter
+    """`ou_dev` holds `workspace:proj-a/*` — denies in `proj-b`.
 
-    from esr.adapter import AdapterConfig
+    Post-Lane-A drop (2026-04-26) this track only verifies the
+    CapabilitiesChecker pattern matching that runs during yaml load
+    + ``esr cap who-can`` resolution. The adapter-side `_is_authorized`
+    assertion that lived here is gone — Lane B's gate at
+    `peer_server.ex:236-274` is the same `Capabilities.has?/2` shape
+    and is exercised by `peer_server_lane_b_deny_dispatch_test.exs`.
+    """
     from esr.capabilities import CapabilitiesChecker
 
     try:
         esrd_home = tmp / "cap-e"
         caps = esrd_home / "default" / "capabilities.yaml"
-        ws = esrd_home / "default" / "workspaces.yaml"
 
         _write_caps(
             caps,
@@ -444,29 +209,6 @@ def track_cap_e(tmp: Path) -> TrackResult:
                     "kind": "feishu_user",
                     "capabilities": ["workspace:proj-a/*"],
                 }
-            ],
-        )
-        _write_workspaces(
-            ws,
-            [
-                {
-                    "name": "proj-a",
-                    "cwd": "/tmp/proj-a",
-                    "start_cmd": "esr-cc",
-                    "role": "dev",
-                    "chats": [
-                        {"chat_id": "oc_a", "app_id": "cli_prod", "kind": "dm"}
-                    ],
-                },
-                {
-                    "name": "proj-b",
-                    "cwd": "/tmp/proj-b",
-                    "start_cmd": "esr-cc",
-                    "role": "dev",
-                    "chats": [
-                        {"chat_id": "oc_b", "app_id": "cli_prod", "kind": "dm"}
-                    ],
-                },
             ],
         )
 
@@ -483,22 +225,6 @@ def track_cap_e(tmp: Path) -> TrackResult:
         _assert(
             checker.has("ou_dev", "workspace:proj-b/msg.send") is False,
             "E-3 cross-workspace should deny",
-        )
-
-        adapter = FeishuAdapter(
-            actor_id="feishu-app:test",
-            config=AdapterConfig(
-                {
-                    "app_id": "cli_prod",
-                    "app_secret": "s",
-                    "workspaces_path": str(ws),
-                    "capabilities_path": str(caps),
-                }
-            ),
-        )
-        _assert(
-            adapter._is_authorized("ou_dev", "oc_b") is False,
-            "E-4 adapter _is_authorized cross-workspace should deny",
         )
 
         return TrackResult(
@@ -670,9 +396,12 @@ def track_cap_g(tmp: Path) -> TrackResult:
 
 TRACKS: list[tuple[str, Callable[[Path], TrackResult]]] = [
     ("CAP-A", track_cap_a),
-    ("CAP-B", track_cap_b),
-    ("CAP-C", track_cap_c),
-    ("CAP-D", track_cap_d),
+    # CAP-B / CAP-C / CAP-D removed 2026-04-26 (Lane A drop) — they
+    # exercised `_is_authorized` / `_should_send_deny` / dual-lane
+    # divergence that no longer exist. Lane B's gate + deny-DM
+    # dispatch are covered by:
+    #   runtime/test/esr/peer_server_lane_b_deny_dispatch_test.exs
+    #   runtime/test/esr/peers/feishu_app_adapter_deny_dm_test.exs
     ("CAP-E", track_cap_e),
     ("CAP-F", track_cap_f),
     ("CAP-G", track_cap_g),
@@ -681,7 +410,7 @@ TRACKS: list[tuple[str, Callable[[Path], TrackResult]]] = [
 
 def main() -> int:
     """Run every track; exit 0 iff all pass."""
-    print("ESR capabilities E2E — 7 tracks")
+    print(f"ESR capabilities E2E — {len(TRACKS)} tracks")
     print("=" * 60)
 
     tmp = Path(tempfile.mkdtemp(prefix="esr-cap-e2e-"))

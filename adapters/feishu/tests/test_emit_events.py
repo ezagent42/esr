@@ -34,7 +34,7 @@ from mock_feishu import MockFeishu  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_emit_events_mock_yields_msg_received(
-    tmp_path: Path, allow_all_capabilities: Path
+    tmp_path: Path,
 ) -> None:
     """When base_url points at a mock, emit_events relays /ws frames.
 
@@ -42,8 +42,6 @@ async def test_emit_events_mock_yields_msg_received(
     from the adapter's generator. Verifies the flattened shape matches
     what the feishu_app / feishu_thread handlers expect.
     """
-    # Bind the synthetic chat to a workspace so Lane A can pass the
-    # (chat_id, app_id) lookup for an authorized principal.
     workspaces_path = tmp_path / "workspaces.yaml"
     write_workspace(
         workspaces_path,
@@ -67,7 +65,6 @@ async def test_emit_events_mock_yields_msg_received(
                 "app_secret": "mock_secret",
                 "base_url": url,
                 "workspaces_path": str(workspaces_path),
-                "capabilities_path": str(allow_all_capabilities),
             }),
         )
 
@@ -78,10 +75,19 @@ async def test_emit_events_mock_yields_msg_received(
 
         async def _seed_soon() -> None:
             await asyncio.sleep(0.2)
+            # PR-A T6: mock_feishu fans push_inbound out per-app
+            # (`app_id` keys `_ws_clients`). The adapter connects with
+            # `?app_id=<self.actor_id>`, so push_inbound must target
+            # the same app_id or the frame goes to the empty "default"
+            # bucket. (Pre-PR-A this test passed because there was
+            # only one bucket; pre-Lane-A-drop the failure was masked
+            # by Lane A's `_is_authorized` rejection happening before
+            # the test could observe the routing miss.)
             mock.push_inbound(
                 chat_id="oc_unit_test",
                 sender_open_id="ou_sender_1",
                 content_text="hello from mock",
+                app_id="feishu-app:test",
             )
 
         seed = asyncio.create_task(_seed_soon())

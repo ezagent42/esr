@@ -327,36 +327,19 @@ seed_capabilities() {
   # any other permission an e2e scenario will need. Matches the valid
   # fixture at runtime/test/support/capabilities_fixtures/valid.yaml.
   #
-  # Two-path write (PR-9 T9 RCA):
-  # - instance path (${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml):
-  #   consumed by the Elixir admin dispatcher to authorize
-  #   adapter.register / session.create etc.
-  # - default path (${ESRD_HOME}/default/capabilities.yaml):
-  #   consumed by the Python FeishuAdapter (_load_capabilities_checker
-  #   at adapter.py:191) for Lane A msg.send gating. Without this file
-  #   every inbound is denied with 你无权使用此 bot.
-  #
-  # ou_e2e is NOT granted workspace:e2e/msg.send — see TODO below.
-  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}" "${ESRD_HOME}/default"
-  # Only ou_admin for v1 — feishu_adapter_runner's handler_hello declares
-  # `permissions: []` (see esrd log), so `msg.send` isn't in the runtime
-  # permissions registry. If we seed `workspace:e2e/msg.send` grants for
-  # ou_e2e, the FileLoader rejects the ENTIRE yaml with
-  # `{:unknown_permission, "msg.send", "ou_e2e"}` and keeps the previous
-  # (empty) snapshot — which means ou_admin also loses its wildcard.
-  # Workaround: stick with ou_admin only; scenarios use ou_admin as
-  # sender (wildcard matches any workspace:*/msg.send).
-  #
-  # TODO: Once feishu_adapter_runner declares msg.send in handler_hello
-  # (or msg.send is registered as a subsystem-intrinsic permission),
-  # re-add the ou_e2e entries.
+  # Single path (post Lane-A drop, 2026-04-26):
+  # - ${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml — sole consumer
+  #   is the Elixir runtime (Lane B). Pre-PR drop-lane-a we also wrote
+  #   ${ESRD_HOME}/default/capabilities.yaml for the Python adapter's
+  #   Lane A `_load_capabilities_checker`; that path is dead now.
+  #   See docs/notes/auth-lane-a-removal.md.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
   local caps_yaml='principals:
   - id: ou_admin
     kind: feishu_user
     note: e2e admin (wildcard)
     capabilities: ["*"]'
   printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
-  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/default/capabilities.yaml"
 }
 
 seed_adapters() {
@@ -550,20 +533,14 @@ EOF
 
 seed_two_capabilities() {
   # ou_admin: wildcard. ou_restricted: ws_dev only (not ws_kanban).
-  # Same dual-write pattern as single-app seed_capabilities — Lane A
-  # reads default/, Lane B reads instance/.
-  #
-  # IMPORTANT: handler_hello declares `permissions: []` for the feishu
-  # adapter (PR-9 era TODO), so the runtime FileLoader rejects any
-  # held cap whose perm segment isn't a known permission. Workaround:
-  # use `workspace:ws_dev/*` — the segment wildcard `*` is special-
-  # cased at validate_perm/2 (file_loader.ex:119) AND at the runtime
-  # matcher (grants.ex:39 segment_match?), so it both loads cleanly
-  # AND grants msg.send/<anything> for ws_dev. The cap-shape mismatch
-  # vs the spec's `workspace:ws_dev/msg.send` is a test-side hack
-  # documented at the seed_capabilities TODO; the post-PR-A Lane-A
-  # removal will make this less load-bearing.
-  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}" "${ESRD_HOME}/default"
+  # Single instance/ path post-Lane-A drop (2026-04-26). The
+  # `workspace:ws_dev/*` shape uses a segment wildcard so the
+  # FileLoader accepts the entry without `msg.send` being declared
+  # in the runtime permissions registry — see file_loader.ex:119
+  # (`validate_perm("*", _) -> :ok`) and grants.ex:39
+  # (`segment_match?("*", _) -> true`). Substantively the same
+  # grant as `workspace:ws_dev/msg.send` for FCP's runtime check.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
   local caps_yaml='principals:
   - id: ou_admin
     kind: feishu_user
@@ -575,7 +552,6 @@ seed_two_capabilities() {
     capabilities:
       - workspace:ws_dev/*'
   printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
-  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/default/capabilities.yaml"
 }
 
 seed_two_adapters() {
