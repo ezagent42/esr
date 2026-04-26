@@ -440,6 +440,29 @@ wait_for_sidecar_ready() {
   done
 }
 
+# --- TIME_WAIT-friendly polling helper (RCA: 2026-04-26) ----------
+# Wait until polling URL until jq filter matches OR deadline expires.
+# Usage:
+#   wait_for_url_jq_match URL JQ [iters=1200] [sleep_ms=100]
+#
+# Replaces the previous `for _ in $(seq 1 N); do curl ...; done` shape
+# that opened a new TCP socket per iteration → ~1200 TIME_WAIT entries
+# per failing wait loop → exhausted the workstation's 127.0.0.1
+# ephemeral port pool during PR-A T9 development. The Python helper
+# uses one requests.Session, so 1200 polls = 1 TCP connection.
+#
+# Returns 0 on match, non-zero on deadline. Matched JSON written to
+# stdout (same shape callers used to capture from the old curl|jq
+# pipeline).
+wait_for_url_jq_match() {
+  local url=$1 filter=$2
+  local iters=${3:-1200} sleep_ms=${4:-100}
+  uv run --project "${_E2E_REPO_ROOT}/py" python \
+    "${_E2E_REPO_ROOT}/tests/e2e/scenarios/_wait_url.py" \
+    "$url" "$filter" \
+    --iterations "$iters" --sleep-ms "$sleep_ms"
+}
+
 register_feishu_adapter() {
   # Register an adapter record so `/new-session` can resolve the proxy
   # target. **Blocker fix 2 (v1.1):** prior version wrote

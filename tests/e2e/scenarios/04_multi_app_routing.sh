@@ -41,14 +41,11 @@ INBOUND1=$(curl -sS --connect-timeout 1 --max-time 5 -X POST -H 'content-type: a
   | jq -r '.message_id')
 [[ -n "$INBOUND1" ]] || _fail_with_context "step1: no message_id from push_inbound"
 
-# Wait up to 120s for CC's reply (real model turn).
-for _ in $(seq 1 1200); do
-  if curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
-       | jq -e '.[] | select(.receive_id=="oc_pra_dev")' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+# Wait up to 120s for CC's reply (real model turn). Single-session
+# poll — see common.sh wait_for_url_jq_match docstring.
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
+  '.[] | select(.receive_id=="oc_pra_dev")' >/dev/null || true
 
 A_BODY=$(curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/sent_messages?app_id=feishu_app_dev" \
          | jq -r '.[] | select(.receive_id=="oc_pra_dev") | .content' | tr '\n' ' ')
@@ -72,13 +69,10 @@ curl -sS --connect-timeout 1 --max-time 5 -X POST -H 'content-type: application/
   -d "{\"chat_id\":\"oc_pra_kanban\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROBE_KAN"),\"app_id\":\"feishu_app_kanban\"}" \
   "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/push_inbound" >/dev/null
 
-for _ in $(seq 1 1500); do
-  if curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
-       | jq -e '.[] | select(.content | contains("ack-kanban-iso"))' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
+  '.[] | select(.content | contains("ack-kanban-iso"))' \
+  1500 100 >/dev/null || true
 
 KAN_ALL=$(curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
           | jq -r '.[].content' | tr '\n' ' ')
@@ -96,13 +90,10 @@ curl -sS --connect-timeout 1 --max-time 5 -X POST -H 'content-type: application/
   -d "{\"chat_id\":\"oc_pra_dev\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROBE2"),\"app_id\":\"feishu_app_dev\"}" \
   "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/push_inbound" >/dev/null
 
-for _ in $(seq 1 1200); do
-  if curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
-       | jq -e '.[] | select(.content | contains("dev finished step 1"))' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
+  '.[] | select(.content | contains("dev finished step 1"))' \
+  >/dev/null || true
 
 KAN2=$(curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \
        | jq -r '.[].content' | tr '\n' ' ')
@@ -202,7 +193,7 @@ echo "$STEP4_OUT"
 assert_contains "$STEP4_OUT" "ok: false"            "step4: tool_result reports ok:false"
 assert_contains "$STEP4_OUT" "unknown_chat_in_app"  "step4: tool_result error.type=unknown_chat_in_app"
 
-grep -q 'FCP cross-app deny type=unknown_chat_in_app.*chat_id="oc_pra_orphan".*app_id="feishu_app_kanban"' "$LOG_PATH" \
+grep -q 'FCP cross-app deny type=unknown_chat_in_app.*app_id="feishu_app_kanban".*chat_id="oc_pra_orphan"' "$LOG_PATH" \
   || _fail_with_context "step4: FCP unknown_chat_in_app log line not in $LOG_PATH"
 
 KAN4=$(curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/sent_messages?app_id=feishu_app_kanban" \

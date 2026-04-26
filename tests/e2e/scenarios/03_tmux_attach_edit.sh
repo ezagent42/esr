@@ -36,13 +36,9 @@ curl -sS -X POST -H 'content-type: application/json' \
 
 # Wait for CC's reply (confirms the pipeline — including TmuxProcess
 # + claude + cc_mcp — is fully wired).
-for _ in $(seq 1 1200); do
-  if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
-       | jq -e '.[] | select(.receive_id=="oc_mock_tmux")' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
+  '.[] | select(.receive_id=="oc_mock_tmux")' >/dev/null || true
 assert_mock_feishu_sent_includes "oc_mock_tmux" "ack"
 
 # --- user-step 11: discover tmux session + capture pane ------------
