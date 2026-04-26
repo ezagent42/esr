@@ -34,6 +34,7 @@ engineer's map from that spec to code on disk.*
 
 ### Capabilities
 - `esr/capabilities.ex` + `esr/capabilities/grants.ex` — canonical `prefix:name/perm` permission model. Diff-based `{:grants_changed, principal_id}` PubSub drives session-scoped projection.
+- Single enforcement lane (post 2026-04-26 Lane A drop): `Esr.PeerServer` `handle_info({:inbound_event, _}, _)` gates inbound on `workspace:<ws>/msg.send`, dispatches a deny-DM directive via the FAA peer on deny. See `docs/notes/auth-lane-a-removal.md` for the migration; `docs/notes/lane-a-rca.md` for why dual-lane existed and how to prevent it next time.
 
 ## Python code (`py/src/`)
 
