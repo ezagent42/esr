@@ -343,6 +343,12 @@ defmodule Esr.Peers.TmuxProcess do
 
       Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, base_delay)
       Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, base_delay + gap)
+      # PR-A T9: scenario 04 spawns two CC sessions concurrently; cold
+      # uv venv setup + claude boot can push the dev-channels dialog
+      # past the 8s second-confirm. Add a third send at 15s to cover
+      # slower concurrent starts. Idempotent — extra "1+Enter"s land
+      # in the terminal harmlessly once claude is past the dialog.
+      Process.send_after(self(), {:send_keys_tokens, ["1", :enter]}, base_delay + gap * 4)
     end
 
     :ok

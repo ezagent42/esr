@@ -354,6 +354,18 @@ defmodule Esr.Peers.FeishuChatProxy do
         if Esr.Capabilities.has?(state.principal_id, perm) do
           dispatch_to_target_app(chat_id, app_id, text, req_id, channel_pid)
         else
+          # Logger.info on every deny path — gives ops a deterministic
+          # signal independent of the model's response, which scenario
+          # 04 scrapes from esrd's stdout.log to detect cross-app
+          # auth-gate behavior. The structured fields mirror the
+          # tool_result error so log + wire stay symmetric.
+          Logger.info(
+            "FCP cross-app deny type=forbidden " <>
+              "principal_id=#{inspect(state.principal_id)} " <>
+              "app_id=#{inspect(app_id)} chat_id=#{inspect(chat_id)} " <>
+              "workspace=#{inspect(target_ws)} perm=#{inspect(perm)}"
+          )
+
           reply_tool_result(channel_pid, req_id, false, nil, %{
             "type" => "forbidden",
             "app_id" => app_id,
@@ -364,6 +376,12 @@ defmodule Esr.Peers.FeishuChatProxy do
         end
 
       :not_found ->
+        Logger.info(
+          "FCP cross-app deny type=unknown_chat_in_app " <>
+            "principal_id=#{inspect(state.principal_id)} " <>
+            "app_id=#{inspect(app_id)} chat_id=#{inspect(chat_id)}"
+        )
+
         reply_tool_result(channel_pid, req_id, false, nil, %{
           "type" => "unknown_chat_in_app",
           "app_id" => app_id,
@@ -391,6 +409,11 @@ defmodule Esr.Peers.FeishuChatProxy do
         })
 
       :not_found ->
+        Logger.info(
+          "FCP cross-app deny type=unknown_app " <>
+            "app_id=#{inspect(app_id)} chat_id=#{inspect(chat_id)}"
+        )
+
         reply_tool_result(channel_pid, req_id, false, nil, %{
           "type" => "unknown_app",
           "app_id" => app_id,
