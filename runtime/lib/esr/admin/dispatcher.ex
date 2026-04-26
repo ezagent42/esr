@@ -86,7 +86,10 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_end" => "session:default/end",
     "session_list" => "session.list",
     "grant" => "cap.manage",
-    "revoke" => "cap.manage"
+    "revoke" => "cap.manage",
+    # PR-A T9: cross_app_test is e2e-only; gate behind a wildcard-
+    # only permission so it can't fire under non-test grants.
+    "cross_app_test" => "cross_app_test.invoke"
   }
 
   # Map kind → Commands.<Module>. Missing entries surface as

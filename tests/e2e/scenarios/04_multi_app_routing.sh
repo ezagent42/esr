@@ -178,7 +178,10 @@ assert_not_contains "$KAN3" "step-1 done" "step3: kanban did NOT receive forbidd
 SID_DEV=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
   | awk '/^thread:/ { sub("thread:", "", $1); print $1 }' \
   | while read sid; do
-      if grep -q "auto-created session ${sid} for new_chat_thread.*chat_id=\"oc_pra_dev\".*app_id=\"feishu_app_dev\"" "$LOG_PATH" 2>/dev/null; then
+      # Log line format (verified): `auto-created session <sid> for
+      # new_chat_thread app_id="feishu_app_dev" chat_id="oc_pra_dev"
+      # thread_id=""` — note app_id comes BEFORE chat_id.
+      if grep -q "auto-created session ${sid} for new_chat_thread.*app_id=\"feishu_app_dev\".*chat_id=\"oc_pra_dev\"" "$LOG_PATH" 2>/dev/null; then
         echo "$sid"
         break
       fi
