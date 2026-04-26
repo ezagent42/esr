@@ -564,6 +564,9 @@ EOF
 
 start_two_mock_feishus() {
   _start_one_mock "${MOCK_FEISHU_PORT_DEV}"    "dev"
+  # Small gap to serialize uv venv access — two parallel uv runs can
+  # race on lock files. _start_one_mock's wait loop ensures the dev
+  # mock is already responding before kicking off kanban.
   _start_one_mock "${MOCK_FEISHU_PORT_KANBAN}" "kanban"
   # Pre-register memberships. feishu_app_dev is a member of oc_pra_dev
   # but NOT oc_pra_orphan (that's the step-4 non-member trigger).
