@@ -438,7 +438,13 @@ class FeishuAdapter:
         req = urllib.request.Request(
             f"{base_url}/open-apis/im/v1/messages?receive_id_type=chat_id",
             data=body,
-            headers={"content-type": "application/json"},
+            # PR-A T6/T7: mock_feishu partitions sent_messages by X-App-Id
+            # and rejects outbound from non-member apps. The "default"
+            # bucket bypasses both for back-compat with scenarios 01-03.
+            headers={
+                "content-type": "application/json",
+                "X-App-Id": self.actor_id,
+            },
             method="POST",
         )
         try:
@@ -491,7 +497,10 @@ class FeishuAdapter:
         req = urllib.request.Request(
             f"{base_url}/open-apis/im/v1/messages/{msg_id}/reactions",
             data=body,
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "X-App-Id": self.actor_id,
+            },
             method="POST",
         )
         try:
@@ -538,7 +547,10 @@ class FeishuAdapter:
         req = urllib.request.Request(
             f"{base_url}/open-apis/im/v1/messages/{msg_id}/reactions",
             data=body,
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "X-App-Id": self.actor_id,
+            },
             method="DELETE",
         )
         try:
@@ -678,7 +690,10 @@ class FeishuAdapter:
         upload_req = urllib.request.Request(
             f"{base_url}/open-apis/im/v1/files",
             data=upload_body,
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "X-App-Id": self.actor_id,
+            },
             method="POST",
         )
         try:
@@ -699,7 +714,10 @@ class FeishuAdapter:
         msg_req = urllib.request.Request(
             f"{base_url}/open-apis/im/v1/messages?receive_id_type=chat_id",
             data=msg_body,
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "X-App-Id": self.actor_id,
+            },
             method="POST",
         )
         try:
@@ -818,6 +836,13 @@ class FeishuAdapter:
                 payload = self._build_msg_received_envelope(
                     args={
                         "chat_id": chat_id,
+                        # PR-A T1: app_id is the ESR instance_id (the
+                        # adapters.yaml `instances:` key, e.g.
+                        # `feishu_app_e2e-mock`), NOT the Feishu wire
+                        # `cli_xxx`. The Elixir FeishuAppAdapter reads
+                        # this to key SessionRegistry's 3-tuple so two
+                        # apps with overlapping chat_ids never collide.
+                        "app_id": self.actor_id,
                         "message_id": getattr(message, "message_id", "") or "",
                         "content": extracted,
                         "raw_content": raw_content,
@@ -983,6 +1008,9 @@ class FeishuAdapter:
         return self._build_msg_received_envelope(
             args={
                 "chat_id": chat_id,
+                # PR-A T1: same ESR instance_id semantics as the WS path
+                # in _emit_events_lark.
+                "app_id": self.actor_id,
                 "message_id": getattr(m, "message_id", "") or "",
                 "content": extracted,
                 "raw_content": raw_content,
@@ -1007,7 +1035,15 @@ class FeishuAdapter:
         """
         import aiohttp
 
-        ws_url = base_url.rstrip("/").replace("http://", "ws://") + "/ws"
+        # PR-A T6 follow-up: identify which app this adapter speaks for so
+        # mock_feishu's per-app `_ws_clients` partitioning can route
+        # `push_inbound(app_id=...)` to the right consumer. Without the
+        # query, both adapters in scenario 04 land in the "default" bucket
+        # and mock_feishu can't tell them apart.
+        ws_url = (
+            base_url.rstrip("/").replace("http://", "ws://")
+            + f"/ws?app_id={self.actor_id}"
+        )
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
@@ -1041,6 +1077,11 @@ class FeishuAdapter:
                             yield self._build_msg_received_envelope(
                                 args={
                                     "chat_id": chat_id,
+                                    # PR-A T1: ESR instance_id (the
+                                    # adapters.yaml key); see the
+                                    # parallel _emit_events_lark
+                                    # comment for the locked semantics.
+                                    "app_id": self.actor_id,
                                     "message_id": message.get("message_id", ""),
                                     "content": _extract_text(raw_content, msg_type),
                                     "raw_content": raw_content,

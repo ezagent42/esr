@@ -152,12 +152,14 @@ defmodule Esr.Integration.N2TmuxTest do
     {:ok, ^sid_a, refs_a} =
       Esr.SessionRegistry.lookup_by_chat_thread(
         "oc_a_#{app_id}",
+        app_id,
         "om_a_#{app_id}"
       )
 
     {:ok, ^sid_b, refs_b} =
       Esr.SessionRegistry.lookup_by_chat_thread(
         "oc_b_#{app_id}",
+        app_id,
         "om_b_#{app_id}"
       )
 
@@ -211,6 +213,7 @@ defmodule Esr.Integration.N2TmuxTest do
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat_thread(
                "oc_a_#{app_id}",
+               app_id,
                "om_a_#{app_id}"
              )
 
@@ -244,6 +247,7 @@ defmodule Esr.Integration.N2TmuxTest do
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat_thread(
                "oc_b_#{app_id}",
+               app_id,
                "om_b_#{app_id}"
              )
   end

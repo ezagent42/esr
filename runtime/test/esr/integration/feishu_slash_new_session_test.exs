@@ -15,7 +15,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
        `SessionRegistry` — this is the T3 loop-closing behaviour.
     5. A second inbound envelope for the same `chat_id`/`thread_id` now
        resolves to the newly-created session via
-       `SessionRegistry.lookup_by_chat_thread/2` — proving the binding loop.
+       `SessionRegistry.lookup_by_chat_thread/3` — proving the binding loop.
 
   The integration test uses the production SlashHandler started by
   `Esr.AdminSession.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
@@ -27,7 +27,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   `Esr.SessionRouter.create_session/1`, which spawns the full
   `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, TmuxProcess)
   and registers the session with refs carrying each spawned peer pid.
-  This test still asserts the T3 invariant (`lookup_by_chat_thread/2`
+  This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
   returns the newly-created session); the T4-specific assertion —
   that `refs.feishu_chat_proxy` is a live pid — lives in
   `Esr.Admin.Commands.Session.NewTest`'s `:t4_session_router` describe
@@ -104,7 +104,9 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       end
 
     on_exit(fn ->
-      Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, @thread_id)
+      # PR-A T1: SessionRouter defaults app_id to "default" when the
+      # slash flow doesn't carry one (T3 will surface app_id explicitly).
+      Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, "default", @thread_id)
       |> case do
         {:ok, sid, _} -> Esr.SessionRegistry.unregister_session(sid)
         _ -> :ok
@@ -137,11 +139,13 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
     [_, sid] = Regex.run(~r/session started: (\S+)/, text)
 
-    # Step 5: a second inbound for the same (chat_id, thread_id) resolves
-    # to the newly-created session — the binding loop is closed.
+    # Step 5: a second inbound for the same (chat_id, app_id, thread_id)
+    # resolves to the newly-created session — the binding loop is closed.
+    # PR-A T1: slash flow doesn't yet supply app_id so SessionRouter
+    # defaults to "default".
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, @thread_id),
-           "SessionRegistry.lookup_by_chat_thread/2 must return the session " <>
+             Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, "default", @thread_id),
+           "SessionRegistry.lookup_by_chat_thread/3 must return the session " <>
              "created by the slash command"
 
     assert is_map(refs)
@@ -149,7 +153,10 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # SessionProcess actually stored the chat_thread_key too (T2 behaviour,
     # double-checked here so T3 failures are easy to diagnose).
     state = Esr.SessionProcess.state(sid)
-    assert state.chat_thread_key == %{chat_id: @chat_id, thread_id: @thread_id}
+
+    assert state.chat_thread_key ==
+             %{chat_id: @chat_id, app_id: "default", thread_id: @thread_id}
+
     assert state.metadata.principal_id == @test_principal
   end
 

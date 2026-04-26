@@ -173,6 +173,25 @@ defmodule Esr.Peers.CCProcessTest do
     assert Process.alive?(pid)
   end
 
+  test "build_channel_notification includes app_id from upstream meta" do
+    state = %{
+      session_id: "S_PRA2",
+      proxy_ctx: %{"channel_adapter" => "feishu"},
+      last_meta: %{
+        chat_id: "oc_PRA",
+        app_id: "feishu_DEV",
+        thread_id: "",
+        message_id: "om_X",
+        sender_id: "ou_someone"
+      }
+    }
+
+    envelope = Esr.Peers.CCProcess.build_channel_notification(state, "hello")
+    assert envelope["app_id"] == "feishu_DEV"
+    assert envelope["chat_id"] == "oc_PRA"
+    assert envelope["content"] == "hello"
+  end
+
   defp relay(reply_to) do
     receive do
       msg ->

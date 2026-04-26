@@ -39,7 +39,11 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     :ok =
       Esr.SessionRegistry.register_session(
         "session-abc",
-        %{chat_id: "oc_xyz", thread_id: "om_123"},
+        # PR-A T1: registry key is (chat_id, app_id, thread_id). Pre-PR-A
+        # envelopes (no args["app_id"]) fall back to state.instance_id —
+        # so the registry app_id MUST equal the adapter's instance_id
+        # for the legacy path to resolve.
+        %{chat_id: "oc_xyz", app_id: "inst_test456", thread_id: "om_123"},
         %{feishu_chat_proxy: test_pid}
       )
 
@@ -63,6 +67,68 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
     send(pid, {:inbound_event, envelope})
     assert_receive {:feishu_inbound, ^envelope}, 500
+  end
+
+  test "PR-A T1: handle_upstream uses args[app_id] for registry lookup, falls back to state.instance_id",
+       %{sup: sup} do
+    test_pid = self()
+
+    # Arrange: register a session keyed under app_id "feishu_DEV"
+    :ok =
+      Esr.SessionRegistry.register_session(
+        "S_PRA_FAA",
+        %{chat_id: "oc_PRA", app_id: "feishu_DEV", thread_id: ""},
+        %{feishu_chat_proxy: test_pid}
+      )
+
+    # Adapter's instance_id is intentionally a *different* string than
+    # the registry app_id, so the only way the lookup hits is via
+    # args["app_id"] from the envelope (post-PR-A wire shape).
+    {:ok, pid_args_path} =
+      DynamicSupervisor.start_child(
+        sup,
+        {FeishuAppAdapter, %{instance_id: "feishu_OTHER", neighbors: [], proxy_ctx: %{}}}
+      )
+
+    env_with_app_id = %{
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{
+          "chat_id" => "oc_PRA",
+          "app_id" => "feishu_DEV",
+          "thread_id" => "",
+          "content" => "hi"
+        }
+      }
+    }
+
+    send(pid_args_path, {:inbound_event, env_with_app_id})
+    assert_receive {:feishu_inbound, ^env_with_app_id}, 500
+
+    # Now prove the legacy fallback: envelope WITHOUT args["app_id"],
+    # adapter's instance_id matches the registry app_id. The lookup
+    # must succeed via the state.instance_id branch.
+    {:ok, pid_fallback} =
+      DynamicSupervisor.start_child(
+        sup,
+        {FeishuAppAdapter, %{instance_id: "feishu_DEV", neighbors: [], proxy_ctx: %{}}}
+      )
+
+    env_without_app_id = %{
+      "payload" => %{
+        "event_type" => "msg_received",
+        "args" => %{
+          "chat_id" => "oc_PRA",
+          "thread_id" => "",
+          "content" => "hi-legacy"
+        }
+      }
+    }
+
+    send(pid_fallback, {:inbound_event, env_without_app_id})
+    assert_receive {:feishu_inbound, ^env_without_app_id}, 500
+
+    Esr.SessionRegistry.unregister_session("S_PRA_FAA")
   end
 
   test "registration key is instance_id, not Feishu-platform app_id (PR-9 T10)",

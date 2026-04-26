@@ -1,4 +1,4 @@
-.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-03
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-03 e2e-04
 
 test: test-py test-ex
 
@@ -28,10 +28,10 @@ clean:
 # Hard timeout wrapper — prevents a hung esrd from holding CI. Uses
 # `perl -e 'alarm ...'` for portability (macOS ships without GNU
 # `timeout`; CI runners have perl in the base image).
-E2E_TIMEOUT ?= 300
+E2E_TIMEOUT ?= 420
 E2E_RUN = perl -e 'alarm shift; exec @ARGV' $(E2E_TIMEOUT) bash
 
-e2e: e2e-01 e2e-02 e2e-03
+e2e: e2e-01 e2e-02 e2e-03 e2e-04
 
 e2e-01:
 	$(E2E_RUN) tests/e2e/scenarios/01_single_user_create_and_end.sh
@@ -41,6 +41,9 @@ e2e-02:
 
 e2e-03:
 	$(E2E_RUN) tests/e2e/scenarios/03_tmux_attach_edit.sh
+
+e2e-04:
+	$(E2E_RUN) tests/e2e/scenarios/04_multi_app_routing.sh
 
 # CI variant: absolute cleanup (§7.2). Same scripts, different env.
 e2e-ci:

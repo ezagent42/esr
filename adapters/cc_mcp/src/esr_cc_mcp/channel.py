@@ -114,6 +114,12 @@ async def _handle_inbound(envelope: dict[str, Any]) -> None:
             k: str(v)
             for k, v in {
                 "chat_id": envelope.get("chat_id"),
+                # PR-A T2 fixup: surface the originating Feishu app_id on
+                # the <channel> tag so claude can echo it in the
+                # `mcp__esr-channel__reply` tool call (T3 made the
+                # schema field required). Without this hop, T2's
+                # upstream propagation never reached the tag.
+                "app_id": envelope.get("app_id"),
                 "message_id": envelope.get("message_id"),
                 "user": envelope.get("user"),
                 "ts": envelope.get("ts"),

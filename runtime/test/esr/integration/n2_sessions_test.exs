@@ -6,7 +6,7 @@ defmodule Esr.Integration.N2SessionsTest do
 
       FeishuAppAdapter(app_A)   FeishuAppAdapter(app_B)
               |                          |
-              +--SessionRegistry.lookup_by_chat_thread/2--+
+              +--SessionRegistry.lookup_by_chat_thread/3--+
               |                          |
         FeishuChatProxy(A)         FeishuChatProxy(B)
 
@@ -77,7 +77,7 @@ defmodule Esr.Integration.N2SessionsTest do
         session_id: "n2-session-A",
         agent_name: "cc",
         dir: "/tmp/n2/A",
-        chat_thread_key: %{chat_id: "oc_a", thread_id: "om_a"},
+        chat_thread_key: %{chat_id: "oc_a", app_id: "app_A", thread_id: "om_a"},
         metadata: %{principal_id: "ou_a"}
       })
 
@@ -86,7 +86,7 @@ defmodule Esr.Integration.N2SessionsTest do
         session_id: "n2-session-B",
         agent_name: "cc",
         dir: "/tmp/n2/B",
-        chat_thread_key: %{chat_id: "oc_b", thread_id: "om_b"},
+        chat_thread_key: %{chat_id: "oc_b", app_id: "app_B", thread_id: "om_b"},
         metadata: %{principal_id: "ou_b"}
       })
 
@@ -94,19 +94,21 @@ defmodule Esr.Integration.N2SessionsTest do
     assert Process.alive?(session_sup_b)
 
     # Register each session in SessionRegistry with a distinct
-    # (chat_id, thread_id) key. The `feishu_chat_proxy` ref points at
-    # our test-owned relay pid so we can observe dispatch decisions.
+    # (chat_id, app_id, thread_id) key. The `feishu_chat_proxy` ref
+    # points at our test-owned relay pid so we can observe dispatch
+    # decisions. PR-A T1: app_id mirrors the FAA instance_id below so
+    # the legacy fallback path resolves correctly.
     :ok =
       Esr.SessionRegistry.register_session(
         "n2-session-A",
-        %{chat_id: "oc_a", thread_id: "om_a"},
+        %{chat_id: "oc_a", app_id: "app_A", thread_id: "om_a"},
         %{feishu_chat_proxy: proxy_a}
       )
 
     :ok =
       Esr.SessionRegistry.register_session(
         "n2-session-B",
-        %{chat_id: "oc_b", thread_id: "om_b"},
+        %{chat_id: "oc_b", app_id: "app_B", thread_id: "om_b"},
         %{feishu_chat_proxy: proxy_b}
       )
 

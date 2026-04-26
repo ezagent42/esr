@@ -24,17 +24,23 @@ defmodule Esr.SessionRegistryTest do
   end
 
   test "registers session and looks up by chat_thread" do
-    :ok = Esr.SessionRegistry.register_session("session-1", %{chat_id: "c1", thread_id: "t1"}, %{})
+    :ok =
+      Esr.SessionRegistry.register_session(
+        "session-1",
+        %{chat_id: "c1", app_id: "a1", thread_id: "t1"},
+        %{}
+      )
 
     assert {:ok, "session-1", _peer_refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread("c1", "t1")
+             Esr.SessionRegistry.lookup_by_chat_thread("c1", "a1", "t1")
   end
 
-  test "lookup_by_chat_thread/2 does not call into the SessionRegistry GenServer" do
+  test "lookup_by_chat_thread/3 does not call into the SessionRegistry GenServer" do
     sid = "no-gs-call-#{System.unique_integer([:positive])}"
 
     chat = %{
       chat_id: "oc_#{System.unique_integer([:positive])}",
+      app_id: "app_#{System.unique_integer([:positive])}",
       thread_id: "om_#{System.unique_integer([:positive])}"
     }
 
@@ -47,7 +53,7 @@ defmodule Esr.SessionRegistryTest do
       Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
 
     assert {:ok, ^sid, _refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
 
     {:message_queue_len, after_lookup} =
       Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
@@ -73,18 +79,19 @@ defmodule Esr.SessionRegistryTest do
 
     chat = %{
       chat_id: "oc_unreg_#{System.unique_integer([:positive])}",
+      app_id: "app_unreg_#{System.unique_integer([:positive])}",
       thread_id: "om_unreg_#{System.unique_integer([:positive])}"
     }
 
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: self()})
 
     assert {:ok, ^sid, _} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
 
     :ok = Esr.SessionRegistry.unregister_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
   end
 
   test "re-registering a session overwrites refs in the ETS index" do
@@ -92,6 +99,7 @@ defmodule Esr.SessionRegistryTest do
 
     chat = %{
       chat_id: "oc_rereg_#{System.unique_integer([:positive])}",
+      app_id: "app_rereg_#{System.unique_integer([:positive])}",
       thread_id: "om_rereg_#{System.unique_integer([:positive])}"
     }
 
@@ -101,16 +109,62 @@ defmodule Esr.SessionRegistryTest do
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid1})
 
     assert {:ok, ^sid, %{feishu_chat_proxy: ^pid1}} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
 
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid2})
 
     assert {:ok, ^sid, %{feishu_chat_proxy: ^pid2}} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
 
     Esr.SessionRegistry.unregister_session(sid)
     Process.exit(pid1, :kill)
     Process.exit(pid2, :kill)
+  end
+
+  describe "PR-A multi-app: 3-tuple key" do
+    test "register + lookup uses (chat_id, app_id, thread_id)" do
+      sid = "S_PRA1"
+
+      :ok =
+        Esr.SessionRegistry.register_session(
+          sid,
+          %{chat_id: "oc_X", app_id: "feishu_dev", thread_id: ""},
+          %{}
+        )
+
+      assert {:ok, ^sid, %{}} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_X", "feishu_dev", "")
+
+      assert :not_found =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_X", "feishu_kanban", "")
+
+      Esr.SessionRegistry.unregister_session(sid)
+    end
+
+    test "two apps over the same chat_id keep distinct sessions" do
+      :ok =
+        Esr.SessionRegistry.register_session(
+          "S_DEV",
+          %{chat_id: "oc_shared", app_id: "feishu_dev", thread_id: ""},
+          %{}
+        )
+
+      :ok =
+        Esr.SessionRegistry.register_session(
+          "S_KANBAN",
+          %{chat_id: "oc_shared", app_id: "feishu_kanban", thread_id: ""},
+          %{}
+        )
+
+      assert {:ok, "S_DEV", _} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_shared", "feishu_dev", "")
+
+      assert {:ok, "S_KANBAN", _} =
+               Esr.SessionRegistry.lookup_by_chat_thread("oc_shared", "feishu_kanban", "")
+
+      Esr.SessionRegistry.unregister_session("S_DEV")
+      Esr.SessionRegistry.unregister_session("S_KANBAN")
+    end
   end
 
   test "reserved field names in agents.yaml trigger WARN log" do

@@ -52,7 +52,7 @@ echo "created session ${SESSION_ID}"
 # FCP), and send_file (step 4). T12-comms-3f 2026-04-24: CC also needs
 # the absolute probe-file path, otherwise it invents a non-existent one.
 PROBE_FILE="${_E2E_REPO_ROOT}/tests/e2e/fixtures/probe_file.txt"
-PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation); (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
+PROMPT="Please do exactly two things, in order: (1) reply with the three letters 'ack' (just the word, no punctuation) — for the reply tool, use the app_id you see in the inbound <channel> tag; (2) send the file at absolute path ${PROBE_FILE} via the send_file MCP tool."
 INBOUND_MSG_ID=$(curl -sS -X POST \
   -H 'content-type: application/json' \
   -d "{\"chat_id\":\"oc_mock_single\",\"user\":\"ou_admin\",\"text\":$(jq -Rs . <<<"$PROMPT")}" \
@@ -63,13 +63,9 @@ INBOUND_MSG_ID=$(curl -sS -X POST \
 # Wait for CC's reply to land in mock's sent_messages.
 # Real CC takes longer than the canned placeholder — allow up to 60s
 # for the model's turn + cc_mcp reply tool dispatch.
-for _ in $(seq 1 600); do
-  if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
-       | jq -e '.[] | select(.receive_id=="oc_mock_single")' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
+  '.[] | select(.receive_id=="oc_mock_single")' >/dev/null || true
 assert_mock_feishu_sent_includes "oc_mock_single" "ack"  # CC's reply per prompt
 
 # --- user-step 3: CC reacts on inbound --------------------------------
@@ -93,13 +89,9 @@ EXPECTED_SHA=$(shasum -a 256 "${PROBE_FILE}" | awk '{print $1}')
 # Real CC's second action (tool call + round-trip) runs well after the
 # first reply — extend to 60s (the initial 10s was sized for the canned
 # placeholder, not a real model turn).
-for _ in $(seq 1 600); do
-  if curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_files" \
-       | jq -e '.[] | select(.chat_id=="oc_mock_single")' >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_files" \
+  '.[] | select(.chat_id=="oc_mock_single")' >/dev/null || true
 assert_mock_feishu_file_sha "oc_mock_single" "$EXPECTED_SHA"
 
 # --- user-step 5: second message, same session -----------------------
@@ -115,7 +107,7 @@ LIVE_SESSION_ID=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev
 echo "live session_id captured: ${LIVE_SESSION_ID}"
 
 curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again"}' \
+  -d '{"chat_id":"oc_mock_single","user":"ou_admin","text":"again — if you reply, use the app_id you see in the inbound <channel> tag for the reply tool"}' \
   "http://127.0.0.1:${MOCK_FEISHU_PORT}/push_inbound" >/dev/null
 sleep 1
 # Same peer must still be present after the 2nd message — session

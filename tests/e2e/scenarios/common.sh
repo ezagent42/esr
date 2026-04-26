@@ -73,6 +73,31 @@ _e2e_teardown() {
   # Scoped to our port number so a user's unrelated dev mock_feishu
   # (on a different port) stays untouched.
   pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT}" 2>/dev/null || true
+
+  # PR-A T8 — extend teardown for the two-mock scenario 04 setup.
+  # `uv run` spawns python3 as a CHILD; killing the uv wrapper leaves
+  # the child python orphaned (still bound to port). Match the python
+  # arg pattern directly to catch both uv wrapper AND its child.
+  for _mock_suffix in dev kanban; do
+    local _mpid="/tmp/mock-feishu-${ESR_E2E_RUN_ID}-${_mock_suffix}.pid"
+    if [[ -f "${_mpid}" ]]; then
+      kill -9 "$(cat "${_mpid}")" 2>/dev/null || true
+      rm -f "${_mpid}"
+    fi
+  done
+  pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT_DEV:-8211}" 2>/dev/null || true
+  pkill -9 -f "mock_feishu\.py --port ${MOCK_FEISHU_PORT_KANBAN:-8212}" 2>/dev/null || true
+  # Belt-and-suspenders: any python that mentions mock_feishu in argv.
+  # Scoped to mock_feishu.py so user's unrelated python procs survive.
+  pkill -9 -f "python.*mock_feishu\.py" 2>/dev/null || true
+  # Wait briefly for port release — TIME_WAIT can persist a few seconds.
+  for _i in 1 2 3 4 5; do
+    if ! lsof -i :"${MOCK_FEISHU_PORT_DEV:-8211}" -i :"${MOCK_FEISHU_PORT_KANBAN:-8212}" \
+           >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
   rm -f /tmp/.sidecar.pid 2>/dev/null || true
   rm -f /tmp/esr-worker-*.pid 2>/dev/null || true
   if [[ -S "${ESR_E2E_TMUX_SOCK}" ]]; then
@@ -257,11 +282,34 @@ start_mock_feishu() {
   # Readiness probe
   for _ in $(seq 1 50); do
     if curl -sSf "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" >/dev/null 2>&1; then
+      _seed_e2e_chat_membership
       return 0
     fi
     sleep 0.1
   done
   _fail_with_context "mock_feishu did not come up on port ${MOCK_FEISHU_PORT}"
+}
+
+# PR-A T6/T7: the feishu adapter now sets `X-App-Id: <actor_id>` on
+# every outbound POST to mock_feishu. T7's membership check rejects
+# the request unless the (app_id, chat_id) pair has been registered.
+# Pre-seed memberships for the e2e adapter ("feishu_app_e2e-mock")
+# against every chat in seed_workspaces so scenarios 01-03 keep
+# passing. Scenario 04 (multi-app) seeds its own memberships in
+# start_two_mock_feishus.
+_seed_e2e_chat_membership() {
+  local chats=(
+    oc_mock_single
+    oc_mock_concurrent_a
+    oc_mock_concurrent_b
+    oc_mock_tmux
+  )
+  for chat in "${chats[@]}"; do
+    curl -sS -X POST -H 'content-type: application/json' \
+      -d "{\"app_id\":\"feishu_app_e2e-mock\",\"chat_id\":\"${chat}\"}" \
+      "http://127.0.0.1:${MOCK_FEISHU_PORT}/register_membership" >/dev/null \
+      || _fail_with_context "register_membership failed for ${chat}"
+  done
 }
 
 load_agent_yaml() {
@@ -392,6 +440,29 @@ wait_for_sidecar_ready() {
   done
 }
 
+# --- TIME_WAIT-friendly polling helper (RCA: 2026-04-26) ----------
+# Wait until polling URL until jq filter matches OR deadline expires.
+# Usage:
+#   wait_for_url_jq_match URL JQ [iters=1200] [sleep_ms=100]
+#
+# Replaces the previous `for _ in $(seq 1 N); do curl ...; done` shape
+# that opened a new TCP socket per iteration → ~1200 TIME_WAIT entries
+# per failing wait loop → exhausted the workstation's 127.0.0.1
+# ephemeral port pool during PR-A T9 development. The Python helper
+# uses one requests.Session, so 1200 polls = 1 TCP connection.
+#
+# Returns 0 on match, non-zero on deadline. Matched JSON written to
+# stdout (same shape callers used to capture from the old curl|jq
+# pipeline).
+wait_for_url_jq_match() {
+  local url=$1 filter=$2
+  local iters=${3:-1200} sleep_ms=${4:-100}
+  uv run --project "${_E2E_REPO_ROOT}/py" python \
+    "${_E2E_REPO_ROOT}/tests/e2e/scenarios/_wait_url.py" \
+    "$url" "$filter" \
+    --iterations "$iters" --sleep-ms "$sleep_ms"
+}
+
 register_feishu_adapter() {
   # Register an adapter record so `/new-session` can resolve the proxy
   # target. **Blocker fix 2 (v1.1):** prior version wrote
@@ -419,4 +490,175 @@ register_feishu_adapter() {
       --arg app_id=e2e-mock \
       --arg app_secret=mock \
       --wait --timeout 10
+}
+
+# =====================================================================
+# PR-A T8 — multi-app helpers (scenario 04)
+# =====================================================================
+# Scenario 04 spawns TWO mock_feishus (different ports) and TWO adapter
+# sidecars (different instance_ids). The helpers below mirror the
+# single-mock seed_*/start_mock_feishu helpers above but parameterized
+# for the two-app case.
+#
+# Workspaces:
+#   ws_dev    — chats: oc_pra_dev (member of feishu_app_dev),
+#                       oc_pra_orphan (NOT a member of any app — drives
+#                                      step 4 non-member rejection)
+#   ws_kanban — chats: oc_pra_kanban (member of feishu_app_kanban)
+#
+# Principals:
+#   ou_admin       — wildcard ["*"] (full access; happy paths)
+#   ou_restricted  — workspace:ws_dev/msg.send only (forbidden test
+#                    on cross-app reply to ws_kanban)
+
+: "${MOCK_FEISHU_PORT_DEV:=8211}"
+: "${MOCK_FEISHU_PORT_KANBAN:=8212}"
+export MOCK_FEISHU_PORT_DEV MOCK_FEISHU_PORT_KANBAN
+
+seed_two_apps_workspaces() {
+  # Dual-write: Python adapter (Lane A) reads ${ESRD_HOME}/default/
+  # workspaces.yaml; Elixir runtime (Lane B + FCP cross-app dispatch)
+  # reads ${ESRD_HOME}/${ESR_INSTANCE}/workspaces.yaml. Same content
+  # to both so single-app inbound auth (Lane A) and cross-app reply
+  # workspace_for_chat lookup (Lane B FCP) both have the right map.
+  # Post-PR-A's Lane-A removal will collapse this to instance/ only.
+  mkdir -p "${ESRD_HOME}/default" "${ESRD_HOME}/${ESRD_INSTANCE}"
+  local ws_yaml
+  ws_yaml="$(cat <<'EOF'
+workspaces:
+  ws_dev:
+    cwd: "/tmp/esr-e2e-workspace-dev"
+    start_cmd: ""
+    role: "dev"
+    chats:
+      - {chat_id: oc_pra_dev,        app_id: feishu_app_dev,    kind: dm}
+      - {chat_id: oc_pra_restricted, app_id: feishu_app_dev,    kind: dm}
+      - {chat_id: oc_pra_orphan,     app_id: feishu_app_dev,    kind: dm}
+    env: {}
+  ws_kanban:
+    cwd: "/tmp/esr-e2e-workspace-kanban"
+    start_cmd: ""
+    role: "dev"
+    chats:
+      - {chat_id: oc_pra_kanban, app_id: feishu_app_kanban, kind: dm}
+    env: {}
+EOF
+)"
+  printf '%s\n' "$ws_yaml" > "${ESRD_HOME}/default/workspaces.yaml"
+  printf '%s\n' "$ws_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/workspaces.yaml"
+}
+
+seed_two_capabilities() {
+  # ou_admin: wildcard. ou_restricted: ws_dev only (not ws_kanban).
+  # Same dual-write pattern as single-app seed_capabilities — Lane A
+  # reads default/, Lane B reads instance/.
+  #
+  # IMPORTANT: handler_hello declares `permissions: []` for the feishu
+  # adapter (PR-9 era TODO), so the runtime FileLoader rejects any
+  # held cap whose perm segment isn't a known permission. Workaround:
+  # use `workspace:ws_dev/*` — the segment wildcard `*` is special-
+  # cased at validate_perm/2 (file_loader.ex:119) AND at the runtime
+  # matcher (grants.ex:39 segment_match?), so it both loads cleanly
+  # AND grants msg.send/<anything> for ws_dev. The cap-shape mismatch
+  # vs the spec's `workspace:ws_dev/msg.send` is a test-side hack
+  # documented at the seed_capabilities TODO; the post-PR-A Lane-A
+  # removal will make this less load-bearing.
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}" "${ESRD_HOME}/default"
+  local caps_yaml='principals:
+  - id: ou_admin
+    kind: feishu_user
+    note: e2e admin (wildcard)
+    capabilities: ["*"]
+  - id: ou_restricted
+    kind: feishu_user
+    note: e2e principal allowed only for ws_dev
+    capabilities:
+      - workspace:ws_dev/*'
+  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
+  printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/default/capabilities.yaml"
+}
+
+seed_two_adapters() {
+  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
+  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/adapters.yaml" <<EOF
+instances:
+  feishu_app_dev:
+    type: feishu
+    config:
+      app_id: feishu_app_dev
+      app_secret: mock
+      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}
+  feishu_app_kanban:
+    type: feishu
+    config:
+      app_id: feishu_app_kanban
+      app_secret: mock
+      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}
+EOF
+}
+
+start_two_mock_feishus() {
+  _start_one_mock "${MOCK_FEISHU_PORT_DEV}"    "dev"
+  # Small gap to serialize uv venv access — two parallel uv runs can
+  # race on lock files. _start_one_mock's wait loop ensures the dev
+  # mock is already responding before kicking off kanban.
+  _start_one_mock "${MOCK_FEISHU_PORT_KANBAN}" "kanban"
+  # Pre-register memberships. feishu_app_dev is a member of oc_pra_dev
+  # but NOT oc_pra_orphan (that's the step-4 non-member trigger).
+  # feishu_app_kanban is only a member of oc_pra_kanban.
+  for chat in oc_pra_dev oc_pra_restricted; do
+    curl -sS --connect-timeout 1 --max-time 5 \
+      -X POST -H 'content-type: application/json' \
+      -d "{\"app_id\":\"feishu_app_dev\",\"chat_id\":\"${chat}\"}" \
+      "http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}/register_membership" >/dev/null \
+      || _fail_with_context "register_membership feishu_app_dev/${chat} failed"
+  done
+  curl -sS --connect-timeout 1 --max-time 5 \
+    -X POST -H 'content-type: application/json' \
+    -d '{"app_id":"feishu_app_kanban","chat_id":"oc_pra_kanban"}' \
+    "http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}/register_membership" >/dev/null \
+    || _fail_with_context "register_membership feishu_app_kanban/oc_pra_kanban failed"
+}
+
+_start_one_mock() {
+  local port=$1 suffix=$2
+  local pidfile="/tmp/mock-feishu-${ESR_E2E_RUN_ID}-${suffix}.pid"
+  local log="/tmp/mock-feishu-${ESR_E2E_RUN_ID}-${suffix}.log"
+  ( cd "${_E2E_REPO_ROOT}" && \
+    uv run --project py python scripts/mock_feishu.py --port "${port}" \
+      > "${log}" 2>&1 &
+    echo $! > "${pidfile}" )
+  # 100 iterations × 0.2s = 20s — uv first-run venv sync can take 10+s.
+  # `--connect-timeout 1 --max-time 2` keeps each iteration bounded so
+  # connection-refused bounces fast and we don't burn 5 min on the
+  # default curl timeout.
+  for _ in $(seq 1 100); do
+    if curl -sSf --connect-timeout 1 --max-time 2 \
+            "http://127.0.0.1:${port}/sent_messages" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  _fail_with_context "mock_feishu (${suffix}) did not come up on port ${port}"
+}
+
+wait_for_two_sidecars_ready() {
+  local timeout_s=${1:-30}
+  for port in "${MOCK_FEISHU_PORT_DEV}" "${MOCK_FEISHU_PORT_KANBAN}"; do
+    local deadline=$(($(date +%s) + timeout_s))
+    while true; do
+      # `--connect-timeout 1 --max-time 2` keeps each iteration fast
+      # so the deadline check actually fires; without these, curl's
+      # internal timeout (~5 min) blows past any reasonable timeout.
+      local count
+      count=$(curl -sS --fail --connect-timeout 1 --max-time 2 \
+              "http://127.0.0.1:${port}/ws_clients" 2>/dev/null \
+        | jq -r '.count // 0' 2>/dev/null || echo 0)
+      [[ "$count" -ge 1 ]] && break
+      if (( $(date +%s) > deadline )); then
+        _fail_with_context "wait_for_two_sidecars_ready: port=${port} no /ws client after ${timeout_s}s"
+      fi
+      sleep 0.2
+    done
+  done
 }

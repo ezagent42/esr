@@ -195,6 +195,67 @@ user (Feishu) → [Feishu open API] → mock_feishu (test) / 真 Feishu WS
 
 把这张图记住，你写自己的拓扑就是"在某些边/节点替换组件"。
 
+### 三.5 多 app 的扩展（PR-A 之后）
+
+每条 inbound 现在带 `app_id` 字段，这个字段一路从 Python feishu
+adapter（`adapter.py:_emit_events_*` 把 `args["app_id"] =
+self.actor_id` 加到 envelope）一直传到 cc_mcp 的
+`<channel>` tag attributes。CC 可以读到自己当前 session 是为哪
+个 app 服务的。
+
+**Cross-app forward**：CC 调 `mcp__esr-channel__reply` 时显式
+指定目标 `app_id`：
+
+  - `app_id == 当前 session 的 home app` → 走原 home-app 路径，
+    `forward_reply_pass_through` 维持 reply_to_message_id /
+    un_react bookkeeping
+  - `app_id != home app` → FCP 走跨 app 分发：
+    1. `Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id)`
+       拿目标 workspace
+    2. `Esr.Capabilities.has?(state.principal_id,
+       "workspace:<target_ws>/msg.send")` 校验 cap
+    3. `Registry.lookup(Esr.PeerRegistry,
+       "feishu_app_adapter_<app_id>")` 找目标 FAA peer
+    4. `send(target_pid, {:outbound, %{"kind" => "reply",
+       "args" => %{"chat_id" => ..., "text" => ...}}})` 把
+       directive 转给目标 app 的 adapter
+
+3 种结构化失败（FCP 都通过 `Logger.info "FCP cross-app deny
+type=..."` 给运维暴露同一信号）：
+
+  - `unknown_chat_in_app` — workspaces.yaml 没该 (chat, app)
+    映射，CC 写错了 chat_id 或 workspace 没配置
+  - `forbidden` — principal 没目标 ws 的 `msg.send`
+  - `unknown_app` — 没注册对应的 FAA peer（typo / app 没启动）
+
+跨 app 分发时 `reply_to_message_id` 和 `edit_message_id` 会被
+strip——它们属于 source app 的 message_id 空间，target app
+不认识。
+
+**E2E 旁路（test-only）**：直接在 admin 端注入 tool_invoke
+而不依赖 CC：
+
+  - `runtime/lib/esr/admin/commands/cross_app_test.ex` 暴露
+    `cross_app_test` 命令
+  - 用 `esr admin submit cross_app_test --arg session_id=<sid>
+    --arg chat_id=... --arg app_id=... --arg text=...
+    --arg principal_id=...` 把 tool_invoke 同步打到
+    指定 session 的 FCP，returncode 包含 FCP 真实 auth-gate
+    决定的 envelope（含 `error.type`）
+
+这条 admin 命令存在的目的：scenario 04 §5.4 / §5.5 的 forbidden /
+non-member E2E 不能依赖 CC 主动发跨 app reply（CC 把"按指令转发到
+其他 chat"识别为 prompt-injection / lateral-movement 信号会
+拒绝执行），需要绕开 CC 直接驱动 FCP 的 gate。生产用法不存在
+——admin command 仍走完整 capability check 链，注入也只能
+到注册了的 session。
+
+参考：
+- 设计 spec — `docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md`
+- 实施 plan — `docs/superpowers/plans/2026-04-25-pr-a-multi-app.md`
+- 跨 app 单元测试 — `runtime/test/esr/peers/feishu_chat_proxy_cross_app_test.exs`
+- 多 app E2E — `tests/e2e/scenarios/04_multi_app_routing.sh`
+
 ---
 
 ## 四、写一个新 agent 的最小步骤

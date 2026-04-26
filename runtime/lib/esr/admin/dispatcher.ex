@@ -86,7 +86,10 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_end" => "session:default/end",
     "session_list" => "session.list",
     "grant" => "cap.manage",
-    "revoke" => "cap.manage"
+    "revoke" => "cap.manage",
+    # PR-A T9: cross_app_test is e2e-only; gate behind a wildcard-
+    # only permission so it can't fire under non-test grants.
+    "cross_app_test" => "cross_app_test.invoke"
   }
 
   # Map kind → Commands.<Module>. Missing entries surface as
@@ -110,7 +113,11 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
     "session_list" => Esr.Admin.Commands.Session.List,
     "grant" => Esr.Admin.Commands.Cap.Grant,
-    "revoke" => Esr.Admin.Commands.Cap.Revoke
+    "revoke" => Esr.Admin.Commands.Cap.Revoke,
+    # PR-A T9: e2e-only test-harness command — synthesizes a
+    # tool_invoke into FCP, bypassing claude. See
+    # Esr.Admin.Commands.CrossAppTest for rationale.
+    "cross_app_test" => Esr.Admin.Commands.CrossAppTest
   }
 
   # ------------------------------------------------------------------

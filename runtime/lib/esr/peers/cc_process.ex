@@ -342,7 +342,13 @@ defmodule Esr.Peers.CCProcess do
     :ok
   end
 
-  defp build_channel_notification(state, text) do
+  @doc false
+  # Public only so cc_process_test.exs can assert envelope shape directly.
+  # Pattern matches `Esr.Peers.TmuxProcess.build_capture_pane_argv/3` —
+  # pure helper exposed to tests as `@doc false def` rather than pulled
+  # apart into a behaviour. Not part of the stable API; the only
+  # in-module caller is `dispatch_action(send_input)` above.
+  def build_channel_notification(state, text) do
     ctx = state.proxy_ctx || %{}
     last = Map.get(state, :last_meta, %{})
 
@@ -354,6 +360,10 @@ defmodule Esr.Peers.CCProcess do
       # only for legacy callers that hadn't threaded it through yet.
       "chat_id" =>
         Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      # T-PR-A T2: surface the originating Feishu app_id so cc_mcp can
+      # render it on the <channel> tag and claude can echo it on reply.
+      "app_id" =>
+        Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || "",
       "thread_id" =>
         Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
       "message_id" => Map.get(last, :message_id) || "",

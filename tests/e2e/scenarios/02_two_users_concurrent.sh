@@ -23,8 +23,8 @@ start_esrd
 wait_for_sidecar_ready 30
 
 # Distinct content markers so isolation violations are unambiguous.
-PROBE_A="Please reply with exactly: ack-alpha-uniq"
-PROBE_B="Please reply with exactly: ack-beta-uniq"
+PROBE_A="Please reply with exactly: ack-alpha-uniq — for the reply tool, use the app_id you see in the inbound <channel> tag"
+PROBE_B="Please reply with exactly: ack-beta-uniq — for the reply tool, use the app_id you see in the inbound <channel> tag"
 
 # Fire both inbounds in parallel — session_router auto-creates two
 # independent pipelines for oc_mock_concurrent_a and oc_mock_concurrent_b.
@@ -39,19 +39,24 @@ PID_B=$!
 wait "$PID_A" "$PID_B"
 
 # Wait up to 120s for both replies (two real CC turns in parallel).
-for _ in $(seq 1 1200); do
-  replies_a=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
-    | jq '[.[] | select(.receive_id=="oc_mock_concurrent_a")] | length')
-  replies_b=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
-    | jq '[.[] | select(.receive_id=="oc_mock_concurrent_b")] | length')
-  [[ "$replies_a" -ge 1 && "$replies_b" -ge 1 ]] && break
-  sleep 0.1
-done
+# Single-session poll for the AND condition (both receive_ids must
+# have at least one record) — _wait_url's jq filter exits 0 when
+# matched, ending the wait.
+wait_for_url_jq_match \
+  "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages" \
+  'select(([.[] | select(.receive_id=="oc_mock_concurrent_a")] | length) >= 1
+       and ([.[] | select(.receive_id=="oc_mock_concurrent_b")] | length) >= 1)' \
+  >/dev/null || true
+
+# Final-state counts (for FAIL messages).
+SENT=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages")
+replies_a=$(echo "$SENT" | jq '[.[] | select(.receive_id=="oc_mock_concurrent_a")] | length')
+replies_b=$(echo "$SENT" | jq '[.[] | select(.receive_id=="oc_mock_concurrent_b")] | length')
 [[ "$replies_a" -ge 1 ]] || _fail_with_context "user-step 7: no reply for oc_mock_concurrent_a"
 [[ "$replies_b" -ge 1 ]] || _fail_with_context "user-step 7: no reply for oc_mock_concurrent_b"
 
 # --- isolation assertions --------------------------------------------
-SENT=$(curl -sS "http://127.0.0.1:${MOCK_FEISHU_PORT}/sent_messages")
+# Reuse $SENT captured above (one curl, not two).
 A_BODY=$(echo "$SENT" | jq -r '.[] | select(.receive_id=="oc_mock_concurrent_a") | .content' | tr '\n' ' ')
 B_BODY=$(echo "$SENT" | jq -r '.[] | select(.receive_id=="oc_mock_concurrent_b") | .content' | tr '\n' ' ')
 

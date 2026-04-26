@@ -87,7 +87,7 @@ defmodule Esr.SessionRouterTest do
     # SessionRegistry records the chat-thread → session mapping and
     # the Stateful peer refs.
     assert {:ok, ^session_id, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread("oc_xx", "om_yy")
+             Esr.SessionRegistry.lookup_by_chat_thread("oc_xx", "cli_test", "om_yy")
 
     # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
     # cc_process → tmux_process. The three Stateful peers are spawned
@@ -131,7 +131,7 @@ defmodule Esr.SessionRouterTest do
     # FeishuChatProxy's state already carries session_id; workspace_name
     # should be reachable once TmuxProcess reads it in T11b.3.
     {:ok, ^session_id, refs} =
-      Esr.SessionRegistry.lookup_by_chat_thread("oc_T11b2", "om_T11b2")
+      Esr.SessionRegistry.lookup_by_chat_thread("oc_T11b2", "cli_test", "om_T11b2")
 
     fcp_state = :sys.get_state(refs.feishu_chat_proxy)
     assert fcp_state.session_id == session_id
@@ -176,11 +176,11 @@ defmodule Esr.SessionRouterTest do
 
     # Precondition: lookup succeeds.
     assert {:ok, ^sid, _refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread("oc_aa", "om_bb")
+             Esr.SessionRegistry.lookup_by_chat_thread("oc_aa", "cli_test", "om_bb")
 
     :ok = SessionRouter.end_session(sid)
 
-    assert :not_found = Esr.SessionRegistry.lookup_by_chat_thread("oc_aa", "om_bb")
+    assert :not_found = Esr.SessionRegistry.lookup_by_chat_thread("oc_aa", "cli_test", "om_bb")
 
     # And the Session supervisor is gone.
     via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
@@ -261,7 +261,7 @@ defmodule Esr.SessionRouterTest do
       assert is_binary(session_id)
 
       {:ok, ^session_id, refs} =
-        Esr.SessionRegistry.lookup_by_chat_thread("oc_voice", "om_voice")
+        Esr.SessionRegistry.lookup_by_chat_thread("oc_voice", "cli_test", "om_voice")
 
       # Stateful peers in cc-voice inbound: feishu_chat_proxy, cc_process,
       # tmux_process. VoiceASRProxy, CCProxy are stateless modules;
@@ -299,7 +299,7 @@ defmodule Esr.SessionRouterTest do
                })
 
       {:ok, ^session_id, refs} =
-        Esr.SessionRegistry.lookup_by_chat_thread("oc_e2e", "om_e2e")
+        Esr.SessionRegistry.lookup_by_chat_thread("oc_e2e", "cli_test", "om_e2e")
 
       assert is_pid(refs.feishu_chat_proxy)
       assert is_pid(refs.voice_e2e)
@@ -336,7 +336,8 @@ defmodule Esr.SessionRouterTest do
 
       # Find one spawned peer and kill it; the router's monitor will
       # DOWN and fire the telemetry event.
-      {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat_thread("oc_crash", "om_crash")
+      {:ok, _sid2, refs} =
+        Esr.SessionRegistry.lookup_by_chat_thread("oc_crash", "cli_test", "om_crash")
       Process.exit(refs.cc_process, :kill)
 
       assert_receive {[:esr, :session_router, :peer_crashed], _ref, %{count: 1}, meta}, 500
@@ -393,7 +394,7 @@ defmodule Esr.SessionRouterTest do
         tmux_socket: tmux_sock
       })
 
-    {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat_thread("oc_T6", "om_T6")
+    {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat_thread("oc_T6", app_id, "om_T6")
 
     fcp = refs.feishu_chat_proxy
     cc = refs.cc_process
