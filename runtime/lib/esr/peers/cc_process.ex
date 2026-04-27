@@ -395,26 +395,114 @@ defmodule Esr.Peers.CCProcess do
     ctx = state.proxy_ctx || %{}
     last = Map.get(state, :last_meta, %{})
 
-    %{
+    chat_id =
+      Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || ""
+
+    app_id =
+      Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || ""
+
+    sender_id = Map.get(last, :sender_id) || ""
+
+    base = %{
       "kind" => "notification",
       "source" => Map.get(ctx, "channel_adapter") || "feishu",
       # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
       # authoritative for this specific inbound. Fall back to proxy_ctx
       # only for legacy callers that hadn't threaded it through yet.
-      "chat_id" =>
-        Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      "chat_id" => chat_id,
       # T-PR-A T2: surface the originating Feishu app_id so cc_mcp can
       # render it on the <channel> tag and claude can echo it on reply.
-      "app_id" =>
-        Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || "",
+      "app_id" => app_id,
       "thread_id" =>
         Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
       "message_id" => Map.get(last, :message_id) || "",
-      "user" => Map.get(last, :sender_id) || "",
+      # PR-C C5 (spec §8.1): `"user"` carries the open_id today (semantic
+      # alias of `"user_id"`). The spec calls for `"user"` to become the
+      # display name in v2 once the FAA → cc_process display-name cache
+      # threading lands; for v1 cc_mcp keeps reading `"user"` so the
+      # existing prompt template stays compatible. New consumers should
+      # prefer `"user_id"`.
+      "user" => sender_id,
+      "user_id" => sender_id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "content" => text
     }
+
+    base
+    |> maybe_put_workspace(chat_id, app_id)
+    |> maybe_put_reachable(state)
   end
+
+  # PR-C C5: workspace name attribute, looked up from
+  # Esr.Workspaces.Registry.workspace_for_chat. Omitted when the
+  # registry has no entry — keeps the tag stable for tests that don't
+  # boot the registry GenServer.
+  defp maybe_put_workspace(envelope, chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, ws} -> Map.put(envelope, "workspace", ws)
+      _ -> envelope
+    end
+  rescue
+    # Workspaces.Registry GenServer not started in some unit tests.
+    ArgumentError -> envelope
+  end
+
+  defp maybe_put_workspace(envelope, _, _), do: envelope
+
+  # PR-C C5: reachable set rendered as a list of `{uri, name}` maps.
+  # Empty / missing reachable_set is omitted entirely so the tag stays
+  # tight when there are no neighbours. The `name` resolves to the
+  # workspaces.yaml `chats[].name` for chat URIs (when registry is
+  # populated) or falls back to the URI's last 8 chars.
+  defp maybe_put_reachable(envelope, state) do
+    case state[:reachable_set] do
+      nil -> envelope
+      set -> if MapSet.size(set) == 0, do: envelope, else: Map.put(envelope, "reachable", reachable_actor_list(set))
+    end
+  end
+
+  defp reachable_actor_list(set) do
+    set
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(fn uri -> %{"uri" => uri, "name" => actor_display_name(uri)} end)
+  end
+
+  defp actor_display_name(uri) do
+    case Esr.Uri.parse(uri) do
+      {:ok, %Esr.Uri{segments: ["workspaces", _ws, "chats", chat_id]}} ->
+        lookup_chat_name(chat_id) || short_id(chat_id)
+
+      {:ok, %Esr.Uri{segments: ["users", open_id]}} ->
+        # No display-name cache wired yet; show short open_id.
+        short_id(open_id)
+
+      {:ok, %Esr.Uri{segments: ["adapters", platform, app_id]}} ->
+        "#{platform}:#{short_id(app_id)}"
+
+      _ ->
+        uri
+    end
+  end
+
+  defp lookup_chat_name(chat_id) do
+    Esr.Workspaces.Registry.list()
+    |> Enum.find_value(fn ws ->
+      Enum.find_value(ws.chats || [], fn
+        %{"chat_id" => ^chat_id} = c -> c["name"]
+        _ -> nil
+      end)
+    end)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp short_id(id) when is_binary(id) and byte_size(id) > 8 do
+    "..." <> String.slice(id, -8, 8)
+  end
+
+  defp short_id(id), do: id
 
   # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
   # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
