@@ -192,6 +192,162 @@ defmodule Esr.Peers.CCProcessTest do
     assert envelope["content"] == "hello"
   end
 
+  # ------------------------------------------------------------------
+  # PR-C C5: <channel> tag extensions — user_id, workspace, reachable
+  # ------------------------------------------------------------------
+
+  describe "build_channel_notification/2 — PR-C extensions" do
+    test "emits user_id alongside user (both = sender_id today)" do
+      state = %{
+        session_id: "sC5_a",
+        proxy_ctx: %{},
+        last_meta: %{sender_id: "ou_alice", chat_id: "", app_id: ""},
+        reachable_set: MapSet.new()
+      }
+
+      env = Esr.Peers.CCProcess.build_channel_notification(state, "hi")
+      assert env["user"] == "ou_alice"
+      assert env["user_id"] == "ou_alice"
+    end
+
+    test "omits 'reachable' when reachable_set is empty" do
+      state = %{
+        session_id: "sC5_b",
+        proxy_ctx: %{},
+        last_meta: %{},
+        reachable_set: MapSet.new()
+      }
+
+      env = Esr.Peers.CCProcess.build_channel_notification(state, "x")
+      refute Map.has_key?(env, "reachable")
+    end
+
+    test "emits 'reachable' as a list of {uri, name} maps when reachable_set is populated" do
+      state = %{
+        session_id: "sC5_c",
+        proxy_ctx: %{},
+        last_meta: %{},
+        reachable_set:
+          MapSet.new([
+            "esr://localhost/users/ou_admin",
+            "esr://localhost/adapters/feishu/cli_app1"
+          ])
+      }
+
+      env = Esr.Peers.CCProcess.build_channel_notification(state, "x")
+      assert is_list(env["reachable"])
+      assert length(env["reachable"]) == 2
+
+      uris = Enum.map(env["reachable"], & &1["uri"])
+      assert "esr://localhost/users/ou_admin" in uris
+      assert "esr://localhost/adapters/feishu/cli_app1" in uris
+
+      # name field is always present (falls back to short id when no
+      # workspaces.yaml mapping is registered for chat URIs).
+      for actor <- env["reachable"] do
+        assert is_binary(actor["name"])
+      end
+    end
+
+    test "reachable list is sorted by URI for prompt determinism" do
+      state = %{
+        session_id: "sC5_d",
+        proxy_ctx: %{},
+        last_meta: %{},
+        reachable_set: MapSet.new(["esr://localhost/users/zzz", "esr://localhost/users/aaa"])
+      }
+
+      env = Esr.Peers.CCProcess.build_channel_notification(state, "x")
+      uris = Enum.map(env["reachable"], & &1["uri"])
+      assert uris == ["esr://localhost/users/aaa", "esr://localhost/users/zzz"]
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # PR-C C4: BGP-style URI learning from upstream meta
+  # ------------------------------------------------------------------
+
+  describe "BGP-style learn_uris (PR-C C4)" do
+    test "learns source URI from meta when not already in reachable_set" do
+      me = self()
+      tmux = spawn_link(fn -> relay(me) end)
+      cc_proxy = spawn_link(fn -> relay(me) end)
+
+      {:ok, pid} =
+        CCProcess.start_link(%{
+          session_id: "sC4_a",
+          handler_module: @handler_module,
+          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          proxy_ctx: %{}
+        })
+
+      :ok =
+        CCProcess.put_handler_override(pid, fn _mod, _payload, _timeout ->
+          {:ok, %{}, []}
+        end)
+
+      meta = %{
+        chat_id: "oc_a",
+        app_id: "cli_a",
+        sender_id: "ou_alice",
+        message_id: "om_1",
+        thread_id: "",
+        source: "esr://localhost/adapters/feishu/cli_a",
+        principal_id: "ou_alice"
+      }
+
+      send(pid, {:text, "hi", meta})
+      Process.sleep(80)
+
+      state = :sys.get_state(pid)
+      assert MapSet.member?(state.reachable_set, "esr://localhost/adapters/feishu/cli_a")
+      # principal_id lifted into a user URI:
+      assert MapSet.member?(state.reachable_set, "esr://localhost/users/ou_alice")
+    end
+
+    test "topology hot-reload broadcast adds URI to reachable_set" do
+      me = self()
+      tmux = spawn_link(fn -> relay(me) end)
+      cc_proxy = spawn_link(fn -> relay(me) end)
+
+      {:ok, pid} =
+        CCProcess.start_link(%{
+          session_id: "sC4_b",
+          handler_module: @handler_module,
+          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          proxy_ctx: %{workspace_name: "ws_x"}
+        })
+
+      send(pid, {:topology_neighbour_added, "ws_x", "esr://localhost/users/ou_admin"})
+      Process.sleep(50)
+
+      state = :sys.get_state(pid)
+      assert MapSet.member?(state.reachable_set, "esr://localhost/users/ou_admin")
+    end
+
+    test "topology_neighbour_added is idempotent" do
+      me = self()
+      tmux = spawn_link(fn -> relay(me) end)
+      cc_proxy = spawn_link(fn -> relay(me) end)
+
+      {:ok, pid} =
+        CCProcess.start_link(%{
+          session_id: "sC4_c",
+          handler_module: @handler_module,
+          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          proxy_ctx: %{}
+        })
+
+      uri = "esr://localhost/users/ou_x"
+      send(pid, {:topology_neighbour_added, "ws_x", uri})
+      send(pid, {:topology_neighbour_added, "ws_x", uri})
+      Process.sleep(50)
+
+      state = :sys.get_state(pid)
+      assert MapSet.size(state.reachable_set) == 1
+    end
+  end
+
   defp relay(reply_to) do
     receive do
       msg ->
