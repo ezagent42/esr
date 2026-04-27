@@ -437,29 +437,36 @@ PR-C makes two breaking changes to the rendered tag:
    `Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id)`
    (already exists at `workspaces/registry.ex:47-56`).
 
-### 8.2 New format
+### 8.2 Format
+
+⚠️ **API constraint discovered during PR-D implementation**:
+`notifications/claude/channel` (Claude Code's experimental API used
+to inject `<channel>` tags) only accepts **flat attributes** keyed
+on `[A-Za-z0-9_]+`. Nested elements like `<reachable><actor/></reachable>`
+are silently dropped. So the spec's original v1 design (nested element)
+won't reach CC's prompt.
+
+PR-D pivots the rendering to a **JSON-string attribute**:
 
 ```xml
 <channel
     chat_id="oc_dev_room"
     app_id="feishu_app_dev"
-    workspace="ws_dev"                  ← NEW
+    workspace="ws_dev"                                              ← NEW
     thread_id="..."
-    user="林懿伦"                        ← display name (was open_id)
-    user_id="ou_6b11..."                ← NEW: explicit open_id
+    user="林懿伦"                                                   ← display name (v2 work; alias of user_id today)
+    user_id="ou_6b11..."                                            ← NEW: explicit open_id
     ts="2026-04-27T..."
-    message_id="om_x100...">
-  <reachable>                           ← NEW
-    <actor uri="esr://manual/workspaces/ws_dev/chats/oc_dev_dm" name="dev-dm"/>
-    <actor uri="esr://manual/workspaces/ws_kanban/chats/oc_kanban_room" name="kanban-room"/>
-    <actor uri="esr://manual/users/ou_admin" name="@admin"/>
-  </reachable>
+    message_id="om_x100..."
+    reachable='[{"uri":"esr://localhost/workspaces/ws_dev/chats/oc_dev_dm","name":"dev-dm"},{"uri":"esr://localhost/workspaces/ws_kanban/chats/oc_kanban_room","name":"kanban-room"},{"uri":"esr://localhost/users/ou_admin","name":"@admin"}]'>
   你好，给我一份周报
 </channel>
 ```
 
-The `<reachable>` element is omitted when the set is empty (avoids
-prompt clutter for sessions with no neighbours yet).
+The `reachable` attribute is omitted when the set is empty (avoids
+prompt clutter for sessions with no neighbours). Claude reads JSON
+natively in attributes, so the LLM ergonomics stay intact even
+though the human-readable structure is denser than nested XML.
 
 ### 8.3 Display name resolution
 

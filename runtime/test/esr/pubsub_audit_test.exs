@@ -25,7 +25,11 @@ defmodule Esr.PubSubAuditTest do
     ~r/^cli:channel\//,
     ~r/^cc_mcp_ready\//,
     ~r/^session_router$/,
-    ~r/^grants_changed:/
+    ~r/^grants_changed:/,
+    # PR-C 2026-04-27 actor-topology-routing §7: workspaces.yaml
+    # hot-reload broadcasts `{:topology_neighbour_added, ws, uri}` on
+    # `topology:<ws>` (per-workspace) and `topology:events` (global).
+    ~r/^topology:/
   ]
 
   # Dynamic-topic call-sites — the broadcast's first-string arg is a

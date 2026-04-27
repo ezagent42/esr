@@ -29,6 +29,13 @@ engineer's map from that spec to code on disk.*
 - `esr/peer_factory.ex` — spawns peer instances into the right session subtree.
 - `esr/peer_pool.ex` + `esr/pools.ex` — pool manager for voice workers (shares via `pools.yaml` overrides).
 
+### Topology + reachable_set (PR-C 2026-04-27)
+- `esr/topology.ex` — yaml-driven actor topology. `initial_seed/3` produces a CC peer's bootstrap reachable_set (own chat + adapter + symmetric closure of yaml-declared neighbours). `neighbour_set/1` exposes the closure for any workspace.
+- `esr/workspaces/registry.ex` — extended with `neighbors: [String.t()]` field per workspace + optional `chats[].name` for display-name resolution.
+- `esr/workspaces/watcher.ex` — fs_watch on `workspaces.yaml`. Eager-add: broadcasts `{:topology_neighbour_added, ws, uri}` on `topology:<ws>` PubSub for active CC peers to merge into their reachable_set. Lazy-remove: cap gate is the authoritative revocation layer.
+- `esr/peers/cc_process.ex` — owns per-actor `reachable_set: MapSet`. `learn_uris_from_event/2` performs BGP-style propagation (inbound `meta.source` + `meta.principal_id` → reachable_set). `build_channel_notification/2` emits `reachable` (JSON-string per spec §8 attribute-only constraint), `workspace`, and `user_id` on the `<channel>` tag.
+- See `docs/superpowers/specs/2026-04-27-actor-topology-routing.md` and `docs/notes/actor-topology-routing.md`.
+
 ### Python subprocess supervision
 - `esr/worker_supervisor.ex` — spawns / tracks `python -m <sidecar>` processes. `sidecar_module/1` dispatch table routes adapter names to their per-type sidecar module (`feishu_adapter_runner`, `cc_adapter_runner`, generic fallback).
 
