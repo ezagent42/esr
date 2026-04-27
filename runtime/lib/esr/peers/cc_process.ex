@@ -411,6 +411,20 @@ defmodule Esr.Peers.CCProcess do
   # `{:notification, _}` identically, and sticking with the admin
   # convention keeps the ops + logs consistent.
   defp broadcast_notification(session_id, envelope) do
+    # PR-E (2026-04-27 actor-topology-routing scenario-05 prep): the
+    # `reachable` attribute is sent over Phoenix.PubSub which has no
+    # default at-rest log line. Emit a single line per dispatch so e2e
+    # harnesses can grep for "channel notification dispatched" with the
+    # expected workspace + reachable shape, without standing up a
+    # subscriber from bash. Truncated to the first 200 chars to keep
+    # logs manageable.
+    Logger.info(
+      "cc_process: channel notification dispatched session_id=#{session_id} " <>
+        "workspace=#{inspect(envelope["workspace"])} " <>
+        "reachable_present=#{inspect(Map.has_key?(envelope, "reachable"))} " <>
+        "reachable=#{inspect(envelope["reachable"] || "")}"
+    )
+
     Phoenix.PubSub.broadcast(
       EsrWeb.PubSub,
       "cli:channel/" <> session_id,
