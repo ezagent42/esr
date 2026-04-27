@@ -80,17 +80,55 @@ defmodule Esr.Peers.CCProcess do
     # See docs/notes/cc-mcp-pubsub-race.md.
     _ = maybe_subscribe("cc_mcp_ready/" <> sid)
 
+    proxy_ctx = Map.get(args, :proxy_ctx, %{})
+
+    # PR-C C4 (2026-04-27 actor-topology-routing §5.2): seed the BGP
+    # reachable_set from yaml topology + own chat + adapter URI. The
+    # set grows when handle_upstream sees inbound URIs in `meta.source`
+    # / `meta.principal_id` (learn_uris/2 below). Empty fallback when
+    # workspace_name/chat_id aren't yet threaded into proxy_ctx —
+    # learning still works, the prompt just won't expose neighbours
+    # until the topology yaml + workspace mapping land.
+    initial_reachable = build_initial_reachable_set(proxy_ctx)
+
     {:ok,
      %{
        session_id: sid,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
        neighbors: Map.get(args, :neighbors, []),
-       proxy_ctx: Map.get(args, :proxy_ctx, %{}),
+       proxy_ctx: proxy_ctx,
        handler_override: nil,
        pending_notifications: [],
-       cc_mcp_ready: false
+       cc_mcp_ready: false,
+       reachable_set: initial_reachable
      }}
+  end
+
+  defp build_initial_reachable_set(ctx) do
+    workspace_name = Map.get(ctx, :workspace_name) || Map.get(ctx, "workspace_name")
+    chat_id = Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id")
+    app_id = Map.get(ctx, :app_id) || Map.get(ctx, "app_id")
+
+    chat_uri =
+      if is_binary(workspace_name) and is_binary(chat_id) and chat_id != "" do
+        Esr.Topology.chat_uri(workspace_name, chat_id)
+      end
+
+    adapter_uri =
+      if is_binary(app_id) and app_id != "" do
+        Esr.Topology.adapter_uri("feishu", app_id)
+      end
+
+    cond do
+      is_binary(workspace_name) and not is_nil(chat_uri) ->
+        Esr.Topology.initial_seed(workspace_name, chat_uri, adapter_uri)
+
+      true ->
+        # No workspace context yet — start empty; learning will fill
+        # in as inbound `meta.source` URIs arrive.
+        MapSet.new()
+    end
   end
 
   # Phoenix.PubSub isn't running in every unit-test setup (some call
@@ -176,6 +214,11 @@ defmodule Esr.Peers.CCProcess do
     # (message_id, sender_id, thread_id) when building their envelopes.
     # Handler implementations don't need to echo them back.
     state = stash_upstream_meta(state, event)
+
+    # PR-C C4 (spec §5.2 BGP-style learning): merge any URIs visible
+    # in upstream meta into reachable_set. Operates on the just-stashed
+    # meta so it sees the same shape stash_upstream_meta saw.
+    state = learn_uris_from_event(state, event)
 
     payload = %{
       "handler" => state.handler_module <> ".on_msg",
@@ -382,6 +425,39 @@ defmodule Esr.Peers.CCProcess do
   end
 
   defp stash_upstream_meta(state, _other), do: state
+
+  # PR-C C4 (spec §4.3 + §5.2): mutate reachable_set with any URIs
+  # visible in the just-arrived inbound. `meta.source` is the immediate
+  # sender's URI (set by FCP from envelope["source"]); `meta.principal_id`
+  # is the originating user's open_id, which we lift into a user URI.
+  # Idempotent — already-known URIs are no-ops.
+  defp learn_uris_from_event(state, {:text, _bytes, meta}) when is_map(meta) do
+    new =
+      [meta[:source], principal_uri(meta[:principal_id])]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.reject(&MapSet.member?(state.reachable_set || MapSet.new(), &1))
+
+    case new do
+      [] ->
+        state
+
+      uris ->
+        Logger.info(
+          "cc_process: learned URIs session_id=#{state.session_id} uris=#{inspect(uris)}"
+        )
+
+        existing = state.reachable_set || MapSet.new()
+        %{state | reachable_set: MapSet.union(existing, MapSet.new(uris))}
+    end
+  end
+
+  defp learn_uris_from_event(state, _other), do: state
+
+  defp principal_uri(open_id) when is_binary(open_id) and open_id != "",
+    do: Esr.Topology.user_uri(open_id)
+
+  defp principal_uri(_), do: nil
 
   # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
   # the event dict must carry `event_type` + `args`. Earlier versions of this
