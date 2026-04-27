@@ -108,10 +108,40 @@ _ECHO = Tool(
     },
 )
 
+# PR-F 2026-04-28: business-topology MCP tool (spec
+# `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`).
+# Returns the current session's workspace + 1-hop neighbour metadata,
+# letting the LLM understand its role in a multi-stage pipeline.
+# Parameter-less: `workspace_name` is injected by the cc_mcp tool
+# handler from the `ESR_WORKSPACE` env var, so the LLM doesn't need
+# to know which workspace it's in.
+_DESCRIBE_TOPOLOGY = Tool(
+    name="describe_topology",
+    description=(
+        "Returns metadata about the current session's workspace and its "
+        "direct (1-hop) neighbours. Call this when:\n"
+        "- The user mentions another workspace/team you don't recognize.\n"
+        "- You need pipeline context (your role, downstream stages, "
+        "expected output format).\n"
+        "- You're unsure which workspace's chat to route a reply to.\n\n"
+        "Returns JSON with `current_workspace` (you are here) and "
+        "`neighbor_workspaces` (1-hop reachable). Each workspace exposes "
+        "a free-form `metadata` map populated by operators in "
+        "workspaces.yaml — fields like `purpose`, `pipeline_position`, "
+        "`hand_off_to` are common, but the structure is open. "
+        "Operational fields (cwd, env, start_cmd) are filtered out."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+)
+
 
 def list_tool_schemas(*, role: str) -> list[Tool]:
     """Return the tool list CC sees — `_echo` only when role=diagnostic."""
-    tools = [_REPLY, _SEND_FILE]
+    tools = [_REPLY, _SEND_FILE, _DESCRIBE_TOPOLOGY]
     if role == "diagnostic":
         tools.append(_ECHO)
     return tools

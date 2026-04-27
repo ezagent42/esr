@@ -1,19 +1,48 @@
 from esr_cc_mcp.tools import list_tool_schemas
 
 
-def test_returns_2_tools_by_default() -> None:
+def test_returns_3_tools_by_default() -> None:
     # PR-9 T5 D4: `react` removed — no longer a CC-facing MCP tool;
     # it's emitted by FeishuChatProxy as a delivery ACK and un-reacted
     # on CC reply, keeping Feishu-specific semantics out of CC.
+    # PR-F 2026-04-28: `describe_topology` added (business-topology MCP tool).
     tools = list_tool_schemas(role="dev")
     names = {t.name for t in tools}
-    assert names == {"reply", "send_file"}
+    assert names == {"reply", "send_file", "describe_topology"}
 
 
 def test_diagnostic_role_adds_echo_tool() -> None:
     tools = list_tool_schemas(role="diagnostic")
     names = {t.name for t in tools}
-    assert names == {"reply", "send_file", "_echo"}
+    assert names == {"reply", "send_file", "describe_topology", "_echo"}
+
+
+# ---------------------------------------------------------------------------
+# PR-F: describe_topology tool schema
+# ---------------------------------------------------------------------------
+
+
+def test_describe_topology_schema_is_parameter_less() -> None:
+    """Spec Q4: LLM-facing API has no parameters; cc_mcp injects
+    workspace_name from ESR_WORKSPACE env var transparently."""
+    tools = list_tool_schemas(role="dev")
+    describe = next(t for t in tools if t.name == "describe_topology")
+    schema = describe.inputSchema
+    assert schema["type"] == "object"
+    assert schema["properties"] == {}
+    assert schema["required"] == []
+
+
+def test_describe_topology_description_mentions_metadata_and_pipeline() -> None:
+    """The 'when to call' description should mention pipeline context
+    and metadata so the LLM is nudged toward calling it during
+    multi-stage routing decisions."""
+    tools = list_tool_schemas(role="dev")
+    describe = next(t for t in tools if t.name == "describe_topology")
+    desc = describe.description.lower()
+    assert "pipeline" in desc
+    assert "metadata" in desc
+    assert "workspace" in desc
 
 
 def test_reply_schema_has_chat_id_and_text() -> None:

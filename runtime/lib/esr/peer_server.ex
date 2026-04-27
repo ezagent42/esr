@@ -294,7 +294,14 @@ defmodule Esr.PeerServer do
     workspace = Map.get(args, "workspace_name")
     required = "workspace:#{workspace || "*"}/#{tool}"
 
-    if capability_granted?(principal_id, required) do
+    # PR-F 2026-04-28: `describe_topology` returns non-secret yaml
+    # metadata (operator-readable workspace + 1-hop neighbour info).
+    # Per Q6 grill decision (Lane A/B audit-table reasoning), no cap
+    # gate — the existing Lane B inbound gate is the single
+    # enforcement point. Skip the workspace:<ws>/<tool> check here
+    # so the tool is callable without operators wiring up
+    # `workspace:<ws>/describe_topology` for every principal.
+    if tool == "describe_topology" or capability_granted?(principal_id, required) do
       # Emit a structured log line for _echo so the gate's L2 grep can match
       # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
       if tool == "_echo" do
@@ -814,6 +821,74 @@ defmodule Esr.PeerServer do
   # must never block or crash the tool_invoke; the CC-side caller gets
   # the ack regardless. Task 25 adds matching `handle_info/2` on
   # `Esr.Admin.Dispatcher` — today its catch-all swallows the message.
+  # PR-F 2026-04-28: business-topology MCP tool. Reads workspaces.yaml
+  # data from `Esr.Workspaces.Registry`, filters operational fields
+  # (cwd, env, start_cmd) out, expands `workspace:<name>` neighbour
+  # entries into a `neighbor_workspaces` array. cc_mcp's tool handler
+  # injects `workspace_name` from the `ESR_WORKSPACE` env var so the
+  # LLM-facing tool API stays parameter-less.
+  #
+  # Returns `{:ok, :direct_ack, %{"data" => %{...}}}` — synchronous,
+  # no adapter directive emitted.
+  defp build_emit_for_tool("describe_topology", args, _state) do
+    case Map.get(args, "workspace_name") do
+      ws_name when is_binary(ws_name) and ws_name != "" ->
+        case Esr.Workspaces.Registry.get(ws_name) do
+          {:ok, ws} ->
+            neighbours = resolve_neighbour_workspaces_for_describe(ws)
+
+            data = %{
+              "current_workspace" => filter_workspace_for_describe(ws),
+              "neighbor_workspaces" =>
+                Enum.map(neighbours, &filter_workspace_for_describe/1)
+            }
+
+            {:ok, :direct_ack, %{"data" => data}}
+
+          :error ->
+            {:error, "unknown_workspace: #{ws_name}"}
+        end
+
+      _ ->
+        {:error, "describe_topology requires workspace_name"}
+    end
+  end
+
+  defp filter_workspace_for_describe(%Esr.Workspaces.Registry.Workspace{} = ws) do
+    %{
+      "name" => ws.name,
+      "role" => ws.role || "dev",
+      "chats" =>
+        Enum.map(ws.chats || [], fn chat ->
+          if is_map(chat) do
+            Map.take(chat, ["chat_id", "app_id", "kind", "name", "metadata"])
+          else
+            %{}
+          end
+        end),
+      "neighbors_declared" => ws.neighbors || [],
+      "metadata" => ws.metadata || %{}
+    }
+  end
+
+  defp resolve_neighbour_workspaces_for_describe(%Esr.Workspaces.Registry.Workspace{
+         neighbors: neighbours
+       }) do
+    neighbours
+    |> Enum.flat_map(fn entry ->
+      case String.split(entry || "", ":", parts: 2) do
+        ["workspace", name] ->
+          case Esr.Workspaces.Registry.get(name) do
+            {:ok, ws} -> [ws]
+            :error -> []
+          end
+
+        _ ->
+          []
+      end
+    end)
+  end
+
   defp build_emit_for_tool("session.signal_cleanup", args, _state) do
     if pid = Process.whereis(Esr.Admin.Dispatcher) do
       send(
