@@ -337,4 +337,151 @@ defmodule EsrWeb.CliChannelTest do
       assert Esr.DeadLetter.list(Esr.DeadLetter) == []
     end
   end
+
+  describe "cli:workspaces/describe" do
+    alias Esr.Workspaces.Registry, as: WS
+
+    setup do
+      # Clean ETS between tests; the registry GenServer is app-level.
+      for {name, _} <- :ets.tab2list(:esr_workspaces), do: :ets.delete(:esr_workspaces, name)
+
+      on_exit(fn ->
+        for {name, _} <- :ets.tab2list(:esr_workspaces), do: :ets.delete(:esr_workspaces, name)
+      end)
+
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-workspaces-describe", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:workspaces/describe")
+
+      %{describe_socket: socket}
+    end
+
+    test "returns current workspace + 1-hop neighbour metadata", %{describe_socket: socket} do
+      :ok =
+        WS.put(%WS.Workspace{
+          name: "ws_translator",
+          cwd: "/tmp/translator",
+          start_cmd: "irrelevant_to_LLM",
+          role: "dev",
+          chats: [
+            %{
+              "chat_id" => "oc_t",
+              "app_id" => "cli_t",
+              "kind" => "dm",
+              "name" => "translator-room"
+            }
+          ],
+          env: %{"OPENAI_API_KEY" => "should_never_appear_in_response"},
+          neighbors: ["workspace:ws_processor"],
+          metadata: %{
+            "purpose" => "Translate Chinese to English",
+            "pipeline_position" => 1
+          }
+        })
+
+      :ok =
+        WS.put(%WS.Workspace{
+          name: "ws_processor",
+          cwd: "/tmp/processor",
+          start_cmd: "irrelevant",
+          role: "dev",
+          chats: [%{"chat_id" => "oc_p", "app_id" => "cli_p", "kind" => "dm"}],
+          env: %{"SECRET" => "filtered"},
+          neighbors: [],
+          metadata: %{"purpose" => "Structure translated text"}
+        })
+
+      ref = push(socket, "cli_call", %{"arg" => "ws_translator"})
+      assert_reply ref, :ok, response
+
+      data = response["data"]
+      cur = data["current_workspace"]
+      assert cur["name"] == "ws_translator"
+      assert cur["role"] == "dev"
+      assert cur["metadata"]["purpose"] == "Translate Chinese to English"
+      assert cur["metadata"]["pipeline_position"] == 1
+      assert cur["neighbors_declared"] == ["workspace:ws_processor"]
+      [chat] = cur["chats"]
+      assert chat["chat_id"] == "oc_t"
+      assert chat["name"] == "translator-room"
+
+      # operational fields filtered out
+      refute Map.has_key?(cur, "cwd")
+      refute Map.has_key?(cur, "start_cmd")
+      refute Map.has_key?(cur, "env")
+
+      # neighbour expanded
+      [nbr] = data["neighbor_workspaces"]
+      assert nbr["name"] == "ws_processor"
+      assert nbr["metadata"]["purpose"] == "Structure translated text"
+      refute Map.has_key?(nbr, "cwd")
+      refute Map.has_key?(nbr, "env")
+    end
+
+    test "unknown workspace returns structured error", %{describe_socket: socket} do
+      ref = push(socket, "cli_call", %{"arg" => "ws_does_not_exist"})
+      assert_reply ref, :ok, response
+      assert response["data"]["error"] =~ "unknown_workspace"
+    end
+
+    test "missing arg returns structured error", %{describe_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"]["error"] =~ "missing arg"
+    end
+
+    test "non-workspace neighbours stay raw in neighbors_declared", %{describe_socket: socket} do
+      :ok =
+        WS.put(%WS.Workspace{
+          name: "ws_mixed",
+          chats: [%{"chat_id" => "oc_m", "app_id" => "cli_m", "kind" => "group"}],
+          neighbors: [
+            "workspace:ws_other",
+            "user:ou_admin",
+            "chat:oc_legal",
+            "adapter:feishu:app_x"
+          ],
+          metadata: %{}
+        })
+
+      ref = push(socket, "cli_call", %{"arg" => "ws_mixed"})
+      assert_reply ref, :ok, response
+
+      cur = response["data"]["current_workspace"]
+      # all four entries stay in neighbors_declared as raw strings
+      assert "user:ou_admin" in cur["neighbors_declared"]
+      assert "chat:oc_legal" in cur["neighbors_declared"]
+      assert "adapter:feishu:app_x" in cur["neighbors_declared"]
+      assert "workspace:ws_other" in cur["neighbors_declared"]
+
+      # only workspace:<name> would expand into neighbor_workspaces;
+      # ws_other isn't registered, so it drops silently
+      assert response["data"]["neighbor_workspaces"] == []
+    end
+
+    test "register dispatch round-trips metadata + neighbors (PR-F)" do
+      {:ok, _, register_sock} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-test-ws-register", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:workspace/register")
+
+      payload = %{
+        "name" => "ws_round_trip",
+        "role" => "dev",
+        "chats" => [%{"chat_id" => "oc_rt", "app_id" => "cli_rt"}],
+        "neighbors" => ["workspace:ws_other"],
+        "metadata" => %{"purpose" => "round-trip test"}
+      }
+
+      ref = push(register_sock, "cli_call", payload)
+      assert_reply ref, :ok, register_resp
+      assert register_resp["data"]["ok"] == true
+
+      # registered workspace should round-trip metadata + neighbors
+      {:ok, ws} = WS.get("ws_round_trip")
+      assert ws.metadata == %{"purpose" => "round-trip test"}
+      assert ws.neighbors == ["workspace:ws_other"]
+    end
+  end
 end
