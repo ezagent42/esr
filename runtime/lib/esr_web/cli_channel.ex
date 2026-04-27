@@ -253,7 +253,13 @@ defmodule EsrWeb.CliChannel do
         start_cmd: payload["start_cmd"] || "",
         role: payload["role"] || "dev",
         chats: payload["chats"] || [],
-        env: payload["env"] || %{}
+        env: payload["env"] || %{},
+        # PR-C 2026-04-27: neighbors round-trip
+        neighbors: payload["neighbors"] || [],
+        # PR-F 2026-04-28: metadata round-trip — without this, registering
+        # a workspace via CLI would silently drop the business-topology
+        # context that `describe_topology` tool expects.
+        metadata: payload["metadata"] || %{}
       }
 
       :ok = WorkspacesReg.put(ws)
