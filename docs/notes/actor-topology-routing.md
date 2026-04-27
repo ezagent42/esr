@@ -129,6 +129,16 @@ Automated coverage:
 
 ## Known limitations (spec follow-ups)
 
+- **Addressability vs business-topology awareness**. PR-C's
+  `reachable` attribute exposes 1-hop addressability — the agent
+  knows who it can send to. It does NOT expose the agent's role
+  in a multi-stage pipeline (e.g. "you are stage 2 of 4: translator
+  → processor → polisher → exporter"). The LLM needs that broader
+  context to make decisions like "don't polish the text yet — that's
+  the next stage's job". Today this lives in agents.yaml system
+  prompts and ad-hoc user prompts; PR-F will grill the design
+  options (richer tag attribute vs agents.yaml schema vs status quo).
+  Tracked as task #150.
 - **`<reachable>` is a JSON-string attribute, not a nested element**.
   `notifications/claude/channel` (Claude Code's experimental channel
   injection API) only forwards flat attributes matching
