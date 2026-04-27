@@ -78,7 +78,7 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
       "id" => "e-deny-1",
       "principal_id" => "ou_stranger",
       "workspace_name" => "proj-a",
-      "source" => "esr://localhost/adapter:feishu/#{instance_id}",
+      "source" => "esr://localhost/adapters/feishu/#{instance_id}",
       "payload" => %{
         "event_type" => "msg_received",
         "args" => %{"chat_id" => "oc_chat_1"}
@@ -104,7 +104,7 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
       "id" => "e-allow-1",
       "principal_id" => "ou_ok",
       "workspace_name" => "proj-a",
-      "source" => "esr://localhost/adapter:feishu/#{instance_id}",
+      "source" => "esr://localhost/adapters/feishu/#{instance_id}",
       "payload" => %{
         "event_type" => "msg_received",
         "args" => %{"chat_id" => "oc_chat_1"}
@@ -134,7 +134,7 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
       "id" => "e-deny-no-faa",
       "principal_id" => "ou_stranger",
       "workspace_name" => "proj-a",
-      "source" => "esr://localhost/adapter:feishu/#{instance_id}",
+      "source" => "esr://localhost/adapters/feishu/#{instance_id}",
       "payload" => %{
         "event_type" => "msg_received",
         "args" => %{"chat_id" => "oc_chat_1"}
@@ -159,13 +159,13 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
     actor_id = "lane-b-deny-non-feishu-#{System.unique_integer([:positive])}"
     peer_pid = start_peer(actor_id)
 
-    # cc_tmux source — the regex ^esr://[^/]+/adapter:feishu/([^/]+)$
+    # cc_tmux source — the regex ^esr://[^/]+/adapters/feishu/([^/]+)$
     # must NOT match, dispatch_deny_dm/1 returns :ok without lookup.
     envelope = %{
       "id" => "e-deny-non-feishu",
       "principal_id" => "ou_stranger",
       "workspace_name" => "proj-a",
-      "source" => "esr://localhost/adapter:cc_tmux/some_id",
+      "source" => "esr://localhost/adapters/cc_tmux/some_id",
       "payload" => %{
         "event_type" => "msg_received",
         "args" => %{"chat_id" => "oc_chat_1"}

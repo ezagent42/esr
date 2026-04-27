@@ -24,12 +24,14 @@ class ChannelPusher:
     :class:`ChannelClient.push` on a fixed topic.
 
     ``source_uri`` is the provenance URI stamped on outgoing envelopes
-    (envelope["source"]). By convention it is derived from the topic as
-    ``"esr://localhost/" + topic`` — a valid ``esr://`` URI the wire
-    invariant (§7.5) requires. The ``topic`` is the underlying Phoenix
-    channel name (``adapter:<name>/<instance>`` or
-    ``handler:<module>/<worker>``); pushes use ``topic``, envelopes use
-    ``source_uri``.
+    (envelope["source"]). By convention it is built from the same
+    components as the topic via :func:`esr.uri.build_path` —
+    ``esr://localhost/adapters/<platform>/<instance_id>`` (path-style
+    RESTful, see 2026-04-27 actor-topology-routing spec §3 + PR-B URI
+    migration). The ``topic`` is the underlying Phoenix channel name
+    (``adapter:<name>/<instance>`` or ``handler:<module>/<worker>``,
+    legacy colon-style — unchanged); pushes use ``topic``, envelopes
+    use ``source_uri``.
     """
 
     def __init__(self, *, client: _ChannelLike, topic: str, source_uri: str) -> None:

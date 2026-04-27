@@ -156,11 +156,17 @@ async def run_with_client(
     await client.connect()
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     await client.join(topic, make_envelope_filter("directive", queue))
-    # The envelope builders require an ``esr://`` source (spec §7.5). The
-    # channel topic (``adapter:<name>/<id>``) is not a valid URI; derive
-    # the source by mapping topic → ``esr://localhost/<topic>`` so acks
-    # carry a provenance string that parses.
-    source_uri = "esr://localhost/" + topic
+    # The envelope builders require an ``esr://`` source (spec §7.5).
+    # The channel topic (``adapter:<name>/<id>``) is the legacy PubSub
+    # topic shape and is NOT a valid URI; build a path-style RESTful URI
+    # from the same components instead (2026-04-27 actor-topology-routing
+    # spec §3 + PR-B URI migration).
+    from esr.uri import build_path
+    adapter_name, _, instance_id = topic.partition("/")
+    adapter_name = adapter_name.removeprefix("adapter:")
+    source_uri = build_path(
+        ["adapters", adapter_name, instance_id], host="localhost"
+    )
     pusher = ChannelPusher(client=client, topic=topic, source_uri=source_uri)
 
     # Announce this process's permission declarations (capabilities
