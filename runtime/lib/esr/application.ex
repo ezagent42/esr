@@ -68,6 +68,14 @@ defmodule Esr.Application do
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,
 
+      # 4e.1 Workspaces fs watcher (PR-C 2026-04-27 actor-topology-routing
+      # §6.1 + §7). Loads workspaces.yaml on init + reloads on file_event,
+      # broadcasting `{:topology_neighbour_added, ws, uri}` via
+      # `EsrWeb.PubSub` so active CC peers can grow their reachable_set
+      # without restarting. Must sit AFTER Workspaces.Registry; the
+      # watcher reuses Registry's ETS table.
+      {Esr.Workspaces.Watcher, path: Esr.Paths.workspaces_yaml()},
+
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so

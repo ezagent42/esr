@@ -12,8 +12,15 @@ defmodule Esr.Workspaces.Registry do
   @table :esr_workspaces
 
   defmodule Workspace do
-    @moduledoc false
-    defstruct [:name, :cwd, :start_cmd, :role, :chats, :env]
+    @moduledoc """
+    Workspace record loaded from yaml.
+
+    `chats` is a list of maps shaped
+    `%{"chat_id" => _, "app_id" => _, "kind" => _, "name" => optional}`.
+    `neighbors` is a list of `<type>:<id>` URI-fragment strings declared
+    in yaml; PR-C 2026-04-27 added it for actor-topology-routing.
+    """
+    defstruct [:name, :cwd, :start_cmd, :role, :chats, :env, neighbors: []]
   end
 
   # --- Public API ---
@@ -78,7 +85,8 @@ defmodule Esr.Workspaces.Registry do
               start_cmd: row["start_cmd"] || "",
               role: row["role"] || "dev",
               chats: row["chats"] || [],
-              env: row["env"] || %{}
+              env: row["env"] || %{},
+              neighbors: row["neighbors"] || []
             }
 
             {name, ws}

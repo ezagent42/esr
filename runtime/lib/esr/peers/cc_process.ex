@@ -80,17 +80,66 @@ defmodule Esr.Peers.CCProcess do
     # See docs/notes/cc-mcp-pubsub-race.md.
     _ = maybe_subscribe("cc_mcp_ready/" <> sid)
 
+    proxy_ctx = Map.get(args, :proxy_ctx, %{})
+
+    # PR-C C6 (spec §7 hot-reload, eager-add): subscribe to the
+    # per-workspace topology PubSub topic so newly-declared neighbours
+    # in workspaces.yaml flow into reachable_set without restarting
+    # the session. Per-workspace scoping keeps cross-workspace traffic
+    # off this peer's mailbox.
+    workspace_name = Map.get(proxy_ctx, :workspace_name) || Map.get(proxy_ctx, "workspace_name")
+
+    if is_binary(workspace_name) and workspace_name != "" do
+      _ = maybe_subscribe("topology:" <> workspace_name)
+    end
+
+    # PR-C C4 (2026-04-27 actor-topology-routing §5.2): seed the BGP
+    # reachable_set from yaml topology + own chat + adapter URI. The
+    # set grows when handle_upstream sees inbound URIs in `meta.source`
+    # / `meta.principal_id` (learn_uris/2 below). Empty fallback when
+    # workspace_name/chat_id aren't yet threaded into proxy_ctx —
+    # learning still works, the prompt just won't expose neighbours
+    # until the topology yaml + workspace mapping land.
+    initial_reachable = build_initial_reachable_set(proxy_ctx)
+
     {:ok,
      %{
        session_id: sid,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
        neighbors: Map.get(args, :neighbors, []),
-       proxy_ctx: Map.get(args, :proxy_ctx, %{}),
+       proxy_ctx: proxy_ctx,
        handler_override: nil,
        pending_notifications: [],
-       cc_mcp_ready: false
+       cc_mcp_ready: false,
+       reachable_set: initial_reachable
      }}
+  end
+
+  defp build_initial_reachable_set(ctx) do
+    workspace_name = Map.get(ctx, :workspace_name) || Map.get(ctx, "workspace_name")
+    chat_id = Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id")
+    app_id = Map.get(ctx, :app_id) || Map.get(ctx, "app_id")
+
+    chat_uri =
+      if is_binary(workspace_name) and is_binary(chat_id) and chat_id != "" do
+        Esr.Topology.chat_uri(workspace_name, chat_id)
+      end
+
+    adapter_uri =
+      if is_binary(app_id) and app_id != "" do
+        Esr.Topology.adapter_uri("feishu", app_id)
+      end
+
+    cond do
+      is_binary(workspace_name) and not is_nil(chat_uri) ->
+        Esr.Topology.initial_seed(workspace_name, chat_uri, adapter_uri)
+
+      true ->
+        # No workspace context yet — start empty; learning will fill
+        # in as inbound `meta.source` URIs arrive.
+        MapSet.new()
+    end
   end
 
   # Phoenix.PubSub isn't running in every unit-test setup (some call
@@ -164,6 +213,30 @@ defmodule Esr.Peers.CCProcess do
     {:noreply, %{state | pending_notifications: [], cc_mcp_ready: true}}
   end
 
+  # PR-C C6 (spec §7 hot-reload eager-add): topology yaml just gained
+  # `uri` as a neighbour of this peer's workspace. Merge it into the
+  # reachable_set so the next prompt's `<reachable>` element exposes
+  # it. Idempotent — already-known URIs are no-ops.
+  def handle_info({:topology_neighbour_added, _ws, uri}, state) when is_binary(uri) do
+    existing = state[:reachable_set] || MapSet.new()
+
+    if MapSet.member?(existing, uri) do
+      {:noreply, state}
+    else
+      Logger.info(
+        "cc_process: topology hot-reload added uri session_id=#{state.session_id} uri=#{uri}"
+      )
+
+      {:noreply, %{state | reachable_set: MapSet.put(existing, uri)}}
+    end
+  end
+
+  # Lazy-remove (spec §7): we deliberately do NOT handle a
+  # `{:topology_neighbour_removed, _, _}` here — removals stay in-set
+  # until session_end; cap revocation in capabilities.yaml is the
+  # authoritative enforcement layer.
+  def handle_info({:topology_loaded, _}, state), do: {:noreply, state}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # ------------------------------------------------------------------
@@ -176,6 +249,11 @@ defmodule Esr.Peers.CCProcess do
     # (message_id, sender_id, thread_id) when building their envelopes.
     # Handler implementations don't need to echo them back.
     state = stash_upstream_meta(state, event)
+
+    # PR-C C4 (spec §5.2 BGP-style learning): merge any URIs visible
+    # in upstream meta into reachable_set. Operates on the just-stashed
+    # meta so it sees the same shape stash_upstream_meta saw.
+    state = learn_uris_from_event(state, event)
 
     payload = %{
       "handler" => state.handler_module <> ".on_msg",
@@ -352,26 +430,114 @@ defmodule Esr.Peers.CCProcess do
     ctx = state.proxy_ctx || %{}
     last = Map.get(state, :last_meta, %{})
 
-    %{
+    chat_id =
+      Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || ""
+
+    app_id =
+      Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || ""
+
+    sender_id = Map.get(last, :sender_id) || ""
+
+    base = %{
       "kind" => "notification",
       "source" => Map.get(ctx, "channel_adapter") || "feishu",
       # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
       # authoritative for this specific inbound. Fall back to proxy_ctx
       # only for legacy callers that hadn't threaded it through yet.
-      "chat_id" =>
-        Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || "",
+      "chat_id" => chat_id,
       # T-PR-A T2: surface the originating Feishu app_id so cc_mcp can
       # render it on the <channel> tag and claude can echo it on reply.
-      "app_id" =>
-        Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || "",
+      "app_id" => app_id,
       "thread_id" =>
         Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
       "message_id" => Map.get(last, :message_id) || "",
-      "user" => Map.get(last, :sender_id) || "",
+      # PR-C C5 (spec §8.1): `"user"` carries the open_id today (semantic
+      # alias of `"user_id"`). The spec calls for `"user"` to become the
+      # display name in v2 once the FAA → cc_process display-name cache
+      # threading lands; for v1 cc_mcp keeps reading `"user"` so the
+      # existing prompt template stays compatible. New consumers should
+      # prefer `"user_id"`.
+      "user" => sender_id,
+      "user_id" => sender_id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "content" => text
     }
+
+    base
+    |> maybe_put_workspace(chat_id, app_id)
+    |> maybe_put_reachable(state)
   end
+
+  # PR-C C5: workspace name attribute, looked up from
+  # Esr.Workspaces.Registry.workspace_for_chat. Omitted when the
+  # registry has no entry — keeps the tag stable for tests that don't
+  # boot the registry GenServer.
+  defp maybe_put_workspace(envelope, chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, ws} -> Map.put(envelope, "workspace", ws)
+      _ -> envelope
+    end
+  rescue
+    # Workspaces.Registry GenServer not started in some unit tests.
+    ArgumentError -> envelope
+  end
+
+  defp maybe_put_workspace(envelope, _, _), do: envelope
+
+  # PR-C C5: reachable set rendered as a list of `{uri, name}` maps.
+  # Empty / missing reachable_set is omitted entirely so the tag stays
+  # tight when there are no neighbours. The `name` resolves to the
+  # workspaces.yaml `chats[].name` for chat URIs (when registry is
+  # populated) or falls back to the URI's last 8 chars.
+  defp maybe_put_reachable(envelope, state) do
+    case state[:reachable_set] do
+      nil -> envelope
+      set -> if MapSet.size(set) == 0, do: envelope, else: Map.put(envelope, "reachable", reachable_actor_list(set))
+    end
+  end
+
+  defp reachable_actor_list(set) do
+    set
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(fn uri -> %{"uri" => uri, "name" => actor_display_name(uri)} end)
+  end
+
+  defp actor_display_name(uri) do
+    case Esr.Uri.parse(uri) do
+      {:ok, %Esr.Uri{segments: ["workspaces", _ws, "chats", chat_id]}} ->
+        lookup_chat_name(chat_id) || short_id(chat_id)
+
+      {:ok, %Esr.Uri{segments: ["users", open_id]}} ->
+        # No display-name cache wired yet; show short open_id.
+        short_id(open_id)
+
+      {:ok, %Esr.Uri{segments: ["adapters", platform, app_id]}} ->
+        "#{platform}:#{short_id(app_id)}"
+
+      _ ->
+        uri
+    end
+  end
+
+  defp lookup_chat_name(chat_id) do
+    Esr.Workspaces.Registry.list()
+    |> Enum.find_value(fn ws ->
+      Enum.find_value(ws.chats || [], fn
+        %{"chat_id" => ^chat_id} = c -> c["name"]
+        _ -> nil
+      end)
+    end)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp short_id(id) when is_binary(id) and byte_size(id) > 8 do
+    "..." <> String.slice(id, -8, 8)
+  end
+
+  defp short_id(id), do: id
 
   # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
   # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
@@ -382,6 +548,39 @@ defmodule Esr.Peers.CCProcess do
   end
 
   defp stash_upstream_meta(state, _other), do: state
+
+  # PR-C C4 (spec §4.3 + §5.2): mutate reachable_set with any URIs
+  # visible in the just-arrived inbound. `meta.source` is the immediate
+  # sender's URI (set by FCP from envelope["source"]); `meta.principal_id`
+  # is the originating user's open_id, which we lift into a user URI.
+  # Idempotent — already-known URIs are no-ops.
+  defp learn_uris_from_event(state, {:text, _bytes, meta}) when is_map(meta) do
+    new =
+      [meta[:source], principal_uri(meta[:principal_id])]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.reject(&MapSet.member?(state.reachable_set || MapSet.new(), &1))
+
+    case new do
+      [] ->
+        state
+
+      uris ->
+        Logger.info(
+          "cc_process: learned URIs session_id=#{state.session_id} uris=#{inspect(uris)}"
+        )
+
+        existing = state.reachable_set || MapSet.new()
+        %{state | reachable_set: MapSet.union(existing, MapSet.new(uris))}
+    end
+  end
+
+  defp learn_uris_from_event(state, _other), do: state
+
+  defp principal_uri(open_id) when is_binary(open_id) and open_id != "",
+    do: Esr.Topology.user_uri(open_id)
+
+  defp principal_uri(_), do: nil
 
   # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
   # the event dict must carry `event_type` + `args`. Earlier versions of this
