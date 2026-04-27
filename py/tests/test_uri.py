@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
-from esr.uri import EsrURI, build, parse
+from esr.uri import (
+    EsrURI,
+    build,
+    build_path,
+    legacy_types,
+    parse,
+    path_style_types,
+)
 
 
 def test_parse_minimal() -> None:
@@ -66,11 +75,13 @@ def test_parse_wrong_scheme_raises() -> None:
 
 
 def test_parse_id_with_slash_raises() -> None:
-    """Reviewer S5: Elixir-side Esr.Uri.parse rejects ``esr://host/type/a/b``
-    (its path split requires exactly ``[type, id]``). Python must match
-    to avoid silent cross-boundary mismatches.
+    """Legacy types stay strict: 2-segment path only.
+
+    Path-style RESTful types (e.g. ``adapters``, ``workspaces``,
+    ``chats``) accept 3+ segments — see ``test_parse_path_style_*``
+    below. Both sides (Elixir + Python) match.
     """
-    with pytest.raises(ValueError, match=r"(slash|bad path|multiple segments)"):
+    with pytest.raises(ValueError, match=r"(slash|bad path|legacy type)"):
         parse("esr://localhost/actor/path/with/slashes")
 
 
@@ -109,5 +120,83 @@ def test_build_round_trip_through_parse() -> None:
         port=4000,
         type="command",
         id="feishu-to-cc",
-        params={},
+        segments=("command", "feishu-to-cc"),
+        params=MappingProxyType({}),
     )
+
+
+# ---------------------------------------------------------------------------
+# Path-style RESTful URIs (introduced 2026-04-27)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_path_style_adapter() -> None:
+    u = parse("esr://localhost/adapters/feishu/app_dev")
+    assert u.host == "localhost"
+    assert u.type == "adapters"
+    assert u.id == "app_dev"
+    assert u.segments == ("adapters", "feishu", "app_dev")
+
+
+def test_parse_path_style_chat_under_workspace() -> None:
+    u = parse("esr://localhost/workspaces/ws_dev/chats/oc_xxx")
+    assert u.type == "workspaces"
+    assert u.id == "oc_xxx"
+    assert u.segments == ("workspaces", "ws_dev", "chats", "oc_xxx")
+
+
+def test_parse_path_style_user() -> None:
+    u = parse("esr://localhost/users/ou_abc")
+    assert u.type == "users"
+    assert u.id == "ou_abc"
+    assert u.segments == ("users", "ou_abc")
+
+
+def test_parse_path_style_session() -> None:
+    u = parse("esr://localhost/sessions/sess_42")
+    assert u.type == "sessions"
+    assert u.id == "sess_42"
+    assert u.segments == ("sessions", "sess_42")
+
+
+def test_path_style_only_collection_segment_rejected() -> None:
+    with pytest.raises(ValueError, match=r"bad path"):
+        parse("esr://localhost/adapters")
+
+
+def test_build_path_adapter() -> None:
+    s = build_path(["adapters", "feishu", "app_dev"], host="localhost")
+    assert s == "esr://localhost/adapters/feishu/app_dev"
+
+
+def test_build_path_chat_under_workspace() -> None:
+    s = build_path(
+        ["workspaces", "ws_dev", "chats", "oc_xxx"], host="localhost"
+    )
+    assert s == "esr://localhost/workspaces/ws_dev/chats/oc_xxx"
+
+
+def test_build_path_rejects_legacy_first_segment() -> None:
+    with pytest.raises(ValueError, match=r"not a path-style type"):
+        build_path(["actor", "x"], host="localhost")
+
+
+def test_build_path_round_trip() -> None:
+    s = build_path(["users", "ou_abc"], host="localhost")
+    u = parse(s)
+    assert u.segments == ("users", "ou_abc")
+
+
+def test_legacy_types_set() -> None:
+    assert "actor" in legacy_types()
+    assert "adapter" in legacy_types()
+    assert "adapters" not in legacy_types()
+
+
+def test_path_style_types_set() -> None:
+    assert "adapters" in path_style_types()
+    assert "workspaces" in path_style_types()
+    assert "chats" in path_style_types()
+    assert "users" in path_style_types()
+    assert "sessions" in path_style_types()
+    assert "actor" not in path_style_types()

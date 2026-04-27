@@ -50,6 +50,49 @@ defmodule Esr.UriTest do
       {:ok, uri} = Esr.Uri.parse("esr://localhost/command/feishu-to-cc?ver=2")
       assert uri.params == %{"ver" => "2"}
     end
+
+    test "legacy types fill segments with [type, id]" do
+      {:ok, uri} = Esr.Uri.parse("esr://localhost/actor/cc:sess-A")
+      assert uri.segments == ["actor", "cc:sess-A"]
+    end
+
+    test "path-style adapter URI" do
+      {:ok, uri} = Esr.Uri.parse("esr://localhost/adapters/feishu/app_dev")
+      assert uri.host == "localhost"
+      assert uri.type == :adapters
+      assert uri.id == "app_dev"
+      assert uri.segments == ["adapters", "feishu", "app_dev"]
+    end
+
+    test "path-style chat URI under workspace" do
+      {:ok, uri} = Esr.Uri.parse("esr://localhost/workspaces/ws_dev/chats/oc_xxx")
+      assert uri.type == :workspaces
+      assert uri.id == "oc_xxx"
+      assert uri.segments == ["workspaces", "ws_dev", "chats", "oc_xxx"]
+    end
+
+    test "path-style user URI" do
+      {:ok, uri} = Esr.Uri.parse("esr://localhost/users/ou_abc")
+      assert uri.type == :users
+      assert uri.id == "ou_abc"
+      assert uri.segments == ["users", "ou_abc"]
+    end
+
+    test "path-style session URI" do
+      {:ok, uri} = Esr.Uri.parse("esr://localhost/sessions/sess_42")
+      assert uri.type == :sessions
+      assert uri.id == "sess_42"
+      assert uri.segments == ["sessions", "sess_42"]
+    end
+
+    test "legacy 2-segment with single id rejects extra slashes for legacy types" do
+      # Legacy types stay strict: actor/<id> with id containing no slashes.
+      assert {:error, :unknown_type} = Esr.Uri.parse("esr://localhost/notatype/a/b")
+    end
+
+    test "path-style with only collection segment rejected" do
+      assert {:error, :bad_path} = Esr.Uri.parse("esr://localhost/adapters")
+    end
   end
 
   describe "build/3" do
@@ -58,11 +101,54 @@ defmodule Esr.UriTest do
                "esr://localhost/actor/cc:sess-A"
     end
 
-    test "assembles URI for every valid type" do
+    test "assembles URI for every legacy type" do
       for type <- [:actor, :adapter, :handler, :command, :interface] do
         uri = Esr.Uri.build(type, "x", "localhost")
         assert uri == "esr://localhost/#{type}/x"
       end
+    end
+  end
+
+  describe "build_path/2" do
+    test "assembles path-style adapter URI" do
+      assert Esr.Uri.build_path(["adapters", "feishu", "app_dev"], "localhost") ==
+               "esr://localhost/adapters/feishu/app_dev"
+    end
+
+    test "assembles path-style chat URI under workspace" do
+      assert Esr.Uri.build_path(
+               ["workspaces", "ws_dev", "chats", "oc_xxx"],
+               "localhost"
+             ) == "esr://localhost/workspaces/ws_dev/chats/oc_xxx"
+    end
+
+    test "rejects legacy first segment" do
+      assert_raise ArgumentError, fn ->
+        Esr.Uri.build_path(["actor", "x"], "localhost")
+      end
+    end
+
+    test "round-trip parse(build_path)" do
+      uri_str = Esr.Uri.build_path(["users", "ou_abc"], "localhost")
+      {:ok, uri} = Esr.Uri.parse(uri_str)
+      assert uri.segments == ["users", "ou_abc"]
+    end
+  end
+
+  describe "type set helpers" do
+    test "legacy_types/0 returns the singular legacy type set" do
+      assert :actor in Esr.Uri.legacy_types()
+      assert :adapter in Esr.Uri.legacy_types()
+      refute :adapters in Esr.Uri.legacy_types()
+    end
+
+    test "path_style_types/0 returns the new RESTful type set" do
+      assert :adapters in Esr.Uri.path_style_types()
+      assert :workspaces in Esr.Uri.path_style_types()
+      assert :chats in Esr.Uri.path_style_types()
+      assert :users in Esr.Uri.path_style_types()
+      assert :sessions in Esr.Uri.path_style_types()
+      refute :actor in Esr.Uri.path_style_types()
     end
   end
 end

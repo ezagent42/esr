@@ -884,14 +884,16 @@ defmodule Esr.PeerServer do
   # per principal and emits the Chinese deny DM via its existing
   # `{:outbound, _}` channel.
   #
-  # The `source` field on the envelope is set by the Python adapter
-  # runner (`runner_core.py` builds it as
-  # `"esr://localhost/" + topic` where topic is
-  # `adapter:feishu/<instance_id>`). One regex BOTH gates on Feishu
-  # source and extracts `instance_id` via the capture group — non-
-  # Feishu sources (cc_tmux, voice, etc.) silently no-op without a
-  # registry lookup. Spec §Task 1.4 / §Spec changelog v1.4 B-v1.3-1.
-  @feishu_source_re ~r{^esr://[^/]+/adapter:feishu/([^/]+)$}
+  # The `source` field on the envelope is a path-style RESTful URI built
+  # by the Python adapter runner (`runner_core.py` calls
+  # `Esr.uri.build_path(["adapters", adapter_name, instance_id], host="localhost")`
+  # → `"esr://localhost/adapters/feishu/<instance_id>"`). One regex BOTH
+  # gates on Feishu source and extracts `instance_id` via the capture
+  # group — non-Feishu sources (cc_tmux, voice, etc.) silently no-op
+  # without a registry lookup. Spec §Task 1.4 / §Spec changelog v1.4
+  # B-v1.3-1; PR-B 2026-04-27 migrated URI shape from colon-style to
+  # path-style RESTful (PubSub topic `adapter:feishu/<id>` is unchanged).
+  @feishu_source_re ~r{^esr://[^/]+/adapters/feishu/([^/]+)$}
 
   defp dispatch_deny_dm(envelope) do
     with source when is_binary(source) <- envelope["source"],
