@@ -82,6 +82,17 @@ defmodule Esr.Peers.CCProcess do
 
     proxy_ctx = Map.get(args, :proxy_ctx, %{})
 
+    # PR-C C6 (spec §7 hot-reload, eager-add): subscribe to the
+    # per-workspace topology PubSub topic so newly-declared neighbours
+    # in workspaces.yaml flow into reachable_set without restarting
+    # the session. Per-workspace scoping keeps cross-workspace traffic
+    # off this peer's mailbox.
+    workspace_name = Map.get(proxy_ctx, :workspace_name) || Map.get(proxy_ctx, "workspace_name")
+
+    if is_binary(workspace_name) and workspace_name != "" do
+      _ = maybe_subscribe("topology:" <> workspace_name)
+    end
+
     # PR-C C4 (2026-04-27 actor-topology-routing §5.2): seed the BGP
     # reachable_set from yaml topology + own chat + adapter URI. The
     # set grows when handle_upstream sees inbound URIs in `meta.source`
@@ -201,6 +212,30 @@ defmodule Esr.Peers.CCProcess do
 
     {:noreply, %{state | pending_notifications: [], cc_mcp_ready: true}}
   end
+
+  # PR-C C6 (spec §7 hot-reload eager-add): topology yaml just gained
+  # `uri` as a neighbour of this peer's workspace. Merge it into the
+  # reachable_set so the next prompt's `<reachable>` element exposes
+  # it. Idempotent — already-known URIs are no-ops.
+  def handle_info({:topology_neighbour_added, _ws, uri}, state) when is_binary(uri) do
+    existing = state[:reachable_set] || MapSet.new()
+
+    if MapSet.member?(existing, uri) do
+      {:noreply, state}
+    else
+      Logger.info(
+        "cc_process: topology hot-reload added uri session_id=#{state.session_id} uri=#{uri}"
+      )
+
+      {:noreply, %{state | reachable_set: MapSet.put(existing, uri)}}
+    end
+  end
+
+  # Lazy-remove (spec §7): we deliberately do NOT handle a
+  # `{:topology_neighbour_removed, _, _}` here — removals stay in-set
+  # until session_end; cap revocation in capabilities.yaml is the
+  # authoritative enforcement layer.
+  def handle_info({:topology_loaded, _}, state), do: {:noreply, state}
 
   def handle_info(_other, state), do: {:noreply, state}
 
