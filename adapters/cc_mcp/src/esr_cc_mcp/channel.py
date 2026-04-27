@@ -165,6 +165,16 @@ async def _invoke_tool(tool: str, args: dict[str, Any]) -> list[TextContent]:
             {"ok": False, "error": {"type": "esrd_disconnect",
                                     "message": "WS not yet connected"}}))]
 
+    # PR-F 2026-04-28: describe_topology is parameter-less from the
+    # LLM's perspective, but the runtime side needs `workspace_name`
+    # to resolve the right yaml subtree. Inject it from the env var
+    # the channel reads at startup so the LLM doesn't need to know
+    # its own workspace identity.
+    if tool == "describe_topology":
+        ws_name = os.environ.get("ESR_WORKSPACE", "")
+        if ws_name:
+            args = {**args, "workspace_name": ws_name}
+
     req_id = str(uuid.uuid4())
     fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
     _pending[req_id] = fut

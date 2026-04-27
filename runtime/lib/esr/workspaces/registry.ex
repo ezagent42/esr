@@ -16,11 +16,20 @@ defmodule Esr.Workspaces.Registry do
     Workspace record loaded from yaml.
 
     `chats` is a list of maps shaped
-    `%{"chat_id" => _, "app_id" => _, "kind" => _, "name" => optional}`.
+    `%{"chat_id" => _, "app_id" => _, "kind" => _, "name" => optional,
+       "metadata" => optional}`.
     `neighbors` is a list of `<type>:<id>` URI-fragment strings declared
     in yaml; PR-C 2026-04-27 added it for actor-topology-routing.
+    `metadata` is a free-form business-topology context map (PR-F
+    2026-04-28); operators put fields like `purpose`, `pipeline_position`,
+    `hand_off_to` here so the cc_mcp `describe_topology` tool can expose
+    them to the LLM verbatim, without code changes.
     """
-    defstruct [:name, :cwd, :start_cmd, :role, :chats, :env, neighbors: []]
+    defstruct [
+      :name, :cwd, :start_cmd, :role, :chats, :env,
+      neighbors: [],
+      metadata: %{}
+    ]
   end
 
   # --- Public API ---
@@ -86,7 +95,8 @@ defmodule Esr.Workspaces.Registry do
               role: row["role"] || "dev",
               chats: row["chats"] || [],
               env: row["env"] || %{},
-              neighbors: row["neighbors"] || []
+              neighbors: row["neighbors"] || [],
+              metadata: row["metadata"] || %{}
             }
 
             {name, ws}

@@ -37,6 +37,42 @@ defmodule Esr.Workspaces.RegistryTest do
     {:ok, %{}} = Registry.load_from_file("/nonexistent/path")
   end
 
+  test "load_from_file/1 parses metadata sub-tree (PR-F)", %{path: path} do
+    File.write!(path, """
+    workspaces:
+      ws_translator:
+        cwd: /tmp/translator
+        chats:
+          - {chat_id: oc_t, app_id: cli_t, kind: dm, name: translator-room}
+        neighbors:
+          - workspace:ws_processor
+        metadata:
+          purpose: "Translate Chinese to English"
+          pipeline_position: 1
+          hand_off_to: "ws_processor"
+    """)
+
+    {:ok, workspaces} = Registry.load_from_file(path)
+    ws = workspaces["ws_translator"]
+    assert ws.metadata == %{
+             "purpose" => "Translate Chinese to English",
+             "pipeline_position" => 1,
+             "hand_off_to" => "ws_processor"
+           }
+  end
+
+  test "load_from_file/1 defaults metadata to empty map when absent (PR-F)", %{path: path} do
+    File.write!(path, """
+    workspaces:
+      ws_minimal:
+        chats:
+          - {chat_id: oc_x, app_id: cli_x, kind: dm}
+    """)
+
+    {:ok, workspaces} = Registry.load_from_file(path)
+    assert workspaces["ws_minimal"].metadata == %{}
+  end
+
   test "load_from_file/1 parses neighbors list (PR-C)", %{path: path} do
     File.write!(path, """
     schema_version: 1

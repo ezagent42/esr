@@ -41,6 +41,11 @@ workspaces:
       - chat:oc_legal_special        # → that chat becomes reachable (workspace inferred via reverse-lookup)
       - user:ou_admin                # → that user URI becomes reachable
       - adapter:feishu:app_other     # → that adapter URI becomes reachable
+    metadata:                        # PR-F: free-form business-topology context
+      purpose: "Engineering team's day-to-day discussion"
+      pipeline_position: 1
+      hand_off_to: "ws_kanban"
+      output_format: "markdown with code blocks"
 
   ws_kanban:
     cwd: /workspaces/kanban
@@ -51,7 +56,35 @@ workspaces:
         name: kanban-room
     # No `neighbors:` declared — ws_kanban inherits ws_dev as a
     # neighbour symmetrically because ws_dev declared workspace:ws_kanban.
+    metadata:
+      purpose: "Track engineering tasks; expects items in ##title|body## format"
+      pipeline_position: 2
 ```
+
+### `metadata:` — what to put there
+
+PR-F's `mcp__esr-channel__describe_topology` MCP tool exposes the
+`metadata:` sub-tree to the LLM verbatim. Operators populate it with
+business-topology context that helps the LLM stay in lane:
+
+| Field | Purpose |
+|---|---|
+| `purpose` | One-line description of this workspace's role in the broader system |
+| `pipeline_position` | Where this stage sits if the workspace is part of a chain (1, 2, 3, ...) |
+| `hand_off_to` | Next workspace name(s) when this one's job is done |
+| `output_format` | Format/schema downstream stages expect |
+| `not_my_job` | Things this workspace explicitly should NOT do (let downstream handle) |
+
+The schema is **open** — operators add fields as their pipelines
+demand. The LLM reads them and reasons accordingly. Code changes are
+not required to add new fields.
+
+### `metadata:` — what NOT to put there
+
+`metadata:` is exposed to the LLM. **Do not put secrets there**:
+- API keys → use `env:` (filtered out of the tool response)
+- Filesystem paths to private dirs → use `cwd:` (also filtered)
+- Personally identifying info beyond what's already in chats[]
 
 Symmetric-closure rules (spec §6.4):
 
@@ -129,16 +162,15 @@ Automated coverage:
 
 ## Known limitations (spec follow-ups)
 
-- **Addressability vs business-topology awareness**. PR-C's
-  `reachable` attribute exposes 1-hop addressability — the agent
-  knows who it can send to. It does NOT expose the agent's role
-  in a multi-stage pipeline (e.g. "you are stage 2 of 4: translator
-  → processor → polisher → exporter"). The LLM needs that broader
-  context to make decisions like "don't polish the text yet — that's
-  the next stage's job". Today this lives in agents.yaml system
-  prompts and ad-hoc user prompts; PR-F will grill the design
-  options (richer tag attribute vs agents.yaml schema vs status quo).
-  Tracked as task #150.
+- ~~**Addressability vs business-topology awareness**~~. **Resolved by
+  PR-F (2026-04-28)**: the `mcp__esr-channel__describe_topology` MCP
+  tool exposes the current workspace's `metadata:` sub-tree + 1-hop
+  neighbour metadata to the LLM. Operators populate `metadata:` with
+  business-topology context (`purpose`, `pipeline_position`,
+  `hand_off_to`, ...) and the LLM reads it on demand without code
+  changes. See spec
+  `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`
+  and the §"Authoring workspaces.yaml" → `metadata:` section above.
 - **`<reachable>` is a JSON-string attribute, not a nested element**.
   `notifications/claude/channel` (Claude Code's experimental channel
   injection API) only forwards flat attributes matching

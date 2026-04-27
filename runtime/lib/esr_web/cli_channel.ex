@@ -241,6 +241,36 @@ defmodule EsrWeb.CliChannel do
     %{"entries" => entries}
   end
 
+  # PR-F 2026-04-28: business-topology MCP tool reads via this dispatch.
+  # Returns the current workspace's filtered metadata (allowlist:
+  # name, role, chats, neighbors_declared, metadata) plus 1-hop
+  # neighbour workspaces resolved from `Workspace.neighbors` entries
+  # of form `workspace:<name>`. Operational fields (cwd, env,
+  # start_cmd) are filtered out by `filter_workspace/1` — they're
+  # for the runtime, not for the LLM. Spec
+  # `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`.
+  def dispatch("cli:workspaces/describe", %{"arg" => workspace_name})
+      when is_binary(workspace_name) do
+    alias Esr.Workspaces.Registry, as: WorkspacesReg
+
+    case WorkspacesReg.get(workspace_name) do
+      {:ok, ws} ->
+        neighbours = resolve_neighbour_workspaces(ws)
+
+        %{"data" => %{
+            "current_workspace" => filter_workspace_for_llm(ws),
+            "neighbor_workspaces" => Enum.map(neighbours, &filter_workspace_for_llm/1)
+          }}
+
+      :error ->
+        %{"data" => %{"error" => "unknown_workspace: #{workspace_name}"}}
+    end
+  end
+
+  def dispatch("cli:workspaces/describe", _payload) do
+    %{"data" => %{"error" => "missing arg: workspace_name"}}
+  end
+
   def dispatch("cli:workspace/register", payload) do
     alias Esr.Workspaces.Registry, as: WorkspacesReg
 
@@ -253,7 +283,13 @@ defmodule EsrWeb.CliChannel do
         start_cmd: payload["start_cmd"] || "",
         role: payload["role"] || "dev",
         chats: payload["chats"] || [],
-        env: payload["env"] || %{}
+        env: payload["env"] || %{},
+        # PR-C 2026-04-27: neighbors round-trip
+        neighbors: payload["neighbors"] || [],
+        # PR-F 2026-04-28: metadata round-trip — without this, registering
+        # a workspace via CLI would silently drop the business-topology
+        # context that `describe_topology` tool expects.
+        metadata: payload["metadata"] || %{}
       }
 
       :ok = WorkspacesReg.put(ws)
@@ -271,6 +307,51 @@ defmodule EsrWeb.CliChannel do
     # matches every other dispatch ({"data" => ...}) so the CLI helpers
     # surface the error string via their existing data.get("error") paths.
     %{"data" => %{"error" => "unknown_topic: #{topic}"}}
+  end
+
+  # PR-F 2026-04-28: workspace-for-LLM filter. Allowlist top-level
+  # fields (operational config + secrets stay out); pass `metadata` as
+  # a free-form sub-tree so operators can add business-topology
+  # context without code changes. chat-level filter via Map.take.
+  @ws_allowed_fields ~w(name role chats neighbors_declared metadata)
+  @chat_allowed_fields ~w(chat_id app_id kind name metadata)
+
+  defp filter_workspace_for_llm(%Esr.Workspaces.Registry.Workspace{} = ws) do
+    %{
+      "name" => ws.name,
+      "role" => ws.role || "dev",
+      "chats" => Enum.map(ws.chats || [], &filter_chat_for_llm/1),
+      "neighbors_declared" => ws.neighbors || [],
+      "metadata" => ws.metadata || %{}
+    }
+    |> Map.take(@ws_allowed_fields)
+  end
+
+  defp filter_chat_for_llm(chat) when is_map(chat),
+    do: Map.take(chat, @chat_allowed_fields)
+
+  defp filter_chat_for_llm(_), do: %{}
+
+  # PR-F 2026-04-28: parse `Workspace.neighbors` (list of `<type>:<id>`
+  # strings) for `workspace:<name>` entries; look up each via
+  # Workspaces.Registry. Non-workspace neighbour types (chat:, user:,
+  # adapter:) stay as raw strings in `neighbors_declared` for the LLM
+  # to interpret — only workspace-typed entries get expanded into
+  # full `neighbor_workspaces` metadata. See spec §4.3.
+  defp resolve_neighbour_workspaces(%Esr.Workspaces.Registry.Workspace{neighbors: neighbours}) do
+    neighbours
+    |> Enum.flat_map(fn entry ->
+      case String.split(entry || "", ":", parts: 2) do
+        ["workspace", name] ->
+          case Esr.Workspaces.Registry.get(name) do
+            {:ok, ws} -> [ws]
+            :error -> []
+          end
+
+        _ ->
+          []
+      end
+    end)
   end
 
   @spec debug_toggle(String.t(), :pause | :resume) :: map()
