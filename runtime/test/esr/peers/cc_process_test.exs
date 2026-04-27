@@ -222,7 +222,7 @@ defmodule Esr.Peers.CCProcessTest do
       refute Map.has_key?(env, "reachable")
     end
 
-    test "emits 'reachable' as a list of {uri, name} maps when reachable_set is populated" do
+    test "emits 'reachable' as JSON-string attribute when reachable_set is populated (PR-D D2)" do
       state = %{
         session_id: "sC5_c",
         proxy_ctx: %{},
@@ -235,21 +235,22 @@ defmodule Esr.Peers.CCProcessTest do
       }
 
       env = Esr.Peers.CCProcess.build_channel_notification(state, "x")
-      assert is_list(env["reachable"])
-      assert length(env["reachable"]) == 2
+      assert is_binary(env["reachable"])
 
-      uris = Enum.map(env["reachable"], & &1["uri"])
+      decoded = Jason.decode!(env["reachable"])
+      assert is_list(decoded)
+      assert length(decoded) == 2
+
+      uris = Enum.map(decoded, & &1["uri"])
       assert "esr://localhost/users/ou_admin" in uris
       assert "esr://localhost/adapters/feishu/cli_app1" in uris
 
-      # name field is always present (falls back to short id when no
-      # workspaces.yaml mapping is registered for chat URIs).
-      for actor <- env["reachable"] do
+      for actor <- decoded do
         assert is_binary(actor["name"])
       end
     end
 
-    test "reachable list is sorted by URI for prompt determinism" do
+    test "reachable JSON entries are sorted by URI for prompt determinism" do
       state = %{
         session_id: "sC5_d",
         proxy_ctx: %{},
@@ -258,7 +259,8 @@ defmodule Esr.Peers.CCProcessTest do
       }
 
       env = Esr.Peers.CCProcess.build_channel_notification(state, "x")
-      uris = Enum.map(env["reachable"], & &1["uri"])
+      decoded = Jason.decode!(env["reachable"])
+      uris = Enum.map(decoded, & &1["uri"])
       assert uris == ["esr://localhost/users/aaa", "esr://localhost/users/zzz"]
     end
   end

@@ -126,6 +126,14 @@ async def _handle_inbound(envelope: dict[str, Any]) -> None:
                 "thread_id": envelope.get("thread_id"),
                 "runtime_mode": envelope.get("runtime_mode", "discussion"),
                 "source": envelope.get("source", "feishu"),
+                # PR-D D5 (2026-04-27 actor-topology-routing §8): forward the
+                # new path-style URI fields. `reachable` is already a
+                # JSON-encoded string (Esr.Peers.CCProcess.reachable_json/1)
+                # because notifications/claude/channel only accepts flat
+                # attributes. The LLM parses JSON natively in attributes.
+                "user_id": envelope.get("user_id"),
+                "workspace": envelope.get("workspace"),
+                "reachable": envelope.get("reachable"),
             }.items()
             if v
         }

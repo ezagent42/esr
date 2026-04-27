@@ -485,23 +485,31 @@ defmodule Esr.Peers.CCProcess do
 
   defp maybe_put_workspace(envelope, _, _), do: envelope
 
-  # PR-C C5: reachable set rendered as a list of `{uri, name}` maps.
-  # Empty / missing reachable_set is omitted entirely so the tag stays
-  # tight when there are no neighbours. The `name` resolves to the
-  # workspaces.yaml `chats[].name` for chat URIs (when registry is
-  # populated) or falls back to the URI's last 8 chars.
+  # PR-D D2: `notifications/claude/channel` only forwards flat
+  # attributes (`[A-Za-z0-9_]+`); nested elements are dropped. To
+  # surface the reachable set in CC's prompt we encode the list as a
+  # JSON-string attribute. Empty / missing reachable_set still omits
+  # the field entirely so tags stay tight.
   defp maybe_put_reachable(envelope, state) do
     case state[:reachable_set] do
-      nil -> envelope
-      set -> if MapSet.size(set) == 0, do: envelope, else: Map.put(envelope, "reachable", reachable_actor_list(set))
+      nil ->
+        envelope
+
+      set ->
+        if MapSet.size(set) == 0 do
+          envelope
+        else
+          Map.put(envelope, "reachable", reachable_json(set))
+        end
     end
   end
 
-  defp reachable_actor_list(set) do
+  defp reachable_json(set) do
     set
     |> MapSet.to_list()
     |> Enum.sort()
     |> Enum.map(fn uri -> %{"uri" => uri, "name" => actor_display_name(uri)} end)
+    |> Jason.encode!()
   end
 
   defp actor_display_name(uri) do

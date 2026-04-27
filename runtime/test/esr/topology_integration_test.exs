@@ -101,16 +101,18 @@ defmodule Esr.TopologyIntegrationTest do
     assert env["app_id"] == "cli_dev"
     assert env["user_id"] == "ou_admin"
     assert env["workspace"] == "ws_dev"
-    assert is_list(env["reachable"])
+    # PR-D D2: reachable encoded as JSON-string attribute.
+    assert is_binary(env["reachable"])
+    decoded = Jason.decode!(env["reachable"])
 
-    uris = Enum.map(env["reachable"], & &1["uri"])
+    uris = Enum.map(decoded, & &1["uri"])
     assert "esr://localhost/workspaces/ws_kanban/chats/oc_kanban_room" in uris
     assert "esr://localhost/users/ou_admin" in uris
 
     # 6. The kanban chat URI's display name resolves from yaml (chats[].name).
     kanban_actor =
       Enum.find(
-        env["reachable"],
+        decoded,
         &(&1["uri"] == "esr://localhost/workspaces/ws_kanban/chats/oc_kanban_room")
       )
 

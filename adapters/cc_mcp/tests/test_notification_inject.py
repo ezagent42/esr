@@ -160,3 +160,64 @@ async def test_notification_meta_omits_app_id_when_envelope_misses_it(
 
     meta = _stub_stdio_stream.sent[0].message.root.params["meta"]
     assert "app_id" not in meta
+
+
+# ---------------------------------------------------------------------------
+# PR-D D5/D6: surface PR-C topology fields on the <channel> tag
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_notification_forwards_topology_fields(
+    _stub_stdio_stream: _FakeStream,
+) -> None:
+    """PR-D D5: cc_mcp must pass through `user_id`, `workspace`, and
+    `reachable` from the runtime envelope so the <channel> tag CC sees
+    carries them. `reachable` is a JSON-encoded string (per spec §8 +
+    notifications/claude/channel attribute-only constraint)."""
+    reachable_json = (
+        '[{"uri":"esr://localhost/workspaces/ws_dev/chats/oc_dev_dm","name":"dev-dm"},'
+        '{"uri":"esr://localhost/users/ou_admin","name":"...ou_admin"}]'
+    )
+
+    await _handle_inbound({
+        "kind": "notification",
+        "source": "feishu",
+        "chat_id": "oc_dev_room",
+        "app_id": "feishu_app_dev",
+        "message_id": "om_x",
+        "user": "ou_user",
+        "user_id": "ou_user",
+        "workspace": "ws_dev",
+        "reachable": reachable_json,
+        "ts": "2026-04-27T...",
+        "content": "hi",
+    })
+
+    meta = _stub_stdio_stream.sent[0].message.root.params["meta"]
+    assert meta["user_id"] == "ou_user"
+    assert meta["workspace"] == "ws_dev"
+    assert meta["reachable"] == reachable_json
+
+
+@pytest.mark.asyncio
+async def test_notification_omits_topology_fields_when_absent(
+    _stub_stdio_stream: _FakeStream,
+) -> None:
+    """Pre-PR-C envelopes (or sessions with empty reachable_set) must
+    not surface empty/None values on the tag — the channels reference
+    drops them silently but the test pins the contract explicitly."""
+    await _handle_inbound({
+        "kind": "notification",
+        "source": "feishu",
+        "chat_id": "oc_x",
+        "app_id": "feishu_app",
+        "message_id": "om_x",
+        "user": "ou_admin",
+        "content": "no topology context",
+    })
+
+    meta = _stub_stdio_stream.sent[0].message.root.params["meta"]
+    assert "user_id" not in meta
+    assert "workspace" not in meta
+    assert "reachable" not in meta
