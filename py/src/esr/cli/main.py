@@ -547,6 +547,53 @@ def adapter_remove(instance_name: str) -> None:
         raise click.exceptions.Exit(code=1)
 
 
+@adapter.command("rename")
+@click.argument("old_instance_name")
+@click.argument("new_instance_name")
+def adapter_rename(old_instance_name: str, new_instance_name: str) -> None:
+    """Rename an adapter instance (PR-O 2026-04-28).
+
+    Equivalent to `adapter remove <old> && adapter add <new>` with the
+    same config preserved. Terminates the old FAA peer + Python sidecar,
+    rewrites adapters.yaml with the new key, then re-spawns under the
+    new name. Validates the new name with the same ASCII rules as
+    `adapter add` (PR-M).
+
+    Use case: registered an adapter with a non-ASCII or temporary name
+    and want to migrate without re-entering app_id/secret.
+    """
+    from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+
+    _validate_instance_name(new_instance_name)
+
+    try:
+        result = call_runtime(
+            topic="cli:adapters/rename",
+            payload={
+                "old_instance_id": old_instance_name,
+                "new_instance_id": new_instance_name,
+            },
+            timeout_sec=10.0,
+        )
+    except RuntimeUnreachable:
+        click.echo(
+            "esrd not reachable — rename requires a live runtime. Start "
+            "esrd first, then retry.",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    data = _unwrap_runtime_data(result)
+    if data.get("ok"):
+        click.echo(
+            f"renamed {old_instance_name} → {new_instance_name} "
+            f"({data.get('type', 'unknown')})"
+        )
+    else:
+        click.echo(f"rename failed: {data.get('error', 'unknown')}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+
 @adapter.command("install")
 @click.argument(
     "source",

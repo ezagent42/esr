@@ -327,6 +327,74 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"ok" => false, "error" => "missing instance_id"}}
   end
 
+  # PR-O 2026-04-28: rename an adapter instance from `old` to `new`.
+  # Same blast radius as remove + add: terminate the running peer +
+  # subprocess under the old name, rewrite adapters.yaml with the new
+  # key, then refresh to spawn under the new name. New name is
+  # validated server-side too so a misconfigured CLI can't smuggle
+  # bad bytes into the runtime.
+  def dispatch("cli:adapters/rename", %{"old_instance_id" => old, "new_instance_id" => new})
+      when is_binary(old) and old != "" and is_binary(new) and new != "" do
+    cond do
+      not Regex.match?(~r/^[A-Za-z][A-Za-z0-9_-]{0,62}$/, new) ->
+        %{"data" => %{"ok" => false, "error" => "invalid_new_name: #{new}"}}
+
+      old == new ->
+        %{"data" => %{"ok" => false, "error" => "old_and_new_match"}}
+
+      true ->
+        path = Esr.Paths.adapters_yaml()
+
+        case read_adapters_yaml(path, old) do
+          {:ok, doc, instance} ->
+            instances = doc["instances"] || %{}
+
+            if Map.has_key?(instances, new) do
+              %{"data" => %{"ok" => false, "error" => "new_name_already_exists: #{new}"}}
+            else
+              type = instance["type"] || "unknown"
+
+              # 1. Terminate old running children (if any).
+              _ = Esr.WorkerSupervisor.terminate_adapter(type, old)
+
+              if type == "feishu" do
+                _ = Esr.AdminSession.terminate_feishu_app_adapter(old)
+              end
+
+              # 2. Rewrite adapters.yaml with the new key.
+              new_instances =
+                instances
+                |> Map.delete(old)
+                |> Map.put(new, instance)
+
+              new_doc = Map.put(doc, "instances", new_instances)
+              :ok = Esr.Yaml.Writer.write(path, new_doc)
+
+              # 3. Refresh to spawn under the new name.
+              _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
+              _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+
+              %{"data" => %{
+                "ok" => true,
+                "old_instance_id" => old,
+                "new_instance_id" => new,
+                "type" => type
+              }}
+            end
+
+          {:error, :not_found} ->
+            %{"data" => %{"ok" => false, "error" => "unknown_instance: #{old}"}}
+
+          {:error, reason} ->
+            %{"data" => %{"ok" => false, "error" => "yaml_read_failed: #{inspect(reason)}"}}
+        end
+    end
+  end
+
+  def dispatch("cli:adapters/rename", _payload) do
+    %{"data" => %{"ok" => false, "error" => "missing old_instance_id and/or new_instance_id"}}
+  end
+
   def dispatch("cli:workspace/register", payload) do
     alias Esr.Workspaces.Registry, as: WorkspacesReg
 
