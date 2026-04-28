@@ -44,6 +44,15 @@ The **only** discovery index is the table in [`README.md`](README.md)
 - Workspace config: `$ESRD_HOME/$ESR_INSTANCE/workspaces.yaml` — hot-reloaded via FSEvents
 - cc_mcp identity env: `ESR_SESSION_ID`, `ESR_WORKSPACE`, `ESR_CHAT_IDS`, `ESR_ROLE`
 
+## Terminology — adapter instance vs esrd environment
+
+Two unrelated "instance"-shaped concepts; pre-PR-17 we conflated them.
+
+- **adapter instance** — a configured runtime instance of an adapter type. Created by `esr adapter add <name> --type <type>`; ASCII identifier (PR-M validates). Examples: `esr_helper`, `esr_dev_helper`.
+- **esrd environment** (was: "esrd instance") — a single esrd daemon's runtime state directory. Identified by `ESRD_HOME` (`~/.esrd` for prod, `~/.esrd-dev` for dev). The env var is still `ESR_INSTANCE` for backward compat — don't be confused; in operator language, prefer "esrd environment".
+
+See [`docs/superpowers/glossary.md`](docs/superpowers/glossary.md) §"Instances & addressing" for the canonical definitions.
+
 ## Three gotchas worth recalling
 
 These have bitten enough times to live in the always-loaded context.

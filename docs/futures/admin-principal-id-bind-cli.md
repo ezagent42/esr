@@ -31,7 +31,7 @@ lead's Feishu open_id so the dev environment "just works".
 
 2. **No clear "this is the admin" concept.** The env var pins a
    specific principal. But conceptually ESR's admin is a role (bound to
-   the operator of that esrd instance), not a specific Feishu account.
+   the operator of that esrd environment), not a specific Feishu account.
    The env-var approach makes these indistinguishable.
 
 3. **Multi-IM support gets awkward.** Once we add Slack/Discord/iMessage

@@ -155,7 +155,7 @@ These should be resolved during the eventual brainstorm for this work:
 ## Non-goals for capabilities-v2
 
 - Distributed consensus about which delegations are active (assume single
-  esrd instance holds the canonical state; sync across instances is a
+  esrd environment holds the canonical state; sync across environments is a
   separate topology problem)
 - OAuth/OIDC token-backed delegations (explicit tokens passed between
   independent systems). Start with file-based + CLI-mutated state; graduate
