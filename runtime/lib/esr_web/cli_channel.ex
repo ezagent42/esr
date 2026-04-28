@@ -279,8 +279,11 @@ defmodule EsrWeb.CliChannel do
   # the FAA half; the missing Python subprocess made
   # ESR开发助手's first add appear partial. Both calls are idempotent.
   def dispatch("cli:adapters/refresh", _payload) do
-    :ok = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-    :ok = Esr.AdminSession.bootstrap_feishu_app_adapters()
+    # PR-M: don't pattern-match `:ok =` — restore_adapters_from_disk
+    # returns the list of for-loop results when adapters.yaml has
+    # entries, not the atom `:ok`. Drop the return value entirely.
+    _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
+    _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
     %{"data" => %{"ok" => true}}
   end
 
