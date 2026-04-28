@@ -44,7 +44,7 @@ esr cmd run feishu-thread-session --param workspace=<ws> --param tag=<tag>
 
 ## Recipe: Add a new Feishu app to the same esrd
 
-Two apps can coexist in one esrd instance. Register each as a distinct
+Two apps can coexist in one esrd environment. Register each as a distinct
 adapter, then bind each chat to its app via workspace config:
 
 ```bash

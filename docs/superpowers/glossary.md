@@ -34,7 +34,7 @@ A `dataclass(frozen=True)` carrying `adapter` (instance name), `action` (string)
 ### Action
 What a handler returns. Exactly three kinds in v0.1:
 - **`Emit(adapter, action, args)`** — instructs the runtime to issue a directive to the named adapter instance
-- **`Route(target, msg)`** — instructs the runtime to deliver `msg` to another actor (same esrd instance)
+- **`Route(target, msg)`** — instructs the runtime to deliver `msg` to another actor (same esrd environment)
 - **`InvokeCommand(name, params)`** — instructs the runtime to instantiate a registered command (sub-topology) with these params (see §InvokeCommand below)
 
 No raw `Spawn` or `Stop` actions in v0.1.
@@ -102,11 +102,16 @@ On `{:error, :worker_crashed}` or `{:error, :handler_timeout}`, the PeerServer r
 
 ## Instances & addressing
 
-### Instance name
-A per-org unique identifier for a configured adapter instance. `esr adapter add feishu-shared --type feishu --app-id ...` creates an instance named `feishu-shared` of type `feishu`. Handlers refer to the instance by name in `Emit(adapter="feishu-shared", ...)`.
+### Instance name (adapter instance)
+A per-org unique identifier for a configured adapter instance. `esr adapter add esr_helper --type feishu --app-id ...` creates an instance named `esr_helper` of type `feishu`. Handlers refer to the instance by name in `Emit(adapter="esr_helper", ...)`. PR-M (2026-04-28) requires ASCII identifiers (`^[A-Za-z][A-Za-z0-9_-]{0,62}$`); `esr adapter rename` migrates legacy non-ASCII names.
+
+### esrd environment (formerly: esrd instance)
+A single running esrd daemon's runtime state directory and supervisor tree. Identified by the `ESRD_HOME` env var (`~/.esrd` for prod, `~/.esrd-dev` for dev are the two-on-one-mac convention). Each environment owns its own `adapters.yaml`, `capabilities.yaml`, `workspaces.yaml`, admin queue, port file, and beam VM.
+
+> **Naming history**: pre-PR-17 (2026-04-28) this was called "esrd instance", which collided with "adapter instance". The internal env var `ESR_INSTANCE` keeps its old name for backward compat — do not confuse with the adapter-instance concept above.
 
 ### actor_id
-Stable string identifier for one live actor, unique within an esrd instance. Typical format `<type-shorthand>:<key>` (e.g. `feishu-app:cli_TEST`, `thread:foo`, `tmux:foo`, `cc:foo`). No `esr://` prefix required when used within one esrd — that's the short-form carve-out in spec §4.4 / §7.5.
+Stable string identifier for one live actor, unique within an esrd environment. Typical format `<type-shorthand>:<key>` (e.g. `feishu-app:cli_TEST`, `thread:foo`, `tmux:foo`, `cc:foo`). No `esr://` prefix required when used within one esrd — that's the short-form carve-out in spec §4.4 / §7.5.
 
 ### esr:// URI
 Canonical cross-boundary address. `esr://[org@]host[:port]/<type>/<id>[?params]`. Host is always required — empty host is a syntax error. Spec §7.5.
