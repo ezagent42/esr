@@ -271,6 +271,17 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing arg: workspace_name"}}
   end
 
+  # PR-K 2026-04-28: re-run the FAA-bootstrap pass without an esrd
+  # restart so `esr adapter add` can spawn the FeishuAppAdapter peer
+  # immediately. Previously the CLI called `cli:run/feishu-app-session`
+  # to do this, but P3-13 deleted the topology module and that path
+  # now returns @topology_removed_error silently. The bootstrap is
+  # idempotent (handles `:already_started`) so re-calling is safe.
+  def dispatch("cli:adapters/refresh", _payload) do
+    :ok = Esr.AdminSession.bootstrap_feishu_app_adapters()
+    %{"data" => %{"ok" => true}}
+  end
+
   def dispatch("cli:workspace/register", payload) do
     alias Esr.Workspaces.Registry, as: WorkspacesReg
 
