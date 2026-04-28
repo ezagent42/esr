@@ -197,6 +197,57 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:adapters/rename (PR-O)" do
+    setup do
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-rename", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:adapters/rename")
+
+      %{rename_socket: socket}
+    end
+
+    test "missing args returns clear error", %{rename_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      assert response["data"]["error"] =~ "missing"
+    end
+
+    test "old==new is rejected", %{rename_socket: socket} do
+      ref = push(socket, "cli_call", %{
+        "old_instance_id" => "same",
+        "new_instance_id" => "same"
+      })
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      assert response["data"]["error"] == "old_and_new_match"
+    end
+
+    test "non-ASCII new name is rejected server-side", %{rename_socket: socket} do
+      ref = push(socket, "cli_call", %{
+        "old_instance_id" => "esr_helper",
+        "new_instance_id" => "ESR助手"
+      })
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      assert response["data"]["error"] =~ "invalid_new_name"
+    end
+
+    test "unknown old instance returns unknown_instance", %{rename_socket: socket} do
+      ref = push(socket, "cli_call", %{
+        "old_instance_id" => "no_such_thing",
+        "new_instance_id" => "ok_name"
+      })
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      # Either the yaml lacks the key entirely or the file is missing —
+      # both surface as a structured error.
+      assert response["data"]["error"] =~ "unknown_instance" or
+               response["data"]["error"] =~ "yaml_read_failed"
+    end
+  end
+
   describe "cli:stop/<name> (post P3-13)" do
     setup do
       {:ok, _, socket} =
