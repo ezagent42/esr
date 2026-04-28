@@ -163,6 +163,30 @@ defmodule Esr.AdminSession do
     :ok
   end
 
+  @doc """
+  PR-L 2026-04-28: terminate the FAA peer for `instance_id`. Counterpart
+  to `bootstrap_feishu_app_adapters/1`. Looks up the peer in the
+  AdminSession DynamicSupervisor and kills it via `terminate_child/2`.
+  Idempotent — returns `:not_found` if the peer isn't running, `:ok`
+  otherwise.
+
+  The FAA peer name is `feishu_app_adapter_<instance_id>` (registered
+  via `Esr.PeerRegistry` from FeishuAppAdapter.start_link/1).
+  """
+  @spec terminate_feishu_app_adapter(String.t()) :: :ok | :not_found
+  def terminate_feishu_app_adapter(instance_id) when is_binary(instance_id) do
+    sup = children_supervisor_name()
+
+    case Esr.PeerRegistry.lookup("feishu_app_adapter_#{instance_id}") do
+      {:ok, pid} ->
+        _ = DynamicSupervisor.terminate_child(sup, pid)
+        :ok
+
+      :error ->
+        :not_found
+    end
+  end
+
   defp spawn_feishu_app_adapter(sup, instance_id, app_id) do
     require Logger
 

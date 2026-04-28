@@ -108,6 +108,18 @@ defmodule Esr.WorkerSupervisor do
     GenServer.call(__MODULE__, :list)
   end
 
+  @doc """
+  Stop the Python adapter sidecar for `(adapter_name, instance_id)` and
+  forget it. PR-L: counterpart to `ensure_adapter/4` so
+  `cli:adapters/remove` can clean up the OS process. Idempotent — a
+  no-op when the worker isn't tracked.
+  """
+  @spec terminate_adapter(String.t(), String.t()) :: :ok | :not_found
+  def terminate_adapter(adapter_name, instance_id)
+      when is_binary(adapter_name) and is_binary(instance_id) do
+    GenServer.call(__MODULE__, {:terminate, {:adapter, adapter_name, instance_id}})
+  end
+
   # ------------------------------------------------------------------
   # GenServer callbacks
   # ------------------------------------------------------------------
@@ -178,6 +190,25 @@ defmodule Esr.WorkerSupervisor do
       )
 
     {:reply, reply, new_state}
+  end
+
+  def handle_call({:terminate, key}, _from, state) do
+    case Map.get(state.workers, key) do
+      nil ->
+        {:reply, :not_found, state}
+
+      %{pid: pid} = worker ->
+        kill_pid(pid)
+        # Best-effort pidfile cleanup so a future ensure_adapter doesn't
+        # see a dead pid and assume the worker is external/already-up.
+        case worker do
+          %{pidfile: pf} when is_binary(pf) -> _ = File.rm(pf)
+          _ -> :ok
+        end
+
+        new_workers = Map.delete(state.workers, key)
+        {:reply, :ok, %{state | workers: new_workers}}
+    end
   end
 
   def handle_call(:list, _from, state) do

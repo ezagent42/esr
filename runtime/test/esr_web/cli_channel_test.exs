@@ -167,6 +167,36 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:adapters/remove (PR-L)" do
+    setup do
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-remove", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:adapters/remove")
+
+      %{remove_socket: socket}
+    end
+
+    test "missing instance_id returns clear error",
+         %{remove_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      assert response["data"]["error"] =~ "missing"
+    end
+
+    test "unknown instance_id returns unknown_instance error",
+         %{remove_socket: socket} do
+      ref = push(socket, "cli_call", %{"instance_id" => "no_such_thing"})
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == false
+      # Either yaml is missing entirely or instance not in it — both
+      # surface as a structured error the operator can read.
+      assert response["data"]["error"] =~ "unknown_instance" or
+               response["data"]["error"] =~ "yaml_read_failed"
+    end
+  end
+
   describe "cli:stop/<name> (post P3-13)" do
     setup do
       {:ok, _, socket} =

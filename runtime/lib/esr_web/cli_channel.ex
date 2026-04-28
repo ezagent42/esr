@@ -271,15 +271,57 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing arg: workspace_name"}}
   end
 
-  # PR-K 2026-04-28: re-run the FAA-bootstrap pass without an esrd
-  # restart so `esr adapter add` can spawn the FeishuAppAdapter peer
-  # immediately. Previously the CLI called `cli:run/feishu-app-session`
-  # to do this, but P3-13 deleted the topology module and that path
-  # now returns @topology_removed_error silently. The bootstrap is
-  # idempotent (handles `:already_started`) so re-calling is safe.
+  # PR-K 2026-04-28 / fixed in PR-L: re-run the boot-time adapters
+  # bootstrap without an esrd restart so `esr adapter add` can spawn
+  # both halves of a feishu instance — the Python adapter sidecar
+  # (via WorkerSupervisor.ensure_adapter) AND the FAA peer (via
+  # AdminSession.bootstrap_feishu_app_adapters). PR-K shipped only
+  # the FAA half; the missing Python subprocess made
+  # ESR开发助手's first add appear partial. Both calls are idempotent.
   def dispatch("cli:adapters/refresh", _payload) do
+    :ok = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
     :ok = Esr.AdminSession.bootstrap_feishu_app_adapters()
     %{"data" => %{"ok" => true}}
+  end
+
+  # PR-L 2026-04-28: counterpart to cli:adapters/refresh — operator
+  # wants to remove an adapter. Three steps in this order:
+  #   1. Terminate the Python sidecar (WorkerSupervisor.terminate_adapter)
+  #   2. Terminate the Elixir FAA peer (AdminSession.terminate_feishu_app_adapter)
+  #   3. Remove the entry from adapters.yaml (so a future esrd boot
+  #      doesn't respawn it from disk)
+  # Fails clearly if the entry is missing — caller can decide how to
+  # surface that. Only `feishu` adapters are supported in v1; other
+  # types skip the FAA-peer step.
+  def dispatch("cli:adapters/remove", %{"instance_id" => instance_id})
+      when is_binary(instance_id) and instance_id != "" do
+    path = Esr.Paths.adapters_yaml()
+
+    case read_adapters_yaml(path, instance_id) do
+      {:ok, doc, instance} ->
+        type = instance["type"] || "unknown"
+
+        _ = Esr.WorkerSupervisor.terminate_adapter(type, instance_id)
+
+        if type == "feishu" do
+          _ = Esr.AdminSession.terminate_feishu_app_adapter(instance_id)
+        end
+
+        new_doc = update_in(doc, ["instances"], &Map.delete(&1 || %{}, instance_id))
+        :ok = Esr.Yaml.Writer.write(path, new_doc)
+
+        %{"data" => %{"ok" => true, "instance_id" => instance_id, "type" => type}}
+
+      {:error, :not_found} ->
+        %{"data" => %{"ok" => false, "error" => "unknown_instance: #{instance_id}"}}
+
+      {:error, reason} ->
+        %{"data" => %{"ok" => false, "error" => "yaml_read_failed: #{inspect(reason)}"}}
+    end
+  end
+
+  def dispatch("cli:adapters/remove", _payload) do
+    %{"data" => %{"ok" => false, "error" => "missing instance_id"}}
   end
 
   def dispatch("cli:workspace/register", payload) do
@@ -318,6 +360,34 @@ defmodule EsrWeb.CliChannel do
     # matches every other dispatch ({"data" => ...}) so the CLI helpers
     # surface the error string via their existing data.get("error") paths.
     %{"data" => %{"error" => "unknown_topic: #{topic}"}}
+  end
+
+  # PR-L 2026-04-28: helper for cli:adapters/remove — reads adapters.yaml
+  # and returns either {:ok, doc, instance_map} when the named instance
+  # exists, {:error, :not_found} when it doesn't, or {:error, reason}
+  # when the file is missing/malformed. Pure I/O wrapper; no side effects.
+  defp read_adapters_yaml(path, instance_id) do
+    cond do
+      not File.exists?(path) ->
+        {:error, :not_found}
+
+      true ->
+        case YamlElixir.read_from_file(path) do
+          {:ok, doc} when is_map(doc) ->
+            instances = doc["instances"] || %{}
+
+            case Map.get(instances, instance_id) do
+              nil -> {:error, :not_found}
+              instance when is_map(instance) -> {:ok, doc, instance}
+            end
+
+          {:ok, _} ->
+            {:error, :malformed_yaml}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
   end
 
   # PR-F 2026-04-28: workspace-for-LLM filter. Allowlist top-level
