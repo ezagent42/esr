@@ -144,6 +144,7 @@ defmodule Esr.WorkerSupervisor do
         state,
         key,
         pidfile_path(key),
+        url,
         fn ->
           spawn_python([
             "-m",
@@ -175,6 +176,7 @@ defmodule Esr.WorkerSupervisor do
         state,
         key,
         pidfile_path(key),
+        url,
         fn ->
           spawn_python([
             "-m",
@@ -244,24 +246,56 @@ defmodule Esr.WorkerSupervisor do
   # Internals
   # ------------------------------------------------------------------
 
-  defp ensure(state, key, pidfile, spawn_fn) do
+  # PR-M 2026-04-28: ensure now takes the target URL so we can detect
+  # orphan subprocesses left over from a previous esrd that bound a
+  # different port. Pidfile content grew from `<PID>` to
+  # `<PID>\n<URL>`; missing 2nd line treated as "stale, respawn"
+  # (covers pre-PR-M pidfiles without losing them entirely).
+  defp ensure(state, key, pidfile, url, spawn_fn) do
     cond do
-      tracked_alive?(state, key) ->
+      tracked_alive_for_url?(state, key, url) ->
         {:already_running, state}
 
-      external_alive?(pidfile) ->
-        {:already_running, record_external(state, key, pidfile)}
+      tracked_alive?(state, key) ->
+        # Tracked but URL drifted (esrd kickstart picked a new port).
+        # Kill the stale one and fall through to spawn fresh.
+        kill_tracked(state, key)
+        spawn_fresh(Map.update!(state, :workers, &Map.delete(&1, key)), key, pidfile, url, spawn_fn)
+
+      external_alive_for_url?(pidfile, url) ->
+        {:already_running, record_external(state, key, pidfile, url)}
+
+      external_alive_any_url?(pidfile) ->
+        # Pidfile says alive but URL doesn't match (or pre-PR-M pidfile
+        # lacks URL). Same drift case as tracked-but-stale — kill it.
+        case read_pidfile(pidfile) do
+          {:ok, pid, _} -> kill_pid(pid)
+          _ -> :ok
+        end
+
+        spawn_fresh(state, key, pidfile, url, spawn_fn)
 
       true ->
-        case spawn_fn.() do
-          {:ok, pid} ->
-            File.write(pidfile, Integer.to_string(pid))
-            {:ok, put_in(state.workers[key], %{pid: pid, pidfile: pidfile})}
+        spawn_fresh(state, key, pidfile, url, spawn_fn)
+    end
+  end
 
-          {:error, reason} ->
-            Logger.warning("WorkerSupervisor spawn failed for #{inspect(key)}: #{inspect(reason)}")
-            {{:error, reason}, state}
-        end
+  defp spawn_fresh(state, key, pidfile, url, spawn_fn) do
+    case spawn_fn.() do
+      {:ok, pid} ->
+        File.write(pidfile, "#{pid}\n#{url}")
+        {:ok, put_in(state.workers[key], %{pid: pid, pidfile: pidfile, url: url})}
+
+      {:error, reason} ->
+        Logger.warning("WorkerSupervisor spawn failed for #{inspect(key)}: #{inspect(reason)}")
+        {{:error, reason}, state}
+    end
+  end
+
+  defp kill_tracked(state, key) do
+    case Map.get(state.workers, key) do
+      %{pid: pid} -> kill_pid(pid)
+      _ -> :ok
     end
   end
 
@@ -272,23 +306,48 @@ defmodule Esr.WorkerSupervisor do
     end
   end
 
-  defp external_alive?(pidfile) do
-    case File.read(pidfile) do
-      {:ok, pid_s} ->
-        case Integer.parse(String.trim(pid_s)) do
-          {pid, _} -> pid_alive?(pid)
-          :error -> false
-        end
-
-      {:error, _} ->
-        false
+  defp tracked_alive_for_url?(state, key, url) do
+    case Map.get(state.workers, key) do
+      %{pid: pid, url: ^url} -> pid_alive?(pid)
+      _ -> false
     end
   end
 
-  defp record_external(state, key, pidfile) do
-    {:ok, pid_s} = File.read(pidfile)
-    {pid, _} = Integer.parse(String.trim(pid_s))
-    put_in(state.workers[key], %{pid: pid, pidfile: pidfile, external: true})
+  defp external_alive_any_url?(pidfile) do
+    case read_pidfile(pidfile) do
+      {:ok, pid, _} -> pid_alive?(pid)
+      _ -> false
+    end
+  end
+
+  defp external_alive_for_url?(pidfile, url) do
+    case read_pidfile(pidfile) do
+      {:ok, pid, ^url} -> pid_alive?(pid)
+      _ -> false
+    end
+  end
+
+  # Returns {:ok, pid, url_or_nil} | :error. URL is nil for pre-PR-M
+  # pidfiles that only contained the PID — caller treats this as
+  # "URL mismatch, respawn" since we can't prove they match.
+  defp read_pidfile(pidfile) do
+    with {:ok, contents} <- File.read(pidfile),
+         [pid_s | rest] <- String.split(String.trim(contents), "\n", parts: 2),
+         {pid, _} <- Integer.parse(pid_s) do
+      url = case rest do
+        [u] when is_binary(u) and u != "" -> u
+        _ -> nil
+      end
+
+      {:ok, pid, url}
+    else
+      _ -> :error
+    end
+  end
+
+  defp record_external(state, key, pidfile, url) do
+    {:ok, pid, _} = read_pidfile(pidfile)
+    put_in(state.workers[key], %{pid: pid, pidfile: pidfile, url: url, external: true})
   end
 
   defp pid_alive?(pid) when is_integer(pid) do

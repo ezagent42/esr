@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
@@ -360,6 +361,15 @@ def adapter_add(
     here is hardcoded to ``default`` in v0.1 (separated-instance
     support lives with Phase 1 F18 esrd multi-instance config).
     """
+    # PR-M 2026-04-28: validate instance_name BEFORE writing yaml. The
+    # name flows through several text channels that don't all handle
+    # non-ASCII well — pidfile basenames go through slugify (bytes
+    # become underscores), DynamicSupervisor child IDs end up in
+    # PeerRegistry keys, and a few log lines elide non-printable bytes.
+    # Reject early with a clear suggestion rather than letting these
+    # paths silently break later.
+    _validate_instance_name(instance_name)
+
     # Parse the trailing pass-through args into a config dict.
     cfg_dict = _parse_config_flags(config_args)
 
@@ -404,6 +414,28 @@ def adapter_add(
         _refresh_adapters_via_runtime()
 
 
+_INSTANCE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
+
+
+def _validate_instance_name(name: str) -> None:
+    """Reject instance names that won't survive the downstream slugify
+    + filesystem + Phoenix-topic gauntlet.
+
+    Allowed: ASCII letter, then up to 62 ASCII letters/digits/`_`/`-`.
+    Rejected examples: ``ESR助手`` (non-ASCII), ``feishu/main`` (slash,
+    breaks topic split), ``-foo`` (CLI-flag-shaped), empty string.
+    """
+    if not _INSTANCE_NAME_PATTERN.match(name):
+        click.echo(
+            f"adapter name {name!r} is not a valid instance identifier.\n"
+            "Use ASCII letters, digits, '_' and '-'; start with a letter; "
+            "≤63 chars. Example: 'esr_zhushou' (Feishu app's human-readable "
+            "name goes in --name on `adapter feishu create-app`, not here).",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=2)
+
+
 def _refresh_adapters_via_runtime() -> None:
     """Trigger esrd's `AdminSession.bootstrap_feishu_app_adapters/0` so
     a freshly-written `adapters.yaml` entry spawns its FAA peer + Python
@@ -416,13 +448,38 @@ def _refresh_adapters_via_runtime() -> None:
     from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
 
     try:
-        call_runtime(topic="cli:adapters/refresh", payload={}, timeout_sec=10.0)
+        result = call_runtime(topic="cli:adapters/refresh", payload={}, timeout_sec=10.0)
     except RuntimeUnreachable:
         click.echo(
             "note: esrd not running — adapter will be picked up on next "
             "esrd boot via AdminSession.bootstrap_feishu_app_adapters/0",
             err=True,
         )
+        return
+
+    # PR-M 2026-04-28: call_runtime returns the phx_reply payload
+    # `{"status": "ok", "response": {...}}`. Real dispatch data is
+    # inside `response.data`. Pre-PR-M we read `result.data` (one
+    # level too shallow) and silently swallowed dispatch errors.
+    data = _unwrap_runtime_data(result)
+    if data and data.get("ok") is False and data.get("error"):
+        click.echo(f"note: cli:adapters/refresh returned: {data['error']}", err=True)
+
+
+def _unwrap_runtime_data(result: Any) -> dict[str, Any]:
+    """Pull `data` out of a `call_runtime` reply.
+
+    The reply shape is `{"status": "ok", "response": {"data": {...}}}`
+    on the happy path. Returns `{}` if the shape doesn't match — caller
+    treats that as "no structured info" and falls back to its own copy.
+    """
+    if not isinstance(result, dict):
+        return {}
+    response = result.get("response", {})
+    if not isinstance(response, dict):
+        return {}
+    data = response.get("data", {})
+    return data if isinstance(data, dict) else {}
 
 
 def _parse_config_flags(args: tuple[str, ...]) -> dict[str, str]:
@@ -479,7 +536,10 @@ def adapter_remove(instance_name: str) -> None:
         )
         raise click.exceptions.Exit(code=1)
 
-    data = result.get("data", {}) if isinstance(result, dict) else {}
+    # PR-M: phx_reply shape is {"status":"ok","response":{"data":{...}}};
+    # pre-PR-M we read `result.data` (one level shallow) so the error
+    # field always missed and the CLI printed "remove failed: unknown".
+    data = _unwrap_runtime_data(result)
     if data.get("ok"):
         click.echo(f"removed {instance_name} ({data.get('type', 'unknown')})")
     else:
