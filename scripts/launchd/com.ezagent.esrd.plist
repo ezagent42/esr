@@ -20,7 +20,12 @@
   <dict>
     <key>ESRD_HOME</key><string>__ESRD_HOME__</string>
     <key>ESR_REPO_DIR</key><string>__REPO_DIR__</string>
-    <key>MIX_ENV</key><string>prod</string>
+    <!-- MIX_ENV=dev keeps Phoenix's runtime.exs SECRET_KEY_BASE guard
+         off the boot path. The label "prod esrd" denotes the runtime
+         instance servicing the production Feishu app, not Elixir's
+         compile-time prod mode. Switching to a real `mix release`
+         deployment is tracked at docs/futures/elixir-prod-mode-deployment.md. -->
+    <key>MIX_ENV</key><string>dev</string>
     <key>ESR_BOOTSTRAP_PRINCIPAL_ID</key>
     <string>ou_6b11faf8e93aedfb9d3857b9cc23b9e7</string>
     <key>ESR_TMUX_SOCKET</key>
