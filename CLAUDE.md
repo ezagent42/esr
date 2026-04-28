@@ -1,0 +1,85 @@
+# ESR — repo-level guidance for AI pair programming
+
+This file is loaded as context for any Claude Code session that runs
+**inside this repo**. Keep it short — the long-form docs live under
+[`docs/`](docs/), and this file's job is to point at them.
+
+> Per-role session preludes (the prompt CC sees when an *operator* spawns
+> a session) live under [`roles/`](roles/), not here. Don't conflate the
+> two. See [`docs/dev-guide.md`](docs/dev-guide.md) §"CC session prompt
+> prelude".
+
+## Quick orientation
+
+- Project intro + bilingual quick start: [`README.md`](README.md)
+- Module tree + PR-by-PR architecture map: [`docs/architecture.md`](docs/architecture.md)
+- Authoring (handlers / adapters / patterns): [`docs/dev-guide.md`](docs/dev-guide.md)
+- Authoring (agent topology, business topology, metadata): [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)
+- Field notes, indexed by topic: [`docs/notes/README.md`](docs/notes/README.md)
+- Specs (every shipped feature): [`docs/superpowers/specs/`](docs/superpowers/specs/)
+
+## Test commands (the only two you'll need 90% of the time)
+
+| Layer | Command | Notes |
+|---|---|---|
+| Elixir runtime | `(cd runtime && mix test)` | Pre-existing flakes: [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md) |
+| cc_mcp Python bridge | `(cd adapters/cc_mcp && uv run --with pytest --with pytest-asyncio pytest)` | Never bare `python` / `pytest` |
+| E2E scenario | `bash tests/e2e/scenarios/0X_*.sh` | Index in [`README.md`](README.md) §"E2E test scenarios" |
+
+## E2E scenarios — single index
+
+E2E coverage lives in [`tests/e2e/scenarios/`](tests/e2e/scenarios/).
+The **only** discovery index is the table in [`README.md`](README.md)
+§"E2E test scenarios".
+
+> **Rule:** when you add or modify an E2E scenario, update *both* the
+> README table *and* the architecture coverage table at
+> [`docs/architecture.md`](docs/architecture.md) §"E2E coverage map".
+> Linking from the README is required so newcomers find the scenario
+> without grepping.
+
+## Runtime layout (only what's not derivable from `git ls-files`)
+
+- esrd WS port: `$ESRD_HOME/$ESR_INSTANCE/esrd.port` (defaults `~/.esrd` / `default`); fallback `ws://127.0.0.1:4001`
+- Workspace config: `$ESRD_HOME/$ESR_INSTANCE/workspaces.yaml` — hot-reloaded via FSEvents
+- cc_mcp identity env: `ESR_SESSION_ID`, `ESR_WORKSPACE`, `ESR_CHAT_IDS`, `ESR_ROLE`
+
+## Three gotchas worth recalling
+
+These have bitten enough times to live in the always-loaded context.
+Long-form rationale lives in the linked notes.
+
+1. **`<channel>` flat-attribute discipline** — `notifications/claude/channel`
+   only forwards attributes matching `[A-Za-z0-9_]+`. Nested children
+   are silently dropped. Encode list-shaped data as JSON strings
+   (`reachable=` is the precedent). See
+   [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) §8 +
+   [`docs/notes/claude-code-channels-reference.md`](docs/notes/claude-code-channels-reference.md).
+2. **macOS FSEvents quirk** — vim-style atomic writes to
+   `workspaces.yaml` work; some editors that rename+delete trigger only
+   `:stop` events and the watcher misses them. See
+   [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) §"Watcher not reacting".
+3. **`metadata:` is LLM-visible** — `workspaces.yaml`'s `metadata:`
+   sub-tree is exposed verbatim via the `describe_topology` MCP tool.
+   Never put secrets there; use `env:` (filtered at the response
+   boundary) or `cwd:` (also filtered). See
+   [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) §9.1.
+
+## Conventions
+
+- Spec-first for behaviour change: every PR with a behaviour delta links
+  a `docs/superpowers/specs/<date>-<topic>.md` file. See existing specs
+  for the shape.
+- Field-note workflow (post-incident learnings): drop a topic-named file
+  under [`docs/notes/`](docs/notes/), register it in
+  [`docs/notes/README.md`](docs/notes/README.md). Keep one note per topic.
+- Pre-existing flakes are tracked, not silenced — see
+  [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md).
+
+## Things to look up rather than memorise
+
+- "How do I write a new agent / peer?" → [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)
+- "How does cross-app reply work?" → [`docs/dev-guide.md`](docs/dev-guide.md) §"Multi-app + cross-app reply"
+- "How does the LLM know which workspace it's in?" → [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) §九
+- "Why are there two CLAUDE.md files (root + roles/)?" → [`docs/dev-guide.md`](docs/dev-guide.md) §"CC session prompt prelude"
+- "What does each scenario actually exercise?" → [`README.md`](README.md) §"E2E test scenarios" + [`docs/architecture.md`](docs/architecture.md) §"E2E coverage map"

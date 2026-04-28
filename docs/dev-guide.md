@@ -108,6 +108,69 @@ Invoke it via `esr cmd run hello --param name=world`.
 - `esr deadletter list` — failed handler calls
 - `esr session chat-id <session_id>` — looked up from actor inspect
 
+## Multi-app + cross-app reply (PR-A)
+
+Every inbound carries `args.app_id` end-to-end and surfaces on the
+`<channel app_id="cli_…">` attribute. The `mcp__esr-channel__reply`
+tool requires explicit `app_id` — there is no default.
+
+To forward to a different app:
+
+```python
+# CC, in tool-call form:
+reply(
+    chat_id="oc_target_chat",
+    app_id="cli_other_app_id",      # different from inbound's app_id
+    text="forwarded summary",
+)
+```
+
+The runtime resolves `(chat_id, app_id) → workspace`, checks the
+calling principal's `workspace:<target_ws>/msg.send` capability, and
+hands off to the target FAA peer. Three structured denies
+(`unknown_chat_in_app`, `forbidden`, `unknown_app`) all log
+`FCP cross-app deny type=…`. `reply_to_message_id` and
+`edit_message_id` are stripped automatically when source app ≠ target
+app — they belong to the source app's message_id space.
+
+See `docs/guides/writing-an-agent-topology.md` §三.5 for the full
+chain. Cross-app E2E is `tests/e2e/scenarios/04_multi_app_routing.sh`.
+
+## Topology + business-topology awareness (PR-C / PR-F)
+
+Each CC session sees its 1-hop neighbours via the `<channel>` tag:
+
+```xml
+<channel ... workspace="ws_dev"
+             user_id="ou_..."
+             reachable='[{"uri":"workspace:ws_kanban","name":"kanban"},...]'>
+  <message text…>
+</channel>
+```
+
+`reachable=` is JSON-string (Claude Code only forwards flat
+`[A-Za-z0-9_]+` attributes — see `docs/notes/actor-topology-routing.md`
+§8 / `docs/notes/claude-code-channels-reference.md`).
+
+For business-topology context (purpose, pipeline position, downstream
+hand-off, expected format), CC calls
+`mcp__esr-channel__describe_topology` — parameter-less; cc_mcp injects
+`ESR_WORKSPACE` server-side. Operators populate
+`workspaces.yaml` `metadata:` to feed it. Spec
+`docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`.
+
+## CC session prompt prelude
+
+Each `role/` subdirectory has a `CLAUDE.md` that becomes the prompt
+prelude for that role's CC sessions:
+
+- `roles/dev/CLAUDE.md` — developer-assistance sessions.
+- `roles/diagnostic/CLAUDE.md` — diagnostic sessions (gated `_echo`
+  MCP tool exposed, see `adapters/cc_mcp/src/esr_cc_mcp/tools.py`).
+
+Repo-root `CLAUDE.md` is the primer for AI-pair-programming **on the
+ESR repo itself** (test commands, gotchas, links). Don't conflate.
+
 ## Common gotchas
 
 - `workspaces.yaml` lives at `~/.esrd/default/workspaces.yaml`; v0.2 is
@@ -119,3 +182,9 @@ Invoke it via `esr cmd run hello --param name=world`.
 - `claude --resume <session_id>` requires the session id to exist in
   `~/.esrd/default/session-ids.yaml` — `esr-cc.sh` writes this on first
   spawn and reads it on restart.
+- `metadata:` in `workspaces.yaml` is exposed verbatim to the LLM via
+  `describe_topology` — never put secrets there. Use `env:` (filtered
+  at the response boundary) or `cwd:` (also filtered).
+- `notifications/claude/channel` only forwards attributes matching
+  `[A-Za-z0-9_]+`. Nested children are silently dropped; encode list
+  attrs as JSON strings (`reachable=` precedent).
