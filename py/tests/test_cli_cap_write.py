@@ -207,3 +207,65 @@ principals:
     assert "# Do not edit under active traffic" in post
     # And the grant actually happened.
     assert "workspace:proj-a/msg.send" in post
+
+
+# --- PR-18: admin alias -----------------------------------------------
+
+
+def test_grant_admin_alias_resolves_to_wildcard(esrd_home: Path) -> None:
+    """`cap grant <user> admin` writes `*` (the canonical wildcard) so
+    the runtime checker matches the same way it would for a hand-edited
+    `capabilities: ["*"]`."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["cap", "grant", "ou_admin", "admin"],
+    )
+    assert result.exit_code == 0, result.output
+
+    caps = (esrd_home / "default" / "capabilities.yaml").read_text()
+    # Canonical form lands on disk; the alias does NOT leak through.
+    assert "- '*'" in caps or "- \"*\"" in caps or "- *" in caps
+    assert "admin" not in caps.replace("ou_admin", "")  # alias didn't slip through
+
+
+def test_revoke_admin_alias_resolves_to_wildcard(esrd_home: Path) -> None:
+    """`cap revoke <user> admin` removes the matching `*` entry — alias
+    resolution is symmetric with grant so a script can grant+revoke
+    using the same shorthand."""
+    caps_path = esrd_home / "default" / "capabilities.yaml"
+    caps_path.write_text(
+        """principals:
+  - id: ou_admin
+    kind: feishu_user
+    note: bootstrap admin
+    capabilities:
+      - '*'
+"""
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["cap", "revoke", "ou_admin", "admin"],
+    )
+    assert result.exit_code == 0, result.output
+
+    post = caps_path.read_text()
+    # `*` entry is gone but the principal stays (note + kind preserved).
+    assert "ou_admin" in post
+    assert "'*'" not in post and '"*"' not in post
+
+
+def test_grant_unknown_alias_passes_through(esrd_home: Path) -> None:
+    """Only documented aliases are rewritten; arbitrary strings flow
+    through verbatim so non-aliased permission names still work."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["cap", "grant", "ou_alice", "workspace:proj-a/msg.send"],
+    )
+    assert result.exit_code == 0, result.output
+
+    caps = (esrd_home / "default" / "capabilities.yaml").read_text()
+    assert "workspace:proj-a/msg.send" in caps
