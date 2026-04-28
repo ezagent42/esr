@@ -168,6 +168,19 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     # P3-7: topic is `session_router` (was "new_chat_thread"); tuple
     # order is `{:new_chat_thread, app_id, chat_id, thread_id, envelope}`
     # (app_id first — FeishuAppAdapter owns the wiring).
+    #
+    # PR-N 2026-04-28: FAA peer now intercepts unbound chats (no
+    # workspaces.yaml entry) and DM-guides instead of broadcasting.
+    # Register a workspace for (oc_new, inst_nomatch) so this test
+    # exercises the broadcast path; the unbound-chat path has its own
+    # test below.
+    :ok =
+      Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+        name: "ws_for_new_chat_thread_test",
+        cwd: "/tmp",
+        chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
+      })
+
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
 
     {:ok, pid} =
@@ -191,6 +204,91 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
     # Tuple's second slot is the Phoenix routing key (instance_id).
     assert_receive {:new_chat_thread, "inst_nomatch", "oc_new", "om_new", ^envelope}, 500
+  end
+
+  describe "PR-N: unbound-chat guide DM" do
+    test "inbound for chat with no workspace binding emits guide DM, drops broadcast",
+         %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_unbound")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_unbound", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_unbound_chat",
+            "thread_id" => "",
+            "content" => "first contact"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      # FAA's handle_downstream wraps the {:outbound, %{kind:"reply",...}}
+      # into a directive envelope before broadcasting on
+      # `adapter:feishu/<instance_id>`. Content lands at
+      # payload.payload.args.content (not args.text).
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{
+                           "action" => "send_message",
+                           "args" => %{"chat_id" => "oc_unbound_chat", "content" => content}
+                         }
+                       }
+                     },
+                     500
+
+      assert content =~ "workspace add"
+      assert content =~ "oc_unbound_chat"
+      assert content =~ "inst_unbound"
+
+      # And the new_chat_thread broadcast must NOT happen — we're
+      # dropping the inbound rather than spinning up a session against
+      # an unconfigured chat.
+      refute_receive {:new_chat_thread, _, _, _, _}, 200
+    end
+
+    test "second inbound from same unbound chat is rate-limited (no second DM)",
+         %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_ratelimit")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_ratelimit", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = fn n ->
+        %{
+          "payload" => %{
+            "event_type" => "msg_received",
+            "args" => %{"chat_id" => "oc_spam", "thread_id" => "", "content" => "msg #{n}"}
+          }
+        }
+      end
+
+      send(pid, {:inbound_event, envelope.(1)})
+      send(pid, {:inbound_event, envelope.(2)})
+      send(pid, {:inbound_event, envelope.(3)})
+
+      # Exactly one DM directive should have been broadcast.
+      assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: %{"kind" => "directive"}},
+                     500
+
+      refute_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: %{"kind" => "directive"}},
+                     200
+    end
   end
 
   describe "handle_downstream wrap_as_directive/2 (PR-9 T10/T11b)" do

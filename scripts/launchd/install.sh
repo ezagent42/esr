@@ -41,7 +41,24 @@ install_one() {
       -e "s|__REPO_DIR__|${repo}|g" \
       "$template" > "$target"
 
-  # If already loaded, bootout first so the new plist takes effect.
+  # PR-N 2026-04-28: detect already-loaded LaunchAgent + alive esrd, give
+  # operator a friendly hint instead of a confusing `Bootstrap failed: 5:
+  # Input/output error`. This typically happens when a second operator on
+  # the same macOS user runs install.sh while the first operator's esrd
+  # is healthy — boot+bootstrap on a busy domain returns I/O 5.
+  if launchctl print "gui/${UID}/${label}" 2>/dev/null | grep -q "state = running"; then
+    local existing_port=""
+    [[ -f "${home}/default/esrd.port" ]] && existing_port=$(cat "${home}/default/esrd.port" 2>/dev/null)
+    local env_short="prod"
+    [[ "$name" == "esrd-dev" ]] && env_short="dev"
+    echo "ℹ $name is already running${existing_port:+ on port $existing_port} — skipping install."
+    echo "  To restart: launchctl kickstart -k gui/\$UID/${label}"
+    echo "  To replace plist (e.g. after editing the template): bash scripts/launchd/uninstall.sh --env=${env_short} && bash scripts/launchd/install.sh --env=${env_short}"
+    return 0
+  fi
+
+  # If loaded but not running (crash-looping / stale), bootout first so
+  # the new plist takes effect cleanly.
   launchctl bootout "gui/${UID}/${label}" 2>/dev/null || true
 
   if ! launchctl bootstrap "gui/${UID}" "$target"; then
