@@ -42,11 +42,11 @@ tmux 3.3+, a Claude Code CLI installed, a Feishu app (or use mock_feishu for loc
 bash scripts/esrd.sh start --instance=default
 
 # 3. Register a Feishu app (or skip and use mock_feishu)
-uv run --project py esr adapter add feishu-prod --type feishu \
+./esr.sh adapter add feishu-prod --type feishu \
     --app-id <app_id> --app-secret <app_secret>
 
 # 4. Register a workspace
-uv run --project py esr workspace add esr-dev \
+./esr.sh workspace add esr-dev \
     --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
     --role dev --chat <chat_id>:<app_id>:dm
 
@@ -132,6 +132,13 @@ discovering live flows.
 
 Pre-existing flakes are tracked in [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md).
 
+### CLI conventions
+
+`./esr.sh <subcmd>` is a thin wrapper around `uv run --project py esr <subcmd>`
+— call it from anywhere via absolute path or symlink.
+A first-class binary on PATH is tracked at
+[`docs/futures/esr-cli-binary.md`](docs/futures/esr-cli-binary.md).
+
 ### Contributing
 
 - AI-pair-programming convention: see [`CLAUDE.md`](CLAUDE.md) for repo-level Claude
@@ -178,11 +185,11 @@ tmux 3.3+ / 已安装 Claude Code CLI / 一个 Feishu app（或用 mock_feishu �
 bash scripts/esrd.sh start --instance=default
 
 # 3. 注册 Feishu app（或跳过，用 mock_feishu）
-uv run --project py esr adapter add feishu-prod --type feishu \
+./esr.sh adapter add feishu-prod --type feishu \
     --app-id <app_id> --app-secret <app_secret>
 
 # 4. 注册 workspace
-uv run --project py esr workspace add esr-dev \
+./esr.sh workspace add esr-dev \
     --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
     --role dev --chat <chat_id>:<app_id>:dm
 
@@ -266,6 +273,12 @@ E2E 覆盖在 [`tests/e2e/scenarios/`](tests/e2e/scenarios/)。**新增 scenario
 | 单 scenario E2E | `bash tests/e2e/scenarios/0X_*.sh` | 5 个 |
 
 已知 flaky 见 [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md)。
+
+### CLI 约定
+
+`./esr.sh <subcmd>` 是 `uv run --project py esr <subcmd>` 的薄包装 ——
+通过绝对路径或 symlink 从任何目录调用都行。后面会迁到 PATH 上的二进制，
+追踪在 [`docs/futures/esr-cli-binary.md`](docs/futures/esr-cli-binary.md)。
 
 ### 协作约定
 
