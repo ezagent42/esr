@@ -20,6 +20,15 @@ echo "$port" > "$dir/esrd.port"
 
 cd "${ESR_REPO_DIR:-$(git rev-parse --show-toplevel)}"
 
+# scripts/esrd.sh runs `cd runtime && exec mix phx.server` (line 77) —
+# the mix project is at runtime/mix.exs, not the repo root. The launchd
+# variant was missing this hop and silently crash-looped with
+# `(Mix) The task "phx.server" could not be found` once PR-H fixed
+# the upstream `mix not found` block.
+if [ -d runtime ]; then
+  cd runtime
+fi
+
 # launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin — Homebrew's
 # mix lives at /opt/homebrew/bin (Apple Silicon) or /usr/local/bin
 # (Intel). Probe both so this script works on either architecture
