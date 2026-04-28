@@ -395,54 +395,32 @@ def adapter_add(
     cfg_path.write_text(yaml.safe_dump(doc, sort_keys=True))
     click.echo(f"added {instance_name} ({adapter_type})")
 
-    # Phase 8f: for recognised adapter types, auto-instantiate the
-    # matching "session" topology so inbound adapter messages route to a
-    # live PeerServer immediately. Without this, ``esr adapter add`` on
-    # its own leaves the adapter_runner (which spawns alongside the
-    # topology's feishu_app_proxy peer) unattached — no PeerServer is
-    # bound for the topic, so inbound envelopes hit "no binding" in
-    # AdapterChannel.forward/2 and never reach a handler.
-    #
-    # Feishu path: auto-run ``esr cmd run feishu-app-session --param
-    # app_id=<X>`` which spawns feishu-app:<X>, binds adapter:feishu/
-    # feishu-app:<X>, and triggers WorkerSupervisor.ensure_adapter from
-    # Topology.Instantiator.spawn_loop (the adapter_runner is launched
-    # there, not here — keeping the lifecycle with the topology).
-    if adapter_type == "feishu" and cfg_dict.get("app_id"):
-        _auto_instantiate_feishu_app_session(cfg_dict["app_id"])
+    # PR-K 2026-04-28: ask esrd to re-run `bootstrap_feishu_app_adapters`
+    # so the new adapters.yaml entry spawns its FAA peer + Python
+    # subprocess without an esrd restart. Pre-PR-K, this code path
+    # called `cli:run/feishu-app-session` which P3-13 deleted —
+    # adapters.yaml was written but the runtime did nothing.
+    if adapter_type == "feishu":
+        _refresh_adapters_via_runtime()
 
 
-def _auto_instantiate_feishu_app_session(app_id: str) -> None:
-    """Compile + run feishu-app-session with app_id so a PeerServer
-    exists for the ``adapter:feishu/feishu-app:<app_id>`` topic."""
+def _refresh_adapters_via_runtime() -> None:
+    """Trigger esrd's `AdminSession.bootstrap_feishu_app_adapters/0` so
+    a freshly-written `adapters.yaml` entry spawns its FAA peer + Python
+    subprocess without an esrd restart.
+
+    PR-K replaces the prior `cli:run/feishu-app-session` artifact path
+    (deleted by P3-13). The new `cli:adapters/refresh` topic re-runs
+    the same boot-time bootstrap; idempotent on `:already_started`.
+    """
     from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
-    import subprocess
 
-    # Compile if not cached — final_gate --live doesn't pre-compile.
-    compiled = paths.commands_compiled_dir() / "feishu-app-session.yaml"
-    if not compiled.exists():
-        compiled.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.run(
-                ["uv", "run", "--project", "py", "esr", "cmd", "compile",
-                 "feishu-app-session", "-o", str(compiled)],
-                check=True, capture_output=True, timeout=30,
-            )
-        except (subprocess.SubprocessError, FileNotFoundError) as exc:
-            click.echo(f"note: failed to compile feishu-app-session: {exc}", err=True)
-            return
-
-    artifact = yaml.safe_load(compiled.read_text())
     try:
-        call_runtime(
-            topic=f"cli:run/{artifact['name']}",
-            payload={"artifact": artifact, "params": {"app_id": str(app_id)}},
-            timeout_sec=30.0,
-        )
+        call_runtime(topic="cli:adapters/refresh", payload={}, timeout_sec=10.0)
     except RuntimeUnreachable:
         click.echo(
-            "note: esrd not running — feishu-app-session will need to be "
-            "instantiated manually once the daemon is up",
+            "note: esrd not running — adapter will be picked up on next "
+            "esrd boot via AdminSession.bootstrap_feishu_app_adapters/0",
             err=True,
         )
 

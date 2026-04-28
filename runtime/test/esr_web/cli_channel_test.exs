@@ -149,6 +149,24 @@ defmodule EsrWeb.CliChannelTest do
     end
   end
 
+  describe "cli:adapters/refresh (PR-K)" do
+    setup do
+      {:ok, _, socket} =
+        EsrWeb.HandlerSocket
+        |> socket("cli-refresh", %{})
+        |> subscribe_and_join(EsrWeb.CliChannel, "cli:adapters/refresh")
+
+      %{refresh_socket: socket}
+    end
+
+    test "returns ok=true (idempotent — wraps bootstrap_feishu_app_adapters)",
+         %{refresh_socket: socket} do
+      ref = push(socket, "cli_call", %{})
+      assert_reply ref, :ok, response
+      assert response["data"]["ok"] == true
+    end
+  end
+
   describe "cli:stop/<name> (post P3-13)" do
     setup do
       {:ok, _, socket} =
