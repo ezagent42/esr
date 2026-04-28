@@ -20,5 +20,22 @@ echo "$port" > "$dir/esrd.port"
 
 cd "${ESR_REPO_DIR:-$(git rev-parse --show-toplevel)}"
 
+# launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin — Homebrew's
+# mix lives at /opt/homebrew/bin (Apple Silicon) or /usr/local/bin
+# (Intel). Probe both so this script works on either architecture
+# without operator intervention. Fail fast with a readable message
+# if mix isn't found anywhere — beats launchd's exit 127 in stderr.
+for prefix in /opt/homebrew /usr/local; do
+  if [ -x "$prefix/bin/mix" ]; then
+    export PATH="$prefix/bin:$PATH"
+    break
+  fi
+done
+
+if ! command -v mix >/dev/null 2>&1; then
+  echo "esrd-launchd: mix not on PATH after probing /opt/homebrew/bin and /usr/local/bin (PATH=$PATH)" >&2
+  exit 1
+fi
+
 export PORT=$port
 exec ${ESRD_CMD_OVERRIDE:-mix phx.server}
