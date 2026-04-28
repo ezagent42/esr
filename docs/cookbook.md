@@ -73,3 +73,31 @@ esr trace --follow
 # Or, filter to a single actor:
 esr trace --follow --actor cc:dev-root
 ```
+
+## Recipe: Attach to a CC session's tmux pane
+
+Each `TmuxProcess` peer hosts its CC session in a tmux session named
+`esr_cc_<N>`. With per-instance socket isolation (PR-H), prod and dev
+keep their tmux sessions in separate sockets — `~/.esrd/default/tmux.sock`
+and `~/.esrd-dev/default/tmux.sock` respectively.
+
+```bash
+# Discover the per-session tmux name + socket via the actors registry
+ESRD_HOME=~/.esrd-dev uv run --project py esr actors list | grep '^thread:'
+ESRD_HOME=~/.esrd-dev uv run --project py esr actors inspect thread:<sid>
+
+# Or list every tmux session on the dev socket directly
+tmux -S ~/.esrd-dev/default/tmux.sock list-sessions
+
+# Attach (Ctrl-b d to detach without killing the session)
+tmux -S ~/.esrd-dev/default/tmux.sock attach -t esr_cc_<N>
+```
+
+Operators on a fresh checkout where the plists predate PR-H can read
+the active socket via `launchctl print gui/$UID/com.ezagent.esrd-dev | grep ESR_TMUX_SOCKET`
+and fall back to `/tmp/tmux-$UID/default` if unset.
+
+> Note: there is no `esr attach` CLI subcommand today — wrap the two
+> commands above in a shell alias if you attach often. A first-class
+> `esr attach <session_id>` is tracked at
+> [`docs/futures/esr-attach-cli.md`](futures/esr-attach-cli.md).

@@ -65,6 +65,28 @@ install_one() {
   exit 1
 }
 
+ensure_dev_worktree() {
+  # PR-H: previously dev install would silently produce a launchd plist
+  # pointing at a non-existent WorkingDirectory, which trips EX_CONFIG (78)
+  # at first kickstart. Auto-create the worktree against `main` so a
+  # fresh operator can run install.sh --env=both without first running
+  # `git worktree add` by hand.
+  if [[ -d "${DEV_WORKTREE}" ]]; then
+    return 0
+  fi
+  echo "→ dev worktree absent at ${DEV_WORKTREE}; creating against origin/main"
+  local repo_root
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  if ! git -C "$repo_root" worktree add "${DEV_WORKTREE}" main 2>/dev/null; then
+    # `main` may not exist as a local branch yet — fall back to origin/main detached.
+    if ! git -C "$repo_root" worktree add --detach "${DEV_WORKTREE}" origin/main; then
+      echo "✗ failed to create dev worktree at ${DEV_WORKTREE}" >&2
+      exit 1
+    fi
+  fi
+  echo "✓ dev worktree created at ${DEV_WORKTREE}"
+}
+
 install_dev_hook() {
   if [[ ! -d "${DEV_WORKTREE}/.git" && ! -f "${DEV_WORKTREE}/.git" ]]; then
     echo "⚠ dev worktree not found at ${DEV_WORKTREE}; skipping post-merge hook install"
@@ -99,6 +121,7 @@ case "$env_target" in
     install_one esrd "${HOME}/.esrd" "${HOME}/Workspace/esr"
     ;;
   --env=dev|dev)
+    ensure_dev_worktree
     install_one esrd-dev "${HOME}/.esrd-dev" "${DEV_WORKTREE}"
     install_dev_hook
     ;;

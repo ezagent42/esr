@@ -213,15 +213,25 @@ defmodule Esr.Application do
   end
 
   @doc """
-  Read `ESR_E2E_TMUX_SOCK` env var and, when set to a non-empty value,
-  stash it under `{:esr, :tmux_socket_override}`. TmuxProcess.spawn_args/1
+  Read tmux socket path env vars and, when set to a non-empty value,
+  stash under `{:esr, :tmux_socket_override}`. TmuxProcess.spawn_args/1
   consults the override when its caller didn't supply `:tmux_socket`.
+
+  Two env vars are honoured (first non-empty wins):
+
+  * `ESR_E2E_TMUX_SOCK` — set by E2E scenarios for per-run isolation.
+  * `ESR_TMUX_SOCKET`   — set by the prod/dev LaunchAgent plists so the
+    two esrds don't share `/tmp/tmux-$UID/default`. Operators attach
+    via `tmux -S $ESRD_HOME/default/tmux.sock attach -t esr_cc_<N>`.
 
   Exposed publicly for test access — pure function; idempotent.
   """
   @spec apply_tmux_socket_env() :: :ok
   def apply_tmux_socket_env do
-    case System.get_env("ESR_E2E_TMUX_SOCK") do
+    e2e = System.get_env("ESR_E2E_TMUX_SOCK")
+    plist = System.get_env("ESR_TMUX_SOCKET")
+
+    case e2e || plist do
       nil -> :ok
       "" -> :ok
       path -> Application.put_env(:esr, :tmux_socket_override, path)
