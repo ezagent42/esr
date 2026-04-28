@@ -47,6 +47,14 @@ defmodule Esr.Peers.FeishuAppAdapter do
   @deny_dm_text "你无权使用此 bot，请联系管理员授权。"
   @deny_dm_interval_ms 10 * 60 * 1000
 
+  # PR-N 2026-04-28: per-chat rate limit for "this chat isn't bound to
+  # any workspace" guide DMs. Without this, every inbound from an
+  # unregistered chat would echo the registration command back —
+  # noisy when a user is typing rapidly into a not-yet-configured
+  # group. Same lifetime + scope as the deny DM rate limit (per FAA
+  # peer, in-memory, lost on restart — that's fine).
+  @guide_dm_interval_ms 10 * 60 * 1000
+
   def start_link(%{instance_id: instance_id} = args) when is_binary(instance_id) do
     GenServer.start_link(__MODULE__, args, name: via(instance_id))
   end
@@ -91,7 +99,10 @@ defmodule Esr.Peers.FeishuAppAdapter do
        # rate-limit per-(principal, instance_id), matching today's
        # Python-side `_last_deny_ts` lifetime (single-FAA equivalent).
        # See spec §4 #2 for the multi-FAA soft regression note.
-       deny_dm_last_emit: %{}
+       deny_dm_last_emit: %{},
+       # PR-N 2026-04-28: per-chat rate limit for unbound-chat guide
+       # DMs. Keys are chat_id, values are last-emit time in ms.
+       guide_dm_last_emit: %{}
      }}
   end
 
@@ -119,19 +130,39 @@ defmodule Esr.Peers.FeishuAppAdapter do
         {:forward, [], state}
 
       :not_found ->
-        # P3-7: broadcast on the `session_router` topic. Tuple's second
-        # slot is the resolved app_id — args["app_id"] when the Python
-        # adapter populated it, else state.instance_id. Downstream
-        # consumers (SessionRouter → FeishuAppProxy) look the peer up
-        # by registry name `:feishu_app_adapter_<instance_id>`; the
-        # PR-A T1 spec locks app_id == instance_id in our system.
-        Phoenix.PubSub.broadcast(
-          EsrWeb.PubSub,
-          "session_router",
-          {:new_chat_thread, app_id, chat_id, thread_id, envelope}
-        )
+        # PR-N 2026-04-28: before falling through to session creation,
+        # check whether this chat is even bound to a workspace. If
+        # there's no binding in `workspaces.yaml`, SessionRouter would
+        # silently fall back to workspace="default" — the user gets no
+        # feedback in Feishu and no obvious "your chat isn't configured"
+        # signal. Instead, DM the registration command (rate-limited)
+        # and drop the inbound. Operators see a clear next-step in their
+        # own DM rather than a silent no-op.
+        case maybe_emit_unbound_chat_guide(state, chat_id, app_id) do
+          {:guided, new_state} ->
+            {:drop, :unbound_chat_guide_sent, new_state}
 
-        {:drop, :new_chat_thread_pending, state}
+          :workspace_bound ->
+            # P3-7: broadcast on the `session_router` topic. Tuple's second
+            # slot is the resolved app_id — args["app_id"] when the Python
+            # adapter populated it, else state.instance_id. Downstream
+            # consumers (SessionRouter → FeishuAppProxy) look the peer up
+            # by registry name `:feishu_app_adapter_<instance_id>`; the
+            # PR-A T1 spec locks app_id == instance_id in our system.
+            Phoenix.PubSub.broadcast(
+              EsrWeb.PubSub,
+              "session_router",
+              {:new_chat_thread, app_id, chat_id, thread_id, envelope}
+            )
+
+            {:drop, :new_chat_thread_pending, state}
+
+          :guide_rate_limited ->
+            # Already DM'd this chat recently — silently drop without
+            # also broadcasting (the operator hasn't acted on the
+            # earlier guide yet, no point making more sessions either).
+            {:drop, :unbound_chat_guide_rate_limited, state}
+        end
 
       other ->
         Logger.warning(
@@ -287,5 +318,64 @@ defmodule Esr.Peers.FeishuAppAdapter do
     )
 
     {:noreply, state}
+  end
+
+  # PR-N 2026-04-28: send a registration-command guide DM when an
+  # inbound arrives for a chat with no `workspaces.yaml` binding.
+  # Returns `:workspace_bound` (proceed with new_chat_thread broadcast),
+  # `{:guided, new_state}` (DM emitted, drop inbound), or
+  # `:guide_rate_limited` (recently DM'd, drop quietly).
+  defp maybe_emit_unbound_chat_guide(state, chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, _ws} ->
+        :workspace_bound
+
+      :not_found ->
+        now = :erlang.monotonic_time(:millisecond)
+        last = Map.get(state.guide_dm_last_emit, chat_id)
+
+        if is_nil(last) or now - last >= @guide_dm_interval_ms do
+          text = guide_text(chat_id, app_id, state.instance_id)
+
+          send(
+            self(),
+            {:outbound,
+             %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
+          )
+
+          new_state = %{
+            state
+            | guide_dm_last_emit: Map.put(state.guide_dm_last_emit, chat_id, now)
+          }
+
+          {:guided, new_state}
+        else
+          :guide_rate_limited
+        end
+    end
+  end
+
+  # Empty chat_id or app_id — fall back to broadcast path; SessionRouter
+  # will surface its own error in logs and we have no chat to DM anyway.
+  defp maybe_emit_unbound_chat_guide(_state, _chat_id, _app_id), do: :workspace_bound
+
+  defp guide_text(chat_id, app_id, _instance_id) do
+    """
+    👋 这个 chat 还没在 ESR 注册 workspace，所以收到的消息会被忽略。
+
+    在 esr 仓库里跑（注意 --env 选 prod 或 dev）：
+
+      ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
+          --cwd <CC 工作目录> \\
+          --start-cmd scripts/esr-cc.sh \\
+          --role dev \\
+          --chat #{chat_id}:#{app_id}:dm
+
+    注册后，给本 bot 发：/new-session <workspace_name> tag=root
+    会话就会拉起来。
+
+    （这条消息 10 分钟内不会重复发送。）
+    """
   end
 end
