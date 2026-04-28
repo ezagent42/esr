@@ -465,4 +465,113 @@ agents.yaml 里用 `proxies` 加一个 `target: "admin::my_singleton"` 引用
 
 ---
 
+## 九、业务拓扑感知（PR-F 2026-04-28）
+
+到这里你已经能写 agent 拓扑、把 peer 串起来。**业务拓扑**（这个 agent
+在更大流水线里的角色）是另一层信息——LLM 自己得知道自己是干嘛的、
+下一棒是谁、要交什么格式。两条工具：
+
+### 9.1 `metadata:` 字段（声明端）
+
+`workspaces.yaml` 每个 workspace 可以挂一段自由格式的 `metadata:`，
+LLM 通过 `describe_topology` 工具按需读取：
+
+```yaml
+workspaces:
+  ws_dev:
+    cwd: /workspaces/dev
+    role: dev
+    chats: [...]
+    neighbors:
+      - workspace:ws_kanban
+    metadata:
+      purpose: "Engineering team's day-to-day discussion"
+      pipeline_position: 1
+      hand_off_to: "ws_kanban"
+      output_format: "markdown with code blocks"
+      not_my_job: "task tracking — that's ws_kanban"
+```
+
+| 常用字段 | 含义 |
+|---|---|
+| `purpose` | 这个 workspace 在系统里扮演什么角色（一句话） |
+| `pipeline_position` | 多阶段流水线里的序号（1, 2, 3, …） |
+| `hand_off_to` | 自己干完之后下一棒交给谁 |
+| `output_format` | 下游期望的格式 / schema |
+| `not_my_job` | 显式声明哪些事不归自己管，让下游接 |
+
+schema **是开放的** —— 运维按业务需要加字段，不需要改代码。LLM 自己会
+读懂并据此决策。
+
+⚠️ **`metadata:` 会被原样暴露给 LLM**。不要放：
+- API key、secret → 用 `env:`（响应里被过滤）
+- 私有路径 → 用 `cwd:`（也过滤）
+- 跟 `chats[]` 已经有的 PII 重复
+
+### 9.2 `describe_topology` MCP 工具（消费端）
+
+CC（或任何接入 esr-channel MCP 的 LLM）能调：
+
+```python
+# Claude 在 prompt 里看到的工具签名是无参的：
+mcp__esr-channel__describe_topology()
+```
+
+cc_mcp 桥（`adapters/cc_mcp/src/esr_cc_mcp/channel.py:_invoke_tool`）
+会把 `ESR_WORKSPACE` 环境变量注入成 `workspace_name` 参数；运行时
+（`EsrWeb.CliChannel.dispatch("cli:workspaces/describe", …)`) 返回：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "current_workspace": {
+      "name": "ws_dev",
+      "role": "dev",
+      "chats": [{"chat_id": "oc_…", "app_id": "cli_…", "kind": "group", "name": "dev-room"}],
+      "neighbors_declared": ["workspace:ws_kanban"],
+      "metadata": {"purpose": "...", "pipeline_position": 1, ...}
+    },
+    "neighbor_workspaces": [
+      { "name": "ws_kanban", "metadata": {...}, ... }
+    ]
+  }
+}
+```
+
+只有 `workspace:<name>` 类型的邻居会被展开成 `neighbor_workspaces`；
+`chat:` / `user:` / `adapter:` 邻居留在 `neighbors_declared` 里让 LLM
+自己解释（参考 `docs/notes/actor-topology-routing.md`）。
+
+**LLM 何时该调？** Tool 描述里的"when to call"会引导：
+- 用户提到了一个不认识的 workspace / 团队名
+- 需要流水线上下文（自己的角色、下游期望、输出格式）
+- 不确定该把 reply 路到哪个 chat
+
+不要每轮都调——它是 on-demand 的"看说明书"动作，不是入参。
+
+### 9.3 写新 agent 时的 metadata checklist
+
+每加一个新 agent 的 workspace 时，过一遍：
+
+- [ ] `metadata.purpose` 是否一句话讲清这个 workspace 干啥
+- [ ] 多阶段流水线里有 `pipeline_position` + `hand_off_to`
+- [ ] 下游期望的格式写在 `output_format` 里
+- [ ] 边界（什么事不该自己干）写在 `not_my_job` 里
+- [ ] 不含 secret / 不重复 chats[] 已有的 PII
+- [ ] 测试时验证返回值符合预期 —— 没有专门的 CLI 子命令；要验证就在
+  CC 会话里直接让 LLM 调 `mcp__esr-channel__describe_topology`，或写
+  Elixir 单元测试打 `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", %{"arg" => "ws_dev"})`
+  （参考 `runtime/test/esr_web/cli_channel_test.exs`）。
+
+### 9.4 相关文件
+
+- 设计 spec — `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`
+- 运维笔记 — `docs/notes/actor-topology-routing.md` §"Authoring workspaces.yaml" → `metadata:`
+- 运行时端点 — `runtime/lib/esr_web/cli_channel.ex` `dispatch("cli:workspaces/describe", …)`
+- cc_mcp 工具 schema — `adapters/cc_mcp/src/esr_cc_mcp/tools.py` `_DESCRIBE_TOPOLOGY`
+- 单元测试 — `runtime/test/esr_web/cli_channel_test.exs`、`adapters/cc_mcp/tests/test_describe_topology_invoke.py`
+
+---
+
 如有具体场景困惑，看 `docs/notes/`（按主题切的小笔记）或问 channel。

@@ -1,6 +1,6 @@
 # Known Test Flakes
 
-**Last updated**: 2026-04-22
+**Last updated**: 2026-04-28
 
 This document lists test failures that appear intermittently and the reason we've accepted them as known-flake rather than blocking merges. Each entry has a concrete follow-up path.
 
@@ -53,7 +53,74 @@ right: {:error, {:unknown_permission, "session.create", "ou_loader_test"}}
 
 ---
 
+## 3. `Esr.AdminSessionBootstrapFeishuTest` — bootstrap helpers see `:test_admin_children` already-dead
+
+**File**: `runtime/test/esr/admin_session_bootstrap_feishu_test.exs:45` and `:80`
+
+**Symptom**:
+```
+** (exit) exited in: GenServer.call(:test_admin_children, {:start_child, ...}, :infinity)
+    ** (EXIT) no process: the process is not alive or there's no process
+       currently associated with the given name, possibly because its
+       application isn't started
+```
+
+**Rate**: ~5-10% under default concurrency.
+
+**Root cause (observed 2026-04-28)**: Test allocates a per-test
+`DynamicSupervisor` registered as `:test_admin_children` and uses it
+to host `FeishuAppAdapter` children. Under concurrent test load, the
+supervisor's owner process can be torn down (or never come up under
+contention) by the time `bootstrap_feishu_app_adapters/1` calls
+`DynamicSupervisor.start_child/2`. Same root-cause family as #1/#2 —
+shared/test-singleton process registration races.
+
+**Workaround**: rerun (`mix test --failed`).
+
+**Permanent fix**: same as #1/#2 — v3.1 per-Session projection.
+Short-term alternative: stub `:test_admin_children` registration into
+the test's `setup` block with explicit `start_supervised/1` so ExUnit
+owns the lifecycle.
+
+---
+
+## 4. `Esr.AdminSessionSlashHandlerBootTest` — `slash_handler_ref/0` returns `:error`
+
+**File**: `runtime/test/esr/admin_session_slash_handler_boot_test.exs:12`
+
+**Symptom**:
+```
+match (=) failed
+code:  assert {:ok, pid} = Esr.AdminSessionProcess.slash_handler_ref()
+left:  {:ok, pid}
+right: :error
+```
+
+**Rate**: ~5-10% under default concurrency.
+
+**Root cause (observed 2026-04-28)**: `slash_handler_ref/0` reads from
+a `Process.put`/`Process.get`-backed registry seeded during admin
+session boot. Under concurrent test load the boot path can finish
+*after* the test's first assertion fires. Race window is narrow but
+real — test predates the v3.1 lifecycle hardening.
+
+**Workaround**: rerun.
+
+**Permanent fix**: same family — v3.1 refactor moves slash handler
+registration to a deterministic supervised child and eliminates the
+boot-completion race.
+
+---
+
 ## Guidance
 
 - **CI failures**: if only these two tests fail and `mix test --failed` then passes, re-approve. If other tests fail intermittently, file a new entry here.
-- **Root cause for all**: the singleton `Esr.Capabilities.Grants` + global `permissions_registry.json` = shared mutable state across tests, not adequately isolated. The test suite predates the v3.1 refactor's Session-scoped model.
+- **Root cause for all**: the singleton `Esr.Capabilities.Grants` + global `permissions_registry.json` + admin-session bootstrap singletons = shared mutable state across tests, not adequately isolated. The test suite predates the v3.1 refactor's Session-scoped model.
+
+## Adding a new entry
+
+When you observe a new flake variant, follow the existing 4-section
+template (Symptom / Rate / Root cause / Workaround + Permanent fix).
+**Don't silence the test** — let it remain in the suite so the
+permanent-fix work has a regression target. Update the "Last updated"
+date.

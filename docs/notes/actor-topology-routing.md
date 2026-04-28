@@ -150,15 +150,41 @@ Manual smoke check after a yaml edit:
 3. `grep '"reachable"' stdout.log | tail -1` — confirm the JSON-string
    attribute appears with the new URI.
 
-Automated coverage:
+Automated coverage (counts as of 2026-04-28):
 
-- Unit: `mix test test/esr/topology_test.exs test/esr/workspaces/watcher_test.exs`
-- Integration: `mix test test/esr/topology_integration_test.exs`
-- cc_mcp pass-through: `(cd adapters/cc_mcp && uv run pytest tests/test_notification_inject.py)`
-- Existing scenarios 01-04 don't exercise topology directly but
-  serve as regression pins for the URI shape used by the topology
-  layer (PR-B path-style migration is what `Esr.Topology.chat_uri/2`
-  emits).
+| What | Where | Tests |
+|---|---|---|
+| Topology unit logic (initial_seed, neighbour_set, symmetric closure) | `runtime/test/esr/topology_test.exs` | 16 |
+| BGP-style learn + tag rendering | `runtime/test/esr/peers/cc_process_test.exs` | 13 |
+| `<channel>` JSON-string attribute filter | `adapters/cc_mcp/tests/test_notification_inject.py` | 8 |
+| `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` | 22 |
+| `describe_topology` injection (PR-F) | `adapters/cc_mcp/tests/test_describe_topology_invoke.py` | 5 |
+| `Workspaces.Registry` neighbours / metadata round-trip | `runtime/test/esr/workspaces_registry_test.exs` | 8 |
+| FS watcher hot-reload | `runtime/test/esr/workspaces/watcher_test.exs` | 4 |
+| Path-style URI parser (PR-B) | `runtime/test/esr/uri_test.exs` | 23 |
+| Compose C1-C5 chain | `runtime/test/esr/topology_integration_test.exs` | 1 |
+| End-to-end (mock_feishu → CC) | `tests/e2e/scenarios/05_topology_routing.sh` | 8 assertions |
+
+Run them all:
+
+```bash
+(cd runtime && mix test test/esr/topology_test.exs \
+                        test/esr/peers/cc_process_test.exs \
+                        test/esr_web/cli_channel_test.exs \
+                        test/esr/workspaces_registry_test.exs \
+                        test/esr/workspaces/watcher_test.exs \
+                        test/esr/topology_integration_test.exs \
+                        test/esr/uri_test.exs)
+
+(cd adapters/cc_mcp && uv run --with pytest --with pytest-asyncio pytest \
+    tests/test_notification_inject.py tests/test_describe_topology_invoke.py)
+
+bash tests/e2e/scenarios/05_topology_routing.sh
+```
+
+Existing scenarios 01-04 don't exercise topology directly but serve as
+regression pins for the URI shape used by the topology layer (PR-B
+path-style migration is what `Esr.Topology.chat_uri/2` emits).
 
 ## Known limitations (spec follow-ups)
 
