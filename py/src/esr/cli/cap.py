@@ -35,6 +35,21 @@ _yaml.preserve_quotes = True
 _yaml.indent(mapping=2, sequence=4, offset=2)
 
 
+# PR-18 2026-04-28: aliases that resolve to the canonical permission
+# string the runtime checker matches against. Keeps the wildcard syntax
+# usable while letting operators type more memorable shorthand.
+_PERMISSION_ALIASES: dict[str, str] = {
+    "admin": "*",
+}
+
+
+def _resolve_permission_alias(perm: str) -> str:
+    """Return the canonical capability string for `perm`. Unknown values
+    pass through unchanged — only documented aliases are rewritten.
+    """
+    return _PERMISSION_ALIASES.get(perm, perm)
+
+
 @click.group()
 def cap() -> None:
     """Manage capabilities (who holds which permission)."""
@@ -122,7 +137,13 @@ def cap_grant(principal_id: str, permission: str, kind: str, note: str) -> None:
     Creates the principal entry if missing; idempotent if the
     permission is already held. Preserves header comments and
     formatting in ``capabilities.yaml`` via ruamel round-trip.
+
+    PR-18 2026-04-28: aliases recognised — ``admin`` rewrites to ``*``
+    (wildcard, full grant) before persistence. Operators see the
+    canonical string in ``capabilities.yaml`` so the wire format stays
+    uniform with what the Lane A checker matches against.
     """
+    permission = _resolve_permission_alias(permission)
     path = Path(capabilities_yaml_path())
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +185,11 @@ def cap_revoke(principal_id: str, permission: str) -> None:
     No-op with a message if the principal or permission isn't found.
     The principal entry is retained even if its capabilities list
     becomes empty — note/kind persist for future grants.
+
+    PR-18 2026-04-28: ``admin`` alias resolves to ``*`` here too so
+    grant/revoke pairs are symmetric.
     """
+    permission = _resolve_permission_alias(permission)
     path = Path(capabilities_yaml_path())
     if not path.exists():
         click.echo("no capabilities file; nothing to revoke")
