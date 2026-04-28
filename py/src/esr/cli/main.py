@@ -449,6 +449,44 @@ def _parse_config_flags(args: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
+@adapter.command("remove")
+@click.argument("instance_name")
+def adapter_remove(instance_name: str) -> None:
+    """Stop and unregister an adapter instance (PR-L 2026-04-28).
+
+    Calls esrd's ``cli:adapters/remove`` Phoenix-channel topic which:
+    1. Terminates the Python adapter sidecar (WorkerSupervisor).
+    2. Terminates the Elixir FAA peer (AdminSession).
+    3. Rewrites adapters.yaml without the instance entry.
+
+    Errors out if the instance isn't in adapters.yaml. Use this when
+    you registered an adapter into the wrong environment (prod vs dev)
+    or want to retire a Feishu app.
+    """
+    from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+
+    try:
+        result = call_runtime(
+            topic="cli:adapters/remove",
+            payload={"instance_id": instance_name},
+            timeout_sec=10.0,
+        )
+    except RuntimeUnreachable:
+        click.echo(
+            "esrd not reachable — cannot remove a live adapter without "
+            "the runtime. Start esrd first, then retry.",
+            err=True,
+        )
+        raise click.exceptions.Exit(code=1)
+
+    data = result.get("data", {}) if isinstance(result, dict) else {}
+    if data.get("ok"):
+        click.echo(f"removed {instance_name} ({data.get('type', 'unknown')})")
+    else:
+        click.echo(f"remove failed: {data.get('error', 'unknown')}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+
 @adapter.command("install")
 @click.argument(
     "source",
