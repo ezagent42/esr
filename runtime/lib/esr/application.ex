@@ -82,6 +82,12 @@ defmodule Esr.Application do
       # FileLoader can cross-check workspace names during validation.
       Esr.Capabilities.Supervisor,
 
+      # 4f.1 Users subsystem (PR-21a) — Registry (ETS) + fs watcher on
+      # users.yaml. feishu_id → esr-username binding consumed by inbound
+      # envelope construction (PR-21b will wire callers). Independent of
+      # Workspaces / Capabilities; ordering is informational only.
+      Esr.Users.Supervisor,
+
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER

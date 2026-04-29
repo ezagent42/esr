@@ -36,6 +36,10 @@ def workspaces_yaml_path() -> Path:
     return runtime_home() / "workspaces.yaml"
 
 
+def users_yaml_path() -> Path:
+    return runtime_home() / "users.yaml"
+
+
 def commands_compiled_dir() -> Path:
     return runtime_home() / "commands" / ".compiled"
 
