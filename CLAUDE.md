@@ -44,14 +44,31 @@ The **only** discovery index is the table in [`README.md`](README.md)
 - Workspace config: `$ESRD_HOME/$ESR_INSTANCE/workspaces.yaml` — hot-reloaded via FSEvents
 - cc_mcp identity env: `ESR_SESSION_ID`, `ESR_WORKSPACE`, `ESR_CHAT_IDS`, `ESR_ROLE`
 
-## Terminology — adapter instance vs esrd environment
+## Terminology — adapter instance vs esrd environment vs esr user
 
-Two unrelated "instance"-shaped concepts; pre-PR-17 we conflated them.
+Three orthogonal "principal"-shaped concepts; don't conflate them.
 
 - **adapter instance** — a configured runtime instance of an adapter type. Created by `esr adapter add <name> --type <type>`; ASCII identifier (PR-M validates). Examples: `esr_helper`, `esr_dev_helper`.
-- **esrd environment** (was: "esrd instance") — a single esrd daemon's runtime state directory. Identified by `ESRD_HOME` (`~/.esrd` for prod, `~/.esrd-dev` for dev). The env var is still `ESR_INSTANCE` for backward compat — don't be confused; in operator language, prefer "esrd environment".
+- **esrd environment** (was: "esrd instance") — a single esrd daemon's runtime state directory. Identified by `ESRD_HOME` (`~/.esrd` for prod, `~/.esrd-dev` for dev). The env var is still `ESR_INSTANCE` for backward compat — in operator language prefer "esrd environment".
+- **esr user** (PR-21a, 2026-04-29) — the canonical principal identity. Capabilities key on it; sessions are owned by it; inbound `<channel user_id="ou_…">` envelopes resolve to one via `users.yaml`. Manage via `esr user add/list/remove/bind-feishu/unbind-feishu`. Not the same as a Feishu open_id (`ou_*`) — one esr user can bind multiple feishu ids (e.g. one human registered with `esr_helper` + `esr_dev_helper` apps). Not the same as the OS user.
 
 See [`docs/superpowers/glossary.md`](docs/superpowers/glossary.md) §"Instances & addressing" for the canonical definitions.
+
+## Session URI shape (PR-21d)
+
+A session is identified globally by:
+
+```
+esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>
+```
+
+`<env>` lives in the URI's `org@` slot, mapping to `$ESR_INSTANCE`. tmux session name is the URI path translated `/` → `_`: `<env>_<username>_<workspace>_<session-name>`. Slash command grammar:
+
+```
+/new-session <workspace> name=<…> cwd=<…> worktree=<…>
+```
+
+`tag=` is accepted as alias for `name=` during the rollout window. `cwd` is a git worktree path (always); `worktree` is a branch name forked from `origin/main` per workspace's `root:` field. See spec [`docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md`](docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md).
 
 ## Three gotchas worth recalling
 
