@@ -21,7 +21,7 @@ defmodule Esr.Admin.Commands.Session.End do
   clean (D12 default "prune iff clean"). Dirty worktrees are kept on
   disk + a warning is logged.
 
-  Two-step interactive confirm via `EsrWeb.PendingActions` is staged
+  Two-step interactive confirm via `EsrWeb.PendingActionsGuard` is staged
   (PR-21e/f) but not wired here — for now `/end-session` is direct.
 
   ## Result

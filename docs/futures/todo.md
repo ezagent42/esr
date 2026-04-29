@@ -16,9 +16,7 @@
 
 ## In flight (current PR)
 
-| What | Status | Notes |
-|---|---|---|
-| Extract `*Guard` modules per migration plan (`UnboundChatGuard`, `UnboundUserGuard`, `PendingActionsGuard` rename) | pending — PR-21w | Per `docs/notes/actor-role-vocabulary.md` "Migration plan" §. ~200 LOC. |
+(none — PR-21w shipped)
 
 ## Pending — concrete next PRs
 
@@ -75,4 +73,6 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21t `#94` — chat-guide DM stale-text fix + `/new-workspace` bypass route
 - PR-21u `#97` — `docs/notes/actor-role-vocabulary.md` (canonical taxonomy)
 - PR-21v `#98` — `Esr.Role.*` compile-time category markers + vocab restructure
+- PR-21w-tracker `#99` — `docs/futures/todo.md` durable task tracker + `AdapterChannelNewChainTest` flake entry
+- PR-21w `#100` — `*Guard` extractions: `EsrWeb.PendingActions` → `PendingActionsGuard`, `Esr.Peers.UnboundChatGuard`, `Esr.Peers.UnboundUserGuard`
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session
