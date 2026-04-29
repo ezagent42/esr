@@ -184,25 +184,36 @@ def user_bind_feishu(name: str, feishu_user_id: str) -> None:
     doc["users"][name] = user_row
     _write_doc(path, doc)
 
-    # PR-21q: auto-grant the bootstrap caps to the freshly-bound
-    # feishu open_id. Without these, the operator's first slash
-    # command in Feishu (e.g. `/new-workspace`) would fail the
-    # cap check (`workspace.create` required by Workspace.New).
-    # Grants are keyed by the raw `ou_*` because the runtime's
-    # cap check uses `principal_id` from the inbound envelope, which
-    # is the open_id today (PR-21b's user-URI rekey is graceful
-    # fallback only — caps haven't been re-keyed onto esr usernames).
-    _bootstrap_grant_caps(feishu_user_id)
+    # PR-21y: caps are stored under the esr-username now, not the raw
+    # Feishu open_id. Two effects in one helper:
+    #   1. Migrate any pre-existing `ou_xxx`-keyed caps into `<name>`'s
+    #      entry (preserves grants made before bind-feishu).
+    #   2. Add the 4 bootstrap caps under `<name>` (PR-21q intent —
+    #      first slash in Feishu must work without manual cap setup).
+    #
+    # CapGuard's read path uses `Esr.Capabilities.has?/2`, which post-
+    # PR-21s does graceful resolve (open_id → username). So the chain
+    # `inbound principal_id=ou_xxx → has? → username lookup → cap hit`
+    # works correctly with username-keyed storage.
+    migrated = _bootstrap_grant_caps(name, feishu_user_id)
 
     click.echo(f"bound {feishu_user_id} to esr user {name}")
+    if migrated:
+        click.echo(
+            f"  ↪ migrated {len(migrated)} existing cap(s) from {feishu_user_id} "
+            f"to {name}: {', '.join(migrated)}"
+        )
     click.echo(
         f"  + auto-granted workspace.create / session:default/create / "
-        f"session:default/end / session.list to {feishu_user_id}"
+        f"session:default/end / session.list to {name}"
     )
 
 
-def _bootstrap_grant_caps(feishu_user_id: str) -> None:
-    """PR-21q: write a default cap grant for a freshly-bound feishu id.
+def _bootstrap_grant_caps(name: str, feishu_user_id: str) -> list[str]:
+    """PR-21y: write the bootstrap cap grants under the esr-username
+    (`name`). Also migrate any pre-existing `ou_xxx`-keyed caps into
+    the `name` entry so PR-21s graceful resolve isn't load-bearing
+    for routine reads going forward.
 
     The four bootstrap caps an active operator needs:
 
@@ -211,11 +222,11 @@ def _bootstrap_grant_caps(feishu_user_id: str) -> None:
     - session:default/end     — for `/end-session` slash
     - session.list            — for `/sessions`, `/workspace info`, etc.
 
-    Pure file-write — uses the same ruamel round-trip as the rest of
-    this module so existing comments / formatting in capabilities.yaml
-    survive. Skips silently when a grant is already present
-    (idempotent — re-running `bind-feishu` with the same args
-    won't duplicate cap entries).
+    Returns the list of cap strings migrated from the `ou_xxx` entry
+    (excluding the 4 bootstrap caps, which are reported separately
+    via the `+ auto-granted` line). Pure file-write — uses the same
+    ruamel round-trip as the rest of this module so existing comments
+    survive. Idempotent.
     """
     from esr.cli.paths import capabilities_yaml_path
 
@@ -235,30 +246,55 @@ def _bootstrap_grant_caps(feishu_user_id: str) -> None:
 
     principals = doc.setdefault("principals", [])
 
-    # Find or create the principal entry
-    principal_entry = None
-    for p in principals:
-        if isinstance(p, dict) and p.get("id") == feishu_user_id:
-            principal_entry = p
-            break
+    name_entry = None
+    ou_entry = None
+    ou_index = None
+    for idx, p in enumerate(principals):
+        if not isinstance(p, dict):
+            continue
+        if p.get("id") == name:
+            name_entry = p
+        elif p.get("id") == feishu_user_id:
+            ou_entry = p
+            ou_index = idx
 
-    if principal_entry is None:
-        principal_entry = {
-            "id": feishu_user_id,
-            "kind": "feishu_user",
+    if name_entry is None:
+        name_entry = {
+            "id": name,
+            "kind": "esr_user",
             "capabilities": [],
         }
-        principals.append(principal_entry)
+        principals.append(name_entry)
 
-    held = list(principal_entry.get("capabilities") or [])
+    held = list(name_entry.get("capabilities") or [])
+
+    # Step 1: migrate existing ou_xxx caps into the username entry
+    # (skip caps already held under the username; report only the
+    # non-bootstrap migrations to the operator).
+    migrated: list[str] = []
+    if ou_entry is not None:
+        ou_caps = list(ou_entry.get("capabilities") or [])
+        for cap in ou_caps:
+            if cap not in held:
+                held.append(cap)
+            if cap not in target_caps and cap not in migrated:
+                migrated.append(cap)
+        # Drop the `ou_xxx` entry — its caps live under `name` now.
+        if ou_index is not None:
+            principals.pop(ou_index)
+
+    # Step 2: ensure the 4 bootstrap caps are present under the
+    # username (idempotent — `cap not in held` skips dupes).
     for cap in target_caps:
         if cap not in held:
             held.append(cap)
-    principal_entry["capabilities"] = held
+    name_entry["capabilities"] = held
 
     caps_path.parent.mkdir(parents=True, exist_ok=True)
     with caps_path.open("w") as f:
         _yaml.dump(doc, f)
+
+    return migrated
 
 
 @user.command("unbind-feishu")
@@ -290,24 +326,31 @@ def user_unbind_feishu(name: str, feishu_user_id: str) -> None:
     doc["users"][name] = user_row
     _write_doc(path, doc)
 
-    revoked = _bootstrap_revoke_caps(feishu_user_id)
+    # PR-21y: auto-revoke the 4 bootstrap caps from the username entry
+    # ONLY when no Feishu binding remains (the user can't invoke caps
+    # via Feishu anymore — symmetric to bind's auto-grant). Caps remain
+    # under the username if other open_ids are still bound. Manual
+    # grants are preserved either way.
+    revoked: list[str] = []
+    if not ids:
+        revoked = _bootstrap_revoke_caps(name)
 
     click.echo(f"unbound {feishu_user_id} from esr user {name}")
     if revoked:
         click.echo(
             f"  - auto-revoked {len(revoked)} bootstrap cap(s) from "
-            f"{feishu_user_id}: {', '.join(revoked)}"
+            f"{name} (no Feishu bindings remain): {', '.join(revoked)}"
         )
 
 
-def _bootstrap_revoke_caps(feishu_user_id: str) -> list[str]:
-    """PR-21s: counterpart to _bootstrap_grant_caps. Revoke ONLY the
-    4 caps bind-feishu auto-granted; preserve any manually-added grants
-    (e.g. `cap grant ou_xxx admin`).
+def _bootstrap_revoke_caps(principal_id: str) -> list[str]:
+    """PR-21y: counterpart to `_bootstrap_grant_caps`. Revoke ONLY the
+    4 bootstrap caps from `principal_id`'s entry; preserve any
+    manually-added grants. Caller decides whether to invoke this (e.g.
+    unbind-feishu only calls it when no Feishu binding remains).
 
-    Returns the list of caps actually removed (for the operator-facing
-    confirmation message). Empty list when the principal entry is gone
-    or has no overlap with the bootstrap set.
+    Returns the list of caps actually removed. Empty list when the
+    principal entry is missing or has no overlap with the bootstrap set.
     """
     from esr.cli.paths import capabilities_yaml_path
 
@@ -329,7 +372,7 @@ def _bootstrap_revoke_caps(feishu_user_id: str) -> list[str]:
     revoked: list[str] = []
 
     for p in principals:
-        if not isinstance(p, dict) or p.get("id") != feishu_user_id:
+        if not isinstance(p, dict) or p.get("id") != principal_id:
             continue
         held = list(p.get("capabilities") or [])
         kept: list[str] = []
@@ -349,7 +392,7 @@ def _bootstrap_revoke_caps(feishu_user_id: str) -> list[str]:
         for p in principals
         if not (
             isinstance(p, dict)
-            and p.get("id") == feishu_user_id
+            and p.get("id") == principal_id
             and not (p.get("capabilities") or [])
         )
     ]
