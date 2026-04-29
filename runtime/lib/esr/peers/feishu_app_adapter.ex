@@ -118,6 +118,28 @@ defmodule Esr.Peers.FeishuAppAdapter do
     args = get_in(envelope, ["payload", "args"]) || %{}
     chat_id = args["chat_id"] || ""
     thread_id = args["thread_id"] || ""
+
+    # PR-21f: PendingActions interception (D15). If this principal+chat
+    # has a registered destructive-action prompt awaiting confirm/cancel,
+    # consume the bare-word answer here BEFORE slash parsing or
+    # active-thread fallback. The PendingActions module forwards the
+    # verdict to the registered reply_pid; the resolver decides what to
+    # do (e.g. /end-session resolver calls Esr.Worktree.remove).
+    principal_id = envelope["principal_id"] || ""
+    text = (args["content"] || args["text"] || "") |> to_string()
+
+    case Process.whereis(EsrWeb.PendingActions) &&
+           EsrWeb.PendingActions.intercept?(principal_id, chat_id, text) do
+      {:consume, _verdict} ->
+        # Drop the inbound — consumer already notified.
+        {:forward, [], state}
+
+      _ ->
+        do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+    end
+  end
+
+  defp do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state) do
     # PR-A T1: prefer args["app_id"] (Python adapter sets it post-PR-A);
     # fall back to state.instance_id for the case where an older Python
     # sidecar is still running mid-rollout. The fallback lets scenario

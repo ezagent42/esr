@@ -356,7 +356,7 @@ class MockFeishu:
         """POST /push_inbound — scenario helper: inject a Feishu-side
         inbound message as if a user typed it. Body JSON shape:
         {"chat_id": "oc_x", "app_id": "cli_x", "user": "ou_user1",
-         "text": "/new-session esr-dev tag=root"}
+         "text": "/new-session esr-dev name=root cwd=/path/to/wt worktree=root"}
 
         PR-A T6: optional `app_id` selects the routing bucket. When
         omitted, the helper fans out to **every currently-connected

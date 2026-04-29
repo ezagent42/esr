@@ -177,7 +177,8 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     :ok =
       Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
         name: "ws_for_new_chat_thread_test",
-        cwd: "/tmp",
+        owner: nil,
+        root: "/tmp",
         chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
       })
 
