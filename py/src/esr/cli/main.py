@@ -21,6 +21,7 @@ from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
 from esr.cli.notify import notify as notify_cmd
 from esr.cli.reload import reload as reload_cmd
+from esr.cli.daemon import daemon as daemon_group
 from esr.cli.users import user as user_group
 from esr.ipc.channel_client import ChannelClient
 
@@ -105,6 +106,12 @@ cli.add_command(notify_cmd)
 # PR-21a: `esr user` — esr-user registry + feishu binding. Day-1 of the
 # multi-user redesign (linyilun + yaoshengyue developing together).
 cli.add_command(user_group)
+
+# PR-21n: `esr daemon` — esrd lifecycle (start / stop / restart / status).
+# Wraps launchctl operations so operators don't have to memorize plist
+# paths. Selects prod / dev daemon via the same ESRD_HOME env var as
+# every other subcommand.
+cli.add_command(daemon_group)
 
 
 @cli.command("use")
