@@ -73,7 +73,8 @@ defmodule Esr.Peers.FeishuChatProxyCrossAppTest do
   defp put_chat_in_workspace(ws_name, chat_id, app_id) do
     Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
       name: ws_name,
-      cwd: "/tmp",
+      owner: nil,
+      root: "/tmp",
       start_cmd: "",
       role: "dev",
       chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}],

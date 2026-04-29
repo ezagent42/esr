@@ -11,12 +11,13 @@ defmodule Esr.Workspaces.RegistryTest do
     %{path: path}
   end
 
-  test "load_from_file/1 parses schema_version 1", %{path: path} do
+  test "load_from_file/1 parses schema_version 1 (PR-21c: owner+root replace cwd)", %{path: path} do
     File.write!(path, """
     schema_version: 1
     workspaces:
       esr-dev:
-        cwd: /tmp/x
+        owner: linyilun
+        root: /Users/h2oslabs/Workspace/esr
         start_cmd: scripts/esr-cc.sh
         role: dev
         chats:
@@ -26,11 +27,25 @@ defmodule Esr.Workspaces.RegistryTest do
     {:ok, workspaces} = Registry.load_from_file(path)
     assert Map.has_key?(workspaces, "esr-dev")
     ws = workspaces["esr-dev"]
-    assert ws.cwd == "/tmp/x"
+    assert ws.owner == "linyilun"
+    assert ws.root == "/Users/h2oslabs/Workspace/esr"
     assert ws.role == "dev"
     assert [%{"chat_id" => "oc_x"}] = ws.chats
     # PR-C: workspaces without `neighbors` parse with an empty list.
     assert ws.neighbors == []
+  end
+
+  test "load_from_file/1 tolerates missing owner/root (admit nil)", %{path: path} do
+    File.write!(path, """
+    workspaces:
+      legacy:
+        chats: []
+    """)
+
+    {:ok, workspaces} = Registry.load_from_file(path)
+    ws = workspaces["legacy"]
+    assert ws.owner == nil
+    assert ws.root == nil
   end
 
   test "load_from_file/1 missing file returns empty map" do
@@ -41,7 +56,8 @@ defmodule Esr.Workspaces.RegistryTest do
     File.write!(path, """
     workspaces:
       ws_translator:
-        cwd: /tmp/translator
+        owner: linyilun
+        root: /tmp/translator
         chats:
           - {chat_id: oc_t, app_id: cli_t, kind: dm, name: translator-room}
         neighbors:
@@ -78,7 +94,8 @@ defmodule Esr.Workspaces.RegistryTest do
     schema_version: 1
     workspaces:
       ws_dev:
-        cwd: /tmp/dev
+        owner: linyilun
+        root: /tmp/dev
         chats:
           - {chat_id: oc_dev, app_id: cli_dev, kind: group, name: dev-room}
           - {chat_id: oc_dev_dm, app_id: cli_dev, kind: dm}
@@ -87,7 +104,8 @@ defmodule Esr.Workspaces.RegistryTest do
           - chat:oc_legal_special
           - user:ou_admin
       ws_kanban:
-        cwd: /tmp/kanban
+        owner: linyilun
+        root: /tmp/kanban
         chats:
           - {chat_id: oc_kanban, app_id: cli_kanban, kind: group}
     """)
@@ -129,7 +147,8 @@ defmodule Esr.Workspaces.RegistryTest do
       :ok =
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
-          cwd: "/tmp",
+          owner: "linyilun",
+          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [
@@ -147,7 +166,8 @@ defmodule Esr.Workspaces.RegistryTest do
       :ok =
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
-          cwd: "/tmp",
+          owner: "linyilun",
+          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
@@ -161,7 +181,8 @@ defmodule Esr.Workspaces.RegistryTest do
       :ok =
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
-          cwd: "/tmp",
+          owner: "linyilun",
+          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
@@ -171,7 +192,8 @@ defmodule Esr.Workspaces.RegistryTest do
       :ok =
         Registry.put(%Registry.Workspace{
           name: "ws_beta",
-          cwd: "/tmp",
+          owner: "linyilun",
+          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_c", "app_id" => "cli_y", "kind" => "group"}],
@@ -181,7 +203,8 @@ defmodule Esr.Workspaces.RegistryTest do
       :ok =
         Registry.put(%Registry.Workspace{
           name: "ws_empty",
-          cwd: "/tmp",
+          owner: "linyilun",
+          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [],
