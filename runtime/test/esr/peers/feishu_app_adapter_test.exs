@@ -292,6 +292,224 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     end
   end
 
+  describe "PR-21i: unbound-user guide DM" do
+    setup do
+      # Ensure Esr.Users.Registry is up + empty for these tests.
+      if Process.whereis(Esr.Users.Registry) == nil do
+        start_supervised!(Esr.Users.Registry)
+      end
+
+      Esr.Users.Registry.load_snapshot(%{})
+      :ok
+    end
+
+    test "chat-bound + user-unbound emits user-guide DM", %{sup: sup} do
+      # Pre: register a workspace bound to (oc_user_test, inst_user_guide)
+      :ok =
+        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+          name: "ws_for_user_guide_test",
+          owner: "linyilun",
+          root: "/tmp",
+          chats: [
+            %{"chat_id" => "oc_user_test", "app_id" => "inst_user_guide", "kind" => "dm"}
+          ]
+        })
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_user_guide")
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_user_guide", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        # PR-21i: top-level user_id (Feishu envelope shape)
+        "user_id" => "ou_unbound_xyz",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_user_test",
+            "app_id" => "inst_user_guide",
+            "thread_id" => "",
+            "content" => "/help"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{
+                           "action" => "send_message",
+                           "args" => %{"chat_id" => "oc_user_test", "content" => content}
+                         }
+                       }
+                     },
+                     500
+
+      # DM mentions the user-bind command + carries the open_id verbatim
+      assert content =~ "user bind-feishu"
+      assert content =~ "ou_unbound_xyz"
+
+      # No new_chat_thread broadcast — inbound dropped at user-guide gate
+      refute_receive {:new_chat_thread, _, _, _, _}, 200
+    end
+
+    test "chat-bound + user-bound proceeds normally (no user-guide DM)",
+         %{sup: sup} do
+      # Bind ou_known_xyz to linyilun
+      :ok =
+        Esr.Users.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Users.Registry.User{
+            username: "linyilun",
+            feishu_ids: ["ou_known_xyz"]
+          }
+        })
+
+      :ok =
+        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+          name: "ws_for_user_bound_test",
+          owner: "linyilun",
+          root: "/tmp",
+          chats: [
+            %{"chat_id" => "oc_bound", "app_id" => "inst_user_bound", "kind" => "dm"}
+          ]
+        })
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_user_bound", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_known_xyz",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_bound",
+            "app_id" => "inst_user_bound",
+            "thread_id" => "om_t1",
+            "content" => "hello"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      # Should reach session-routing path (broadcast new_chat_thread since
+      # no live session exists) — NOT trapped by user-guide gate.
+      assert_receive {:new_chat_thread, "inst_user_bound", "oc_bound", "om_t1", ^envelope}, 500
+    end
+
+    test "chat unbound: chat-guide DM takes precedence (user-guide does not pile on)",
+         %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_chat_first")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_chat_first", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_unbound_too",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_chat_unbound",
+            "app_id" => "inst_chat_first",
+            "thread_id" => "",
+            "content" => "/help"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "payload" => %{
+                           "args" => %{"content" => content}
+                         }
+                       }
+                     },
+                     500
+
+      # The chat-guide DM mentions `workspace add`; the user-guide DM
+      # mentions `user bind-feishu`. We expect the chat one only.
+      assert content =~ "workspace add"
+      refute content =~ "user bind-feishu"
+
+      # No second DM stacked on top
+      refute_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 200
+    end
+
+    test "second inbound from same unbound user is rate-limited", %{sup: sup} do
+      :ok =
+        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+          name: "ws_for_user_ratelimit",
+          owner: "linyilun",
+          root: "/tmp",
+          chats: [
+            %{"chat_id" => "oc_ratelimit", "app_id" => "inst_user_ratelimit", "kind" => "dm"}
+          ]
+        })
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_user_ratelimit")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_user_ratelimit", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = fn n ->
+        %{
+          "user_id" => "ou_spam",
+          "payload" => %{
+            "event_type" => "msg_received",
+            "args" => %{
+              "chat_id" => "oc_ratelimit",
+              "app_id" => "inst_user_ratelimit",
+              "thread_id" => "",
+              "content" => "msg #{n}"
+            }
+          }
+        }
+      end
+
+      send(pid, {:inbound_event, envelope.(1)})
+      send(pid, {:inbound_event, envelope.(2)})
+      send(pid, {:inbound_event, envelope.(3)})
+
+      # Exactly one user-guide DM directive
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "payload" => %{"args" => %{"content" => content}}
+                       }
+                     },
+                     500
+
+      assert content =~ "user bind-feishu"
+
+      refute_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 200
+    end
+  end
+
   describe "handle_downstream wrap_as_directive/2 (PR-9 T10/T11b)" do
     # The downstream path broadcasts on `adapter:feishu/<instance_id>` with
     # event="envelope" and a *directive*-shaped payload. Subscribe to the
