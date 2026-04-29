@@ -3,7 +3,7 @@ defmodule Esr.Admin.Commands.Session.End do
   `Esr.Admin.Commands.Session.End` — the consolidated agent-session
   teardown admin command (PR-3 P3-9.2; dispatcher kind `session_end`).
 
-  ## PR-21g resolution path
+  ## PR-21g / PR-22 resolution path
 
   Two arg shapes accepted:
 
@@ -15,11 +15,11 @@ defmodule Esr.Admin.Commands.Session.End do
     `$ESR_INSTANCE`; `username` and `workspace` come from the args
     (threaded by `SlashHandler`).
 
-  When the args carry `cwd` (PR-21d slash) AND the workspace's
-  `root:` is configured, `Esr.Worktree.remove/3` is called after the
-  router teardown — but only when the worktree is clean (D12 default
-  "prune iff clean"). Dirty worktrees are kept on disk + a warning is
-  logged.
+  When the args carry `cwd` AND `root` (PR-22: both per-session, both
+  threaded by SlashHandler from /end-session), `Esr.Worktree.remove/3`
+  is called after the router teardown — but only when the worktree is
+  clean (D12 default "prune iff clean"). Dirty worktrees are kept on
+  disk + a warning is logged.
 
   Two-step interactive confirm via `EsrWeb.PendingActions` is staged
   (PR-21e/f) but not wired here — for now `/end-session` is direct.
@@ -93,22 +93,18 @@ defmodule Esr.Admin.Commands.Session.End do
 
   defp end_by_session_id(sid, args) do
     cwd = args["cwd"]
-
-    workspace_root =
-      case args["workspace"] do
-        ws when is_binary(ws) and ws != "" ->
-          case Esr.Workspaces.Registry.get(ws) do
-            {:ok, %{root: r}} when is_binary(r) and r != "" -> r
-            _ -> nil
-          end
-
-        _ ->
-          nil
-      end
+    # PR-22: root is per-session now (was workspace-level pre PR-22).
+    # /end-session arrives via slash with the session's URI tuple; the
+    # router can't trivially look up the per-session root post-teardown,
+    # so we accept args["root"] from the slash threading. Operators who
+    # invoke /end-session without root= miss the worktree-prune step
+    # (we just log "skipped" and let them clean up via `git worktree
+    # remove --force` manually).
+    session_root = args["root"]
 
     case Esr.SessionRouter.end_session(sid) do
       :ok ->
-        worktree_removed = maybe_remove_worktree(workspace_root, cwd)
+        worktree_removed = maybe_remove_worktree(session_root, cwd)
 
         {:ok,
          %{

@@ -438,8 +438,43 @@ defmodule Esr.Peers.SlashHandlerTest do
     end
   end
 
-  describe "PR-21k /new-workspace slash" do
-    test "parses name + root= into workspace_new kind" do
+  describe "PR-21k /new-workspace slash (PR-22 amended)" do
+    test "parses bare name into workspace_new kind (no root= required)" do
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/new-workspace my-ws", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_new",
+                         "args" => %{
+                           "name" => "my-ws",
+                           "chat_id" => "oc_z"
+                         } = args
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+
+      # PR-22: workspace.New args no longer include `root` (workspace
+      # has no repo identity).
+      refute Map.has_key?(args, "root")
+    end
+
+    test "ignores legacy root= in args (silently drops, doesn't error)" do
       {:ok, pid} =
         GenServer.start_link(
           SlashHandler,
@@ -454,7 +489,7 @@ defmodule Esr.Peers.SlashHandlerTest do
       envelope = %{
         "principal_id" => "p_user",
         "payload" => %{
-          "text" => "/new-workspace my-ws root=/Users/me/Workspace/my-repo",
+          "text" => "/new-workspace my-ws root=/Users/me/legacy",
           "chat_id" => "oc_z"
         }
       }
@@ -462,19 +497,16 @@ defmodule Esr.Peers.SlashHandlerTest do
       send(pid, {:slash_cmd, envelope, self()})
 
       assert_receive {:"$gen_cast",
-                      {:execute,
-                       %{
-                         "kind" => "workspace_new",
-                         "args" => %{
-                           "name" => "my-ws",
-                           "root" => "/Users/me/Workspace/my-repo",
-                           "chat_id" => "oc_z"
-                         }
-                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                      {:execute, %{"kind" => "workspace_new", "args" => args},
+                       {:reply_to, {:pid, ^pid, _ref}}}},
                      500
+
+      # PR-22: legacy root= silently dropped — operator's typo doesn't
+      # fail the parse, we just don't propagate it.
+      refute Map.has_key?(args, "root")
     end
 
-    test "missing root= returns user-facing error" do
+    test "missing name returns user-facing error" do
       {:ok, pid} =
         GenServer.start_link(
           SlashHandler,
@@ -488,13 +520,13 @@ defmodule Esr.Peers.SlashHandlerTest do
 
       envelope = %{
         "principal_id" => "p_user",
-        "payload" => %{"text" => "/new-workspace foo", "chat_id" => "oc_z"}
+        "payload" => %{"text" => "/new-workspace", "chat_id" => "oc_z"}
       }
 
       send(pid, {:slash_cmd, envelope, self()})
 
       assert_receive {:reply, text}, 500
-      assert text =~ "root="
+      assert text =~ "<name>"
     end
   end
 end

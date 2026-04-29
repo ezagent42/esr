@@ -1,15 +1,19 @@
-"""workspaces.yaml read/write helpers (spec §5.1, PR-21c schema bump).
+"""workspaces.yaml read/write helpers (spec §5.1, PR-22 schema bump).
 
 Schema (schema_version: 1):
   workspaces:
     <name>:
-      owner: <esr-username>           # PR-21c — replaces removed `cwd:`
-      root: <path-to-main-git-repo>   # PR-21c — main checkout for worktree forks
+      owner: <esr-username>           # PR-21c
       start_cmd: <cmd>
       role: <role>
       chats:
         - {chat_id, app_id, kind: dm|group}
       env: {KEY: VAL, ...}
+
+PR-22 (2026-04-29): `root:` removed — workspace is purely user
+config (chat bindings, role, metadata, neighbors). The git repo a
+session forks from is now a per-session arg in /new-session.
+Legacy `root:` in yaml is silently ignored.
 """
 from __future__ import annotations
 
@@ -26,7 +30,6 @@ SCHEMA_VERSION = 1
 class Workspace:
     name: str
     owner: str | None
-    root: str | None
     start_cmd: str
     role: str
     chats: list[dict[str, str]] = field(default_factory=list)
@@ -41,10 +44,10 @@ def read_workspaces(path: Path) -> dict[str, Workspace]:
     doc = yaml.safe_load(path.read_text()) or {}
     out: dict[str, Workspace] = {}
     for name, row in (doc.get("workspaces") or {}).items():
+        # PR-22: row.get("root") silently ignored
         out[name] = Workspace(
             name=name,
             owner=row.get("owner"),
-            root=row.get("root"),
             start_cmd=row.get("start_cmd", ""),
             role=row.get("role", "dev"),
             chats=list(row.get("chats") or []),
@@ -79,8 +82,6 @@ def write_workspace(path: Path, workspace: Workspace) -> None:
     }
     if workspace.owner is not None:
         row["owner"] = workspace.owner
-    if workspace.root is not None:
-        row["root"] = workspace.root
 
     workspaces[workspace.name] = row
     path.write_text(yaml.safe_dump(doc, sort_keys=True))

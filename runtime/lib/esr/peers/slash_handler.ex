@@ -205,18 +205,19 @@ defmodule Esr.Peers.SlashHandler do
     case String.split(text, " ", parts: 2) do
       ["/new-session", rest] -> parse_new_session(rest)
       ["/new-session"] ->
-        {:error, "/new-session requires <workspace> and name= cwd= worktree=, e.g. " <>
-                   "/new-session esr-dev name=foo cwd=/path/to/wt worktree=foo"}
+        {:error, "/new-session requires <workspace> and name= root= cwd= worktree=, e.g. " <>
+                   "/new-session esr-dev name=foo root=/path/to/repo cwd=/path/to/wt worktree=foo"}
       ["/end-session", rest] -> parse_end_session(rest)
       ["/end-session"] -> {:error, "/end-session requires <name>"}
-      # PR-21k: create a workspace from inside Feishu chat. Auto-binds
-      # this chat to the new workspace's chats: list. owner defaults to
-      # the resolved esr user (envelope.user_id → users.yaml).
+      # PR-21k + PR-22: create a workspace from inside Feishu chat.
+      # Auto-binds this chat to the new workspace's chats: list. owner
+      # defaults to the resolved esr user (envelope.user_id →
+      # users.yaml). PR-22 (2026-04-29): `root=` arg removed —
+      # workspace no longer carries a repo identity.
       ["/new-workspace", rest] -> parse_new_workspace(rest)
       ["/new-workspace"] ->
         {:error,
-         "/new-workspace requires <name> and root=<path>, e.g. " <>
-           "/new-workspace my-ws root=/Users/me/Workspace/my-repo"}
+         "/new-workspace requires <name>, e.g. /new-workspace my-ws"}
       # PR-21j: `/sessions` and `/list-sessions` lift the empty-args
       # default — SlashHandler's merge_chat_context resolves the chat's
       # workspace and Session.List uses it to filter by the URI tuple.
@@ -244,12 +245,12 @@ defmodule Esr.Peers.SlashHandler do
           name == "" ->
             {:error, "/new-workspace requires <name> as first arg"}
 
-          is_nil(kv["root"]) or kv["root"] == "" ->
-            {:error, "/new-workspace requires root=<absolute-path>"}
-
           true ->
+            # PR-22 (2026-04-29): `root=` no longer accepted — workspace
+            # has no repo identity. Per-session `root=` (in /new-session)
+            # is the new home.
             args =
-              %{"name" => name, "root" => kv["root"]}
+              %{"name" => name}
               |> maybe_put("role", kv["role"])
               |> maybe_put("start_cmd", kv["start_cmd"])
               |> maybe_put("owner", kv["owner"])
@@ -258,7 +259,7 @@ defmodule Esr.Peers.SlashHandler do
         end
 
       [] ->
-        {:error, "/new-workspace requires <name> and root=<path>"}
+        {:error, "/new-workspace requires <name>"}
     end
   end
 
@@ -275,8 +276,23 @@ defmodule Esr.Peers.SlashHandler do
 
   defp parse_end_session(rest) do
     case tokenize(rest) do
-      [name | _] -> {:ok, "session_end", %{"session_id" => name, "name" => name}}
-      [] -> {:error, "/end-session requires <name>"}
+      [name | kvs] when is_binary(name) ->
+        # PR-22: optional root= + cwd= args let Session.End prune the
+        # worktree post-teardown without re-querying state. The most
+        # common form remains bare `/end-session foo` — Session.End
+        # then skips the worktree-prune step (operator can clean up
+        # via git CLI later).
+        kv = parse_kv_pairs(kvs)
+
+        args =
+          %{"session_id" => name, "name" => name}
+          |> maybe_put("root", kv["root"])
+          |> maybe_put("cwd", kv["cwd"])
+
+        {:ok, "session_end", args}
+
+      [] ->
+        {:error, "/end-session requires <name>"}
     end
   end
 
@@ -301,8 +317,14 @@ defmodule Esr.Peers.SlashHandler do
         true ->
           name = kv["name"] || kv["tag"]
 
+          # PR-22: thread per-session `root=` (the git repo to fork
+          # worktree from) into args. Optional in the parser — Session.New
+          # rejects with a clear error if absent AND worktree= was given
+          # (i.e., spawn would need git access). Sessions without
+          # worktree= can still spawn without root=, just no worktree fork.
           args =
             %{"workspace" => workspace, "name" => name, "tag" => name}
+            |> maybe_put("root", kv["root"])
             |> maybe_put("cwd", kv["cwd"])
             |> maybe_put("worktree", kv["worktree"])
 

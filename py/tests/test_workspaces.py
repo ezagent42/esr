@@ -15,7 +15,6 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
     ws = Workspace(
         name="esr-dev",
         owner="linyilun",
-        root="/Users/h2oslabs/Workspace/esr",
         start_cmd="scripts/esr-cc.sh",
         role="dev",
         chats=[{"chat_id": "oc_x", "app_id": "cli_x", "kind": "dm"}],
@@ -27,29 +26,50 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
     assert "esr-dev" in loaded
     assert loaded["esr-dev"].role == "dev"
     assert loaded["esr-dev"].owner == "linyilun"
-    assert loaded["esr-dev"].root == "/Users/h2oslabs/Workspace/esr"
+    # PR-22: workspace.root removed
+    assert not hasattr(loaded["esr-dev"], "root")
     assert loaded["esr-dev"].chats == [{"chat_id": "oc_x", "app_id": "cli_x", "kind": "dm"}]
 
 
 def test_write_rejects_duplicate_name(tmp_path: Path) -> None:
     f = tmp_path / "workspaces.yaml"
     ws = Workspace(
-        name="x", owner=None, root="/", start_cmd="a", role="dev", chats=[], env={}
+        name="x", owner=None, start_cmd="a", role="dev", chats=[], env={}
     )
     write_workspace(f, ws)
     with pytest.raises(ValueError, match="already exists"):
         write_workspace(f, ws)
 
 
-def test_optional_owner_root_omitted_from_yaml_when_none(tmp_path: Path) -> None:
-    """PR-21c: owner/root are optional; None should not write the key."""
+def test_optional_owner_omitted_from_yaml_when_none(tmp_path: Path) -> None:
+    """PR-21c: owner is optional; None should not write the key."""
     f = tmp_path / "workspaces.yaml"
     ws = Workspace(
-        name="legacy", owner=None, root=None, start_cmd="a", role="dev",
+        name="legacy", owner=None, start_cmd="a", role="dev",
         chats=[], env={},
     )
     write_workspace(f, ws)
 
     raw = f.read_text()
     assert "owner" not in raw
+    # PR-22: root never written under any condition
     assert "root" not in raw
+
+
+def test_legacy_yaml_with_root_field_silently_ignored(tmp_path: Path) -> None:
+    """PR-22: pre-PR-22 yaml may have `root:` entries; they're ignored."""
+    f = tmp_path / "workspaces.yaml"
+    f.write_text("""
+schema_version: 1
+workspaces:
+  legacy:
+    owner: linyilun
+    root: /should/be/ignored
+    start_cmd: x
+    role: dev
+""")
+    loaded = read_workspaces(f)
+    assert "legacy" in loaded
+    assert loaded["legacy"].owner == "linyilun"
+    # The `root` key on disk is silently dropped at parse time
+    assert not hasattr(loaded["legacy"], "root")

@@ -18,7 +18,6 @@ defmodule Esr.Admin.Commands.Workspace.InfoTest do
       Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
         name: "ws_info_test",
         owner: "linyilun",
-        root: "/Users/h2oslabs/Workspace/esr",
         role: "dev",
         start_cmd: "scripts/esr-cc.sh",
         chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
@@ -32,7 +31,8 @@ defmodule Esr.Admin.Commands.Workspace.InfoTest do
     assert {:ok, info} = WorkspaceInfo.execute(cmd)
     assert info["name"] == "ws_info_test"
     assert info["owner"] == "linyilun"
-    assert info["root"] == "/Users/h2oslabs/Workspace/esr"
+    # PR-22: workspace no longer carries `root:` — repo is per-session.
+    refute Map.has_key?(info, "root")
     assert info["role"] == "dev"
     assert info["chats"] == [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}]
     assert info["neighbors"] == ["workspace:other-ws"]

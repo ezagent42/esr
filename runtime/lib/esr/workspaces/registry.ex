@@ -15,6 +15,12 @@ defmodule Esr.Workspaces.Registry do
     @moduledoc """
     Workspace record loaded from yaml.
 
+    PR-22 (2026-04-29) — `root:` REMOVED. workspace is purely user
+    config (chat bindings, role, metadata, neighbors); it does not
+    know about specific git repos. The git repo a session forks
+    its worktree from is now a per-session arg (`root=` in
+    `/new-session` slash) — see spec v3.4.
+
     `chats` is a list of maps shaped
     `%{"chat_id" => _, "app_id" => _, "kind" => _, "name" => optional,
        "metadata" => optional}`.
@@ -26,7 +32,7 @@ defmodule Esr.Workspaces.Registry do
     them to the LLM verbatim, without code changes.
     """
     defstruct [
-      :name, :owner, :root, :start_cmd, :role, :chats, :env,
+      :name, :owner, :start_cmd, :role, :chats, :env,
       neighbors: [],
       metadata: %{}
     ]
@@ -88,10 +94,11 @@ defmodule Esr.Workspaces.Registry do
         workspaces =
           (parsed["workspaces"] || %{})
           |> Enum.map(fn {name, row} ->
+            # PR-22: row["root"] is admitted in yaml for backward-compat
+            # but ignored — workspace no longer carries a repo identity.
             ws = %Workspace{
               name: name,
               owner: row["owner"] || nil,
-              root: row["root"] || nil,
               start_cmd: row["start_cmd"] || "",
               role: row["role"] || "dev",
               chats: row["chats"] || [],

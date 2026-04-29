@@ -375,7 +375,6 @@ seed_workspaces() {
   cat > "${ESRD_HOME}/default/workspaces.yaml" <<'EOF'
 workspaces:
   e2e:
-    root: "/tmp/esr-e2e-workspace"
     start_cmd: ""
     role: "dev"
     chats:
@@ -510,7 +509,6 @@ seed_two_apps_workspaces() {
   ws_yaml="$(cat <<'EOF'
 workspaces:
   ws_dev:
-    root: "/tmp/esr-e2e-workspace-dev"
     start_cmd: ""
     role: "dev"
     chats:
@@ -519,7 +517,6 @@ workspaces:
       - {chat_id: oc_pra_orphan,     app_id: feishu_app_dev,    kind: dm}
     env: {}
   ws_kanban:
-    root: "/tmp/esr-e2e-workspace-kanban"
     start_cmd: ""
     role: "dev"
     chats:
