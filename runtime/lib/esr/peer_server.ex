@@ -840,6 +840,22 @@ defmodule Esr.PeerServer do
     end
   end
 
+  # PR-21z 2026-04-30 — security boundary: this is the ONLY function
+  # that decides what `describe_topology` exposes to the LLM. Build it
+  # as an explicit allowlist (NOT a denylist on the struct), so adding
+  # a new field to `%Workspace{}` doesn't accidentally leak it.
+  #
+  # **Excluded by design:**
+  #   - `owner` (esr-username — sensitive once paired with `users.yaml`'s
+  #     feishu_ids; describe_topology is principal-agnostic on purpose)
+  #   - `start_cmd` (operator config; could leak shell paths / args)
+  #   - `env` (workspace env block — may carry secrets)
+  #
+  # The chats sub-map uses its own allowlist for the same reason.
+  # **Never expose `users.yaml` data here** — feishu open_ids / esr-
+  # username pairings are out-of-band identity material that the LLM
+  # has no business reading. Default-deny: if you need a new field,
+  # add it AND a regression test in `peer_server_describe_topology_test.exs`.
   defp filter_workspace_for_describe(%Esr.Workspaces.Registry.Workspace{} = ws) do
     %{
       "name" => ws.name,
