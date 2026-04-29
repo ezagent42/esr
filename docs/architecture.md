@@ -127,7 +127,25 @@ from that spec to code on disk. PRs are tracked under
 > table **and** in [`README.md`](../README.md) §"E2E test scenarios" so
 > the index stays single-sourced.
 
+## Cross-boundary addressing
+
+esrd has one canonical addressing scheme for anything that crosses
+process / IPC boundaries: `esr://[org@]host[:port]/<segment>(/<segment>)*`.
+Both Elixir (`runtime/lib/esr/uri.ex`) and Python (`py/src/esr/uri.py`)
+ship parsers + builders that agree on the wire shape. Registered
+path-style types: `adapters`, `workspaces`, `chats`, `users`, `sessions`.
+
+Any new cross-process identifier should reuse this grammar — extending
+the registered type set if needed, never inventing a new scheme. See
+[`docs/notes/esr-uri-grammar.md`](notes/esr-uri-grammar.md) for the
+practical reference (grammar, every existing emit site, builder
+examples, when to add a new type).
+
+The reachable_set ACL in `Esr.PeerServer` keys off these URIs to
+enforce cross-boundary routing per spec §6.
+
 ## Cross-references
 - Spec: `docs/design/ESR-Protocol-v0.3.md`, `docs/superpowers/specs/2026-04-22-peer-session-refactor-design.md`.
+- URI grammar: [`docs/notes/esr-uri-grammar.md`](notes/esr-uri-grammar.md) + `docs/superpowers/glossary.md` §"esr:// URI" (canonical spec §7.5).
 - PR-by-PR progress snapshots: `docs/superpowers/progress/2026-04-23-pr*-snapshot.md`.
 - Developer notes: `docs/notes/README.md`.

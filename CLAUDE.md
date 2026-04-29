@@ -99,3 +99,4 @@ Long-form rationale lives in the linked notes.
 - "How does the LLM know which workspace it's in?" → [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) §九
 - "Why are there two CLAUDE.md files (root + roles/)?" → [`docs/dev-guide.md`](docs/dev-guide.md) §"CC session prompt prelude"
 - "What does each scenario actually exercise?" → [`README.md`](README.md) §"E2E test scenarios" + [`docs/architecture.md`](docs/architecture.md) §"E2E coverage map"
+- "How do I address a thing across processes / boundaries?" → [`docs/notes/esr-uri-grammar.md`](docs/notes/esr-uri-grammar.md) + [`runtime/lib/esr/uri.ex`](runtime/lib/esr/uri.ex). **Don't invent a new identifier shape — extend the existing `esr://` URI grammar.**
