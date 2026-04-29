@@ -109,6 +109,28 @@ defmodule Esr.WorkerSupervisor do
   end
 
   @doc """
+  PR-21m (2026-04-29): scan ``/tmp/esr-worker-*.pid`` for orphan
+  subprocesses (alive but not tracked by this WorkerSupervisor) and
+  SIGTERM them. Stale pidfiles for already-dead pids are unlinked.
+
+  Origin: BEAM crashes during PR-21 dev cycles caused subprocesses
+  to be re-parented to launchd (PID 1) without their parent esrd
+  knowing — the result was multiple Python feishu_adapter_runners
+  competing for the same Feishu app credential, producing the
+  silent message-loss the user reported. erlexec normally handles
+  same-process-tree cleanup; orphans require this pidfile-driven
+  sweep at boot.
+
+  Returns ``%{checked: n, orphans_killed: m, stale_unlinked: k}``
+  for the caller (Application boot logs it; ``esr daemon doctor``
+  surfaces it on demand).
+  """
+  @spec cleanup_orphans() :: %{checked: non_neg_integer(), orphans_killed: non_neg_integer(), stale_unlinked: non_neg_integer()}
+  def cleanup_orphans do
+    GenServer.call(__MODULE__, :cleanup_orphans)
+  end
+
+  @doc """
   Stop the Python adapter sidecar for `(adapter_name, instance_id)` and
   forget it. PR-L: counterpart to `ensure_adapter/4` so
   `cli:adapters/remove` can clean up the OS process. Idempotent — a
@@ -220,6 +242,52 @@ defmodule Esr.WorkerSupervisor do
       end
 
     {:reply, list, state}
+  end
+
+  def handle_call(:cleanup_orphans, _from, state) do
+    require Logger
+
+    tracked_pids =
+      state.workers
+      |> Map.values()
+      |> Enum.map(fn %{pid: pid} -> pid end)
+      |> MapSet.new()
+
+    stats =
+      Path.wildcard(Path.join(@pidfile_dir, "esr-worker-*.pid"))
+      |> Enum.reduce(%{checked: 0, orphans_killed: 0, stale_unlinked: 0}, fn path, acc ->
+        acc = Map.update!(acc, :checked, &(&1 + 1))
+
+        with {:ok, content} <- File.read(path),
+             {pid, _} <- Integer.parse(String.trim(content)),
+             true <- pid > 0 do
+          cond do
+            not pid_alive?(pid) ->
+              File.rm(path)
+              Map.update!(acc, :stale_unlinked, &(&1 + 1))
+
+            MapSet.member?(tracked_pids, pid) ->
+              # Tracked — leave alone
+              acc
+
+            true ->
+              Logger.info(
+                "WorkerSupervisor.cleanup_orphans: SIGTERM orphan subprocess pid=#{pid} pidfile=#{path}"
+              )
+
+              kill_pid(pid)
+              File.rm(path)
+              Map.update!(acc, :orphans_killed, &(&1 + 1))
+          end
+        else
+          # Malformed pidfile (empty / non-numeric) — treat as stale.
+          _ ->
+            File.rm(path)
+            Map.update!(acc, :stale_unlinked, &(&1 + 1))
+        end
+      end)
+
+    {:reply, stats, state}
   end
 
   @impl GenServer

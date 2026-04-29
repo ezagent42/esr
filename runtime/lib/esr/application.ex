@@ -172,6 +172,34 @@ defmodule Esr.Application do
       # advisory — set ESRD_HOME to override.
       _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
+
+      # PR-21m (2026-04-29): clean up orphan subprocesses BEFORE
+      # restore_adapters_from_disk re-spawns them. Origin: BEAM
+      # crashes during PR-21 dev cycles re-parented subprocesses to
+      # launchd (PID 1) — they outlived their parent esrd, kept
+      # holding Feishu app credentials, and produced silent message-
+      # loss when restore_adapters spawned a new sibling. The
+      # boot-time sweep ensures the new generation owns the Feishu
+      # WS without contention.
+      try do
+        stats = Esr.WorkerSupervisor.cleanup_orphans()
+        require Logger
+
+        Logger.info(
+          "WorkerSupervisor.cleanup_orphans at boot: " <>
+            "checked=#{stats.checked} orphans_killed=#{stats.orphans_killed} " <>
+            "stale_unlinked=#{stats.stale_unlinked}"
+        )
+      catch
+        kind, reason ->
+          require Logger
+
+          Logger.warning(
+            "WorkerSupervisor.cleanup_orphans failed (#{kind}: #{inspect(reason)}); " <>
+              "continuing boot"
+          )
+      end
+
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
 
       # PR-9 T10: spawn one FeishuAppAdapter (Elixir admin peer) per

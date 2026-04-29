@@ -183,3 +183,70 @@ def daemon_restart() -> None:
         raise SystemExit(1)
 
     click.echo(f"esrd ({label}) restarted")
+
+
+@daemon.command("doctor")
+@click.option(
+    "--cleanup-orphans",
+    is_flag=True,
+    default=False,
+    help="Sweep /tmp/esr-worker-*.pid for orphan subprocesses and SIGTERM them.",
+)
+def daemon_doctor(cleanup_orphans: bool) -> None:
+    """Health snapshot + on-demand orphan cleanup (PR-21m).
+
+    By default just reports the current state (workers tracked,
+    users / workspaces loaded). Pass --cleanup-orphans to actually
+    SIGTERM any subprocess found in /tmp/esr-worker-*.pid that this
+    esrd doesn't own — the same logic the boot path runs.
+    """
+    from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
+
+    label = _label_for_home()
+
+    def _data(reply: dict) -> dict:
+        # call_runtime returns a phx_reply envelope:
+        #   {"status": "ok", "response": {"data": {...}}}
+        if reply.get("status") != "ok":
+            raise RuntimeError(f"runtime returned non-ok: {reply!r}")
+        return (reply.get("response") or {}).get("data") or {}
+
+    try:
+        if cleanup_orphans:
+            stats = _data(call_runtime(topic="cli:daemon/cleanup_orphans", payload={}))
+            click.echo(f"esrd ({label}) orphan sweep:")
+            click.echo(f"  pidfiles checked: {stats.get('checked', 0)}")
+            click.echo(f"  orphans killed:   {stats.get('orphans_killed', 0)}")
+            click.echo(f"  stale unlinked:   {stats.get('stale_unlinked', 0)}")
+            return
+
+        data = _data(call_runtime(topic="cli:daemon/doctor", payload={}))
+
+        click.echo(f"🩺 esrd ({label}) health")
+        click.echo(f"  pid:                 {data.get('esrd_pid', '-')}")
+        click.echo(f"  users loaded:        {data.get('users_loaded', 0)}")
+        click.echo(f"  workspaces loaded:   {data.get('workspaces_loaded', 0)}")
+        click.echo(f"  workers tracked:     {data.get('workers_tracked', 0)}")
+
+        workers = data.get("workers") or []
+        if workers:
+            click.echo("  worker subprocess detail:")
+            for w in workers:
+                click.echo(
+                    f"    {w.get('kind', '?'):8s}  "
+                    f"{w.get('name', '?'):24s}  "
+                    f"{w.get('id', '?'):24s}  "
+                    f"pid={w.get('pid', '-')}"
+                )
+
+        click.echo()
+        click.echo("Tips:")
+        click.echo("  - Sweep orphan subprocesses: esr daemon doctor --cleanup-orphans")
+        click.echo("  - Lifecycle: esr daemon {start|stop|restart}")
+    except RuntimeUnreachable:
+        click.echo(
+            f"esrd ({label}) is not reachable on its WS port.\n"
+            f"  start: esr daemon start",
+            err=True,
+        )
+        raise SystemExit(1)
