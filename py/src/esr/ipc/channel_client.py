@@ -71,6 +71,11 @@ class ChannelClient:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
+        # PR-21l 2026-04-29: Phoenix v2 mandates a periodic heartbeat
+        # frame to keep the WebSocket alive past the server's idle
+        # timeout (60s default). Without this, the channel drops every
+        # ~60s and any inbound Feishu event arriving in the gap is lost.
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._shutdown: bool = False
 
         self._ref_counter = itertools.count(1)
@@ -92,21 +97,25 @@ class ChannelClient:
     # --- lifecycle -----------------------------------------------------
 
     async def connect(self) -> None:
-        """Open the WS and start the read loop."""
+        """Open the WS and start the read loop + Phoenix heartbeat."""
         self._session = aiohttp.ClientSession()
         self._ws = await self._session.ws_connect(self._url)
         self._is_disconnected = False
         self._reader_task = asyncio.create_task(self._read_loop())
+        # PR-21l: Phoenix heartbeat — server's idle timeout drops the
+        # connection at 60s without one.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def close(self) -> None:
         """Cancel all tasks, close the WS + session, stop reconnection."""
         self._shutdown = True
-        for task in (self._reader_task, self._reconnect_task):
+        for task in (self._reader_task, self._reconnect_task, self._heartbeat_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         self._reader_task = None
+        self._heartbeat_task = None
         self._reconnect_task = None
         if self._ws is not None:
             await self._ws.close()
@@ -194,6 +203,37 @@ class ChannelClient:
         if self._ws is None:
             raise RuntimeError("ws not connected")
         await self._ws.send_str(json.dumps(frame))
+
+    async def _heartbeat_loop(self) -> None:
+        """Send a Phoenix heartbeat frame every 30s.
+
+        PR-21l: without this, esrd's Phoenix WebSocket transport drops
+        the connection at its 60s idle timeout, which produced an
+        observable 60-65s reconnect cycle (Feishu inbound events
+        arriving in the gap got silently dropped).
+
+        Phoenix v2 heartbeat frame shape:
+            [null, ref, "phoenix", "heartbeat", {}]
+
+        Server replies with a phx_reply on the same ref (no payload
+        action needed; the read_loop already drains phx_reply for
+        normal joins / pushes — heartbeat replies will pass through
+        the same path harmlessly).
+        """
+        try:
+            while True:
+                await asyncio.sleep(30.0)
+                if self._ws is None or self._ws.closed:
+                    return
+                ref = str(next(self._ref_counter))
+                # join_ref slot is null for heartbeats — Phoenix recognises
+                # the special "phoenix" topic + "heartbeat" event without
+                # requiring an established join.
+                await self._send_frame([None, ref, "phoenix", "heartbeat", {}])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("heartbeat loop ended unexpectedly: %s", exc)
 
     async def _read_loop(self) -> None:
         assert self._ws is not None
