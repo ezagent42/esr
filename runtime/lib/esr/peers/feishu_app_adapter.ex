@@ -102,7 +102,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
        deny_dm_last_emit: %{},
        # PR-N 2026-04-28: per-chat rate limit for unbound-chat guide
        # DMs. Keys are chat_id, values are last-emit time in ms.
-       guide_dm_last_emit: %{}
+       guide_dm_last_emit: %{},
+       # PR-21i 2026-04-29: per-feishu_id rate limit for unbound-user
+       # guide DMs. Keys are feishu open_id (`ou_*`), values are
+       # last-emit time in ms. Same 10-min window as the chat guide.
+       user_guide_dm_last_emit: %{}
      }}
   end
 
@@ -135,7 +139,23 @@ defmodule Esr.Peers.FeishuAppAdapter do
         {:forward, [], state}
 
       _ ->
-        do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+        # PR-21i 2026-04-29: when the inbound `user_id` (Feishu open_id)
+        # is not bound to any esr user AND the chat IS workspace-bound,
+        # DM the operator a `esr user bind-feishu …` instruction
+        # including their open_id verbatim. Same rate-limit / drop
+        # semantics as the existing unbound-chat guide. Mutually
+        # exclusive: only fires when chat is bound (so we don't pile
+        # two DMs on a brand-new chat).
+        app_id = args["app_id"] || state.instance_id
+        user_id = envelope["user_id"] || args["user_id"]
+
+        case maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id) do
+          {:guided, new_state} ->
+            {:drop, :unbound_user_guide_sent, new_state}
+
+          _ ->
+            do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+        end
     end
   end
 
@@ -381,6 +401,74 @@ defmodule Esr.Peers.FeishuAppAdapter do
   # Empty chat_id or app_id — fall back to broadcast path; SessionRouter
   # will surface its own error in logs and we have no chat to DM anyway.
   defp maybe_emit_unbound_chat_guide(_state, _chat_id, _app_id), do: :workspace_bound
+
+  # PR-21i 2026-04-29: send a `esr user bind-feishu` guide DM when an
+  # inbound carries a `user_id` (Feishu open_id) that isn't bound to
+  # any esr user yet. Pre-conditions checked here (so callers don't
+  # have to):
+  #
+  # - `user_id` is non-empty
+  # - chat is already workspace-bound (otherwise the chat-guide DM
+  #   takes precedence and we don't want to pile two DMs)
+  # - `Esr.Users.Registry` is up
+  # - `lookup_by_feishu_id(user_id)` returns `:not_found`
+  # - 10-min rate limit on (user_id) is not yet exceeded
+  #
+  # Returns `{:guided, new_state}` (DM emitted, drop inbound) or
+  # `:user_bound_or_anonymous` (proceed normally).
+  defp maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id)
+       when is_binary(user_id) and user_id != "" and
+              is_binary(chat_id) and chat_id != "" do
+    with {:ok, _ws} <- Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id),
+         true <- Process.whereis(Esr.Users.Registry) != nil,
+         :not_found <- Esr.Users.Registry.lookup_by_feishu_id(user_id) do
+      now = :erlang.monotonic_time(:millisecond)
+      last = Map.get(state.user_guide_dm_last_emit, user_id)
+
+      if is_nil(last) or now - last >= @guide_dm_interval_ms do
+        text = user_guide_text(user_id)
+
+        send(
+          self(),
+          {:outbound,
+           %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
+        )
+
+        new_state = %{
+          state
+          | user_guide_dm_last_emit:
+              Map.put(state.user_guide_dm_last_emit, user_id, now)
+        }
+
+        {:guided, new_state}
+      else
+        :user_guide_rate_limited
+      end
+    else
+      _ -> :user_bound_or_anonymous
+    end
+  end
+
+  defp maybe_emit_unbound_user_guide(_state, _user_id, _chat_id, _app_id),
+    do: :user_bound_or_anonymous
+
+  defp user_guide_text(user_id) do
+    """
+    👋 你的 Feishu 身份还没绑到 ESR 用户。先看一下已注册的 esr user：
+
+      ./esr.sh --env=<prod|dev> user list
+
+    然后跑：
+
+      ./esr.sh --env=<prod|dev> user bind-feishu <esr_username> #{user_id}
+
+    绑完之后给本 bot 发任意消息就会走 ESR 流程。
+
+    你的 Feishu open_id 是 #{user_id}（复制即可）。
+
+    （这条消息 10 分钟内不会重复发送。）
+    """
+  end
 
   defp guide_text(chat_id, app_id, _instance_id) do
     """
