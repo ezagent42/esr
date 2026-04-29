@@ -1,9 +1,9 @@
-# PR-20 Spec: Session cwd + tag/worktree redesign
+# PR-20 Spec: Session URI + cwd/worktree redesign + multi-user
 
-**Status:** brainstorm v2 — restructured after user's 2026-04-28 08:31 clarification.
+**Status:** v3 — all open Qs answered (2026-04-29). Ready for implementation.
 **Author:** allen (linyilun) + claude pair-prog session.
-**Date:** 2026-04-28.
-**Implementation PR:** PR-20 (after this spec is locked).
+**Date:** 2026-04-28 (drafted), 2026-04-29 (locked).
+**Implementation PR:** PR-20.
 
 ## Background
 
@@ -30,219 +30,219 @@ User's clarified model (2026-04-28 08:31):
 >    c. **worktree name**: fork 的分支名，默认从 main fork，需要切换可以手动去切换
 >    d. 每个 worktree 只有一个 session，多个 session 使用一个 worktree 不允许
 
-## Locked decisions (from user clarification)
+User's URI model (2026-04-29 02:49 + 02:58 + 03:02 + 03:07):
 
-| # | Decision | Source |
+> 所有的命名都要和 uri 机制对应，`esr://<env>/<username>/<workspace>/<session-name>` (注意不是 esrd 而是 esr://), 考虑到每个 session 都有对应的 proxy，这样比较合理。
+> tmux 的命名 = `<env>_<username>_<workspace>_<session-name>` (URI path 转译)。
+> 唯一性范围 = esrd instance（user namespace 中的 user 不是 OS user，是 esr user — linyilun, yaoshengyue 这些）。
+> 需要引入 esr user 的概念，feishu id 等需要通过 cli 绑定 user，权限作用在 esr user 上。
+> /end-session 时弹出提示（两步交互）。
+> 现在就有第二个人（yaoshengyue）参与开发。
+
+## Locked decisions
+
+| # | Decision | Rationale |
 |---|---|---|
-| **D1** | No backwards compatibility shim. esrd has 0 live sessions today; PR-20 is a clean break. | 2026-04-28 08:31 #1 |
-| **D2** | `/new-session` takes **three explicit positional/keyword args**: `name`, `cwd`, `worktree`. No derivation from workspace. | 2026-04-28 08:31 #2 |
-| **D3** | `name` = the session's identity. tmux session name, CC handle, log line prefix, `actors list` row — all key off this. | 2026-04-28 08:31 #2a |
-| **D4** | `cwd` = where CC's process actually runs. Operator picks; esrd doesn't derive it. | 2026-04-28 08:31 #2b |
-| **D5** | `worktree` = the **git branch name** of the worktree fork. Always forks from `main` initially; operator switches branches manually post-spawn if they want. | 2026-04-28 08:31 #2c |
-| **D6** | One session per worktree. Forbidden to start a second session naming an existing worktree. | 2026-04-28 08:31 #2d |
+| **D1** | No backwards compatibility shim. esrd has 0 live sessions; PR-20 is a clean break. | Caps + sessions.yaml + workspaces.yaml all reset. |
+| **D2** | `/new-session` takes three explicit args: `name`, `cwd`, `worktree`. No derivation from workspace. | User's 2026-04-28 08:31 #2. |
+| **D3** | Session is identified by URI: **`esr://<env>/<username>/<workspace>/<session-name>`**. URI is the primary key in `sessions.yaml`. | User's 2026-04-29 02:49 #1. `esr://` (proxy face), not `esrd://` (daemon face). |
+| **D4** | tmux session name = URI path translated `/` → `_`: **`<env>_<username>_<workspace>_<session-name>`**. | User's 2026-04-29 02:58 + 03:02 F2. env in tmux name (clearer); also avoids cross-env collision. |
+| **D5** | `cwd` = git worktree path (where CC's process runs). Always a worktree, never a plain dir. | User's 2026-04-29 02:17 + my A/B clarification → user picked "cwd is worktree". |
+| **D6** | `worktree` = git branch name. Always forked from `main` initially via `git -C <root> worktree add <cwd> -b <worktree> main`. Switch branches manually post-spawn if needed. | User's 2026-04-28 08:31 #2c. |
+| **D7** | `root` = each workspace's main git repo. Stored in `workspaces.yaml` as `root:` field. esrd does `git -C <root> worktree add <cwd> -b <worktree> main` from there. | User's 2026-04-29 02:49 vocab. |
+| **D8** | Uniqueness — single esrd instance scope: within one `<env>`, both `(username, workspace, name)` AND `(username, workspace, worktree-branch)` must be unique. dev / prod envs don't constrain each other. | User's 2026-04-29 02:58 F3 + 03:02 #3. |
+| **D9** | esr user is a first-class concept. New `users.yaml` registry; feishu id → esr user binding via CLI. caps system re-keys onto esr user. yaoshengyue is currently developing alongside linyilun, so multi-user is day-1 (not YAGNI). | User's 2026-04-29 03:02 F1 + F5. |
+| **D10** | `<env>` and `<username>` derivation: `<env>` from `$ESR_INSTANCE` env var (existing); `<username>` resolved from inbound `<channel user_id="ou_...">` lookup against `users.yaml`. CLI-direct fallback: required `--as-user <name>` flag. | Implied by F1. CLI without IM identity needs explicit user. |
+| **D11** | tmux socket per esrd env: `tmux -S $ESRD_HOME/$ESR_INSTANCE/tmux.sock`. Avoids polluting user's other tmux sessions and gives extra isolation even though tmux name already disambiguates. | User's 2026-04-29 03:02 F2 + my hardening. |
+| **D12** | `/end-session <name>` two-step interactive confirm. Step 1: status report ("worktree clean / dirty, reply `confirm` to prune / `cancel` to keep"). Step 2: operator's next message consumed by channel server's pending-action state machine. | User's 2026-04-29 03:02 F4 + 03:07 selection (a). |
+| **D13** | Character set for `<username>` and `<session-name>`: ASCII alphanumeric + `-` + `_`. Validates at insert time. Aligns with PR-M adapter naming rule. | Hygiene; URI must be safe. |
 
 ## Proposed shape
 
+### Session URI (D3)
+
 ```
-workspace (template / persistent config — UNCHANGED scope)
-├── name: esr-dev                          ← addressed by chat
-├── chats: [{chat_id: oc_…, app_id: …}]    ← IM chats routing to it
-├── role: dev                              ← CC's CLAUDE.md prelude
-├── start_cmd: scripts/esr-cc.sh           ← how to spawn CC
-└── (workspace.cwd field deleted — D1, D4)
+esr://<env>/<username>/<workspace>/<session-name>
 
-slash command shape (per D2):
-  /new-session esr-dev name=root cwd=/Users/h2oslabs/Workspace/esr-feature-foo worktree=feature-foo
-
-session (concrete instance, in-memory + sessions.yaml)
-├── workspace: esr-dev
-├── name: root                             ← D3; tmux session = "esr_cc_root"
-├── cwd: /Users/h2oslabs/Workspace/esr-feature-foo
-└── worktree_branch: feature-foo           ← D5; created via `git worktree add`
+example: esr://default/linyilun/esr-dev/feature-foo
+         esr://dev/yaoshengyue/voice-gateway/spike-1
 ```
 
-The runtime, on `/new-session`:
-1. Validates `name` doesn't collide with another live session under the same workspace (D6 lite — a stricter version of D6 sits below in Q-collision).
-2. If `worktree` is given AND `cwd` doesn't already exist:
-   `git -C <some_repo_root> worktree add <cwd> -b <worktree> main`.
-3. Spawns CC's tmux pane with that `cwd` and tmux session name `esr_<name>` (or similar — see Q-tmux-name).
+Components:
+- `<env>` — esrd environment (`default`, `dev`, …) from `$ESR_INSTANCE`.
+- `<username>` — esr user (linyilun, yaoshengyue, …); resolved from feishu id binding.
+- `<workspace>` — workspace name from `workspaces.yaml`.
+- `<session-name>` — operator-supplied session label.
 
-## Open mechanics — 5 narrower questions
+### Workspace yaml schema (D7, D9)
 
-D1-D6 lock the high-level shape. Five mechanics still open:
+```yaml
+# $ESRD_HOME/$ESR_INSTANCE/workspaces.yaml
+workspaces:
+  esr-dev:
+    owner: linyilun                          # NEW (D9) — esr user this workspace belongs to
+    root: /Users/h2oslabs/Workspace/esr      # NEW (D7) — main git repo
+    role: dev
+    start_cmd: scripts/esr-cc.sh
+    chats:
+      - chat_id: oc_xxx
+        app_id: cli_xxx
+    metadata: { ... }                        # unchanged (PR-F)
+    neighbors: [ ... ]                       # unchanged (PR-C)
+    # cwd: <DELETED>                         — was workspace-level, now per-session
+```
 
----
+### Users yaml (D9, D10)
 
-### Q-collision: collision rules — name, cwd, worktree
+```yaml
+# $ESRD_HOME/$ESR_INSTANCE/users.yaml      ← NEW file
+users:
+  linyilun:
+    feishu_ids:
+      - ou_6b11faf8e93aedfb9d3857b9cc23b9e7
+  yaoshengyue:
+    feishu_ids:
+      - ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
 
-D6 says "one session per worktree". What about `name` and `cwd`?
+Multiple feishu ids per esr user supported (one human can use multi accounts).
 
-**(a) `worktree` is the unique key.** Two sessions with same `name`
-or same `cwd` are allowed; only `worktree` collisions are rejected.
-Risk: two `name=root` sessions break tmux session naming
-(`esr_cc_root` collides).
+### Sessions yaml (D3)
 
-**(b) All three (`name`, `cwd`, `worktree`) must be unique within an
-esrd environment.** Belt-and-braces. Easy to explain, no edge cases.
+```yaml
+# $ESRD_HOME/$ESR_INSTANCE/sessions.yaml
+sessions:
+  "esr://default/linyilun/esr-dev/feature-foo":     # full URI as key
+    cwd: /Users/h2oslabs/Workspace/esr-feature-foo
+    worktree: feature-foo
+    pid: 12345
+    started_at: 2026-04-29T03:00:00Z
+    tmux_session: default_linyilun_esr-dev_feature-foo
+```
 
-**(c) `name` unique within workspace; `cwd` and `worktree` unique
-globally.** Allows `name=root` in two different workspaces.
+### Slash command (D2)
 
-**Default recommendation: (b).** Simplest mental model; matches the
-spirit of "each session is an isolated thing".
+```
+/new-session <workspace> name=<session-name> cwd=<path> worktree=<branch>
 
----
+example:
+  /new-session esr-dev name=feature-foo cwd=/Users/h2oslabs/Workspace/esr-feature-foo worktree=feature-foo
+```
 
-### Q-tmux-name: tmux session name from `name`
+Runtime sequence on `/new-session`:
 
-When operator types `name=root`, what's the tmux session called?
+1. Resolve `<username>` from inbound channel envelope's `user_id`, looking up `users.yaml`. Reject if no binding.
+2. Construct URI `esr://<env>/<username>/<workspace>/<name>`.
+3. Validate D8 uniqueness in `sessions.yaml` (no live URI; no live `(username, workspace, worktree)` collision).
+4. Validate D13 character set on `<name>`.
+5. Resolve workspace's `root:` field from `workspaces.yaml`.
+6. If `cwd` does not exist on disk: run `git -C <root> worktree add <cwd> -b <worktree> main`. Errors abort spawn.
+7. Spawn CC in tmux: `tmux -S $ESRD_HOME/$ESR_INSTANCE/tmux.sock new-session -d -s <env>_<username>_<workspace>_<name> -c <cwd> ...`.
+8. Append session to `sessions.yaml` keyed by URI.
 
-**(a) `esr_cc_root`.** Today's `esr_cc_<N>` integer pattern, with
-`<N>` replaced by `name`. Backward-pattern-compatible.
+### `/end-session` two-step (D12)
 
-**(b) `<workspace>_<name>`.** e.g. `esr-dev_root`. Disambiguates
-across workspaces if Q-collision lands on (c).
+```
+operator: /end-session feature-foo
+         (resolves via current channel envelope's user → URI)
+esrd:    Session esr://default/linyilun/esr-dev/feature-foo at /path
+         worktree feature-foo: clean ✓
+         Reply `confirm` to prune worktree + remove session,
+         or `cancel` to keep worktree on disk (session still ends).
+operator: confirm
+esrd:    Pruned /path. Session ended.
+```
 
-**(c) `<name>`.** Just the operator's chosen name verbatim.
-Shortest. Conflicts with system tmux sessions if user picks a
-common name like `default`.
+Channel server gains a small **pending-action state machine**: when esrd emits a "confirm-or-cancel" prompt, the next inbound message from that operator+chat is intercepted as the answer. State expires after 60 s.
 
-**Default recommendation: (a) `esr_cc_<name>`.** Keeps the existing
-`esr_cc_*` namespace prefix so operators' grep / attach habits don't
-break. Operator-provided name replaces the integer.
-
----
-
-### Q-cwd-relation: relationship between `cwd` and `worktree`
-
-Operator passes both `cwd=` and `worktree=`. The runtime needs to know:
-
-**(a) `cwd` IS the worktree path.** The runtime runs
-`git worktree add <cwd> -b <worktree>`. The operator's `cwd` is
-where the new worktree gets created. Constraint: `cwd` must NOT
-already exist (otherwise `git worktree add` fails). Cleanest mapping.
-
-**(b) Operator pre-creates worktree, then names them both.** Operator
-manually does `git worktree add /path/to/foo -b feature-foo main`,
-THEN runs `/new-session esr-dev name=root cwd=/path/to/foo
-worktree=feature-foo`. The runtime just records the binding without
-running `git`. Pro: no git side-effects from a slash command.
-Con: operator does extra work; slash-command UX worse.
-
-**(c) `cwd` is the parent directory; runtime creates a subdir.** e.g.
-`cwd=/Users/h2oslabs/Workspace/esr` + `worktree=feature-foo` →
-runtime creates `/Users/h2oslabs/Workspace/esr/<somewhere>/feature-foo`.
-Awkward — operator gave us `cwd`, we change it.
-
-**(d) `worktree` is optional.** If absent, runtime treats `cwd` as a
-plain working dir (no git interaction). If present, (a) applies.
-This makes the user's "需要切换可以手动去切换" comment work
-naturally — operator can spawn a session with just cwd, no
-worktree management, and switch branches in-place.
-
-**Default recommendation: (a) + (d) combined.** When `worktree=` is
-given, runtime auto-creates worktree at `cwd`. When `worktree=` is
-absent, runtime just uses `cwd` as-is and CC works in the existing
-checkout. Operators get the choice.
-
----
-
-### Q-which-repo: which git repo does `git worktree add` operate on?
-
-When `/new-session` runs `git worktree add <cwd> -b <worktree>
-main`, which directory is the "main" repo (the one whose `.git/`
-directory sources the worktree)?
-
-**(a) The workspace's existing main checkout.** workspaces.yaml gains
-a `repo_root:` field (e.g. `/Users/h2oslabs/Workspace/esr`). Runtime
-runs `git -C <repo_root> worktree add ...`.
-
-**(b) Inferred from `cwd`'s parent / sibling.** If `cwd` is
-`/Users/h2oslabs/Workspace/esr-feature-foo`, look for a `.git` in
-sibling directories. Magic; brittle.
-
-**(c) Operator passes it as a fourth arg.** `/new-session ws name=
-cwd= worktree= repo=/path/to/main`. Most flexible, most typing.
-
-**Default recommendation: (a) `repo_root:` on the workspace.** Each
-workspace already has a long-lived "main checkout" implicit in the
-operator's mental model; making it explicit in the workspace yaml
-matches that.
-
----
-
-### Q-end-cleanup: `/end-session` worktree cleanup
-
-When session ends, what happens to the worktree on disk?
-
-**(a) Always keep.** Operator manually `git worktree remove`. Safe;
-disk fills.
-
-**(b) Always prune (`git worktree remove --force`).** Auto-cleanup;
-risk of losing uncommitted work.
-
-**(c) Prune iff clean.** `git status --porcelain` empty → remove.
-Dirty → keep + log warning.
-
-**(d) Per-session flag.** `/end-session foo --keep-worktree` opts in
-to retention. Default = (c).
-
-**Default recommendation: (c) prune iff clean.** Auto-handles "tried
-this branch, didn't work" case; protects in-progress work; no extra
-flags needed.
-
----
-
-## Out of scope (deferred)
-
-- **Per-session role override**: today the workspace dictates `role:
-  dev` or `role: diagnostic`; per-session override is a future PR.
-- **Cross-workspace branch sharing**: highly speculative.
-- **Worktree GC sweep**: periodic prune of branchless worktrees;
-  operator can `git worktree prune` by hand.
-- **`workspace add --repo-root` CLI**: depends on Q-which-repo; if
-  recommendation lands, the CLI gets a new flag (small change, but
-  let's land the runtime side first then the CLI).
+This pattern is reusable for any future destructive op (`/remove-workspace`, `/unbind-user`, `/destroy-adapter`).
 
 ## Implementation outline
 
-Conditional on the 5 open Qs being answered:
+### Runtime (Elixir, ~350 LOC)
 
-1. **Workspace yaml schema** — delete `cwd:` field; add `repo_root:`
-   (per Q-which-repo). Update `workspace add` CLI.
-2. **`/new-session` parser** — accept `name=`, `cwd=`, `worktree=`;
-   reject if any required ones are missing.
-3. **Worktree spawn helper** — `git worktree add <cwd> -b <worktree>
-   main` invoked via `System.cmd("git", ...)`. Error handling for
-   already-exists / detached-head / etc.
-4. **Session registry** — track `(workspace, name, worktree)`
-   collision; reject duplicates per Q-collision answer.
-5. **`/end-session` cleanup** — `git status --porcelain` check;
-   conditional `git worktree remove`.
-6. **tmux session naming** — `esr_cc_<name>` per Q-tmux-name.
+1. **`Esr.Users`** (new module) — load/save `users.yaml`; resolve `feishu_id → username`; CRUD via `cli:users:*` topics.
+2. **`Esr.Sessions.URI`** (new module) — parse/build URI; D13 validation.
+3. **`Esr.Workspaces`** — schema migration: load `root:` and `owner:` fields; drop `cwd:`. FSEvents reload unchanged.
+4. **`Esr.SessionRegistry`** — re-key from `name` → URI. D8 collision check expanded to cover worktree-branch tuple.
+5. **`Esr.Worktree`** (new module) — wrap `git worktree add` / `git status --porcelain` / `git worktree remove`. Macro for `System.cmd("git", ...)` with structured error.
+6. **`Esr.Tmux`** — switch to `tmux -S $ESRD_HOME/$ESR_INSTANCE/tmux.sock` everywhere. Update `scripts/esr-cc.sh`.
+7. **`EsrWeb.CliChannel`** — new dispatch clauses: `cli:users:*`. `/new-session` and `/end-session` clauses re-shaped per D2 / D12.
+8. **`EsrWeb.PendingActions`** (new) — TTL state machine for two-step confirm.
+9. **`Esr.Caps`** — rekey storage from feishu identity → esr user. D1 = wipe existing caps, fresh start.
 
-LOC budget: ~200 Elixir runtime + ~50 Python CLI + ~15 doc/spec
-update.
+### Python CLI (~120 LOC)
 
-## Subagent-review checklist (run after user answers the 5 Qs)
+New click subgroup `esr user`:
+- `esr user add <name>`
+- `esr user list`
+- `esr user remove <name>`
+- `esr user bind-feishu <name> <feishu_user_id>`
+- `esr user unbind-feishu <name> <feishu_user_id>`
 
-`superpowers:code-reviewer` should fact-check:
+Modified:
+- `esr workspace add` gains `--owner <esr-user>` and `--root <repo-path>` required flags.
+- `esr session new` (or however `/new-session` shells out) takes the 3 named args; supports `--as-user <name>` for CLI-direct fallback (D10).
+- `esr session ls` prints URIs.
+- `esr session end` triggers the two-step confirm flow.
 
-- [ ] `git worktree add <path> -b <new_branch> main` works as
-      expected on macOS git 2.40+ (specifically: does `main` need to
-      be `origin/main` if local `main` is behind?).
-- [ ] Existing `Esr.SessionRegistry` collision detection can be
-      extended to enforce Q-collision rules without a major refactor.
-- [ ] No existing test fixture relies on `tag=` being load-bearing in
-      a way that the rename to `name=` / `worktree=` would silently
-      break.
-- [ ] The deny-DM / guide-DM rate limits in PR-N are keyed on
-      `chat_id`, not `(chat_id, session_name)` — confirm renaming
-      doesn't perturb them.
-- [ ] `workspaces.yaml` `metadata:` (PR-F) and `neighbors:` (PR-C)
-      survive the schema change unchanged.
+### Auto-docs (CLAUDE.md convention)
+
+After touching `py/src/esr/cli/**` or any `dispatch/2` clause, run `bash scripts/gen-docs.sh` and commit regenerated [`docs/cli-reference.md`](../../cli-reference.md) + [`docs/runtime-channel-reference.md`](../../runtime-channel-reference.md) in the same PR.
+
+### Tests
+
+| Layer | What |
+|---|---|
+| Unit (Elixir) | URI parse/build, D8 collision tuples, `Esr.Users` CRUD, pending-action TTL expiry |
+| Unit (Python) | `esr user *` click commands; arg validation |
+| E2E | New scenario `0X_pr20_multi_user_worktree.sh`: register linyilun + yaoshengyue; spawn 2 sessions same workspace; verify URI uniqueness, separate worktrees, separate tmux sessions on shared socket |
+| Cap regression | Existing cap tests rekeyed to esr user; verify cap grant works for `esr user bind-feishu`-resolved identity |
+
+### LOC budget
+
+Updated total: **~600-800 LOC**.
+
+| Area | LOC |
+|---|---|
+| Elixir runtime | ~350 |
+| Python CLI | ~120 |
+| Tests (Elixir + Python + E2E) | ~150 |
+| Docs (this spec + architecture.md update + dev-guide.md user/auth section) | ~50 |
+
+## Out of scope (deferred)
+
+- **Per-session role override** — workspace dictates `role:`; per-session future PR.
+- **Cross-workspace branch sharing** — speculative.
+- **Worktree GC sweep** — periodic prune of branchless worktrees; operator handles for now.
+- **Multiple feishu apps per esr user** — `users.yaml` schema allows but mapping is per-id; no aliasing across apps.
+- **OAuth-based esr user registration** — manual `esr user add` for now.
+
+## Subagent-review checklist
+
+`superpowers:code-reviewer` fact-checks before PR-20 opens:
+
+- [ ] `git worktree add <path> -b <new_branch> main` works on macOS git 2.40+. Specifically: does `main` need to be `origin/main` if local `main` is behind? Does `git -C <root>` work even if cwd of the calling process differs?
+- [ ] Existing `Esr.SessionRegistry` collision detection extends to `(username, workspace, worktree)` tuple without major refactor.
+- [ ] Existing tmux usage in `scripts/esr-cc.sh`, `scripts/esr.sh`, and `runtime/lib/esr_web/cli_channel.ex` doesn't assume default socket — survey all `tmux …` invocations and confirm they thread through a configurable socket path.
+- [ ] Existing cap system storage location and key shape — confirm rekeying from feishu identity to esr user fits within current modules without schema migration tooling (D1 says wipe).
+- [ ] Channel server has no existing "pending-action" mechanism — confirm `EsrWeb.PendingActions` is greenfield, doesn't conflict with existing rate-limit / dedup logic for deny-DM / guide-DM (PR-N).
+- [ ] `workspaces.yaml` `metadata:` (PR-F) and `neighbors:` (PR-C) survive the schema change with `owner:` + `root:` added and `cwd:` removed.
+- [ ] No existing test fixture relies on `tag=` being load-bearing in a way that the rename to `name=` / `worktree=` would silently break.
+- [ ] `describe_topology` MCP tool (CLAUDE.md gotcha #3) — `users.yaml` content should NOT be exposed verbatim to LLM (feishu ids might be considered sensitive); confirm this is filtered at the response boundary, like `env:` and `cwd:` already are.
+
+## Migration to PR-20
+
+D1 = clean break. On PR-20 merge:
+1. Operator stops esrd.
+2. `rm $ESRD_HOME/$ESR_INSTANCE/sessions.yaml` (no live sessions).
+3. `rm $ESRD_HOME/$ESR_INSTANCE/caps.{yaml,db}` (whatever the existing path is) — caps reset.
+4. Edit `workspaces.yaml`: add `owner:` + `root:` to each workspace; remove `cwd:`.
+5. Create `users.yaml` with linyilun + yaoshengyue + their feishu ids.
+6. Restart esrd.
+
+Migration script optional (small enough to do by hand for 2 envs × N workspaces).
 
 ## Next step
 
-User answers the 5 open Qs. Then this doc gets a **Decisions:**
-section per Q, code-reviewer subagent fact-checks, and PR-20 opens.
+Spec v3 locked. Run `superpowers:code-reviewer` subagent for fact-check pass; address any findings; then open PR-20.
