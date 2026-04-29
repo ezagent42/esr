@@ -60,6 +60,8 @@ defmodule Esr.Peers.TmuxProcess do
   See spec §3.2 and §4.1 TmuxProcess card; expansion P3-3.
   """
 
+  @behaviour Esr.Role.State
+
   use Esr.Peer.Stateful
   use Esr.OSProcess, kind: :tmux, wrapper: :pty
 

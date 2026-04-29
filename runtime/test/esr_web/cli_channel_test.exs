@@ -460,7 +460,6 @@ defmodule EsrWeb.CliChannelTest do
       :ok =
         WS.put(%WS.Workspace{
           name: "ws_translator",
-          cwd: "/tmp/translator",
           start_cmd: "irrelevant_to_LLM",
           role: "dev",
           chats: [
@@ -482,7 +481,6 @@ defmodule EsrWeb.CliChannelTest do
       :ok =
         WS.put(%WS.Workspace{
           name: "ws_processor",
-          cwd: "/tmp/processor",
           start_cmd: "irrelevant",
           role: "dev",
           chats: [%{"chat_id" => "oc_p", "app_id" => "cli_p", "kind" => "dm"}],

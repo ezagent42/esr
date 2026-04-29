@@ -10,6 +10,8 @@ defmodule Esr.Peers.VoiceE2E do
 
   Spec §4.1 VoiceE2E card.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Stateful
   use GenServer
 

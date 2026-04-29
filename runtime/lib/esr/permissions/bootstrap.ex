@@ -16,6 +16,8 @@ defmodule Esr.Permissions.Bootstrap do
   later over the `handler_hello` IPC envelope (spec §3.1, §4.1).
   """
 
+  @behaviour Esr.Role.Control
+
   alias Esr.Permissions.Registry
 
   # Subsystem-intrinsic permissions — declared by the capabilities

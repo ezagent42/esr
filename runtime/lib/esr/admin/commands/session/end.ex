@@ -36,6 +36,8 @@ defmodule Esr.Admin.Commands.Session.End do
     * `{:error, %{"type" => "invalid_args", ...}}`
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

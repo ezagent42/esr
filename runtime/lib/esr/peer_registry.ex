@@ -10,6 +10,8 @@ defmodule Esr.PeerRegistry do
   to know the underlying `Registry` module.
   """
 
+  @behaviour Esr.Role.State
+
   @registry __MODULE__
 
   @doc """

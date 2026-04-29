@@ -15,6 +15,8 @@ defmodule Esr.Peers.FeishuAppProxy do
 
   Spec §3.6, §4.1 FeishuAppProxy card.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Proxy
   @required_cap "peer_proxy:feishu/forward"
 

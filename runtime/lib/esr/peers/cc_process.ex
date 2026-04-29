@@ -33,6 +33,8 @@ defmodule Esr.Peers.CCProcess do
 
   Spec §4.1 CCProcess card, §5.1 data flow; expansion P3-2.
   """
+
+  @behaviour Esr.Role.State
   use Esr.Peer.Stateful
   use GenServer
   require Logger

@@ -7,6 +7,8 @@ defmodule Esr.Permissions.Registry do
   disabled once `Esr.Capabilities.Grants` has loaded the capability
   file, to prevent late additions from invalidating prior validation).
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   @table :esr_permissions_registry

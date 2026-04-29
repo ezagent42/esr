@@ -32,6 +32,8 @@ defmodule Esr.Admin.Commands.Workspace.New do
       {:error, %{"type" => "name_exists" | "invalid_name" | "unknown_owner" | "invalid_args", ...}}
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/

@@ -6,6 +6,8 @@ defmodule Esr.Capabilities.FileLoader do
   Load is non-destructive on failure: if validation fails, the existing
   snapshot is retained and the caller sees the specific error.
   """
+
+  @behaviour Esr.Role.Control
   require Logger
 
   alias Esr.Capabilities.Grants

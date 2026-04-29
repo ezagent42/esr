@@ -13,6 +13,8 @@ defmodule Esr.Telemetry.Buffer do
     query(name, opts) — opts: [:duration_seconds]
   """
 
+  @behaviour Esr.Role.State
+
   use GenServer
 
   defmodule Event do

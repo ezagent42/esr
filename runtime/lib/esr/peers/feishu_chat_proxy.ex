@@ -17,6 +17,8 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   Spec §4.1 FeishuChatProxy card, §5.1, §5.3.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Stateful
   use GenServer
   require Logger

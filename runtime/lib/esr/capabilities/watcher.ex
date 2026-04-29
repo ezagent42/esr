@@ -3,6 +3,8 @@ defmodule Esr.Capabilities.Watcher do
   Watches the capabilities.yaml file and triggers FileLoader.load/1 on
   any change event. Also performs the initial load on start.
   """
+
+  @behaviour Esr.Role.Control
   use GenServer
   require Logger
 

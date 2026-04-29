@@ -46,6 +46,8 @@ defmodule Esr.Admin.Dispatcher do
   per spec §10.
   """
 
+  @behaviour Esr.Role.Control
+
   # Sentinel value written in place of any secret-ish arg key on the
   # completed/failed queue file. Listed once so tests and callers can
   # import a single canonical value.

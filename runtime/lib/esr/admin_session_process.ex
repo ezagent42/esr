@@ -5,6 +5,8 @@ defmodule Esr.AdminSessionProcess do
 
   See spec §3.4.
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   def start_link(opts \\ []) do

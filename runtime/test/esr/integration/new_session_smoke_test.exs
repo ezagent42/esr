@@ -1,6 +1,6 @@
 defmodule Esr.Integration.NewSessionSmokeTest do
   @moduledoc """
-  P2-13: E2E smoke test for `/new-session --agent cc --dir /tmp/test`.
+  P2-13: E2E smoke test for `/new-session esr-dev name=test cwd=/tmp/test worktree=test`.
 
   Exercises the full PR-2 slash-command path end-to-end:
 
@@ -128,13 +128,13 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     {:ok, slash: slash_pid}
   end
 
-  test "/new-session --agent cc --dir /tmp/test succeeds through the full slash path" do
+  test "/new-session esr-dev name=test cwd=/tmp/test worktree=test succeeds through the full slash path" do
     {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
 
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session --agent cc --dir /tmp/test",
+        "text" => "/new-session esr-dev name=test cwd=/tmp/test worktree=test",
         "chat_id" => "oc_smoke",
         "thread_id" => "om_smoke"
       }
@@ -169,7 +169,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session --dir /tmp/x",
+        "text" => "/new-session esr-dev cwd=/tmp/x",
         "chat_id" => "oc_smoke",
         "thread_id" => "om_smoke"
       }
@@ -178,8 +178,9 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     send(slash, {:slash_cmd, envelope, self()})
 
     assert_receive {:reply, text}, 1_000
-    assert text =~ "requires --agent",
-           "expected --agent missing error, got: #{text}"
+    # PR-21d unified grammar: error mentions name= instead of --agent.
+    assert text =~ "name=",
+           "expected name= missing error, got: #{text}"
   end
 
   test "/new-session without matching capability returns an error reply" do
@@ -188,7 +189,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     envelope = %{
       "principal_id" => @test_principal_nocap,
       "payload" => %{
-        "text" => "/new-session --agent cc --dir /tmp/y",
+        "text" => "/new-session esr-dev name=y cwd=/tmp/y worktree=y",
         "chat_id" => "oc_smoke",
         "thread_id" => "om_smoke"
       }

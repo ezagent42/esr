@@ -51,6 +51,8 @@ defmodule Esr.SessionRouter do
     still goes through `SessionsSupervisor.start_session/1` (legacy
     path) until a follow-up subtask rewires it.
   """
+
+  @behaviour Esr.Role.Pipeline
   use GenServer
   require Logger
 

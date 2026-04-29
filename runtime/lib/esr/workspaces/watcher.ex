@@ -20,6 +20,8 @@ defmodule Esr.Workspaces.Watcher do
       {:topology_loaded, %{added_workspaces: [ws_name]}}
       {:topology_neighbour_added, ws_name, uri}
   """
+
+  @behaviour Esr.Role.Control
   use GenServer
   require Logger
 

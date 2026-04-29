@@ -26,6 +26,8 @@ defmodule Esr.Admin.Commands.Workspace.Info do
   Read-only — touches `Esr.Workspaces.Registry` only.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

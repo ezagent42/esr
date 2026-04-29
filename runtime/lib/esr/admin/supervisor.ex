@@ -19,6 +19,8 @@ defmodule Esr.Admin.Supervisor do
   `register_adapter` command validates workspace names at execution
   time).
   """
+
+  @behaviour Esr.Role.OTP
   use Supervisor
 
   def start_link(opts),

@@ -6,6 +6,8 @@ defmodule Esr.Peers.VoiceASR do
 
   Spec §4.1 VoiceASR card.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.PyWorker, module: "voice_asr"
 
   @default_timeout 5_000

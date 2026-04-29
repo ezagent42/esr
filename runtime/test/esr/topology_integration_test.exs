@@ -35,7 +35,6 @@ defmodule Esr.TopologyIntegrationTest do
     :ok =
       WS.put(%WS.Workspace{
         name: "ws_dev",
-        cwd: "/tmp/dev",
         chats: [%{"chat_id" => "oc_dev_room", "app_id" => "cli_dev", "name" => "dev-room"}],
         neighbors: ["workspace:ws_kanban", "user:ou_admin"]
       })
@@ -43,7 +42,6 @@ defmodule Esr.TopologyIntegrationTest do
     :ok =
       WS.put(%WS.Workspace{
         name: "ws_kanban",
-        cwd: "/tmp/kanban",
         chats: [%{"chat_id" => "oc_kanban_room", "app_id" => "cli_kanban", "name" => "kanban-room"}],
         neighbors: []
       })

@@ -10,6 +10,8 @@ defmodule Esr.PeerSupervisor do
 
   PRD 01 F04.
   """
+
+  @behaviour Esr.Role.OTP
   use DynamicSupervisor
 
   @spec start_link(keyword()) :: Supervisor.on_start()

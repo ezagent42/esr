@@ -19,6 +19,8 @@ defmodule Esr.Admin.Commands.Session.Switch do
       refuses to materialize one out of thin air.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

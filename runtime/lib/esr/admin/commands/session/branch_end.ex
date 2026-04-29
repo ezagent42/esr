@@ -107,6 +107,8 @@ defmodule Esr.Admin.Commands.Session.BranchEnd do
       subscriber.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   require Logger

@@ -47,6 +47,8 @@ defmodule Esr.Admin.Commands.Session.BranchNew do
   `:spawn_fn` pattern in `Esr.Admin.Commands.RegisterAdapter`.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

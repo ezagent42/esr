@@ -22,6 +22,8 @@ defmodule Esr.Admin.Commands.Notify do
       without retry (operator action required).
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

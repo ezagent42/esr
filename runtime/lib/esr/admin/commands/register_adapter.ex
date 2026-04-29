@@ -37,6 +37,8 @@ defmodule Esr.Admin.Commands.RegisterAdapter do
   `execute/2` with the real `Esr.WorkerSupervisor.ensure_adapter/4`.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

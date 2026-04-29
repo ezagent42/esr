@@ -37,6 +37,8 @@ defmodule Esr.Admin.Commands.Session.List do
       }
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

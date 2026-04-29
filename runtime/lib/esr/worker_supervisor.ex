@@ -30,6 +30,8 @@ defmodule Esr.WorkerSupervisor do
   cleaned — operators can still see what ran.
   """
 
+  @behaviour Esr.Role.OTP
+
   use GenServer
 
   require Logger
