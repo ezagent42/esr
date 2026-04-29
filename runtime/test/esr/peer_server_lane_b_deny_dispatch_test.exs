@@ -1,12 +1,14 @@
 defmodule Esr.PeerServerLaneBDenyDispatchTest do
   @moduledoc """
-  Drop-Lane-A T1.4 — peer_server.ex deny path now dispatches a
-  `{:dispatch_deny_dm, principal_id, chat_id}` directive to the
-  source app's FAA peer (resolved via `Esr.PeerRegistry` keyed by
-  `"feishu_app_adapter_<instance_id>"`).
+  PR-21x — Lane B deny path now dispatches an
+  `{:outbound, %{"kind" => "reply", ...}}` message to the source app's
+  FAA peer (resolved via `Esr.PeerRegistry` keyed by
+  `"feishu_app_adapter_<instance_id>"`). Cap check + rate-limit live
+  in `Esr.Peers.CapGuard`; FAA's existing `handle_downstream/2`
+  wraps the outbound into a directive on `adapter:feishu/<id>`.
 
   Three cases:
-   1. Deny path with a Feishu-source envelope sends the dispatch to
+   1. Deny path with a Feishu-source envelope sends the outbound to
       the registered FAA pid.
    2. Allow path doesn't send anything to FAA.
    3. Deny path with no FAA registered (or non-Feishu source) logs
@@ -14,11 +16,10 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
 
   We don't stand up a real FAA here — instead we register the test
   process in `Esr.PeerRegistry` under the expected key, then assert
-  the message lands. This isolates the wiring without depending on
-  FAA-side behaviour (covered separately in
-  `feishu_app_adapter_deny_dm_test.exs`).
+  the message lands. CapGuard rate-limit / FAA directive-wrap covered
+  by separate tests.
 
-  Spec: docs/superpowers/specs/2026-04-25-drop-lane-a-auth.md §Task 1.4.
+  Original spec: docs/superpowers/specs/2026-04-25-drop-lane-a-auth.md §Task 1.4.
   """
 
   use ExUnit.Case, async: false
@@ -27,8 +28,16 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
   alias Esr.PeerServer
   alias Esr.TestSupport.AuthContext
 
+  @deny_dm_text "你无权使用此 bot，请联系管理员授权。"
+
   setup do
     Grants.load_snapshot(%{})
+    # PR-21x: reset CapGuard rate-limit between tests so a fresh
+    # principal_id always passes the rate-limit gate.
+    if pid = Process.whereis(Esr.Peers.CapGuard) do
+      :sys.replace_state(pid, fn state -> %{state | last_emit: %{}} end)
+    end
+
     :ok
   end
 
@@ -65,7 +74,7 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
     :ok
   end
 
-  test "deny path sends {:dispatch_deny_dm, _, _} to the resolved FAA pid" do
+  test "deny path sends {:outbound, _} to the resolved FAA pid" do
     AuthContext.load(%{"ou_stranger" => []})
 
     instance_id = "deny_dispatch_#{System.unique_integer([:positive])}"
@@ -87,10 +96,15 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
 
     send(peer_pid, {:inbound_event, envelope})
 
-    assert_receive {:dispatch_deny_dm, "ou_stranger", "oc_chat_1"}, 500
+    assert_receive {:outbound,
+                    %{
+                      "kind" => "reply",
+                      "args" => %{"chat_id" => "oc_chat_1", "text" => @deny_dm_text}
+                    }},
+                   500
   end
 
-  test "allow path doesn't send {:dispatch_deny_dm, _, _} to FAA" do
+  test "allow path doesn't send {:outbound, _} to FAA" do
     # Grant the principal so the inbound passes the gate.
     AuthContext.load(%{"ou_ok" => ["workspace:proj-a/msg.send"]})
 
@@ -116,8 +130,8 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
     # The allow path then calls the handler; with handler_timeout=200
     # and no fake worker, the handler-router call times out and emits
     # an [:esr, :handler, :error] (which we don't care about). What we
-    # DO care about: no deny-DM dispatch hits the test pid.
-    refute_receive {:dispatch_deny_dm, _, _}, 400
+    # DO care about: no deny-DM outbound hits the test pid.
+    refute_receive {:outbound, _}, 400
   end
 
   test "deny path with no FAA registered logs a warning and doesn't crash" do
@@ -148,7 +162,7 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
         Process.sleep(50)
       end)
 
-    assert log =~ "Lane B deny"
+    assert log =~ "CapGuard Lane B deny"
     assert log =~ instance_id
     assert Process.alive?(peer_pid)
   end
@@ -174,10 +188,10 @@ defmodule Esr.PeerServerLaneBDenyDispatchTest do
 
     send(peer_pid, {:inbound_event, envelope})
 
-    # No FAA dispatch should leak to the test pid even though no FAA
+    # No FAA outbound should leak to the test pid even though no FAA
     # is registered for this source — the regex guard short-circuits
     # before any registry lookup.
-    refute_receive {:dispatch_deny_dm, _, _}, 200
+    refute_receive {:outbound, _}, 200
     assert Process.alive?(peer_pid)
   end
 end

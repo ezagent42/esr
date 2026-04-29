@@ -237,45 +237,29 @@ defmodule Esr.PeerServer do
 
   def handle_info({:inbound_event, envelope}, %__MODULE__{} = state) do
     # Capabilities spec §7.2 (CAP-4) — Lane B inbound enforcement.
-    # AdapterChannel.handle_in("event", ...) has already rejected
-    # envelopes missing principal_id, so a well-formed ingress path
-    # always has one. For direct test/route sends that bypass the
-    # adapter channel (e.g. route action at peer_server.ex:618), a
-    # missing or non-binary principal_id means "no grant" → deny.
-    principal_id = envelope["principal_id"]
+    # PR-21x: cap check + telemetry + deny-DM dispatch are owned by
+    # `Esr.Peers.CapGuard.check_inbound/3`. PeerServer keeps the
+    # handler-invocation hot path; the gate is one call away.
     workspace = envelope["workspace_name"]
     event_type = get_in(envelope, ["payload", "event_type"])
     required = "workspace:#{workspace || "*"}/#{permission_for_event(event_type)}"
 
-    if capability_granted?(principal_id, required) do
-      idempotency_key = extract_idempotency_key(envelope)
+    case Esr.Peers.CapGuard.check_inbound(envelope, required, state.actor_id) do
+      :granted ->
+        idempotency_key = extract_idempotency_key(envelope)
 
-      if idempotency_key && MapSet.member?(state.dedup_keys, idempotency_key) do
-        :telemetry.execute([:esr, :handler, :dedup_drop], %{}, %{
-          actor_id: state.actor_id,
-          idempotency_key: idempotency_key
-        })
+        if idempotency_key && MapSet.member?(state.dedup_keys, idempotency_key) do
+          :telemetry.execute([:esr, :handler, :dedup_drop], %{}, %{
+            actor_id: state.actor_id,
+            idempotency_key: idempotency_key
+          })
+          {:noreply, state}
+        else
+          {:noreply, invoke_handler(state, envelope, idempotency_key)}
+        end
+
+      :denied ->
         {:noreply, state}
-      else
-        {:noreply, invoke_handler(state, envelope, idempotency_key)}
-      end
-    else
-      :telemetry.execute(
-        [:esr, :capabilities, :denied],
-        %{count: 1},
-        %{
-          principal_id: principal_id,
-          required_perm: required,
-          lane: :B_inbound,
-          actor_id: state.actor_id
-        }
-      )
-
-      # Lane B owns deny + user-feedback (see dispatch_deny_dm/1 below).
-      # The deny-DM dispatch is async via the FAA peer; deny itself is
-      # observable via the [:esr, :capabilities, :denied] telemetry.
-      dispatch_deny_dm(envelope)
-      {:noreply, state}
     end
   end
 
@@ -955,44 +939,10 @@ defmodule Esr.PeerServer do
   # Lane B capability check helpers (CAP-4)
   # --------------------------------------------------------------
 
-  # Drop-Lane-A T1.4: when Lane B's inbound gate denies a Feishu
-  # envelope, dispatch a `{:dispatch_deny_dm, principal_id, chat_id}`
-  # message to the source app's FAA peer. The FAA peer rate-limits
-  # per principal and emits the Chinese deny DM via its existing
-  # `{:outbound, _}` channel.
-  #
-  # The `source` field on the envelope is a path-style RESTful URI built
-  # by the Python adapter runner (`runner_core.py` calls
-  # `Esr.uri.build_path(["adapters", adapter_name, instance_id], host="localhost")`
-  # → `"esr://localhost/adapters/feishu/<instance_id>"`). One regex BOTH
-  # gates on Feishu source and extracts `instance_id` via the capture
-  # group — non-Feishu sources (cc_tmux, voice, etc.) silently no-op
-  # without a registry lookup. Spec §Task 1.4 / §Spec changelog v1.4
-  # B-v1.3-1; PR-B 2026-04-27 migrated URI shape from colon-style to
-  # path-style RESTful (PubSub topic `adapter:feishu/<id>` is unchanged).
-  @feishu_source_re ~r{^esr://[^/]+/adapters/feishu/([^/]+)$}
-
-  defp dispatch_deny_dm(envelope) do
-    with source when is_binary(source) <- envelope["source"],
-         [_full, instance_id] <- Regex.run(@feishu_source_re, source),
-         chat_id when is_binary(chat_id) and chat_id != "" <-
-           get_in(envelope, ["payload", "args", "chat_id"]),
-         principal_id when is_binary(principal_id) and principal_id != "" <-
-           envelope["principal_id"] do
-      case Registry.lookup(Esr.PeerRegistry, "feishu_app_adapter_#{instance_id}") do
-        [{faa_pid, _}] when is_pid(faa_pid) ->
-          send(faa_pid, {:dispatch_deny_dm, principal_id, chat_id})
-
-        _ ->
-          Logger.warning(
-            "Lane B deny: no FAA registered for instance_id=#{inspect(instance_id)}; " <>
-              "DM not sent (deny still effective; principal=#{inspect(principal_id)})"
-          )
-      end
-    end
-
-    :ok
-  end
+  # PR-21x: Lane B deny-DM dispatch + `@feishu_source_re` extracted into
+  # `Esr.Peers.CapGuard.check_inbound/3`. The cap check, telemetry, and
+  # rate-limited DM all live there now — this module just decides
+  # `:granted` vs `:denied` via that one call.
 
   # Esr.Capabilities.has?/2 guards on is_binary(principal_id). Tests
   # and internal routes (`route` action at peer_server.ex line ~618)

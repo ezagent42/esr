@@ -101,6 +101,14 @@ defmodule Esr.Application do
       Esr.Peers.UnboundChatGuard,
       Esr.Peers.UnboundUserGuard,
 
+      # 4f.4 Lane B inbound capability guard (PR-21x). Extracted from
+      # `Esr.PeerServer.handle_info({:inbound_event, _})` + FAA's
+      # `{:dispatch_deny_dm}` rate-limit. Owns the per-principal deny-DM
+      # rate-limit Map; PeerServer calls `CapGuard.check_inbound/3`
+      # before invoking the handler. On deny, CapGuard emits telemetry
+      # and dispatches an `{:outbound, ...}` to the source FAA peer.
+      Esr.Peers.CapGuard,
+
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER

@@ -40,14 +40,10 @@ defmodule Esr.Peers.FeishuAppAdapter do
   use GenServer
   require Logger
 
-  # Drop-Lane-A T1.1: Lane B owns the deny gate AND the user-facing
-  # deny DM. When `Esr.PeerServer`'s inbound gate denies a Feishu
-  # envelope (capabilities spec §7.2), it sends `{:dispatch_deny_dm,
-  # principal_id, chat_id}` here; we emit the Chinese deny text via
-  # the existing `{:outbound, _}` path, rate-limited per principal.
-  # Spec: docs/superpowers/specs/2026-04-25-drop-lane-a-auth.md §Task 1.
-  @deny_dm_text "你无权使用此 bot，请联系管理员授权。"
-  @deny_dm_interval_ms 10 * 60 * 1000
+  # PR-21x: Lane B deny gate + deny-DM rate limit moved to
+  # `Esr.Peers.CapGuard`. CapGuard sends `{:outbound, %{"kind" => "reply",
+  # ...}}` directly to this FAA pid; the existing handle_downstream/2
+  # path wraps it as a directive on `adapter:feishu/<id>`.
 
   def start_link(%{instance_id: instance_id} = args) when is_binary(instance_id) do
     GenServer.start_link(__MODULE__, args, name: via(instance_id))
@@ -85,19 +81,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
        instance_id: instance_id,
        app_id: args[:app_id] || instance_id,
        neighbors: args[:neighbors] || [],
-       proxy_ctx: args[:proxy_ctx] || %{},
-       # Drop-Lane-A T1.2: per-principal rate-limit for Lane B deny
-       # DMs. Keys are principal_id (binary), values are
-       # `:erlang.monotonic_time(:millisecond)` of the last DM emit.
-       # Map lives in this FAA's GenServer state — multi-FAA topologies
-       # rate-limit per-(principal, instance_id), matching today's
-       # Python-side `_last_deny_ts` lifetime (single-FAA equivalent).
-       # See spec §4 #2 for the multi-FAA soft regression note.
-       deny_dm_last_emit: %{}
+       proxy_ctx: args[:proxy_ctx] || %{}
        # PR-21w: rate-limit state for unbound-chat / unbound-user guide
-       # DMs lives in `Esr.Peers.UnboundChatGuard` /
-       # `Esr.Peers.UnboundUserGuard` now (started under
-       # Esr.Application). Each guard owns its own Map.
+       # DMs lives in `Esr.Peers.UnboundChatGuard` / `UnboundUserGuard`.
+       # PR-21x: deny-DM rate-limit moved to `Esr.Peers.CapGuard`.
+       # FAA state is now down to passive routing context only.
      }}
   end
 
@@ -577,57 +565,10 @@ defmodule Esr.Peers.FeishuAppAdapter do
     end
   end
 
-  # Drop-Lane-A T1.3: Lane B deny-DM dispatch. `peer_server.ex`'s
-  # inbound gate emits this message after capability denial; here we
-  # rate-limit per principal (10 min window, see @deny_dm_interval_ms)
-  # and dispatch a `{:outbound, %{"kind" => "reply", ...}}` directive
-  # which routes through the existing handle_downstream path, lands as
-  # a directive on `adapter:feishu/<instance_id>`, and is sent over
-  # the wire by the Python adapter.
-  #
-  # Empty/missing principal_id is dropped silently — the regex match
-  # in peer_server.ex's `dispatch_deny_dm/1` already filters these,
-  # but the belt-and-braces guard here means any internally-fired bad
-  # dispatch can't crash this GenServer.
-  def handle_info({:dispatch_deny_dm, principal_id, chat_id}, state)
-      when is_binary(principal_id) and principal_id != "" and is_binary(chat_id) and chat_id != "" do
-    now = :erlang.monotonic_time(:millisecond)
-    # `:erlang.monotonic_time/1` may be negative — never compare against
-    # a literal default like `0` (which would mark first dispatch as
-    # rate-limited on a freshly-booted node). Treat "never seen" as a
-    # forced-fire branch.
-    last = Map.get(state.deny_dm_last_emit, principal_id)
-
-    if is_nil(last) or now - last >= @deny_dm_interval_ms do
-      send(
-        self(),
-        {:outbound,
-         %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => @deny_dm_text}}}
-      )
-
-      {:noreply, %{state | deny_dm_last_emit: Map.put(state.deny_dm_last_emit, principal_id, now)}}
-    else
-      Logger.debug(
-        "FAA Lane B deny-DM suppressed by rate-limit " <>
-          "principal=#{inspect(principal_id)} chat_id=#{inspect(chat_id)} " <>
-          "instance_id=#{inspect(state.instance_id)}"
-      )
-
-      {:noreply, state}
-    end
-  end
-
-  # Catch-all for malformed dispatch tuples (empty/missing principal_id
-  # or chat_id, non-binary types). Drop and stay alive — never crash
-  # the GenServer for a bad dispatch.
-  def handle_info({:dispatch_deny_dm, _principal_id, _chat_id}, state) do
-    Logger.warning(
-      "FAA Lane B deny-DM ignored: malformed dispatch tuple " <>
-        "(empty/non-binary principal_id or chat_id) instance_id=#{inspect(state.instance_id)}"
-    )
-
-    {:noreply, state}
-  end
+  # PR-21x: `{:dispatch_deny_dm, _, _}` handle_info clauses removed —
+  # `Esr.Peers.CapGuard` now sends `{:outbound, ...}` directly to this
+  # FAA pid, so the existing `{:outbound, _}` handle_info clause does
+  # the wrapping. No FAA-side rate-limit state remains.
 
   # PR-21w: outbound entrypoint shared by the unbound-chat / unbound-user
   # guards. Both Guard modules return `{:emit, text}` and let FAA do the
