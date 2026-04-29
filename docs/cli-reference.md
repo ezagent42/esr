@@ -27,6 +27,7 @@ Commands:
   admin       Administrative commands (queue-based).
   cap         Manage capabilities (who holds which permission).
   cmd         Command (pattern) install / compile / run / stop operations.
+  daemon      Manage the esrd background daemon (start / stop / restart /...
   deadletter  DeadLetter queue inspection + recovery (PRD 07 F19).
   debug       Admin / debug commands (PRD 07 F18).
   drain       Gracefully stop every live topology (PRD 07 F21).
@@ -609,6 +610,91 @@ Options:
   --help        Show this message and exit.
 ```
 
+### `cli daemon`
+
+> Manage the esrd background daemon (start / stop / restart / status).
+
+```
+Usage: cli daemon [OPTIONS] COMMAND [ARGS]...
+
+  Manage the esrd background daemon (start / stop / restart / status).
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  restart  Restart esrd via launchctl kickstart -k.
+  start    Bring up esrd via launchctl bootstrap.
+  status   Show whether esrd is running, with pid + label.
+  stop     Stop esrd via launchctl bootout.
+```
+
+#### `cli daemon restart`
+
+> Restart esrd via launchctl kickstart -k.
+
+```
+Usage: cli daemon restart [OPTIONS]
+
+  Restart esrd via launchctl kickstart -k.
+
+  `kickstart -k` sends SIGTERM to the running process and waits for launchd to
+  respawn it. Faster than stop+start (no plist re-load), and KeepAlive=true on
+  our plist guarantees the respawn.
+
+Options:
+  --help  Show this message and exit.
+```
+
+#### `cli daemon start`
+
+> Bring up esrd via launchctl bootstrap.
+
+```
+Usage: cli daemon start [OPTIONS]
+
+  Bring up esrd via launchctl bootstrap.
+
+  Idempotent — if already loaded + running, it's a no-op (launchctl returns
+  "service already loaded" which we report cleanly). If loaded but stopped,
+  this sends ``kickstart``.
+
+Options:
+  --help  Show this message and exit.
+```
+
+#### `cli daemon status`
+
+> Show whether esrd is running, with pid + label.
+
+```
+Usage: cli daemon status [OPTIONS]
+
+  Show whether esrd is running, with pid + label.
+
+  Reads ``launchctl list <label>`` for the active state. Exit 0 when running,
+  1 when stopped.
+
+Options:
+  --help  Show this message and exit.
+```
+
+#### `cli daemon stop`
+
+> Stop esrd via launchctl bootout.
+
+```
+Usage: cli daemon stop [OPTIONS]
+
+  Stop esrd via launchctl bootout.
+
+  Bootout signals the daemon process and removes the plist from the launchd
+  registry. Use ``esr daemon start`` to bring it back.
+
+Options:
+  --help  Show this message and exit.
+```
+
 ### `cli deadletter`
 
 > DeadLetter queue inspection + recovery (PRD 07 F19).
@@ -1099,6 +1185,10 @@ Options:
 Usage: cli user unbind-feishu [OPTIONS] NAME FEISHU_USER_ID
 
   Remove a Feishu open_id binding from an esr user.
+
+  PR-21s (2026-04-29): also auto-revokes the 4 bootstrap caps that bind-feishu
+  auto-granted. Symmetric — bind grants, unbind revokes. Other manually-added
+  caps on the open_id are preserved.
 
 Options:
   --help  Show this message and exit.
