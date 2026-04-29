@@ -23,7 +23,7 @@
 | What | Tracked PR | Notes |
 |---|---|---|
 | `Esr.Peers.CapGuard` — extract Lane B from `Esr.PeerServer` | done | PR-21x #101. `deny_dm_last_emit` migrated; rate-limit globally consistent. |
-| Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | PR-21y | Currently PR-21s does **graceful resolution** at check time (open_id → username). Storing under username would require migrating capabilities.yaml + all envelope construction sites. |
+| Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | done | PR-21y #102. `bind-feishu` migrates existing `ou_xxx` caps + grants bootstrap under username. `unbind-feishu` revokes bootstrap when last binding goes. `cap grant ou_*` emits operator hint. PR-21s graceful resolve stays as backstop. |
 | `describe_topology` filter for `users.yaml` | PR-21z | Spec §"Out of scope". feishu_ids are sensitive — should NOT be exposed via the MCP `describe_topology` tool. Default-deny. See `docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md` §"Out of scope". |
 | `AdapterChannelNewChainTest` known-flake formal entry | done | Now in `docs/operations/known-flakes.md`. |
 
@@ -76,4 +76,5 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21w-tracker `#99` — `docs/futures/todo.md` durable task tracker + `AdapterChannelNewChainTest` flake entry
 - PR-21w `#100` — `*Guard` extractions: `EsrWeb.PendingActions` → `PendingActionsGuard`, `Esr.Peers.UnboundChatGuard`, `Esr.Peers.UnboundUserGuard`
 - PR-21x `#101` — `Esr.Peers.CapGuard` extracted from `Esr.PeerServer` Lane B + FAA deny-DM rate limit
+- PR-21y `#102` — Cap principal_id rekey to esr-username (bind-feishu migrates existing `ou_*` caps + grants bootstrap under username)
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session

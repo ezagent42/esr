@@ -142,7 +142,24 @@ def cap_grant(principal_id: str, permission: str, kind: str, note: str) -> None:
     (wildcard, full grant) before persistence. Operators see the
     canonical string in ``capabilities.yaml`` so the wire format stays
     uniform with what the Lane A checker matches against.
+
+    PR-21y 2026-04-30: operator-facing nudge — when ``principal_id``
+    looks like a Feishu open_id (``ou_*``), prefer granting under the
+    bound esr-username instead. Doesn't block the write (some legacy
+    flows + tests still seed by open_id), just prints a hint pointing
+    at ``user bind-feishu`` so new operators don't accidentally create
+    `ou_*`-keyed caps that PR-21s graceful resolve has to mask.
     """
+    if principal_id.startswith("ou_"):
+        click.echo(
+            f"hint: {principal_id} looks like a Feishu open_id; "
+            f"caps stored under the esr-username are preferred (PR-21y). "
+            f"If a user is already bound to this open_id, run instead: "
+            f"`cap grant <esr_username> {permission}`. "
+            f"To bind: `user bind-feishu <esr_username> {principal_id}`",
+            err=True,
+        )
+
     permission = _resolve_permission_alias(permission)
     path = Path(capabilities_yaml_path())
     path.parent.mkdir(parents=True, exist_ok=True)
