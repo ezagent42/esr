@@ -367,13 +367,16 @@ defmodule Esr.Peers.FeishuAppAdapter do
     在 esr 仓库里跑（注意 --env 选 prod 或 dev）：
 
       ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
-          --cwd <CC 工作目录> \\
+          --owner <esr_username> \\
+          --root <主 git 仓库路径> \\
           --start-cmd scripts/esr-cc.sh \\
           --role dev \\
           --chat #{chat_id}:#{app_id}:dm
 
-    注册后，给本 bot 发：/new-session <workspace_name> tag=root
-    会话就会拉起来。
+    注册后，给本 bot 发：
+      /new-session <workspace_name> name=<session_name> cwd=<worktree 路径> worktree=<分支名>
+
+    会话就会拉起来（每个 session 一个独立 worktree，从 origin/main fork）。
 
     （这条消息 10 分钟内不会重复发送。）
     """

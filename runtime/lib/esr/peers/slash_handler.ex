@@ -121,20 +121,27 @@ defmodule Esr.Peers.SlashHandler do
   defp maybe_put(map, k, v), do: Map.put(map, k, v)
 
   # --------------------------------------------------------------------
-  # Parser — D15-compliant tokenization:
-  #   /new-session --agent <name> --dir <path>      (both required)
-  #   /end-session <session_id>
+  # Parser — PR-21d unified grammar (D14):
+  #   /new-session <workspace> name=<…> cwd=<…> worktree=<…>
+  #   /end-session <name>
   #   /list-sessions | /sessions
   #   /list-agents
+  #
+  # `tag=<…>` is accepted as an alias for `name=<…>` during rollout;
+  # `--agent <…>` / `--dir <…>` (the pre-PR-21d Elixir-only form) are
+  # rejected with a hint pointing at the new grammar.
+  #
   # Cap check is the Dispatcher's job, not SlashHandler's.
   # --------------------------------------------------------------------
 
   defp parse_command(text) do
     case String.split(text, " ", parts: 2) do
       ["/new-session", rest] -> parse_new_session(rest)
-      ["/new-session"] -> {:error, "/new-session requires --agent and --dir"}
+      ["/new-session"] ->
+        {:error, "/new-session requires <workspace> and name= cwd= worktree=, e.g. " <>
+                   "/new-session esr-dev name=foo cwd=/path/to/wt worktree=foo"}
       ["/end-session", rest] -> parse_end_session(rest)
-      ["/end-session"] -> {:error, "/end-session requires <session_id>"}
+      ["/end-session"] -> {:error, "/end-session requires <name>"}
       ["/list-sessions"] -> {:ok, "session_list", %{}}
       ["/sessions"] -> {:ok, "session_list", %{}}
       ["/list-agents"] -> {:ok, "agent_list", %{}}
@@ -144,35 +151,53 @@ defmodule Esr.Peers.SlashHandler do
 
   defp parse_end_session(rest) do
     case tokenize(rest) do
-      [sid | _] -> {:ok, "session_end", %{"session_id" => sid}}
-      [] -> {:error, "/end-session requires <session_id>"}
+      [name | _] -> {:ok, "session_end", %{"session_id" => name, "name" => name}}
+      [] -> {:error, "/end-session requires <name>"}
     end
   end
 
-  # --agent <name> --dir <path>; both required per D11/D13.
   defp parse_new_session(rest) do
     toks = tokenize(rest)
-    agent = flag_value(toks, "--agent")
-    dir = flag_value(toks, "--dir")
 
-    cond do
-      is_nil(agent) ->
-        {:error, "/new-session requires --agent"}
+    if has_legacy_flags?(toks) do
+      {:error,
+       "/new-session: --agent / --dir are removed (PR-21d). Use " <>
+         "/new-session <workspace> name=<…> cwd=<…> worktree=<…>"}
+    else
+      [workspace | kvs] = toks ++ [""]
+      kv = parse_kv_pairs(kvs)
 
-      is_nil(dir) ->
-        {:error,
-         "/new-session requires --dir (agent '#{agent}' declares dir required)"}
+      cond do
+        workspace == "" ->
+          {:error, "/new-session requires <workspace> as first arg"}
 
-      true ->
-        {:ok, "session_new", %{"agent" => agent, "dir" => dir}}
+        is_nil(kv["name"]) and is_nil(kv["tag"]) ->
+          {:error, "/new-session requires name=<…>"}
+
+        true ->
+          name = kv["name"] || kv["tag"]
+
+          args =
+            %{"workspace" => workspace, "name" => name, "tag" => name}
+            |> maybe_put("cwd", kv["cwd"])
+            |> maybe_put("worktree", kv["worktree"])
+
+          {:ok, "session_new", args}
+      end
     end
   end
 
-  defp flag_value(toks, flag) do
-    case Enum.drop_while(toks, &(&1 != flag)) do
-      [^flag, value | _] -> value
-      _ -> nil
-    end
+  defp has_legacy_flags?(toks),
+    do: Enum.any?(toks, &(&1 in ["--agent", "--dir"]))
+
+  defp parse_kv_pairs(toks) do
+    toks
+    |> Enum.reduce(%{}, fn tok, acc ->
+      case String.split(tok, "=", parts: 2) do
+        [k, v] when k != "" -> Map.put(acc, k, v)
+        _ -> acc
+      end
+    end)
   end
 
   defp tokenize(rest),

@@ -25,26 +25,51 @@ def _with_chat(event: Event, chat_id: str) -> Event:
 # --- /new-session (v0.2) -----------------------------------------------
 
 
-def test_new_session_triggers_invoke_command() -> None:
+def test_new_session_triggers_invoke_command_with_pr21d_grammar() -> None:
     from esr_handler_feishu_app.on_msg import on_msg
     from esr_handler_feishu_app.state import FeishuAppState
 
     s = FeishuAppState()
-    # args include chat_id now for the pass-through
-    event = _with_chat(_msg("/new-session esr-dev tag=dev-root"), "oc_abc")
+    event = _with_chat(
+        _msg(
+            "/new-session esr-dev name=feature-foo cwd=/Users/h2oslabs/Workspace/esr-feature-foo worktree=feature-foo"
+        ),
+        "oc_abc",
+    )
 
     new_s, actions = on_msg(s, event)
-    assert new_s.bound_threads == frozenset({"dev-root"})
-    assert new_s.active_thread_by_chat == {"oc_abc": "dev-root"}
+    assert new_s.bound_threads == frozenset({"feature-foo"})
+    assert new_s.active_thread_by_chat == {"oc_abc": "feature-foo"}
     assert len(actions) == 1
     ic = actions[0]
     assert ic.name == "feishu-thread-session"
     assert ic.params == {
-        "thread_id": "dev-root",
+        "thread_id": "feature-foo",
         "chat_id": "oc_abc",
         "workspace": "esr-dev",
-        "tag": "dev-root",
+        "tag": "feature-foo",
+        "name": "feature-foo",
+        "cwd": "/Users/h2oslabs/Workspace/esr-feature-foo",
+        "worktree": "feature-foo",
     }
+
+
+def test_new_session_legacy_tag_alias_still_accepted() -> None:
+    """PR-21d rollout: tag= still accepted as alias for name=."""
+    from esr_handler_feishu_app.on_msg import on_msg
+    from esr_handler_feishu_app.state import FeishuAppState
+
+    s = FeishuAppState()
+    event = _with_chat(_msg("/new-session esr-dev tag=dev-root"), "oc_abc")
+
+    new_s, actions = on_msg(s, event)
+    assert new_s.bound_threads == frozenset({"dev-root"})
+    ic = actions[0]
+    assert ic.params["name"] == "dev-root"
+    assert ic.params["workspace"] == "esr-dev"
+    # cwd/worktree omitted in legacy path: empty strings (PR-21e spawn rejects)
+    assert ic.params["cwd"] == ""
+    assert ic.params["worktree"] == ""
 
 
 def test_new_thread_legacy_alias_still_works() -> None:

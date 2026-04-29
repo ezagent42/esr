@@ -77,38 +77,62 @@ def _handle_new_session(
 
     parts = body.split()
 
-    # Two parsing forms:
-    #   /new-session <workspace> tag=<tag>   (v0.2)
-    #   /new-thread <tag>                    (v0.1 compat — first token is the tag)
-    if default_workspace:  # legacy /new-thread
-        tag = parts[0]
+    # PR-21d unified grammar (D14): always positional workspace + named
+    # name= cwd= worktree= args. Examples:
+    #   /new-session esr-dev name=feature-foo cwd=/Users/.../esr-feature-foo worktree=feature-foo
+    #   /new-thread feature-foo                       (v0.1 compat — first token is the name; uses default_workspace)
+    #
+    # Backward-compat for v0.1 /new-thread is preserved (it just maps to
+    # name=<first-token>; cwd/worktree default to empty and PR-21e's
+    # spawn path will reject the missing-worktree case there).
+    if default_workspace:  # legacy /new-thread <name>
+        if not parts:
+            return state, []
+        name = parts[0]
         workspace = default_workspace
-    else:                  # v0.2 /new-session
+        cwd = ""
+        worktree = ""
+    else:                  # PR-21d /new-session <workspace> name=… cwd=… worktree=…
         workspace = parts[0] if parts else ""
-        tag = ""
+        name, cwd, worktree = "", "", ""
         for p in parts[1:]:
-            if p.startswith("tag="):
-                tag = p[4:]
-                break
+            if p.startswith("name="):
+                name = p[5:]
+            elif p.startswith("cwd="):
+                cwd = p[4:]
+            elif p.startswith("worktree="):
+                worktree = p[len("worktree="):]
+            elif p.startswith("tag="):
+                # PR-21d: legacy `tag=` accepted as alias for `name=` to
+                # ease the rollout; prints a deprecation hint via the
+                # session response (PR-21e adds the warning DM).
+                if not name:
+                    name = p[4:]
 
     if not workspace:
         return state, []
 
-    # Default tag = short slug of message_id if absent (v0.2 /new-session only)
-    if not tag:
+    # Default name = short slug of message_id if absent
+    if not name:
         mid = str(event.args.get("message_id", ""))
-        tag = mid.split("_", 1)[-1][:12] or "sess"
+        name = mid.split("_", 1)[-1][:12] or "sess"
 
     chat_id = str(event.args.get("chat_id", ""))
 
-    new_state = state.with_added_thread(tag)
+    new_state = state.with_added_thread(name)
     if chat_id:
-        new_state = new_state.with_active_thread(chat_id, tag)
+        new_state = new_state.with_active_thread(chat_id, name)
+
+    # `tag` field on the InvokeCommand kept for downstream compat (Elixir
+    # SessionRouter's params parser hasn't been bumped yet — that's
+    # PR-21e). PR-21d emits both `tag` and `name`; consumers can switch
+    # to `name` once available.
     return new_state, [
         InvokeCommand(
             name="feishu-thread-session",
-            params={"thread_id": tag, "chat_id": chat_id,
-                    "workspace": workspace, "tag": tag},
+            params={"thread_id": name, "chat_id": chat_id,
+                    "workspace": workspace, "tag": name, "name": name,
+                    "cwd": cwd, "worktree": worktree},
         )
     ]
 
