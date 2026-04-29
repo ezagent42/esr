@@ -25,6 +25,16 @@ defmodule Esr.SessionRegistry do
   # Mirrors the pattern in `Esr.Capabilities.Grants`.
   @ets_table :esr_session_chat_index
 
+  # PR-21g: D8 uniqueness — additional ETS indexes on
+  #   {env, username, workspace, name}            → session_id
+  #   {env, username, workspace, worktree_branch} → session_id
+  # within a single esrd environment ($ESR_INSTANCE), each tuple must
+  # be unique. Collisions reject at register-time so two `/new-session`
+  # calls competing for the same name (or worktree branch) fail fast
+  # rather than silently overwriting tmux sessions / worktree paths.
+  @ets_name_index :esr_session_name_index
+  @ets_worktree_index :esr_session_worktree_index
+
   # Public API
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -33,6 +43,62 @@ defmodule Esr.SessionRegistry do
 
   def register_session(session_id, chat_thread_key, peer_refs),
     do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
+
+  @doc """
+  PR-21g D8: claim a session URI tuple. Atomically inserts both the
+  `name` and the `worktree_branch` key under the
+  `(env, username, workspace, …)` namespace, rejecting if either is
+  already taken.
+
+  Returns `:ok` on successful claim, or `{:error, {:name_taken, _}}` /
+  `{:error, {:worktree_taken, _}}` when a collision is detected.
+
+  Call this BEFORE materialising the worktree on disk and BEFORE
+  spawning tmux — the registry is the source of truth for
+  "this session already exists" outside the disk-state quorum.
+  """
+  @spec claim_uri(
+          String.t(),
+          %{
+            env: String.t(),
+            username: String.t(),
+            workspace: String.t(),
+            name: String.t(),
+            worktree_branch: String.t()
+          }
+        ) :: :ok | {:error, term()}
+  def claim_uri(session_id, %{} = uri_components) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:claim_uri, session_id, uri_components})
+  end
+
+  @doc """
+  PR-21g: lookup a session by its URI tuple. Used by `/end-session`
+  to resolve the user-facing `<name>` to the runtime session_id.
+  """
+  @spec lookup_by_name(String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | :not_found
+  def lookup_by_name(env, username, workspace, name)
+      when is_binary(env) and is_binary(username) and is_binary(workspace) and is_binary(name) do
+    case :ets.lookup(@ets_name_index, {env, username, workspace, name}) do
+      [{_k, sid}] -> {:ok, sid}
+      [] -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc "PR-21g: list every URI-claimed session under a (env, username, workspace) prefix."
+  @spec list_uris(String.t(), String.t(), String.t()) :: [{String.t(), String.t()}]
+  def list_uris(env, username, workspace) do
+    @ets_name_index
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {{^env, ^username, ^workspace, name}, sid} -> [{name, sid}]
+      _ -> []
+    end)
+  rescue
+    ArgumentError -> []
+  end
 
   @doc """
   Direct ETS lookup — runs in the caller process with no GenServer hop.
@@ -56,6 +122,8 @@ defmodule Esr.SessionRegistry do
   @impl true
   def init(_opts) do
     :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
+    :ets.new(@ets_name_index, [:named_table, :set, :protected, read_concurrency: true])
+    :ets.new(@ets_worktree_index, [:named_table, :set, :protected, read_concurrency: true])
     # Eagerly load <runtime_home>/agents.yaml at init so agents are
     # available before Admin.Supervisor starts (and its watcher
     # dispatches any pre-queued session_new commands). E2E discovered
@@ -116,6 +184,9 @@ defmodule Esr.SessionRegistry do
   end
 
   def handle_call({:unregister_session, sid}, _from, state) do
+    # PR-21g: clear both indexes' rows for this sid.
+    drop_uri_rows_for(sid)
+
     case Map.get(state.sessions, sid) do
       nil ->
         {:reply, :ok, state}
@@ -130,6 +201,48 @@ defmodule Esr.SessionRegistry do
 
         {:reply, :ok, state}
     end
+  end
+
+  def handle_call(
+        {:claim_uri, sid, %{env: env, username: u, workspace: ws, name: n, worktree_branch: wb}},
+        _from,
+        state
+      )
+      when is_binary(env) and is_binary(u) and is_binary(ws) and is_binary(n) and is_binary(wb) do
+    name_key = {env, u, ws, n}
+    wt_key = {env, u, ws, wb}
+
+    case {:ets.lookup(@ets_name_index, name_key), :ets.lookup(@ets_worktree_index, wt_key)} do
+      {[], []} ->
+        :ets.insert(@ets_name_index, {name_key, sid})
+        :ets.insert(@ets_worktree_index, {wt_key, sid})
+        {:reply, :ok, state}
+
+      {[{_, taken_by}], _} ->
+        {:reply, {:error, {:name_taken, taken_by}}, state}
+
+      {_, [{_, taken_by}]} ->
+        {:reply, {:error, {:worktree_taken, taken_by}}, state}
+    end
+  end
+
+  def handle_call({:claim_uri, _sid, _bad}, _from, state),
+    do: {:reply, {:error, {:invalid_args, "claim_uri requires env/username/workspace/name/worktree_branch"}}, state}
+
+  defp drop_uri_rows_for(sid) do
+    drop_matching(@ets_name_index, sid)
+    drop_matching(@ets_worktree_index, sid)
+  end
+
+  defp drop_matching(table, sid) do
+    table
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {key, ^sid} -> :ets.delete(table, key)
+      _ -> :ok
+    end)
+  rescue
+    ArgumentError -> :ok
   end
 
   # Internal: yaml parse + reserved-field warning

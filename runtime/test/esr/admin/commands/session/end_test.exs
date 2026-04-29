@@ -125,4 +125,76 @@ defmodule Esr.Admin.Commands.Session.EndTest do
       assert {:error, %{"type" => "invalid_args"}} = SessionEnd.execute(%{})
     end
   end
+
+  describe "execute/1 PR-21g name= resolution" do
+    test "args.name resolves via SessionRegistry.lookup_by_name + ends",
+         %{tmux_socket: tmux_sock} do
+      Grants.load_snapshot(%{"ou_pr21g_a" => ["*"]})
+
+      env = "test-env-#{System.unique_integer([:positive])}"
+      sid_suffix = System.unique_integer([:positive])
+
+      {:ok, sid} =
+        Esr.SessionRouter.create_session(%{
+          agent: "cc",
+          dir: "/tmp",
+          principal_id: "ou_pr21g_a",
+          chat_id: "oc_pr21g_#{sid_suffix}",
+          thread_id: "om_pr21g_#{sid_suffix}",
+          tmux_socket: tmux_sock
+        })
+
+      # Stage URI claim so lookup_by_name resolves to sid.
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "feature-foo",
+          worktree_branch: "feature-foo"
+        })
+
+      cmd = %{
+        "submitted_by" => "ou_pr21g_a",
+        "args" => %{
+          "name" => "feature-foo",
+          "username" => "linyilun",
+          "workspace" => "esr-dev",
+          "env" => env
+        }
+      }
+
+      assert {:ok, %{"session_id" => ^sid, "ended" => true}} = SessionEnd.execute(cmd)
+
+      # URI claim cleared by unregister_session under the hood
+      assert :not_found =
+               Esr.SessionRegistry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
+    end
+
+    test "args.name without args.username → invalid_args" do
+      cmd = %{
+        "submitted_by" => "ou_pr21g_b",
+        "args" => %{"name" => "feature-foo", "workspace" => "esr-dev"}
+      }
+
+      assert {:error, %{"type" => "invalid_args", "message" => msg}} =
+               SessionEnd.execute(cmd)
+
+      assert msg =~ "username"
+    end
+
+    test "args.name resolves to :not_found → unknown_session" do
+      cmd = %{
+        "submitted_by" => "ou_pr21g_c",
+        "args" => %{
+          "name" => "ghost-#{System.unique_integer([:positive])}",
+          "username" => "linyilun",
+          "workspace" => "esr-dev",
+          "env" => "iso-env-#{System.unique_integer([:positive])}"
+        }
+      }
+
+      assert {:error, %{"type" => "unknown_session"}} = SessionEnd.execute(cmd)
+    end
+  end
 end
