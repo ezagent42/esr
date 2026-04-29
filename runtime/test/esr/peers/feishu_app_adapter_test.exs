@@ -507,7 +507,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
   end
 
   describe "PR-21q bootstrap slash bypass" do
-    test "/help in unbound chat returns help text inline (chat-guide bypassed)",
+    test "/help returns clean command reference (no status — that's /doctor)",
          %{sup: sup} do
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_help_test")
 
@@ -545,12 +545,64 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
                      },
                      500
 
-      # /help text mentions the canonical bootstrap commands
+      # PR-21r: /help is now a clean command reference (man-style).
+      # Lists the slash commands with one-line descriptions; does NOT
+      # include the operator's user/chat status or bootstrap walk-
+      # through (that's /doctor).
+      assert content =~ "ESR slash commands"
+      assert content =~ "/help"
       assert content =~ "/whoami"
+      assert content =~ "/doctor"
       assert content =~ "/new-workspace"
-      assert content =~ "ESR 帮助"
-      # Chat-binding status reflected (unbound)
+      assert content =~ "/new-session"
+      # Status checkmarks / bootstrap commands NOT in /help output
+      refute content =~ "✅"
+      refute content =~ "你的当前状态"
+      refute content =~ "Bootstrap 步骤"
+    end
+
+    test "/doctor returns status + bootstrap walk-through (the old /help content)",
+         %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_doctor_test")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_doctor_test", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_doctor_user",
+        "principal_id" => "ou_doctor_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_doctor_test",
+            "app_id" => "inst_doctor_test",
+            "thread_id" => "",
+            "content" => "/doctor"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{"args" => %{"content" => content}}
+                       }
+                     },
+                     500
+
+      assert content =~ "ESR 状态诊断"
       assert content =~ "❌"
+      # /doctor's "next step" branch should be the user-bind one
+      # since ou_doctor_user is unbound
+      assert content =~ "user bind-feishu"
+      assert content =~ "ou_doctor_user"
     end
 
     test "/whoami in unbound chat returns identity diagnostic", %{sup: sup} do
