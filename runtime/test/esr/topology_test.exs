@@ -36,8 +36,34 @@ defmodule Esr.TopologyTest do
                "esr://localhost/workspaces/ws_dev/chats/oc_xxx"
     end
 
-    test "user_uri/1 builds path-style user URI" do
+    test "user_uri/1 builds path-style user URI (raw ou_* fallback when unbound)" do
+      # PR-21b: with no Esr.Users.Registry binding, falls back to raw open_id
+      # (and logs a warning). When Registry is up but has no binding, same
+      # fallback applies.
       assert Topology.user_uri("ou_abc") == "esr://localhost/users/ou_abc"
+    end
+
+    test "user_uri/1 rekeys to esr-username when binding exists (PR-21b)" do
+      # Stage a Users.Registry binding then check user_uri/1 picks it up.
+      if Process.whereis(Esr.Users.Registry) == nil do
+        start_supervised!(Esr.Users.Registry)
+      end
+
+      :ok =
+        Esr.Users.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Users.Registry.User{
+            username: "linyilun",
+            feishu_ids: ["ou_known"]
+          }
+        })
+
+      assert Topology.user_uri("ou_known") == "esr://localhost/users/linyilun"
+
+      # Unbound id: still falls back to raw
+      assert Topology.user_uri("ou_unknown") == "esr://localhost/users/ou_unknown"
+
+      # Cleanup so we don't leak into other tests
+      Esr.Users.Registry.load_snapshot(%{})
     end
 
     test "adapter_uri/2 builds path-style adapter URI" do

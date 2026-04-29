@@ -133,6 +133,35 @@ defmodule Esr.UriTest do
       {:ok, uri} = Esr.Uri.parse(uri_str)
       assert uri.segments == ["users", "ou_abc"]
     end
+
+    test "build_path with :org emits org@host (PR-21b)" do
+      uri = Esr.Uri.build_path(["sessions", "linyilun", "ws", "foo"], "localhost", org: "default")
+      assert uri == "esr://default@localhost/sessions/linyilun/ws/foo"
+    end
+
+    test "build_path round-trips through parser with :org" do
+      uri_str =
+        Esr.Uri.build_path(
+          ["sessions", "linyilun", "esr-dev", "feature"],
+          "localhost",
+          org: "default"
+        )
+
+      {:ok, uri} = Esr.Uri.parse(uri_str)
+      assert uri.org == "default"
+      assert uri.host == "localhost"
+      assert uri.segments == ["sessions", "linyilun", "esr-dev", "feature"]
+    end
+
+    test "build_path with nil org behaves identically to no opts" do
+      assert Esr.Uri.build_path(["users", "x"], "localhost", org: nil) ==
+               Esr.Uri.build_path(["users", "x"], "localhost")
+    end
+
+    test "build with :org emits org@host (PR-21b symmetry)" do
+      assert Esr.Uri.build(:actor, "cc:sess", "localhost", org: "default") ==
+               "esr://default@localhost/actor/cc:sess"
+    end
   end
 
   describe "type set helpers" do

@@ -81,30 +81,44 @@ defmodule Esr.Uri do
   def parse(_), do: {:error, :bad_scheme}
 
   @doc """
-  Builds a 2-segment URI (legacy form): `esr://<host>/<type>/<id>`.
+  Builds a 2-segment URI (legacy form): `esr://[org@]<host>/<type>/<id>`.
+
+  `opts` accepts `:org` to emit `org@host` (PR-21b symmetry with the
+  Python builder; first production user is the session URI in PR-21d).
   """
-  @spec build(atom(), String.t(), String.t()) :: String.t()
-  def build(type, id, host) when type in @valid_types do
-    "esr://#{host}/#{type}/#{id}"
+  @spec build(atom(), String.t(), String.t(), keyword()) :: String.t()
+  def build(type, id, host, opts \\ []) when type in @valid_types do
+    "esr://#{authority(host, opts)}/#{type}/#{id}"
   end
 
   @doc """
   Builds a path-style URI from a list of path segments:
-  `esr://<host>/<seg1>/<seg2>/.../<segN>`.
+  `esr://[org@]<host>/<seg1>/<seg2>/.../<segN>`.
 
   The first segment must be a valid path-style type (e.g. `adapters`,
   `workspaces`, `chats`, `users`, `sessions`). Use `build/3` for legacy
   2-segment forms.
+
+  `opts` accepts `:org` to emit `org@host` (PR-21b symmetry with
+  `py/src/esr/uri.py` `build_path(..., org=...)`).
   """
-  @spec build_path([String.t()], String.t()) :: String.t()
-  def build_path([first | _] = segments, host)
+  @spec build_path([String.t()], String.t(), keyword()) :: String.t()
+  def build_path([first | _] = segments, host, opts \\ [])
       when length(segments) >= 2 do
     if first in Enum.map(@path_style_types, &Atom.to_string/1) do
-      "esr://#{host}/" <> Enum.join(segments, "/")
+      "esr://#{authority(host, opts)}/" <> Enum.join(segments, "/")
     else
       raise ArgumentError,
             "first segment #{inspect(first)} is not a valid path-style type " <>
               "(expected one of #{inspect(@path_style_types)})"
+    end
+  end
+
+  defp authority(host, opts) do
+    case Keyword.get(opts, :org) do
+      nil -> host
+      "" -> host
+      org when is_binary(org) -> "#{org}@#{host}"
     end
   end
 
