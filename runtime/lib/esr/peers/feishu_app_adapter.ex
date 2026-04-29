@@ -139,24 +139,148 @@ defmodule Esr.Peers.FeishuAppAdapter do
         {:forward, [], state}
 
       _ ->
-        # PR-21i 2026-04-29: when the inbound `user_id` (Feishu open_id)
-        # is not bound to any esr user AND the chat IS workspace-bound,
-        # DM the operator a `esr user bind-feishu …` instruction
-        # including their open_id verbatim. Same rate-limit / drop
-        # semantics as the existing unbound-chat guide. Mutually
-        # exclusive: only fires when chat is bound (so we don't pile
-        # two DMs on a brand-new chat).
-        app_id = args["app_id"] || state.instance_id
-        user_id = envelope["user_id"] || args["user_id"]
+        # PR-21q (2026-04-29): handle bootstrap slashes (`/help`,
+        # `/new-workspace`, `/whoami`) inline BEFORE the unbound-chat /
+        # unbound-user guide gates. Without this, the chat-guide DM
+        # tells operators to do something the chat-guide itself
+        # prevents (chicken-and-egg).
+        if bootstrap_slash?(text) do
+          handle_bootstrap_slash(text, chat_id, principal_id, args, state)
+        else
+          # PR-21i: user-guide DM when user_id unbound AND chat IS
+          # workspace-bound. Mutually exclusive with chat-guide below.
+          app_id = args["app_id"] || state.instance_id
+          user_id = envelope["user_id"] || args["user_id"]
 
-        case maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id) do
-          {:guided, new_state} ->
-            {:drop, :unbound_user_guide_sent, new_state}
+          case maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id) do
+            {:guided, new_state} ->
+              {:drop, :unbound_user_guide_sent, new_state}
 
-          _ ->
-            do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+            _ ->
+              do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+          end
         end
     end
+  end
+
+  # PR-21q: bootstrap slashes that must work in ANY chat state — chat
+  # unbound, user unbound, or both. Inline-parsed (not routed through
+  # SlashHandler) so we can DM the result directly without the slash
+  # round-trip's chat-binding requirements.
+  defp bootstrap_slash?(text) do
+    head =
+      text
+      |> to_string()
+      |> String.trim()
+      |> String.split(~r/\s+/, parts: 2, trim: true)
+      |> List.first()
+
+    head in ~w(/help /whoami)
+  end
+
+  defp handle_bootstrap_slash(text, chat_id, principal_id, args, state) do
+    text = String.trim(text)
+    app_id = args["app_id"] || state.instance_id
+
+    reply =
+      cond do
+        text == "/help" or String.starts_with?(text, "/help ") ->
+          help_text(principal_id, chat_id, app_id, state.instance_id)
+
+        text == "/whoami" or String.starts_with?(text, "/whoami ") ->
+          whoami_text(principal_id, chat_id, app_id)
+
+        true ->
+          # Bootstrap dispatch table miss — shouldn't reach here given
+          # bootstrap_slash?/1 already filtered. Defensive fallback.
+          "unknown bootstrap slash"
+      end
+
+    send(
+      self(),
+      {:outbound, %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => reply}}}
+    )
+
+    {:drop, :bootstrap_slash_replied, state}
+  end
+
+  defp help_text(principal_id, chat_id, app_id, _instance_id) do
+    user_status =
+      if Process.whereis(Esr.Users.Registry) do
+        case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
+          {:ok, username} -> "✅ 已绑定到 esr user: #{username}"
+          :not_found -> "❌ 未绑定 esr user (你的 open_id: #{principal_id})"
+        end
+      else
+        "(Esr.Users.Registry 未运行)"
+      end
+
+    chat_status =
+      case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+        {:ok, ws} -> "✅ 已绑定到 workspace: #{ws}"
+        :not_found -> "❌ chat 未绑定任何 workspace"
+      end
+
+    """
+    👋 ESR 帮助
+
+    你的当前状态：
+      • 用户身份: #{user_status}
+      • Chat 绑定: #{chat_status}
+
+    可用的 slash 命令：
+
+    bootstrap（任何状态都可用）:
+      /help            — 显示这条帮助
+      /whoami          — 显示你的身份和 chat 绑定状态
+
+    需要 user + workspace 都绑定:
+      /new-workspace <name>
+        创建新 workspace 并自动绑当前 chat
+      /new-session <ws> name=<…> root=<repo> cwd=<wt> worktree=<branch>
+        启 CC session
+      /sessions / /workspace info / /workspace sessions
+      /end-session <name>
+
+    Bootstrap 步骤（如果你状态有 ❌）：
+
+    1. 终端跑（绑 feishu id）：
+       ./esr.sh --env=<prod|dev> user bind-feishu <esr_user> <你的 open_id>
+
+    2. 然后在本 chat 直接：
+       /new-workspace <name>
+
+    3. 之后启 session：
+       /new-session <ws> name=<…> root=<repo路径> cwd=<wt路径> worktree=<分支>
+    """
+  end
+
+  defp whoami_text(principal_id, chat_id, app_id) do
+    user_resolved =
+      if Process.whereis(Esr.Users.Registry) do
+        case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
+          {:ok, username} -> "esr user: #{username}"
+          :not_found -> "未绑定 (open_id: #{principal_id})"
+        end
+      else
+        "(registry 未运行)"
+      end
+
+    workspace =
+      case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+        {:ok, ws} -> ws
+        :not_found -> "(无)"
+      end
+
+    """
+    🪪 你的 ESR 身份
+
+    open_id: #{principal_id}
+    esr 用户: #{user_resolved}
+    chat_id: #{chat_id}
+    app_id (instance): #{app_id}
+    workspace: #{workspace}
+    """
   end
 
   defp do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state) do
