@@ -23,6 +23,8 @@ defmodule Esr.Users.FileLoader do
   Load is non-destructive on parse failure: the prior snapshot is kept
   and the caller sees the specific error.
   """
+
+  @behaviour Esr.Role.Control
   require Logger
 
   alias Esr.Users.Registry

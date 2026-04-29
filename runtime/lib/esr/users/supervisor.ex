@@ -6,6 +6,8 @@ defmodule Esr.Users.Supervisor do
   - `Esr.Users.Watcher` — `users.yaml` reload watcher (depends on
     Registry being up so its `init/1` initial-load lands in real ETS)
   """
+
+  @behaviour Esr.Role.OTP
   use Supervisor
 
   def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)

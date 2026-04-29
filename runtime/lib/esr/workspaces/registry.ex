@@ -7,6 +7,8 @@ defmodule Esr.Workspaces.Registry do
   `~/.esrd/<instance>/workspaces.yaml`; subsequent writes from the
   CLI re-push via `cli:workspace/register` (P3-4).
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   @table :esr_workspaces

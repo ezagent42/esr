@@ -16,6 +16,8 @@ defmodule Esr.Peers.VoiceTTSProxy do
 
   Spec §3.6, §4.1 VoiceTTSProxy card; expansion P4a-6.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Proxy
   @required_cap "peer_pool:voice_tts/acquire"
 

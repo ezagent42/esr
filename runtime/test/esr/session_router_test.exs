@@ -108,7 +108,6 @@ defmodule Esr.SessionRouterTest do
     :ok =
       Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
         name: "T11b2_ws",
-        cwd: "/tmp",
         start_cmd: "",
         role: "dev",
         chats: [%{"chat_id" => "oc_T11b2", "app_id" => "cli_test", "kind" => "dm"}],

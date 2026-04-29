@@ -19,6 +19,8 @@ defmodule Esr.HandlerRouter do
        | {:error, {:handler_error, detail}}``.
   """
 
+  @behaviour Esr.Role.Pipeline
+
   @default_timeout_ms 5_000
 
   @typep reply ::

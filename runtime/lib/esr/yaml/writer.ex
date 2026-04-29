@@ -17,6 +17,8 @@ defmodule Esr.Yaml.Writer do
       `|`, `>`, `[`, `{`, `?`) → quoted
   """
 
+  @behaviour Esr.Role.Control
+
   @spec write(Path.t(), term()) :: :ok | {:error, term()}
   def write(path, data) do
     with :ok <- File.mkdir_p(Path.dirname(path)),

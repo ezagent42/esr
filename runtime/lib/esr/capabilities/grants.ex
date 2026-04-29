@@ -11,6 +11,8 @@ defmodule Esr.Capabilities.Grants do
     or via bare `*`)
   - no prefix glob — only whole-segment wildcards
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   @table :esr_capabilities_grants

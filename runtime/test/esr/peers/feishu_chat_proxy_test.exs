@@ -30,7 +30,7 @@ defmodule Esr.Peers.FeishuChatProxyTest do
     send(peer, {:feishu_inbound, %{
       "payload" => %{
         "event_type" => "msg_received",
-        "args" => %{"chat_id" => "oc_x", "content" => "/new-session --agent cc --dir /tmp/w"}
+        "args" => %{"chat_id" => "oc_x", "content" => "/new-session esr-dev name=w cwd=/tmp/w worktree=w"}
       }
     }})
 

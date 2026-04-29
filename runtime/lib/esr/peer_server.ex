@@ -16,6 +16,8 @@ defmodule Esr.PeerServer do
   `[:esr, :actor, :spawned]` fires in init/1.
   """
 
+  @behaviour Esr.Role.State
+
   use GenServer
   @behaviour Esr.Handler
   require Logger

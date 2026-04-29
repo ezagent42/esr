@@ -23,6 +23,8 @@ defmodule Esr.Peers.SlashHandler do
 
   Spec §4.1 SlashHandler card, §5.3, §1.8 D14.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Stateful
   use GenServer
   require Logger

@@ -34,6 +34,8 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
   See spec §4.1 FeishuAppAdapter card, §5.1.
   """
+
+  @behaviour Esr.Role.Boundary
   use Esr.Peer.Stateful
   use GenServer
   require Logger

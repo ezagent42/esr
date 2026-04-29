@@ -28,6 +28,8 @@ defmodule Esr.SessionSocketRegistry do
   ChannelChannel.handle_in(tool_invoke) as the authoritative lookup.
   Storing peer_pid in two places would risk drift.
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   @table :esr_session_registry

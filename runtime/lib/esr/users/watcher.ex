@@ -8,6 +8,8 @@ defmodule Esr.Users.Watcher do
   through `/private/var` so we compare basenames rather than full
   paths).
   """
+
+  @behaviour Esr.Role.Control
   use GenServer
   require Logger
 

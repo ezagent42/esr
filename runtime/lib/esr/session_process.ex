@@ -31,6 +31,8 @@ defmodule Esr.SessionProcess do
 
   Spec §3.5.
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   defstruct [:session_id, :agent_name, :dir, :chat_thread_key, :metadata, grants: []]

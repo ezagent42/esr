@@ -20,6 +20,8 @@ defmodule Esr.Peers.CCProxy do
 
   Spec §3.6, §4.1 CCProxy card.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.Proxy
   @required_cap "peer_proxy:cc/forward"
 

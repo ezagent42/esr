@@ -42,6 +42,8 @@ defmodule Esr.Admin.Commands.CrossAppTest do
     * `{:error, %{"type" => "timeout"}}` if FCP doesn't reply in 5s
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @reply_timeout_ms 5_000

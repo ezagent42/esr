@@ -63,6 +63,8 @@ defmodule Esr.Admin.Commands.Reload do
       `launchctl kickstart -k` is idempotent (re-exec the process).
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   # ------------------------------------------------------------------

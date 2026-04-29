@@ -6,6 +6,8 @@ defmodule Esr.SessionsSupervisor do
   Overflow behaviour: start_session/1 returns `{:error, :max_children}`;
   surfaced to the user by the SlashHandler as `session limit reached`.
   """
+
+  @behaviour Esr.Role.OTP
   use DynamicSupervisor
 
   @default_max 128

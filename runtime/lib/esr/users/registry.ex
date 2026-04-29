@@ -15,6 +15,8 @@ defmodule Esr.Users.Registry do
   Snapshot replacement is atomic (load_snapshot/1 deletes both tables
   and refills) so callers never observe a half-loaded state.
   """
+
+  @behaviour Esr.Role.State
   use GenServer
 
   @by_name :esr_users_by_name

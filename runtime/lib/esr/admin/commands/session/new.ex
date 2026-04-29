@@ -50,6 +50,8 @@ defmodule Esr.Admin.Commands.Session.New do
   through `Esr.SessionRouter.create_session/1` to close that loop.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   # Default hooks — both injectable via `execute/2` opts. Tests stub

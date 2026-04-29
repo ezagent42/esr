@@ -22,6 +22,8 @@ defmodule EsrWeb.PendingActions do
   Storage: a single ETS table keyed by `{principal_id, chat_id}`.
   Cleanup: a `Process.send_after/3` `:expire` message per entry.
   """
+
+  @behaviour Esr.Role.Pipeline
   use GenServer
 
   @table :esr_pending_actions

@@ -18,6 +18,8 @@ defmodule Esr.PyProcess do
   See spec §3.2 and §8.3.
   """
 
+  @behaviour Esr.Role.State
+
   use Esr.Peer.Stateful
   use Esr.OSProcess, kind: :python, wrapper: :plain
 

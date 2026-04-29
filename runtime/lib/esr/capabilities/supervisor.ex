@@ -1,4 +1,6 @@
 defmodule Esr.Capabilities.Supervisor do
+
+  @behaviour Esr.Role.OTP
   use Supervisor
   require Logger
 

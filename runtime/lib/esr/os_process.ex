@@ -49,6 +49,8 @@ defmodule Esr.OSProcess do
   See spec §3.2.
   """
 
+  @behaviour Esr.Role.State
+
   @callback os_cmd(state :: term()) :: [String.t()]
   @callback os_env(state :: term()) :: [{String.t(), String.t()}]
   @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::

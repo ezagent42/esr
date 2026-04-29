@@ -5,7 +5,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   Simulates:
 
     1. User DMs bot: envelope with `content_text`
-       `"/new-session --agent cc --dir /tmp/t3-int"`, `chat_id "oc_slashsession"`,
+       `"/new-session esr-dev name=t3 cwd=/tmp/t3-int worktree=t3"`, `chat_id "oc_slashsession"`,
        `thread_id "om_slashsession"`.
     2. FeishuChatProxy detects the slash (via a direct send to the
        SlashHandler, mirroring `FeishuChatProxy.handle_upstream/2`'s
@@ -123,7 +123,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session --agent cc --dir /tmp/t3-int",
+        "text" => "/new-session esr-dev name=t3 cwd=/tmp/t3-int worktree=t3",
         "chat_id" => @chat_id,
         "thread_id" => @thread_id
       }

@@ -30,6 +30,8 @@ defmodule Esr.Admin.Commands.Cap.Grant do
     * `{:error, %{"type" => "invalid_args", ...}}` — malformed command.
   """
 
+  @behaviour Esr.Role.Control
+
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()

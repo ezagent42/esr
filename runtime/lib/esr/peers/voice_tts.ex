@@ -6,6 +6,8 @@ defmodule Esr.Peers.VoiceTTS do
 
   Spec §4.1 VoiceTTS card.
   """
+
+  @behaviour Esr.Role.Pipeline
   use Esr.Peer.PyWorker, module: "voice_tts"
 
   @default_timeout 5_000

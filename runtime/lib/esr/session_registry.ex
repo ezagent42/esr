@@ -10,6 +10,8 @@ defmodule Esr.SessionRegistry do
 
   See spec §3.3, §3.5, and PR-A multi-app spec §2.1.
   """
+
+  @behaviour Esr.Role.State
   use GenServer
   require Logger
 
