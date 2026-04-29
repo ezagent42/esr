@@ -45,13 +45,13 @@ User's URI model (2026-04-29 02:49 + 02:58 + 03:02 + 03:07):
 |---|---|---|
 | **D1** | No backwards compatibility shim. esrd has 0 live sessions; PR-20 is a clean break. | Caps + sessions.yaml + workspaces.yaml all reset. |
 | **D2** | `/new-session` takes three explicit args: `name`, `cwd`, `worktree`. No derivation from workspace. | User's 2026-04-28 08:31 #2. |
-| **D3** | Session is identified by URI: **`esr://<env>/<username>/<workspace>/<session-name>`**. URI is the primary key in `sessions.yaml`. | User's 2026-04-29 02:49 #1. `esr://` (proxy face), not `esrd://` (daemon face). |
-| **D4** | tmux session name = URI path translated `/` → `_`: **`<env>_<username>_<workspace>_<session-name>`**. | User's 2026-04-29 02:58 + 03:02 F2. env in tmux name (clearer); also avoids cross-env collision. |
+| **D3** | Session is identified by URI: **`esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>`**. Reuses existing `Esr.Uri` (Elixir) + `EsrURI` (Python) modules — `sessions` is already a registered path-style type (per `runtime/lib/esr/uri.ex:34`). `<env>` lives in the `org@` slot (existing parser support, never used in production until now). URI is the primary key in `sessions.yaml`. | User's 2026-04-29 03:45 chose option (X). `esr://` (proxy face), not `esrd://` (daemon face). Glossary §"esr:// URI" documents the canonical form. |
+| **D4** | tmux session name derived from URI: **`<org>_<seg2>_<seg3>_<seg4>`** = **`<env>_<username>_<workspace>_<session-name>`**. The `sessions/` segment 1 is dropped (constant). | User's 2026-04-29 02:58 + 03:02 F2. env in tmux name (clearer); also avoids cross-env collision. |
 | **D5** | `cwd` = git worktree path (where CC's process runs). Always a worktree, never a plain dir. | User's 2026-04-29 02:17 + my A/B clarification → user picked "cwd is worktree". |
 | **D6** | `worktree` = git branch name. Always forked from **`origin/main`** (not local `main`) via `git -C <root> worktree add <cwd> -b <worktree> origin/main`. Operator switches branches manually post-spawn if needed. Using `origin/main` avoids the "local main is stale" footgun. | User's 2026-04-28 08:31 #2c + code-reviewer fact-check (local-main-stale risk). |
 | **D7** | `root` = each workspace's main git repo. Stored in `workspaces.yaml` as `root:` field. esrd does `git -C <root> worktree add <cwd> -b <worktree> main` from there. | User's 2026-04-29 02:49 vocab. |
 | **D8** | Uniqueness — single esrd instance scope: within one `<env>`, both `(username, workspace, name)` AND `(username, workspace, worktree-branch)` must be unique. dev / prod envs don't constrain each other. | User's 2026-04-29 02:58 F3 + 03:02 #3. |
-| **D9** | esr user is a first-class concept. New `users.yaml` registry; feishu id → esr user binding via CLI. caps system re-keys onto esr user. yaoshengyue is currently developing alongside linyilun, so multi-user is day-1 (not YAGNI). | User's 2026-04-29 03:02 F1 + F5. |
+| **D9** | esr user is a first-class concept. New `users.yaml` registry; feishu id → esr user binding via CLI. caps system re-keys onto esr user. yaoshengyue is currently developing alongside linyilun, so multi-user is day-1 (not YAGNI). **All `esr://localhost/users/<id>` URIs migrate from feishu `ou_*` to esr username** (e.g. `esr://localhost/users/linyilun`); affects `Esr.Topology` URI emit, `peer_server.ex`, `feishu_chat_proxy.ex`, etc. | User's 2026-04-29 03:02 F1 + F5 + 03:45 confirmation. |
 | **D10** | `<env>` and `<username>` derivation: `<env>` from `$ESR_INSTANCE` env var (existing); `<username>` resolved from inbound `<channel user_id="ou_...">` lookup against `users.yaml`. CLI-direct fallback: required `--as-user <name>` flag. | Implied by F1. CLI without IM identity needs explicit user. |
 | **D11** | tmux socket per esrd env: `tmux -S $ESRD_HOME/$ESR_INSTANCE/tmux.sock`. Avoids polluting user's other tmux sessions and gives extra isolation even though tmux name already disambiguates. | User's 2026-04-29 03:02 F2 + my hardening. |
 | **D12** | `/end-session <name>` two-step interactive confirm. Step 1: status report ("worktree clean / dirty, reply `confirm` to prune / `cancel` to keep"). Step 2: operator's next message consumed by channel server's pending-action state machine. | User's 2026-04-29 03:02 F4 + 03:07 selection (a). |
@@ -61,20 +61,34 @@ User's URI model (2026-04-29 02:49 + 02:58 + 03:02 + 03:07):
 
 ## Proposed shape
 
-### Session URI (D3)
+### Session URI (D3) — reuses existing `esr://` URI grammar
 
 ```
-esr://<env>/<username>/<workspace>/<session-name>
+esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>
 
-example: esr://default/linyilun/esr-dev/feature-foo
-         esr://dev/yaoshengyue/voice-gateway/spike-1
+example: esr://default@localhost/sessions/linyilun/esr-dev/feature-foo
+         esr://dev@localhost/sessions/yaoshengyue/voice-gateway/spike-1
 ```
 
-Components:
-- `<env>` — esrd environment (`default`, `dev`, …) from `$ESR_INSTANCE`.
-- `<username>` — esr user (linyilun, yaoshengyue, …); resolved from feishu id binding.
-- `<workspace>` — workspace name from `workspaces.yaml`.
-- `<session-name>` — operator-supplied session label.
+Components (mapped to existing `Esr.Uri` struct):
+- `org` = `<env>` — esrd environment (`default`, `dev`, …) from `$ESR_INSTANCE`. The `org@` slot is documented in `runtime/lib/esr/uri.ex:8` and tested (`runtime/test/esr/uri_test.exs:27`) but never used in production until PR-20.
+- `host` = `localhost` — matches `Esr.Topology.@host` convention (all current URIs hardcode `localhost`).
+- `type` = `sessions` — already in the path-style registered set (`runtime/lib/esr/uri.ex:34`, `py/src/esr/uri.py:34`).
+- `segments[1..3]` = `<username>` / `<workspace>` / `<session-name>`.
+
+Reuses existing parsers — **no new URI module is added**. PR-20 just calls `Esr.Uri.build_path/2` and `Esr.Uri.parse/1`. Spec referenced as glossary §"esr:// URI".
+
+### Companion URI rekey (D9 follow-on)
+
+Existing user URIs:
+```
+before:  esr://localhost/users/ou_6b11faf8e93aedfb9d3857b9cc23b9e7
+after:   esr://localhost/users/linyilun
+```
+
+`Esr.Topology.user_uri/1`-style emit sites (`peer_server.ex:683, 921`, `feishu_chat_proxy.ex`, `Topology` module) all switch from feishu open_id to esr username. capabilities.yaml `principal_id` field tracks the change automatically (caps Grants is string-equality, see impl outline 10).
+
+Adapter / chat / workspace URIs unchanged.
 
 ### Workspace yaml schema (D7, D9)
 
@@ -164,7 +178,7 @@ This pattern is reusable for any future destructive op (`/remove-workspace`, `/u
 ### Runtime (Elixir, ~400 LOC)
 
 1. **`Esr.Users`** (new module) — load/save `users.yaml`; resolve `feishu_id → username`; CRUD via `cli:users:*` topics.
-2. **`Esr.Sessions.URI`** (new module) — parse/build URI; D13 validation.
+2. **No new URI module needed** — reuse `Esr.Uri.build_path/2` + `parse/1` (`runtime/lib/esr/uri.ex`, already registered `:sessions` path-style type). Just add helper `Esr.Sessions.uri/4` (~10 LOC) wrapping `Esr.Uri.build_path/2` for ergonomics. D13 validation hooks in at the helper.
 3. **`Esr.Workspaces.Registry`** — schema bump (`runtime/lib/esr/workspaces/registry.ex:28-32, 84-111`): add `:owner` + `:root` to `Workspace` struct; drop `:cwd`; update field-by-field loader. FSEvents reload unchanged. `metadata` and `neighbors` survive (already in struct).
 4. **`Esr.SessionRegistry`** (`runtime/lib/esr/session_registry.ex:26-50, 98-116`) — **net-new uniqueness logic** (NOT an extension): the registry today is keyed by `(chat_id, app_id, thread_id)` (PR-A T1 ETS layout) and has no name-uniqueness check at all. PR-20 adds two new ETS indexes: `(env, username, workspace, name) → URI` and `(env, username, workspace, worktree-branch) → URI`. Maintained on register/unregister with collision-rejection up front. ~50 LOC.
 5. **`Esr.Worktree`** (new module) — wrap `git -C <root> worktree add <cwd> -b <branch> origin/main` (D6, **`origin/main` not local `main`**) / `git status --porcelain` / `git worktree remove`. Structured error from `System.cmd`.
@@ -183,7 +197,14 @@ This pattern is reusable for any future destructive op (`/remove-workspace`, `/u
 10. **`Esr.Capabilities.Grants`** rekey — Grants module itself does string-equality on `principal_id` (`runtime/lib/esr/capabilities/grants.ex:25-31`), so the module is unchanged. The rekey happens at envelope-construction sites: `peer_server.ex:243`, `peers/feishu_chat_proxy.ex:362`, `admin/dispatcher.ex:188`, `admin/commands/session/new.ex:121`. Each translates `ou_*` → esr username via `Esr.Users.lookup/1` before populating `principal_id`. Plus:
     - `capabilities.yaml`'s `kind: feishu_user` field → rename to `kind: esr_user` (informational; not used for matching)
     - `ESR_BOOTSTRAP_PRINCIPAL_ID` env var now accepts an esr username (was `ou_*`); update auto-generated comment in capabilities.yaml.
-11. **`scripts/esr-cc.sh`** — line 45-52 reads `cwd` from yaml via `yq`. With `cwd:` removed, switch to relying on tmux's `-c <cwd>` already setting pwd at spawn (no `cd` needed in the script). Drop the `yq` lookup. Line 79-86 uses `session-ids.yaml` keyed by `<ws>:<sid>` for `claude --resume` — bump key shape to URI (`esr://...`) and wipe in migration.
+11. **`Esr.Topology` user URI rekey** — `Topology` module emits `esr://<host>/users/<open_id>` per `runtime/lib/esr/topology.ex:24`. With D9 user-URI rekey, all user-URI emit sites switch to `esr://<host>/users/<esr-username>`. Affects `peer_server.ex:683, 921`, `feishu_chat_proxy.ex`, the `Topology.initial_seed/3` reachable_set construction. Tests in `topology_test.exs` re-fixtured.
+12. **`scripts/esr-cc.sh`** — line 45-52 reads `cwd` from yaml via `yq`. With `cwd:` removed, switch to relying on tmux's `-c <cwd>` already setting pwd at spawn (no `cd` needed in the script). Drop the `yq` lookup. Line 79-86 uses `session-ids.yaml` keyed by `<ws>:<sid>` for `claude --resume` — bump key shape to URI (`esr://...`) and wipe in migration.
+
+### Documentation (new in v3.2 — closes the URI discoverability gap)
+
+13. **`docs/notes/esr-uri-grammar.md`** (new) — practical reference for the URI mechanism. Lists registered path-style types, file:line pointers to `Esr.Uri` + `EsrURI`, and concrete examples for every URI shape currently emitted. Registered in `docs/notes/README.md`. (Glossary already has `esr://` definition at `docs/superpowers/glossary.md:117` but it's not surfaced in CLAUDE.md "Things to look up", which is why I missed it on the first spec pass.)
+14. **`CLAUDE.md` "Things to look up" section** — add: `"How do I address a thing across processes / boundaries?" → docs/notes/esr-uri-grammar.md + runtime/lib/esr/uri.ex`.
+15. **`docs/architecture.md`** — add §"Cross-boundary addressing" (3-5 lines) linking to the notes doc and `Esr.Uri`. Prevents future contributors / AI pair-programmers from re-inventing the URI scheme.
 
 ### Python CLI (~150 LOC)
 
@@ -217,15 +238,15 @@ After touching `py/src/esr/cli/**` or any `dispatch/2` clause, run `bash scripts
 
 ### LOC budget
 
-Updated total: **~700-950 LOC**.
+Updated total: **~620-850 LOC** (down from v3.1's 700-950 — saved ~80 LOC by reusing `Esr.Uri` instead of new module; added ~30 LOC of doc work).
 
 | Area | LOC |
 |---|---|
-| Elixir runtime | ~400 |
+| Elixir runtime | ~320 (was 400; saved ~80 by reusing `Esr.Uri`) |
 | Python CLI + handlers | ~150 |
 | Tests (Elixir + Python + E2E) | ~200 |
 | Shell + scripts (esr-cc.sh, final_gate.sh, mock_feishu.py) | ~60 |
-| Docs (this spec + architecture.md update + dev-guide.md user/auth section) | ~75 |
+| Docs (this spec + architecture.md + dev-guide.md user/auth + **new `docs/notes/esr-uri-grammar.md` + CLAUDE.md update**) | ~110 |
 
 ## Out of scope (deferred)
 
@@ -251,6 +272,7 @@ Updated total: **~700-950 LOC**.
 | 7 | Caps Grants module unchanged but `kind: feishu_user` becomes misnomer; `ESR_BOOTSTRAP_PRINCIPAL_ID` semantics shifts | Impl outline 10 rewritten: rename `kind` to `esr_user`; bootstrap env var accepts username |
 | 8 | Migration missed `session-ids.yaml` (`esr-cc.sh:79-86` uses it for `claude --resume`) | Migration § §3a added |
 | 9 | `describe_topology` filter — `users.yaml` should be default-deny, not just filter feishu_ids | Out-of-scope §: do not expose `users.yaml` to MCP tool at all (no LLM use case) |
+| 10 | **URI discoverability gap** (found by user 2026-04-29 03:34 — neither I nor subagent caught): esr already has a complete `esr://` URI mechanism (`Esr.Uri` + `EsrURI`) with `sessions` as registered type. v3 invented a new format. v3.2 fixes by reusing existing parser (D3 rewrite). Root cause was not searching the codebase for `esr://` before designing — and the URI grammar is documented only in `glossary.md:117` + module docstrings, not surfaced in CLAUDE.md "Things to look up". | D3 rewritten to use `esr://<env>@localhost/sessions/...`. Added impl tasks 13-15 to surface URI grammar in `docs/notes/esr-uri-grammar.md` + CLAUDE.md. |
 
 Findings cited file:line throughout `runtime/lib/esr/`, `handlers/feishu_app/`, `adapters/cc_tmux/`, `scripts/`, `py/src/esr/`. See git history of this spec file for the full subagent transcript context.
 
