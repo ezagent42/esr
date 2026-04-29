@@ -108,10 +108,6 @@ defmodule Esr.Peers.SlashHandler do
   defp merge_chat_context(args, kind, envelope) when kind in ["session_new", "session_end"] do
     chat_id = get_in(envelope, ["payload", "chat_id"])
     thread_id = get_in(envelope, ["payload", "thread_id"])
-
-    # PR-21g: resolve esr-username from envelope.user_id (feishu open_id)
-    # via the Users registry. Falls back to nil — Session.New / Session.End
-    # treat absent username as "no URI claim" / "session_id-only mode".
     username = resolve_username(envelope)
 
     args
@@ -120,7 +116,42 @@ defmodule Esr.Peers.SlashHandler do
     |> maybe_put("username", username)
   end
 
+  # PR-21j: session_list (when called with workspace=) and workspace_info
+  # need both `username` (URI uniqueness scoping) and `workspace`
+  # (defaults to the chat's bound workspace when absent from args).
+  defp merge_chat_context(args, kind, envelope) when kind in ["session_list", "workspace_info"] do
+    chat_id = get_in(envelope, ["payload", "chat_id"])
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    username = resolve_username(envelope)
+
+    args =
+      args
+      |> maybe_put("chat_id", chat_id)
+      |> maybe_put("username", username)
+
+    # If args don't already carry workspace, look it up from the chat
+    # binding. Falls back to nil → Session.List runs in legacy mode
+    # (routing.yaml summary); Workspace.Info errors with invalid_args.
+    if Map.get(args, "workspace") in [nil, ""] do
+      maybe_put(args, "workspace", resolve_workspace(chat_id, app_id))
+    else
+      args
+    end
+  end
+
   defp merge_chat_context(args, _kind, _envelope), do: args
+
+  # Resolve the workspace name a chat is bound to. Returns nil when no
+  # binding (caller decides whether that's an error).
+  defp resolve_workspace(chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, ws} -> ws
+      :not_found -> nil
+    end
+  end
+
+  defp resolve_workspace(_chat_id, _app_id), do: nil
 
   defp resolve_username(envelope) do
     open_id = envelope["user_id"] || get_in(envelope, ["payload", "user_id"])
@@ -165,10 +196,30 @@ defmodule Esr.Peers.SlashHandler do
                    "/new-session esr-dev name=foo cwd=/path/to/wt worktree=foo"}
       ["/end-session", rest] -> parse_end_session(rest)
       ["/end-session"] -> {:error, "/end-session requires <name>"}
+      # PR-21j: `/sessions` and `/list-sessions` lift the empty-args
+      # default — SlashHandler's merge_chat_context resolves the chat's
+      # workspace and Session.List uses it to filter by the URI tuple.
       ["/list-sessions"] -> {:ok, "session_list", %{}}
       ["/sessions"] -> {:ok, "session_list", %{}}
       ["/list-agents"] -> {:ok, "agent_list", %{}}
+      # PR-21j workspace group ops:
+      #   /workspace info             — show current workspace config
+      #   /workspace sessions         — explicit form of /sessions
+      #   /workspace info <name>      — show named workspace
+      ["/workspace", rest] -> parse_workspace(rest)
+      ["/workspace"] -> {:error, "/workspace requires a sub-command (info | sessions)"}
       _ -> {:error, inspect(String.slice(text, 0, 32))}
+    end
+  end
+
+  defp parse_workspace(rest) do
+    case tokenize(rest) do
+      ["info"] -> {:ok, "workspace_info", %{}}
+      ["info", name | _] -> {:ok, "workspace_info", %{"workspace" => name}}
+      ["sessions"] -> {:ok, "session_list", %{}}
+      ["sessions", name | _] -> {:ok, "session_list", %{"workspace" => name}}
+      [other | _] -> {:error, "/workspace #{inspect(other)}: unknown sub-command (try info | sessions)"}
+      [] -> {:error, "/workspace requires a sub-command (info | sessions)"}
     end
   end
 
@@ -229,6 +280,48 @@ defmodule Esr.Peers.SlashHandler do
   # --------------------------------------------------------------------
   # Result formatting — human-readable text for the ChatProxy reply.
   # --------------------------------------------------------------------
+
+  # PR-21j: session_list workspace-scoped result.
+  defp format_result({:ok, %{"workspace" => ws, "sessions" => sessions}})
+       when is_list(sessions) do
+    if sessions == [] do
+      "workspace #{ws}: no live sessions"
+    else
+      lines =
+        sessions
+        |> Enum.map(fn %{"name" => n, "session_id" => sid} -> "  • #{n} (sid=#{sid})" end)
+        |> Enum.join("\n")
+
+      "workspace #{ws} sessions (#{length(sessions)}):\n#{lines}"
+    end
+  end
+
+  # PR-21j: workspace_info result.
+  defp format_result({:ok, %{"name" => name, "owner" => owner, "root" => root} = ws}) do
+    chats =
+      (Map.get(ws, "chats") || [])
+      |> Enum.map(fn c ->
+        "  • #{Map.get(c, "chat_id", "?")} @ #{Map.get(c, "app_id", "?")}"
+      end)
+      |> case do
+        [] -> "  (no chat bindings)"
+        list -> Enum.join(list, "\n")
+      end
+
+    role = Map.get(ws, "role", "-")
+    metadata_keys = (Map.get(ws, "metadata") || %{}) |> Map.keys() |> Enum.join(", ")
+
+    """
+    workspace #{name}:
+      owner: #{owner || "-"}
+      root:  #{root || "-"}
+      role:  #{role}
+      chats:
+    #{chats}
+      metadata keys: #{metadata_keys}
+    """
+    |> String.trim()
+  end
 
   defp format_result({:ok, %{"branches" => b}}) when is_list(b),
     do: "sessions: " <> Enum.join(b, ", ")

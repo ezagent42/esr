@@ -85,6 +85,9 @@ defmodule Esr.Admin.Dispatcher do
     "session_end" => "session:default/end",
     "session_branch_end" => "session:default/end",
     "session_list" => "session.list",
+    # PR-21j: workspace_info shares session.list scope — both are
+    # read-only introspection of the routing namespace.
+    "workspace_info" => "session.list",
     "grant" => "cap.manage",
     "revoke" => "cap.manage",
     # PR-A T9: cross_app_test is e2e-only; gate behind a wildcard-
@@ -112,6 +115,7 @@ defmodule Esr.Admin.Dispatcher do
     "session_end" => Esr.Admin.Commands.Session.End,
     "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
     "session_list" => Esr.Admin.Commands.Session.List,
+    "workspace_info" => Esr.Admin.Commands.Workspace.Info,
     "grant" => Esr.Admin.Commands.Cap.Grant,
     "revoke" => Esr.Admin.Commands.Cap.Revoke,
     # PR-A T9: e2e-only test-harness command — synthesizes a
