@@ -623,10 +623,31 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  doctor   Health snapshot + on-demand orphan cleanup (PR-21m).
   restart  Restart esrd via launchctl kickstart -k.
   start    Bring up esrd via launchctl bootstrap.
   status   Show whether esrd is running, with pid + label.
   stop     Stop esrd via launchctl bootout.
+```
+
+#### `cli daemon doctor`
+
+> Health snapshot + on-demand orphan cleanup (PR-21m).
+
+```
+Usage: cli daemon doctor [OPTIONS]
+
+  Health snapshot + on-demand orphan cleanup (PR-21m).
+
+  By default just reports the current state (workers tracked, users /
+  workspaces loaded). Pass --cleanup-orphans to actually SIGTERM any
+  subprocess found in /tmp/esr-worker-*.pid that this esrd doesn't own — the
+  same logic the boot path runs.
+
+Options:
+  --cleanup-orphans  Sweep /tmp/esr-worker-*.pid for orphan subprocesses and
+                     SIGTERM them.
+  --help             Show this message and exit.
 ```
 
 #### `cli daemon restart`

@@ -179,6 +179,44 @@ defmodule EsrWeb.CliChannel do
     }
   end
 
+  # PR-21m (2026-04-29): on-demand orphan cleanup via `esr daemon doctor`.
+  # Same logic the boot path runs in Esr.Application.start_link/2; CLI
+  # surfaces it for runtime invocation when an operator suspects orphans
+  # (e.g. subprocess log-tail shows multiple Feishu WS sessions
+  # competing).
+  def dispatch("cli:daemon/cleanup_orphans", _payload) do
+    stats = Esr.WorkerSupervisor.cleanup_orphans()
+    %{"data" => stats}
+  end
+
+  # PR-21m: comprehensive runtime health snapshot for `esr daemon doctor`.
+  # Pulls together state from multiple subsystems so operators can see
+  # at a glance what's healthy / what's degraded.
+  def dispatch("cli:daemon/doctor", _payload) do
+    workers = Esr.WorkerSupervisor.list()
+    user_count = length(Esr.Users.Registry.list())
+
+    workspace_count =
+      try do
+        length(Esr.Workspaces.Registry.list())
+      rescue
+        _ -> 0
+      end
+
+    %{
+      "data" => %{
+        "esrd_pid" => System.pid() |> to_string(),
+        "users_loaded" => user_count,
+        "workspaces_loaded" => workspace_count,
+        "workers_tracked" => length(workers),
+        "workers" =>
+          Enum.map(workers, fn {kind, name, id, pid} ->
+            %{"kind" => to_string(kind), "name" => name, "id" => id, "pid" => pid}
+          end)
+      }
+    }
+  end
+
   def dispatch("cli:debug/pause", %{"actor_id" => actor_id}) when is_binary(actor_id) do
     debug_toggle(actor_id, :pause)
   end

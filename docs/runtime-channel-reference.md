@@ -46,6 +46,24 @@ _(No documentation comment.)_
 
 ---
 
+## `cli:daemon/cleanup_orphans`
+
+PR-21m (2026-04-29): on-demand orphan cleanup via `esr daemon doctor`.
+Same logic the boot path runs in Esr.Application.start_link/2; CLI
+surfaces it for runtime invocation when an operator suspects orphans
+(e.g. subprocess log-tail shows multiple Feishu WS sessions
+competing).
+
+---
+
+## `cli:daemon/doctor`
+
+PR-21m: comprehensive runtime health snapshot for `esr daemon doctor`.
+Pulls together state from multiple subsystems so operators can see
+at a glance what's healthy / what's degraded.
+
+---
+
 ## `cli:debug/pause`
 
 _(No documentation comment.)_
