@@ -69,6 +69,26 @@ async def test_channel_client_connect_and_close() -> None:
         assert client.connected is False
 
 
+async def test_channel_client_starts_heartbeat_task_on_connect() -> None:
+    """PR-21l: connect() spawns a background heartbeat task that must
+    survive close() without leaking exceptions.
+
+    The full 30-second heartbeat interval is too long for a unit test;
+    we just assert the task exists post-connect and is cancelled cleanly
+    by close(). The on-wire heartbeat frame shape
+    `[null, ref, "phoenix", "heartbeat", {}]` is verified by integration
+    tests against esrd.
+    """
+    async with _phoenix_mock_server() as (url, _):
+        client = ChannelClient(url)
+        await client.connect()
+        assert client._heartbeat_task is not None
+        assert not client._heartbeat_task.done()
+
+        await client.close()
+        assert client._heartbeat_task is None
+
+
 async def test_channel_client_join_gets_phx_reply_ok() -> None:
     """join() sends phx_join and awaits a matching phx_reply with status ok."""
     async with _phoenix_mock_server() as (url, received):
