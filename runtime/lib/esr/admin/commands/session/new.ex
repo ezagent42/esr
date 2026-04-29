@@ -81,6 +81,7 @@ defmodule Esr.Admin.Commands.Session.New do
     with :ok <- validate_args(agent, dir),
          {:ok, agent_def} <- fetch_agent(agent),
          :ok <- verify_caps(submitter, agent_def.capabilities_required),
+         :ok <- maybe_create_worktree(args),
          {:ok, sid} <-
            spawn_session(
              agent,
@@ -96,6 +97,48 @@ defmodule Esr.Admin.Commands.Session.New do
       {:ok, %{"session_id" => sid, "agent" => agent}}
     end
   end
+
+  # PR-22 (2026-04-29): when args carry `root` + `cwd` + `worktree`,
+  # create the git worktree before spawning the CC session. `root` is
+  # the git repo to fork from (per-session arg as of PR-22, was
+  # workspace.root pre-PR-22). When any of the three are absent, skip
+  # silently — operator may be running a workspace-only session
+  # without git isolation (legacy support for tests / direct admin
+  # CLI).
+  defp maybe_create_worktree(%{"root" => root, "cwd" => cwd, "worktree" => branch})
+       when is_binary(root) and root != "" and is_binary(cwd) and cwd != "" and
+              is_binary(branch) and branch != "" do
+    case Esr.Worktree.add(root, branch, cwd) do
+      :ok ->
+        :ok
+
+      {:error, {:already_exists, _path}} ->
+        # The worktree path already exists. Two interpretations:
+        # (a) operator pointed at an existing checkout intentionally
+        #     (e.g., session reuse) — proceed without re-running git
+        # (b) collision with another session's worktree — would have
+        #     been caught by Esr.SessionRegistry.claim_uri post-spawn
+        # Treating as (a) here; (b) is the URI-uniqueness gate's job.
+        require Logger
+        Logger.info("session_new: cwd #{cwd} already exists, treating as reuse")
+        :ok
+
+      {:error, {:git_failed, code, output}} ->
+        {:error,
+         %{
+           "type" => "worktree_failed",
+           "details" => "git worktree add failed (exit #{code}): #{output}",
+           "root" => root,
+           "branch" => branch,
+           "cwd" => cwd
+         }}
+
+      {:error, reason} ->
+        {:error, %{"type" => "worktree_failed", "details" => inspect(reason)}}
+    end
+  end
+
+  defp maybe_create_worktree(_args), do: :ok
 
   # PR-21g: if the slash command threaded URI components (name +
   # username + workspace + worktree), claim them in SessionRegistry

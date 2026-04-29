@@ -11,13 +11,12 @@ defmodule Esr.Workspaces.RegistryTest do
     %{path: path}
   end
 
-  test "load_from_file/1 parses schema_version 1 (PR-21c: owner+root replace cwd)", %{path: path} do
+  test "load_from_file/1 parses schema_version 1 (PR-22: workspace has no root)", %{path: path} do
     File.write!(path, """
     schema_version: 1
     workspaces:
       esr-dev:
         owner: linyilun
-        root: /Users/h2oslabs/Workspace/esr
         start_cmd: scripts/esr-cc.sh
         role: dev
         chats:
@@ -28,14 +27,31 @@ defmodule Esr.Workspaces.RegistryTest do
     assert Map.has_key?(workspaces, "esr-dev")
     ws = workspaces["esr-dev"]
     assert ws.owner == "linyilun"
-    assert ws.root == "/Users/h2oslabs/Workspace/esr"
     assert ws.role == "dev"
     assert [%{"chat_id" => "oc_x"}] = ws.chats
+    # PR-22: ws struct no longer has :root field. Accessing it would
+    # raise KeyError.
+    refute Map.has_key?(ws, :root)
     # PR-C: workspaces without `neighbors` parse with an empty list.
     assert ws.neighbors == []
   end
 
-  test "load_from_file/1 tolerates missing owner/root (admit nil)", %{path: path} do
+  test "load_from_file/1 silently ignores legacy `root:` in yaml (PR-22)", %{path: path} do
+    File.write!(path, """
+    workspaces:
+      legacy:
+        owner: linyilun
+        root: /should/be/ignored
+        chats: []
+    """)
+
+    {:ok, workspaces} = Registry.load_from_file(path)
+    ws = workspaces["legacy"]
+    assert ws.owner == "linyilun"
+    refute Map.has_key?(ws, :root)
+  end
+
+  test "load_from_file/1 tolerates missing owner (admit nil)", %{path: path} do
     File.write!(path, """
     workspaces:
       legacy:
@@ -45,7 +61,6 @@ defmodule Esr.Workspaces.RegistryTest do
     {:ok, workspaces} = Registry.load_from_file(path)
     ws = workspaces["legacy"]
     assert ws.owner == nil
-    assert ws.root == nil
   end
 
   test "load_from_file/1 missing file returns empty map" do
@@ -148,7 +163,6 @@ defmodule Esr.Workspaces.RegistryTest do
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
           owner: "linyilun",
-          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [
@@ -167,7 +181,6 @@ defmodule Esr.Workspaces.RegistryTest do
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
           owner: "linyilun",
-          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
@@ -182,7 +195,6 @@ defmodule Esr.Workspaces.RegistryTest do
         Registry.put(%Registry.Workspace{
           name: "ws_alpha",
           owner: "linyilun",
-          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
@@ -193,7 +205,6 @@ defmodule Esr.Workspaces.RegistryTest do
         Registry.put(%Registry.Workspace{
           name: "ws_beta",
           owner: "linyilun",
-          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [%{"chat_id" => "oc_c", "app_id" => "cli_y", "kind" => "group"}],
@@ -204,7 +215,6 @@ defmodule Esr.Workspaces.RegistryTest do
         Registry.put(%Registry.Workspace{
           name: "ws_empty",
           owner: "linyilun",
-          root: "/tmp",
           start_cmd: "",
           role: "dev",
           chats: [],

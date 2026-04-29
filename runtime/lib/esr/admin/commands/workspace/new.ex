@@ -7,31 +7,28 @@ defmodule Esr.Admin.Commands.Workspace.New do
   then proactively `put`s into `Esr.Workspaces.Registry` so the
   current chat doesn't have to wait for the watcher tick.
 
-  ## Args
+  ## Args (PR-22: `root` removed)
 
       args: %{
-        "name" => "esr-dev",
-        "root" => "/Users/h2oslabs/Workspace/esr",  # required
+        "name" => "esr-dev",                  # required
         # optional — defaults below
-        "owner" => "linyilun",            # default: args.username (slash threading)
-        "role" => "dev",                  # default
-        "start_cmd" => "scripts/esr-cc.sh", # default
-        "chat_id" => "oc_xxx",            # auto-bind this chat to the new workspace
+        "owner" => "linyilun",                # default: args.username (slash threading)
+        "role" => "dev",                      # default
+        "start_cmd" => "scripts/esr-cc.sh",   # default
+        "chat_id" => "oc_xxx",                # auto-bind this chat to the new workspace
         "app_id"  => "cli_xxx",
-        "username" => "linyilun"          # SlashHandler-resolved esr user
+        "username" => "linyilun"              # SlashHandler-resolved esr user
       }
 
   ## Validation
 
   - `name` must match ASCII `[A-Za-z0-9][A-Za-z0-9_-]*` (PR-M / D13)
-  - `root` must be a non-empty path (existence is NOT checked here —
-    operator may be pointing at a path they intend to create)
   - `owner` must be a registered esr user (in `users.yaml`)
   - workspace name must NOT already exist
 
   ## Result
 
-      {:ok, %{"name" => name, "owner" => owner, "root" => root, "chats" => […]}}
+      {:ok, %{"name" => name, "owner" => owner, "chats" => […]}}
       {:error, %{"type" => "name_exists" | "invalid_name" | "unknown_owner" | "invalid_args", ...}}
   """
 
@@ -40,8 +37,8 @@ defmodule Esr.Admin.Commands.Workspace.New do
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"name" => name, "root" => root} = args})
-      when is_binary(name) and name != "" and is_binary(root) and root != "" do
+  def execute(%{"args" => %{"name" => name} = args})
+      when is_binary(name) and name != "" do
     owner = args["owner"] || args["username"] || ""
     role = args["role"] || "dev"
     start_cmd = args["start_cmd"] || "scripts/esr-cc.sh"
@@ -91,7 +88,6 @@ defmodule Esr.Admin.Commands.Workspace.New do
         else
           new_entry = %{
             "owner" => owner,
-            "root" => root,
             "role" => role,
             "start_cmd" => start_cmd,
             "chats" => chats,
@@ -112,7 +108,6 @@ defmodule Esr.Admin.Commands.Workspace.New do
                 Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
                   name: name,
                   owner: owner,
-                  root: root,
                   role: role,
                   start_cmd: start_cmd,
                   chats: chats,
@@ -123,7 +118,6 @@ defmodule Esr.Admin.Commands.Workspace.New do
                %{
                  "name" => name,
                  "owner" => owner,
-                 "root" => root,
                  "role" => role,
                  "chats" => chats
                }}
@@ -139,7 +133,7 @@ defmodule Esr.Admin.Commands.Workspace.New do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "workspace_new requires args.name and args.root (non-empty strings)"
+       "message" => "workspace_new requires args.name (non-empty string)"
      }}
   end
 

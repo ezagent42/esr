@@ -32,11 +32,13 @@ defmodule Esr.Admin.Commands.Workspace.Info do
   def execute(%{"args" => %{"workspace" => ws}}) when is_binary(ws) and ws != "" do
     case Esr.Workspaces.Registry.get(ws) do
       {:ok, w} ->
+        # PR-22: workspace.root removed — workspace is purely user
+        # config (owner, role, chats, metadata, neighbors). Repo is
+        # per-session.
         {:ok,
          %{
            "name" => w.name,
            "owner" => w.owner,
-           "root" => w.root,
            "role" => w.role,
            "chats" => w.chats,
            "neighbors" => w.neighbors,

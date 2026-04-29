@@ -178,7 +178,6 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
       Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
         name: "ws_for_new_chat_thread_test",
         owner: nil,
-        root: "/tmp",
         chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
       })
 
@@ -309,7 +308,6 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
         Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
           name: "ws_for_user_guide_test",
           owner: "linyilun",
-          root: "/tmp",
           chats: [
             %{"chat_id" => "oc_user_test", "app_id" => "inst_user_guide", "kind" => "dm"}
           ]
@@ -376,7 +374,6 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
         Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
           name: "ws_for_user_bound_test",
           owner: "linyilun",
-          root: "/tmp",
           chats: [
             %{"chat_id" => "oc_bound", "app_id" => "inst_user_bound", "kind" => "dm"}
           ]
@@ -461,7 +458,6 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
         Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
           name: "ws_for_user_ratelimit",
           owner: "linyilun",
-          root: "/tmp",
           chats: [
             %{"chat_id" => "oc_ratelimit", "app_id" => "inst_user_ratelimit", "kind" => "dm"}
           ]

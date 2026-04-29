@@ -37,12 +37,11 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
     {:ok, tmp: tmp}
   end
 
-  test "creates workspace with all fields and writes yaml", %{tmp: tmp} do
+  test "creates workspace with all fields and writes yaml (PR-22: no root)", %{tmp: tmp} do
     cmd = %{
       "submitted_by" => "ou_known",
       "args" => %{
         "name" => "test-ws-1",
-        "root" => "/tmp/test-ws-1",
         "owner" => "linyilun",
         "chat_id" => "oc_test1",
         "app_id" => "cli_test"
@@ -53,10 +52,12 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
             %{
               "name" => "test-ws-1",
               "owner" => "linyilun",
-              "root" => "/tmp/test-ws-1",
               "role" => "dev",
               "chats" => chats
-            }} = WorkspaceNew.execute(cmd)
+            } = result} = WorkspaceNew.execute(cmd)
+
+    # PR-22: workspace.New result no longer includes "root"
+    refute Map.has_key?(result, "root")
 
     assert chats == [%{"chat_id" => "oc_test1", "app_id" => "cli_test", "kind" => "dm"}]
 
@@ -64,7 +65,7 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
     yaml = File.read!(Path.join([tmp, "default", "workspaces.yaml"]))
     {:ok, parsed} = YamlElixir.read_from_string(yaml)
     assert parsed["workspaces"]["test-ws-1"]["owner"] == "linyilun"
-    assert parsed["workspaces"]["test-ws-1"]["root"] == "/tmp/test-ws-1"
+    refute Map.has_key?(parsed["workspaces"]["test-ws-1"], "root")
 
     # Registry populated proactively
     assert {:ok, ws} = Esr.Workspaces.Registry.get("test-ws-1")
@@ -76,7 +77,6 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
       "submitted_by" => "ou_known",
       "args" => %{
         "name" => "test-ws-2",
-        "root" => "/tmp/test-ws-2",
         "username" => "linyilun"
       }
     }
@@ -87,7 +87,7 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
   test "no owner / no username → invalid_args" do
     cmd = %{
       "submitted_by" => "ou_known",
-      "args" => %{"name" => "test-ws-x", "root" => "/tmp"}
+      "args" => %{"name" => "test-ws-x"}
     }
 
     assert {:error, %{"type" => "invalid_args", "message" => msg}} = WorkspaceNew.execute(cmd)
