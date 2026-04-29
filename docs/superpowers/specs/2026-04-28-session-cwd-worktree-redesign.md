@@ -1,9 +1,10 @@
-# PR-20 Spec: Session URI + cwd/worktree redesign + multi-user
+# PR-21 Spec: Session URI + cwd/worktree redesign + multi-user
 
-**Status:** v3 — all open Qs answered (2026-04-29). Ready for implementation.
+**Status:** v3.3 — all open Qs answered (2026-04-29). Ready for PR-21 implementation.
 **Author:** allen (linyilun) + claude pair-prog session.
 **Date:** 2026-04-28 (drafted), 2026-04-29 (locked).
-**Implementation PR:** PR-20.
+**Implementation PR:** PR-21 (was PR-20 in earlier drafts; renumbered after splitting URI-doc work into PR-20).
+**Related shipped:** [PR-20 #75 — `docs: surface esr:// URI grammar`](https://github.com/ezagent42/esr/pull/75) shipped impl outline §13-15 of v3.2 — `docs/notes/esr-uri-grammar.md` + CLAUDE.md update + `docs/architecture.md` §"Cross-boundary addressing" all live on main now (commit `ee2328f`).
 
 ## Background
 
@@ -200,11 +201,16 @@ This pattern is reusable for any future destructive op (`/remove-workspace`, `/u
 11. **`Esr.Topology` user URI rekey** — `Topology` module emits `esr://<host>/users/<open_id>` per `runtime/lib/esr/topology.ex:24`. With D9 user-URI rekey, all user-URI emit sites switch to `esr://<host>/users/<esr-username>`. Affects `peer_server.ex:683, 921`, `feishu_chat_proxy.ex`, the `Topology.initial_seed/3` reachable_set construction. Tests in `topology_test.exs` re-fixtured.
 12. **`scripts/esr-cc.sh`** — line 45-52 reads `cwd` from yaml via `yq`. With `cwd:` removed, switch to relying on tmux's `-c <cwd>` already setting pwd at spawn (no `cd` needed in the script). Drop the `yq` lookup. Line 79-86 uses `session-ids.yaml` keyed by `<ws>:<sid>` for `claude --resume` — bump key shape to URI (`esr://...`) and wipe in migration.
 
-### Documentation (new in v3.2 — closes the URI discoverability gap)
+### Documentation
 
-13. **`docs/notes/esr-uri-grammar.md`** (new) — practical reference for the URI mechanism. Lists registered path-style types, file:line pointers to `Esr.Uri` + `EsrURI`, and concrete examples for every URI shape currently emitted. Registered in `docs/notes/README.md`. (Glossary already has `esr://` definition at `docs/superpowers/glossary.md:117` but it's not surfaced in CLAUDE.md "Things to look up", which is why I missed it on the first spec pass.)
-14. **`CLAUDE.md` "Things to look up" section** — add: `"How do I address a thing across processes / boundaries?" → docs/notes/esr-uri-grammar.md + runtime/lib/esr/uri.ex`.
-15. **`docs/architecture.md`** — add §"Cross-boundary addressing" (3-5 lines) linking to the notes doc and `Esr.Uri`. Prevents future contributors / AI pair-programmers from re-inventing the URI scheme.
+13. ✅ **Shipped in PR-20** (#75, commit `ee2328f`):
+    - `docs/notes/esr-uri-grammar.md` — practical URI reference
+    - `docs/notes/README.md` — index registration
+    - `CLAUDE.md` "Things to look up" — cross-boundary addressing entry
+    - `docs/architecture.md` §"Cross-boundary addressing"
+14. **Add new entries to `docs/notes/esr-uri-grammar.md`** as part of PR-21 — append the new session URI shape (`esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>`) to the "Where URIs are built today" table; update the "Known gap" note about `org` builder support after extending it (see impl outline 16).
+15. **Update CLAUDE.md** with the new esr user / users.yaml conventions and the cap principal_id format change (was `ou_*`, now esr username).
+16. **Extend `Esr.Uri.build_path/2` Elixir builder** to accept an optional `:org` keyword. Python builders already support `org=` kwarg. ~10 LOC + tests.
 
 ### Python CLI (~150 LOC)
 
@@ -253,7 +259,6 @@ Updated total: **~620-850 LOC** (down from v3.1's 700-950 — saved ~80 LOC by r
 - **Per-session role override** — workspace dictates `role:`; per-session future PR.
 - **Cross-workspace branch sharing** — speculative.
 - **Worktree GC sweep** — periodic prune of branchless worktrees; operator handles for now.
-- **Multiple feishu apps per esr user** — `users.yaml` schema allows but mapping is per-id; no aliasing across apps.
 - **OAuth-based esr user registration** — manual `esr user add` for now.
 - **`describe_topology` exposure of `users.yaml`** — default-deny in PR-20. The MCP tool currently filters `workspaces.yaml` via per-field whitelist (`runtime/lib/esr/peer_server.ex:857-872` `filter_workspace_for_describe`). PR-20 does not extend this to `users.yaml` at all: feishu ids are sensitive, and there is no concrete LLM use case for "which other esr users exist" today. Future PR can add an opt-in filter (whitelist `username` only, drop `feishu_ids`) if a use case arises.
 
@@ -300,4 +305,4 @@ Migration script optional (small enough to do by hand for 2 envs × N workspaces
 
 ## Next step
 
-Spec v3 locked. Run `superpowers:code-reviewer` subagent for fact-check pass; address any findings; then open PR-20.
+Spec v3.3 locked. PR-20 (URI doc surfacing) shipped 2026-04-29 (#75). Open PR-21 with the implementation per the outline above.
