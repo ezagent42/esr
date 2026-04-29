@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections.abc import Callable, Iterable
 
@@ -79,8 +80,22 @@ def build_main(
         return 2
 
     def main(argv: list[str] | None = None) -> int:
+        # PR-21o (2026-04-29): default to DEBUG when stdout is redirected
+        # to a file (subprocess case — esrd's WorkerSupervisor pipes us
+        # to /tmp/esr-worker-adapter-*.log). Operators can debug
+        # behaviour without re-running. INFO when stdout is a tty
+        # (interactive cli usage) to keep output reasonable.
+        # `LOG_LEVEL` env var overrides both defaults.
+        explicit = os.environ.get("LOG_LEVEL")
+        if explicit:
+            level = getattr(logging, explicit.upper(), logging.INFO)
+        elif sys.stdout.isatty():
+            level = logging.INFO
+        else:
+            level = logging.DEBUG
+
         logging.basicConfig(
-            level=logging.INFO,
+            level=level,
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
         ns = _parse(argv if argv is not None else [])
