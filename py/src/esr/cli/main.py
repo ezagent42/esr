@@ -21,6 +21,7 @@ from esr.cli.admin import admin as admin_group
 from esr.cli.cap import cap as cap_group
 from esr.cli.notify import notify as notify_cmd
 from esr.cli.reload import reload as reload_cmd
+from esr.cli.users import user as user_group
 from esr.ipc.channel_client import ChannelClient
 
 # --- Context file helpers ----------------------------------------------
@@ -100,6 +101,10 @@ cli.add_command(reload_cmd)
 # invoked by the post-merge git hook to DM the operator about breaking
 # commits before the next reload (spec §7.7, §8.2).
 cli.add_command(notify_cmd)
+
+# PR-21a: `esr user` — esr-user registry + feishu binding. Day-1 of the
+# multi-user redesign (linyilun + yaoshengyue developing together).
+cli.add_command(user_group)
 
 
 @cli.command("use")
