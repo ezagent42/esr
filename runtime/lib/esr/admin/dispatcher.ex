@@ -88,6 +88,11 @@ defmodule Esr.Admin.Dispatcher do
     # PR-21j: workspace_info shares session.list scope — both are
     # read-only introspection of the routing namespace.
     "workspace_info" => "session.list",
+    # PR-21k: workspace_new — anyone with this cap can create
+    # workspaces (writes workspaces.yaml). Operators bootstrap
+    # themselves via `esr cap grant <ou_*> workspace.create` after
+    # initial user binding.
+    "workspace_new" => "workspace.create",
     "grant" => "cap.manage",
     "revoke" => "cap.manage",
     # PR-A T9: cross_app_test is e2e-only; gate behind a wildcard-
@@ -116,6 +121,7 @@ defmodule Esr.Admin.Dispatcher do
     "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
     "session_list" => Esr.Admin.Commands.Session.List,
     "workspace_info" => Esr.Admin.Commands.Workspace.Info,
+    "workspace_new" => Esr.Admin.Commands.Workspace.New,
     "grant" => Esr.Admin.Commands.Cap.Grant,
     "revoke" => Esr.Admin.Commands.Cap.Revoke,
     # PR-A T9: e2e-only test-harness command — synthesizes a

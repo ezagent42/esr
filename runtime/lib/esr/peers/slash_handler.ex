@@ -139,6 +139,19 @@ defmodule Esr.Peers.SlashHandler do
     end
   end
 
+  # PR-21k: workspace_new threads chat_id + app_id (for auto-binding
+  # the new workspace to this chat) + username (for owner default).
+  defp merge_chat_context(args, "workspace_new", envelope) do
+    chat_id = get_in(envelope, ["payload", "chat_id"])
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    username = resolve_username(envelope)
+
+    args
+    |> maybe_put("chat_id", chat_id)
+    |> maybe_put("app_id", app_id)
+    |> maybe_put("username", username)
+  end
+
   defp merge_chat_context(args, _kind, _envelope), do: args
 
   # Resolve the workspace name a chat is bound to. Returns nil when no
@@ -196,6 +209,14 @@ defmodule Esr.Peers.SlashHandler do
                    "/new-session esr-dev name=foo cwd=/path/to/wt worktree=foo"}
       ["/end-session", rest] -> parse_end_session(rest)
       ["/end-session"] -> {:error, "/end-session requires <name>"}
+      # PR-21k: create a workspace from inside Feishu chat. Auto-binds
+      # this chat to the new workspace's chats: list. owner defaults to
+      # the resolved esr user (envelope.user_id → users.yaml).
+      ["/new-workspace", rest] -> parse_new_workspace(rest)
+      ["/new-workspace"] ->
+        {:error,
+         "/new-workspace requires <name> and root=<path>, e.g. " <>
+           "/new-workspace my-ws root=/Users/me/Workspace/my-repo"}
       # PR-21j: `/sessions` and `/list-sessions` lift the empty-args
       # default — SlashHandler's merge_chat_context resolves the chat's
       # workspace and Session.List uses it to filter by the URI tuple.
@@ -209,6 +230,35 @@ defmodule Esr.Peers.SlashHandler do
       ["/workspace", rest] -> parse_workspace(rest)
       ["/workspace"] -> {:error, "/workspace requires a sub-command (info | sessions)"}
       _ -> {:error, inspect(String.slice(text, 0, 32))}
+    end
+  end
+
+  defp parse_new_workspace(rest) do
+    toks = tokenize(rest)
+
+    case toks do
+      [name | kvs] ->
+        kv = parse_kv_pairs(kvs)
+
+        cond do
+          name == "" ->
+            {:error, "/new-workspace requires <name> as first arg"}
+
+          is_nil(kv["root"]) or kv["root"] == "" ->
+            {:error, "/new-workspace requires root=<absolute-path>"}
+
+          true ->
+            args =
+              %{"name" => name, "root" => kv["root"]}
+              |> maybe_put("role", kv["role"])
+              |> maybe_put("start_cmd", kv["start_cmd"])
+              |> maybe_put("owner", kv["owner"])
+
+            {:ok, "workspace_new", args}
+        end
+
+      [] ->
+        {:error, "/new-workspace requires <name> and root=<path>"}
     end
   end
 
@@ -294,6 +344,19 @@ defmodule Esr.Peers.SlashHandler do
 
       "workspace #{ws} sessions (#{length(sessions)}):\n#{lines}"
     end
+  end
+
+  # PR-21k: workspace_new result.
+  defp format_result({:ok, %{"name" => name, "owner" => owner, "root" => root, "chats" => chats}})
+       when is_list(chats) do
+    chat_summary =
+      case chats do
+        [] -> "(no chat bindings)"
+        list -> "#{length(list)} chat(s) bound"
+      end
+
+    "workspace #{name} created (owner=#{owner}, root=#{root}, #{chat_summary}). " <>
+      "Now: /new-session #{name} name=<…> cwd=<…> worktree=<…>"
   end
 
   # PR-21j: workspace_info result.
