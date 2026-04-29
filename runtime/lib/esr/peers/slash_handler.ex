@@ -102,20 +102,43 @@ defmodule Esr.Peers.SlashHandler do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  # Only session_new needs chat_thread_key threading today (the other kinds —
-  # session_list, agent_list, session_end — don't bind a session to a chat).
-  # Keeping this scoped prevents accidental leakage into command args that
-  # already have chat_id/thread_id semantics for something else.
-  defp merge_chat_context(args, "session_new", envelope) do
+  # session_new needs chat_thread_key threading + (PR-21g) username
+  # resolution from envelope.user_id via Esr.Users.Registry. session_end
+  # also needs username when args carries `name=` (PR-21g resolver).
+  defp merge_chat_context(args, kind, envelope) when kind in ["session_new", "session_end"] do
     chat_id = get_in(envelope, ["payload", "chat_id"])
     thread_id = get_in(envelope, ["payload", "thread_id"])
+
+    # PR-21g: resolve esr-username from envelope.user_id (feishu open_id)
+    # via the Users registry. Falls back to nil — Session.New / Session.End
+    # treat absent username as "no URI claim" / "session_id-only mode".
+    username = resolve_username(envelope)
 
     args
     |> maybe_put("chat_id", chat_id)
     |> maybe_put("thread_id", thread_id)
+    |> maybe_put("username", username)
   end
 
   defp merge_chat_context(args, _kind, _envelope), do: args
+
+  defp resolve_username(envelope) do
+    open_id = envelope["user_id"] || get_in(envelope, ["payload", "user_id"])
+
+    cond do
+      not is_binary(open_id) or open_id == "" ->
+        nil
+
+      Process.whereis(Esr.Users.Registry) == nil ->
+        nil
+
+      true ->
+        case Esr.Users.Registry.lookup_by_feishu_id(open_id) do
+          {:ok, username} -> username
+          :not_found -> nil
+        end
+    end
+  end
 
   defp maybe_put(map, _k, nil), do: map
   defp maybe_put(map, k, v), do: Map.put(map, k, v)

@@ -3,38 +3,119 @@ defmodule Esr.Admin.Commands.Session.End do
   `Esr.Admin.Commands.Session.End` — the consolidated agent-session
   teardown admin command (PR-3 P3-9.2; dispatcher kind `session_end`).
 
-  Given a `session_id` (ULID string) on `args`, delegates to
-  `Esr.SessionRouter.end_session/1`, which tears down the
-  `Esr.SessionProcess` supervisor subtree (terminating the
-  `SessionsSupervisor` child) and unregisters the session from
-  `Esr.SessionRegistry`. The router already performs the Registry
-  lookup and surfaces `{:error, :unknown_session}` when the session
-  id is not live; we pass that through to the caller as a
-  `unknown_session`-typed error map.
+  ## PR-21g resolution path
 
-  Before PR-3 this module name held the legacy branch-worktree
-  teardown; that logic now lives in `Esr.Admin.Commands.Session.BranchEnd`
-  under dispatcher kind `session_branch_end`.
+  Two arg shapes accepted:
+
+  - **Legacy `session_id`** — direct ULID lookup via `SessionRouter.end_session/1`.
+    Used by tests and the file-queue admin path.
+  - **New `name`** (PR-21d slash grammar) — resolves to session_id via
+    `Esr.SessionRegistry.lookup_by_name/4` using
+    `(env, username, workspace, name)`. `env` defaults to
+    `$ESR_INSTANCE`; `username` and `workspace` come from the args
+    (threaded by `SlashHandler`).
+
+  When the args carry `cwd` (PR-21d slash) AND the workspace's
+  `root:` is configured, `Esr.Worktree.remove/3` is called after the
+  router teardown — but only when the worktree is clean (D12 default
+  "prune iff clean"). Dirty worktrees are kept on disk + a warning is
+  logged.
+
+  Two-step interactive confirm via `EsrWeb.PendingActions` is staged
+  (PR-21e/f) but not wired here — for now `/end-session` is direct.
 
   ## Result
 
     * `{:ok, %{"session_id" => sid, "ended" => true}}` — Session
       supervisor torn down and the Registry entry released.
-    * `{:error, %{"type" => "unknown_session", "session_id" => sid}}`
-      — no live Session for that id (already ended, or never existed).
-    * `{:error, %{"type" => "end_failed", "details" => ...}}` —
-      unexpected router error; the router keeps running per Risk-E.
-    * `{:error, %{"type" => "invalid_args", "message" => ...}}` —
-      missing or empty `session_id`, or a malformed command map.
+    * `{:ok, %{..., "worktree_removed" => true | false}}` — PR-21g
+      shape; `true` only when a worktree was both registered and
+      successfully removed.
+    * `{:error, %{"type" => "unknown_session", ...}}`
+    * `{:error, %{"type" => "end_failed", ...}}`
+    * `{:error, %{"type" => "invalid_args", ...}}`
   """
 
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"session_id" => sid}}) when is_binary(sid) and sid != "" do
+  def execute(%{"args" => %{"session_id" => sid}} = cmd)
+      when is_binary(sid) and sid != "" do
+    end_by_session_id(sid, cmd["args"])
+  end
+
+  # PR-21g: resolve by URI tuple. `username` + `workspace` come from
+  # args (threaded by SlashHandler from envelope.user / params); `env`
+  # falls back to $ESR_INSTANCE when not given.
+  def execute(%{"args" => %{"name" => name} = args}) when is_binary(name) and name != "" do
+    env = args["env"] || Esr.Paths.current_instance()
+    username = args["username"] || ""
+    workspace = args["workspace"] || ""
+
+    cond do
+      username == "" ->
+        {:error,
+         %{
+           "type" => "invalid_args",
+           "message" => "session_end by name requires args.username"
+         }}
+
+      workspace == "" ->
+        {:error,
+         %{
+           "type" => "invalid_args",
+           "message" => "session_end by name requires args.workspace"
+         }}
+
+      true ->
+        case Esr.SessionRegistry.lookup_by_name(env, username, workspace, name) do
+          {:ok, sid} ->
+            end_by_session_id(sid, args)
+
+          :not_found ->
+            {:error, %{"type" => "unknown_session", "name" => name}}
+        end
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "session_end requires args.session_id OR args.name (with username + workspace)"
+     }}
+  end
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  defp end_by_session_id(sid, args) do
+    cwd = args["cwd"]
+
+    workspace_root =
+      case args["workspace"] do
+        ws when is_binary(ws) and ws != "" ->
+          case Esr.Workspaces.Registry.get(ws) do
+            {:ok, %{root: r}} when is_binary(r) and r != "" -> r
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+
     case Esr.SessionRouter.end_session(sid) do
       :ok ->
-        {:ok, %{"session_id" => sid, "ended" => true}}
+        worktree_removed = maybe_remove_worktree(workspace_root, cwd)
+
+        {:ok,
+         %{
+           "session_id" => sid,
+           "ended" => true,
+           "worktree_removed" => worktree_removed
+         }}
 
       {:error, :unknown_session} ->
         {:error, %{"type" => "unknown_session", "session_id" => sid}}
@@ -44,11 +125,45 @@ defmodule Esr.Admin.Commands.Session.End do
     end
   end
 
-  def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "session_end requires args.session_id (non-empty string)"
-     }}
+  # PR-21g: D12 default — prune iff clean. Dirty worktrees are kept
+  # on disk + a warning is logged; operator can prune manually with
+  # `git worktree remove --force` once they've reviewed the diff.
+  defp maybe_remove_worktree(nil, _cwd), do: false
+  defp maybe_remove_worktree(_root, nil), do: false
+  defp maybe_remove_worktree(_root, ""), do: false
+
+  defp maybe_remove_worktree(root, cwd) do
+    case Esr.Worktree.status(cwd) do
+      {:ok, :clean} ->
+        case Esr.Worktree.remove(root, cwd, force: false) do
+          :ok ->
+            true
+
+          {:error, reason} ->
+            require Logger
+            Logger.warning(
+              "session_end: worktree remove failed cwd=#{cwd} reason=#{inspect(reason)}"
+            )
+
+            false
+        end
+
+      {:ok, :dirty} ->
+        require Logger
+        Logger.warning(
+          "session_end: worktree #{cwd} has uncommitted changes — kept on disk. " <>
+            "Remove manually with `git worktree remove --force` once you've reviewed the diff."
+        )
+
+        false
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning(
+          "session_end: worktree status check failed cwd=#{cwd} reason=#{inspect(reason)}"
+        )
+
+        false
+    end
   end
 end

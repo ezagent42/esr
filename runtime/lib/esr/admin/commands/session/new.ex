@@ -64,8 +64,12 @@ defmodule Esr.Admin.Commands.Session.New do
   @spec execute(map(), keyword()) :: result()
   def execute(%{"submitted_by" => submitter, "args" => args}, opts)
       when is_binary(submitter) and is_map(args) and is_list(opts) do
-    agent = args["agent"]
-    dir = args["dir"]
+    # PR-21g grammar accommodation: `cwd` (PR-21d slash) is accepted as
+    # alias for `dir` (legacy / admin-CLI). When `workspace` is provided
+    # without an explicit `agent`, default to "cc" — the only agent
+    # currently registered in agents.yaml.
+    agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
+    dir = args["dir"] || args["cwd"]
     # PR-8 T2: thread the originating Feishu chat through so the session
     # is registered under the real {chat_id, thread_id}. Falls back to
     # "pending" when args don't carry them (direct admin CLI submits).
@@ -87,9 +91,68 @@ defmodule Esr.Admin.Commands.Session.New do
              thread_id,
              create_session_fn,
              start_session_fn
-           ) do
+           ),
+         :ok <- maybe_claim_uri(args, sid) do
       {:ok, %{"session_id" => sid, "agent" => agent}}
     end
+  end
+
+  # PR-21g: if the slash command threaded URI components (name +
+  # username + workspace + worktree), claim them in SessionRegistry
+  # against the freshly-spawned sid. Collisions roll back the spawn
+  # so the pair (Registry, supervisor tree) stays consistent.
+  defp maybe_claim_uri(%{"name" => name, "username" => u, "workspace" => ws, "worktree" => wt} = _args, sid)
+       when is_binary(name) and name != "" and is_binary(u) and u != "" and
+              is_binary(ws) and ws != "" and is_binary(wt) and wt != "" do
+    env = Esr.Paths.current_instance()
+
+    case Esr.SessionRegistry.claim_uri(sid, %{
+           env: env,
+           username: u,
+           workspace: ws,
+           name: name,
+           worktree_branch: wt
+         }) do
+      :ok ->
+        :ok
+
+      {:error, {:name_taken, _other_sid}} = err ->
+        rollback_spawn(sid)
+
+        {:error,
+         %{
+           "type" => "name_collision",
+           "name" => name,
+           "username" => u,
+           "workspace" => ws,
+           "details" => "another live session already uses this name"
+         }}
+        |> tap(fn _ -> _ = err end)
+
+      {:error, {:worktree_taken, _other_sid}} = err ->
+        rollback_spawn(sid)
+
+        {:error,
+         %{
+           "type" => "worktree_collision",
+           "worktree" => wt,
+           "username" => u,
+           "workspace" => ws,
+           "details" => "another live session already uses this worktree branch"
+         }}
+        |> tap(fn _ -> _ = err end)
+
+      {:error, _other} = err ->
+        rollback_spawn(sid)
+        err
+    end
+  end
+
+  defp maybe_claim_uri(_args, _sid), do: :ok
+
+  defp rollback_spawn(sid) do
+    _ = Esr.SessionRouter.end_session(sid)
+    :ok
   end
 
   def execute(_, _opts),

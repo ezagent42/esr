@@ -188,4 +188,142 @@ defmodule Esr.SessionRegistryTest do
     assert log =~ "reserved field"
     File.rm!(path)
   end
+
+  describe "claim_uri/2 (PR-21g D8 uniqueness)" do
+    setup do
+      # Distinct prefix per test so concurrent tests don't see each other's
+      # rows under the singleton ETS table.
+      env = "test-env-#{System.unique_integer([:positive])}"
+      {:ok, env: env}
+    end
+
+    test "first claim succeeds; second claim with same name rejects", %{env: env} do
+      sid_a = "sid-a-#{System.unique_integer([:positive])}"
+      sid_b = "sid-b-#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               Esr.SessionRegistry.claim_uri(sid_a, %{
+                 env: env,
+                 username: "linyilun",
+                 workspace: "esr-dev",
+                 name: "feature-foo",
+                 worktree_branch: "feature-foo"
+               })
+
+      assert {:error, {:name_taken, ^sid_a}} =
+               Esr.SessionRegistry.claim_uri(sid_b, %{
+                 env: env,
+                 username: "linyilun",
+                 workspace: "esr-dev",
+                 name: "feature-foo",
+                 # Different worktree branch — name collision wins
+                 worktree_branch: "feature-bar"
+               })
+
+      :ok = Esr.SessionRegistry.unregister_session(sid_a)
+    end
+
+    test "claim with same worktree_branch but different name rejects", %{env: env} do
+      sid_a = "sid-wt-a-#{System.unique_integer([:positive])}"
+      sid_b = "sid-wt-b-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid_a, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "session-one",
+          worktree_branch: "shared-branch"
+        })
+
+      assert {:error, {:worktree_taken, ^sid_a}} =
+               Esr.SessionRegistry.claim_uri(sid_b, %{
+                 env: env,
+                 username: "linyilun",
+                 workspace: "esr-dev",
+                 name: "session-two",
+                 worktree_branch: "shared-branch"
+               })
+
+      :ok = Esr.SessionRegistry.unregister_session(sid_a)
+    end
+
+    test "different (env, username, workspace) tuples don't collide", %{env: env} do
+      sid_a = "sid-iso-a-#{System.unique_integer([:positive])}"
+      sid_b = "sid-iso-b-#{System.unique_integer([:positive])}"
+      sid_c = "sid-iso-c-#{System.unique_integer([:positive])}"
+
+      base = %{
+        env: env,
+        username: "linyilun",
+        workspace: "esr-dev",
+        name: "same-name",
+        worktree_branch: "same-branch"
+      }
+
+      assert :ok = Esr.SessionRegistry.claim_uri(sid_a, base)
+      # Different username → no collision
+      assert :ok = Esr.SessionRegistry.claim_uri(sid_b, %{base | username: "yaoshengyue"})
+      # Different workspace → no collision
+      assert :ok = Esr.SessionRegistry.claim_uri(sid_c, %{base | workspace: "voice-gateway"})
+
+      for sid <- [sid_a, sid_b, sid_c] do
+        :ok = Esr.SessionRegistry.unregister_session(sid)
+      end
+    end
+
+    test "lookup_by_name/4 returns sid; unregister clears the index", %{env: env} do
+      sid = "sid-lookup-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "feature-foo",
+          worktree_branch: "feature-foo"
+        })
+
+      assert {:ok, ^sid} =
+               Esr.SessionRegistry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
+
+      :ok = Esr.SessionRegistry.unregister_session(sid)
+      assert :not_found =
+               Esr.SessionRegistry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
+    end
+
+    test "list_uris/3 enumerates only the requested prefix", %{env: env} do
+      sid_a = "sid-list-a-#{System.unique_integer([:positive])}"
+      sid_b = "sid-list-b-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid_a, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "alpha",
+          worktree_branch: "alpha-br"
+        })
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid_b, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "beta",
+          worktree_branch: "beta-br"
+        })
+
+      names =
+        Esr.SessionRegistry.list_uris(env, "linyilun", "esr-dev")
+        |> Enum.map(fn {n, _} -> n end)
+        |> Enum.sort()
+
+      assert names == ["alpha", "beta"]
+
+      for sid <- [sid_a, sid_b] do
+        :ok = Esr.SessionRegistry.unregister_session(sid)
+      end
+    end
+  end
 end
