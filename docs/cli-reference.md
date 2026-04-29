@@ -1131,8 +1131,14 @@ Usage: cli workspace add [OPTIONS] NAME
 
   Declare a workspace template for `/new-session <name>`.
 
+  PR-21c: `--cwd` removed, replaced by `--owner` (esr username) and `--root`
+  (main git repo for worktree forks).
+
 Options:
-  --cwd PATH        [required]
+  --owner TEXT      esr username this workspace belongs to (PR-21c).
+                    [required]
+  --root PATH       Path to the main git repo (worktree forks branch from
+                    origin/main here).  [required]
   --start-cmd TEXT  [required]
   --role TEXT
   --chat TEXT       <chat_id>:<app_id>:<kind> triple; repeat for multiple

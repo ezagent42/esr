@@ -1397,15 +1397,22 @@ def workspace() -> None:
 
 @workspace.command("add", context_settings={"ignore_unknown_options": True})
 @click.argument("name")
-@click.option("--cwd", required=True, type=click.Path())
+@click.option("--owner", required=True,
+              help="esr username this workspace belongs to (PR-21c).")
+@click.option("--root", required=True, type=click.Path(),
+              help="Path to the main git repo (worktree forks branch from origin/main here).")
 @click.option("--start-cmd", required=True)
 @click.option("--role", default="dev")
 @click.option("--chat", "chats", multiple=True,
               help="<chat_id>:<app_id>:<kind> triple; repeat for multiple chats")
 @click.option("--env", "envs", multiple=True, help="KEY=VAL; repeat for multiple env vars")
-def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
+def workspace_add(name: str, owner: str, root: str, start_cmd: str, role: str,
                   chats: tuple[str, ...], envs: tuple[str, ...]) -> None:
-    """Declare a workspace template for `/new-session <name>`."""
+    """Declare a workspace template for `/new-session <name>`.
+
+    PR-21c: `--cwd` removed, replaced by `--owner` (esr username) and
+    `--root` (main git repo for worktree forks).
+    """
     from esr.workspaces import Workspace, write_workspace
 
     parsed_chats = []
@@ -1425,7 +1432,7 @@ def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
         env_dict[k] = v
 
     path = paths.workspaces_yaml_path()
-    ws = Workspace(name=name, cwd=cwd, start_cmd=start_cmd, role=role,
+    ws = Workspace(name=name, owner=owner, root=root, start_cmd=start_cmd, role=role,
                    chats=parsed_chats, env=env_dict)
     try:
         write_workspace(path, ws)
@@ -1439,7 +1446,7 @@ def workspace_add(name: str, cwd: str, start_cmd: str, role: str,
     try:
         call_runtime(
             topic="cli:workspace/register",
-            payload={"name": name, "cwd": cwd, "start_cmd": start_cmd,
+            payload={"name": name, "owner": owner, "root": root, "start_cmd": start_cmd,
                      "role": role, "chats": parsed_chats, "env": env_dict},
             timeout_sec=5.0,
         )
@@ -1459,7 +1466,10 @@ def workspace_list() -> None:
         chat_refs = ",".join(
             f"{c['chat_id']}@{c['app_id']}" for c in ws.chats
         )
-        click.echo(f"{name}  cwd={ws.cwd}  role={ws.role}  chats={chat_refs}")
+        click.echo(
+            f"{name}  owner={ws.owner or '-'}  root={ws.root or '-'}  "
+            f"role={ws.role}  chats={chat_refs}"
+        )
 
 
 @workspace.command("remove")

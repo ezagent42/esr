@@ -403,7 +403,11 @@ defmodule EsrWeb.CliChannel do
     if is_binary(name) and name != "" do
       ws = %WorkspacesReg.Workspace{
         name: name,
-        cwd: payload["cwd"] || "",
+        # PR-21c: owner + root replace cwd. Both are optional in the
+        # payload to keep older CLI clients working during rollout, but
+        # PR-21d's session-spawn path will require root: to be set.
+        owner: payload["owner"],
+        root: payload["root"],
         start_cmd: payload["start_cmd"] || "",
         role: payload["role"] || "dev",
         chats: payload["chats"] || [],

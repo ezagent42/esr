@@ -42,16 +42,25 @@ if [ ! -f "$WORKSPACES_YAML" ]; then
 fi
 
 ws="$ESR_WORKSPACE"
-cwd=$(yq -r ".workspaces.${ws}.cwd // \"\"" "$WORKSPACES_YAML")
+# PR-21c: schema bump — `cwd:` removed, `root:` added (main git repo).
+# Per-session cwd is supplied by PR-21d's `/new-session` slash; until that
+# lands, fall back to `root:` for the .mcp.json placement directory.
+# `ESR_CWD` env var is the forward-compatible override that PR-21d's
+# spawn path will set before invoking this script.
+root=$(yq -r ".workspaces.${ws}.root // \"\"" "$WORKSPACES_YAML")
 role=$(yq -r ".workspaces.${ws}.role // \"dev\"" "$WORKSPACES_YAML")
 chats_json=$(yq -o=json -I=0 ".workspaces.${ws}.chats // []" "$WORKSPACES_YAML")
 
-if [ -z "$cwd" ] || [ "$cwd" = "null" ]; then
-  echo "esr-cc.sh: workspace '$ws' not declared in $WORKSPACES_YAML" >&2
+if [ -n "${ESR_CWD:-}" ]; then
+  cwd="$ESR_CWD"
+elif [ -n "$root" ] && [ "$root" != "null" ]; then
+  cwd="$root"
+else
+  echo "esr-cc.sh: workspace '$ws' has no root: in $WORKSPACES_YAML and no ESR_CWD env var" >&2
   exit 2
 fi
 
-# Expand ~ in cwd
+# Expand ~
 cwd="${cwd/#\~/$HOME}"
 mkdir -p "$cwd"
 cd "$cwd"

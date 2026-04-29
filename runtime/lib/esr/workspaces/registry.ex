@@ -26,7 +26,7 @@ defmodule Esr.Workspaces.Registry do
     them to the LLM verbatim, without code changes.
     """
     defstruct [
-      :name, :cwd, :start_cmd, :role, :chats, :env,
+      :name, :owner, :root, :start_cmd, :role, :chats, :env,
       neighbors: [],
       metadata: %{}
     ]
@@ -90,7 +90,8 @@ defmodule Esr.Workspaces.Registry do
           |> Enum.map(fn {name, row} ->
             ws = %Workspace{
               name: name,
-              cwd: row["cwd"] || "",
+              owner: row["owner"] || nil,
+              root: row["root"] || nil,
               start_cmd: row["start_cmd"] || "",
               role: row["role"] || "dev",
               chats: row["chats"] || [],

@@ -55,7 +55,7 @@ mkdir -p "${ESRD_HOME}/default" "${ESRD_HOME}/${ESRD_INSTANCE}"
 ws_yaml=$(cat <<'EOF'
 workspaces:
   ws_alpha:
-    cwd: "/tmp/esr-e2e-workspace-alpha"
+    root: "/tmp/esr-e2e-workspace-alpha"
     start_cmd: ""
     role: "dev"
     chats:
@@ -64,7 +64,7 @@ workspaces:
       - workspace:ws_bravo
     env: {}
   ws_bravo:
-    cwd: "/tmp/esr-e2e-workspace-bravo"
+    root: "/tmp/esr-e2e-workspace-bravo"
     start_cmd: ""
     role: "dev"
     chats:
@@ -73,7 +73,7 @@ workspaces:
       - workspace:ws_charlie
     env: {}
   ws_charlie:
-    cwd: "/tmp/esr-e2e-workspace-charlie"
+    root: "/tmp/esr-e2e-workspace-charlie"
     start_cmd: ""
     role: "dev"
     chats:
