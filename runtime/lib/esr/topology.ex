@@ -130,11 +130,41 @@ defmodule Esr.Topology do
   end
 
   @doc """
-  Builds the canonical user URI for an open_id.
+  Builds the canonical user URI for a feishu open_id.
+
+  PR-21b rekey: looks up the open_id in `Esr.Users.Registry` and uses
+  the bound esr-username when available. Falls back to the raw open_id
+  with a warning when the id is not yet bound — this preserves
+  backwards-compatible reachable_set construction during the rollout
+  window. Once every active operator has been bound (`esr user
+  bind-feishu …`), the warning path goes silent.
   """
   @spec user_uri(String.t()) :: String.t()
   def user_uri(open_id) when is_binary(open_id) do
-    Esr.Uri.build_path(["users", open_id], @host)
+    id = resolve_user_id(open_id)
+    Esr.Uri.build_path(["users", id], @host)
+  end
+
+  defp resolve_user_id(open_id) do
+    if Process.whereis(Esr.Users.Registry) do
+      case Esr.Users.Registry.lookup_by_feishu_id(open_id) do
+        {:ok, username} ->
+          username
+
+        :not_found ->
+          require Logger
+
+          Logger.warning(
+            "topology: feishu open_id #{open_id} has no esr user binding; using raw id in URI. " <>
+              "Bind via `esr user bind-feishu <user> #{open_id}` to fix."
+          )
+
+          open_id
+      end
+    else
+      # Tests / boot edge-case: Registry not up yet. Fall back without warning.
+      open_id
+    end
   end
 
   @doc """
