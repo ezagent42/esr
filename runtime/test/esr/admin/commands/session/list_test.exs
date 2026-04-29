@@ -130,4 +130,75 @@ defmodule Esr.Admin.Commands.Session.ListTest do
       assert {:error, %{"type" => "invalid_args"}} = SessionList.execute(%{"args" => %{}})
     end
   end
+
+  describe "execute/1 PR-21j workspace-scoped path" do
+    test "returns sessions filtered by (env, username, workspace) URI tuple" do
+      assert is_pid(Process.whereis(Esr.SessionRegistry))
+      env = "test-list-#{System.unique_integer([:positive])}"
+
+      sid_a = "sid-listA-#{System.unique_integer([:positive])}"
+      sid_b = "sid-listB-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid_a, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "alpha",
+          worktree_branch: "alpha-br"
+        })
+
+      :ok =
+        Esr.SessionRegistry.claim_uri(sid_b, %{
+          env: env,
+          username: "linyilun",
+          workspace: "esr-dev",
+          name: "beta",
+          worktree_branch: "beta-br"
+        })
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"workspace" => "esr-dev", "username" => "linyilun", "env" => env}
+      }
+
+      assert {:ok,
+              %{
+                "workspace" => "esr-dev",
+                "username" => "linyilun",
+                "env" => ^env,
+                "sessions" => sessions
+              }} = SessionList.execute(cmd)
+
+      names = sessions |> Enum.map(& &1["name"]) |> Enum.sort()
+      assert names == ["alpha", "beta"]
+
+      # Cleanup
+      :ok = Esr.SessionRegistry.unregister_session(sid_a)
+      :ok = Esr.SessionRegistry.unregister_session(sid_b)
+    end
+
+    test "workspace= without username= → invalid_args" do
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"workspace" => "esr-dev"}
+      }
+
+      assert {:error, %{"type" => "invalid_args", "message" => msg}} =
+               SessionList.execute(cmd)
+
+      assert msg =~ "username"
+    end
+
+    test "no matching sessions → empty list" do
+      env = "empty-#{System.unique_integer([:positive])}"
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"workspace" => "ghost-ws", "username" => "linyilun", "env" => env}
+      }
+
+      assert {:ok, %{"sessions" => []}} = SessionList.execute(cmd)
+    end
+  end
 end

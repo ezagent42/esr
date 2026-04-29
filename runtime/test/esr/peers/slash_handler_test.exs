@@ -345,4 +345,96 @@ defmodule Esr.Peers.SlashHandlerTest do
                     {:execute, %{"kind" => "agent_list"}, {:reply_to, {:pid, ^pid, _ref}}}},
                    500
   end
+
+  describe "PR-21j workspace group ops" do
+    setup do
+      {:ok, _} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          },
+          name: :test_pr21j_slash
+        )
+
+      :ok
+    end
+
+    test "/workspace info parses to workspace_info kind with empty args (chat resolved)" do
+      pid = Process.whereis(:test_pr21j_slash)
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/workspace info", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute, %{"kind" => "workspace_info"} = cmd,
+                       {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+
+      # No explicit workspace= → SlashHandler resolves nil (no Workspace.Registry binding for oc_z)
+      refute Map.has_key?(cmd["args"], "workspace") and cmd["args"]["workspace"] in [nil, ""]
+      # In test env without a workspace_for_chat binding, args.workspace stays nil
+      # (Workspace.Info will surface the invalid_args error downstream)
+    end
+
+    test "/workspace info <name> threads name into args" do
+      pid = Process.whereis(:test_pr21j_slash)
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/workspace info esr-dev", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_info",
+                         "args" => %{"workspace" => "esr-dev"}
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
+    test "/workspace sessions threads workspace into session_list args" do
+      pid = Process.whereis(:test_pr21j_slash)
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/workspace sessions esr-dev", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "session_list",
+                         "args" => %{"workspace" => "esr-dev"}
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
+    test "/workspace bad-subcmd returns user-facing error" do
+      pid = Process.whereis(:test_pr21j_slash)
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/workspace nope", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:reply, text}, 500
+      assert text =~ "info"
+      assert text =~ "sessions"
+    end
+  end
 end
