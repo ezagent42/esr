@@ -88,10 +88,18 @@ defmodule Esr.Application do
       # Workspaces / Capabilities; ordering is informational only.
       Esr.Users.Supervisor,
 
-      # 4f.2 PendingActions (PR-21e) — TTL state machine for two-step
+      # 4f.2 PendingActionsGuard (PR-21e) — TTL state machine for two-step
       # destructive confirms (D12/D15). Inbound message interception
       # is wired in feishu_app_adapter; no other dependencies.
-      EsrWeb.PendingActions,
+      EsrWeb.PendingActionsGuard,
+
+      # 4f.3 Inbound onboarding guards (PR-21w). Both extracted from
+      # `Esr.Peers.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
+      # migration plan. Each owns its own per-key rate-limit Map and
+      # exposes a single `check/3` entry point the FAA `handle_upstream`
+      # path consults before further routing.
+      Esr.Peers.UnboundChatGuard,
+      Esr.Peers.UnboundUserGuard,
 
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities

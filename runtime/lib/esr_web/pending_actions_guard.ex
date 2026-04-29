@@ -1,4 +1,4 @@
-defmodule EsrWeb.PendingActions do
+defmodule EsrWeb.PendingActionsGuard do
   @moduledoc """
   TTL state machine for two-step destructive confirms (PR-21e, spec D12/D15).
 
