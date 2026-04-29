@@ -41,7 +41,11 @@ defmodule Esr.Admin do
       # `session_branch_new` share `session:default/create`; `session_end`
       # + `session_branch_end` share `session:default/end`).
       "session:default/create",
-      "session:default/end"
+      "session:default/end",
+      # PR-21k: workspace.create — creating a workspace from inside
+      # Feishu (via /new-workspace slash) writes workspaces.yaml.
+      # Bootstrap path: `esr cap grant <esr-user> workspace.create`.
+      "workspace.create"
     ]
   end
 end

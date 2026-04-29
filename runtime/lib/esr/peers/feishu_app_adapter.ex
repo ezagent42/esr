@@ -474,16 +474,24 @@ defmodule Esr.Peers.FeishuAppAdapter do
     """
     👋 这个 chat 还没在 ESR 注册 workspace，所以收到的消息会被忽略。
 
-    在 esr 仓库里跑（注意 --env 选 prod 或 dev）：
+    两种注册方式（任选其一）：
 
-      ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
-          --owner <esr_username> \\
-          --root <主 git 仓库路径> \\
-          --start-cmd scripts/esr-cc.sh \\
-          --role dev \\
-          --chat #{chat_id}:#{app_id}:dm
+    A. 在本 chat 直接发 slash 命令（推荐 — 自动绑当前 chat）：
 
-    注册后，给本 bot 发：
+       /new-workspace <workspace_name> root=<主 git 仓库路径>
+
+       owner 缺省 = 你（已绑定的 esr user）；role / start_cmd 也有缺省值。
+
+    B. 在 esr 仓库 CLI 里跑（注意 --env 选 prod 或 dev）：
+
+       ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
+           --owner <esr_username> \\
+           --root <主 git 仓库路径> \\
+           --start-cmd scripts/esr-cc.sh \\
+           --role dev \\
+           --chat #{chat_id}:#{app_id}:dm
+
+    注册后给本 bot 发：
       /new-session <workspace_name> name=<session_name> cwd=<worktree 路径> worktree=<分支名>
 
     会话就会拉起来（每个 session 一个独立 worktree，从 origin/main fork）。

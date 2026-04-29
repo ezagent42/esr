@@ -437,4 +437,64 @@ defmodule Esr.Peers.SlashHandlerTest do
       assert text =~ "sessions"
     end
   end
+
+  describe "PR-21k /new-workspace slash" do
+    test "parses name + root= into workspace_new kind" do
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{
+          "text" => "/new-workspace my-ws root=/Users/me/Workspace/my-repo",
+          "chat_id" => "oc_z"
+        }
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_new",
+                         "args" => %{
+                           "name" => "my-ws",
+                           "root" => "/Users/me/Workspace/my-repo",
+                           "chat_id" => "oc_z"
+                         }
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
+    test "missing root= returns user-facing error" do
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        "principal_id" => "p_user",
+        "payload" => %{"text" => "/new-workspace foo", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:reply, text}, 500
+      assert text =~ "root="
+    end
+  end
 end
