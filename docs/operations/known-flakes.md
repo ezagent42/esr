@@ -1,6 +1,6 @@
 # Known Test Flakes
 
-**Last updated**: 2026-04-28
+**Last updated**: 2026-04-29
 
 This document lists test failures that appear intermittently and the reason we've accepted them as known-flake rather than blocking merges. Each entry has a concrete follow-up path.
 
@@ -112,9 +112,32 @@ boot-completion race.
 
 ---
 
+## 5. `EsrWeb.AdapterChannelNewChainTest` — "adapter_channel forwards `{:inbound_event, envelope}` to FeishuAppAdapter when flag on"
+
+**File**: `runtime/test/esr_web/adapter_channel_new_chain_test.exs:42`
+
+**Symptom**:
+```
+Assertion with == failed
+  pattern: assert_receive {:new_chat_thread, "cli_app_p211", "oc_test", "om_test", ^envelope}
+  The process mailbox is empty.
+```
+
+**Rate**: ~50%+ — fails consistently in CI but passes 30-50% of the time on local re-runs.
+
+**Root cause (recorded 2026-04-29 PR-21w-tracker)**: pre-existing failure dating to PR-9 T10 era (last touched in commit `4e0592a`). The test asserts a Phoenix.PubSub broadcast `{:new_chat_thread, app_id, chat_id, thread_id, envelope}` on the `session_router` topic. Subscription happens via `Phoenix.PubSub.subscribe` BEFORE the inbound, but receive timing is fragile when the FeishuAppAdapter peer isn't fully started by the time the broadcast fires.
+
+Cross-checked: failures occur on `main` regardless of PR-21 work — verified during PR-21a, PR-21l, PR-21v, and PR-21w restart cycles. NOT caused by recent changes.
+
+**Workaround**: rerun (`mix test --failed`).
+
+**Permanent fix**: requires deterministic peer-ready signal between `DynamicSupervisor.start_child` and PubSub subscribe. The test pre-dates the start_link return-then-bind sequencing pattern used in PR-9+ peers. Could be addressed by wrapping the start path in a `wait_until_registered/1` helper, or by re-architecting the test to observe a synchronous return value instead of a PubSub broadcast.
+
+---
+
 ## Guidance
 
-- **CI failures**: if only these two tests fail and `mix test --failed` then passes, re-approve. If other tests fail intermittently, file a new entry here.
+- **CI failures**: if only these tests fail and `mix test --failed` then passes, re-approve. If other tests fail intermittently, file a new entry here.
 - **Root cause for all**: the singleton `Esr.Capabilities.Grants` + global `permissions_registry.json` + admin-session bootstrap singletons = shared mutable state across tests, not adequately isolated. The test suite predates the v3.1 refactor's Session-scoped model.
 
 ## Adding a new entry
