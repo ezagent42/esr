@@ -72,13 +72,29 @@ defmodule Esr.Capabilities.FileLoader do
   defp validate_cap("*", _pid), do: :ok
 
   defp validate_cap(cap, pid) when is_binary(cap) do
-    with [scope, perm] <- String.split(cap, "/", parts: 2),
-         :ok <- validate_scope(scope),
-         :ok <- validate_perm(perm, pid) do
-      :ok
-    else
-      {:error, _} = err -> err
-      _ -> {:error, {:malformed_cap, cap, pid}}
+    cond do
+      # PR-21s 2026-04-29: flat dotted caps (`workspace.create`,
+      # `session.list`, `cap.manage`, `notify.send`, …) are admitted
+      # at load time if they appear in the runtime's declared
+      # permissions registry. Match logic (Grants.matches?/2) gained an
+      # exact-string fallback in the same PR. docs/notes/
+      # capability-name-format-mismatch.md is the historical context.
+      not String.contains?(cap, "/") ->
+        if Registry.declared?(cap) do
+          :ok
+        else
+          {:error, {:unknown_permission, cap, pid}}
+        end
+
+      true ->
+        with [scope, perm] <- String.split(cap, "/", parts: 2),
+             :ok <- validate_scope(scope),
+             :ok <- validate_perm(perm, pid) do
+          :ok
+        else
+          {:error, _} = err -> err
+          _ -> {:error, {:malformed_cap, cap, pid}}
+        end
     end
   end
 

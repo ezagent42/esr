@@ -265,7 +265,12 @@ def _bootstrap_grant_caps(feishu_user_id: str) -> None:
 @click.argument("name")
 @click.argument("feishu_user_id")
 def user_unbind_feishu(name: str, feishu_user_id: str) -> None:
-    """Remove a Feishu open_id binding from an esr user."""
+    """Remove a Feishu open_id binding from an esr user.
+
+    PR-21s (2026-04-29): also auto-revokes the 4 bootstrap caps that
+    bind-feishu auto-granted. Symmetric — bind grants, unbind revokes.
+    Other manually-added caps on the open_id are preserved.
+    """
     path = users_yaml_path()
     doc = _read_doc(path)
 
@@ -284,4 +289,72 @@ def user_unbind_feishu(name: str, feishu_user_id: str) -> None:
     user_row["feishu_ids"] = ids
     doc["users"][name] = user_row
     _write_doc(path, doc)
+
+    revoked = _bootstrap_revoke_caps(feishu_user_id)
+
     click.echo(f"unbound {feishu_user_id} from esr user {name}")
+    if revoked:
+        click.echo(
+            f"  - auto-revoked {len(revoked)} bootstrap cap(s) from "
+            f"{feishu_user_id}: {', '.join(revoked)}"
+        )
+
+
+def _bootstrap_revoke_caps(feishu_user_id: str) -> list[str]:
+    """PR-21s: counterpart to _bootstrap_grant_caps. Revoke ONLY the
+    4 caps bind-feishu auto-granted; preserve any manually-added grants
+    (e.g. `cap grant ou_xxx admin`).
+
+    Returns the list of caps actually removed (for the operator-facing
+    confirmation message). Empty list when the principal entry is gone
+    or has no overlap with the bootstrap set.
+    """
+    from esr.cli.paths import capabilities_yaml_path
+
+    target_caps = {
+        "workspace.create",
+        "session:default/create",
+        "session:default/end",
+        "session.list",
+    }
+
+    caps_path = Path(capabilities_yaml_path())
+    if not caps_path.exists():
+        return []
+
+    with caps_path.open("r") as f:
+        doc = _yaml.load(f) or {}
+
+    principals = doc.get("principals") or []
+    revoked: list[str] = []
+
+    for p in principals:
+        if not isinstance(p, dict) or p.get("id") != feishu_user_id:
+            continue
+        held = list(p.get("capabilities") or [])
+        kept: list[str] = []
+        for cap in held:
+            if cap in target_caps:
+                revoked.append(cap)
+            else:
+                kept.append(cap)
+        p["capabilities"] = kept
+
+    if not revoked:
+        return []
+
+    # Drop principal entry entirely if no caps remain (clean state)
+    pruned = [
+        p
+        for p in principals
+        if not (
+            isinstance(p, dict)
+            and p.get("id") == feishu_user_id
+            and not (p.get("capabilities") or [])
+        )
+    ]
+    doc["principals"] = pruned
+
+    with caps_path.open("w") as f:
+        _yaml.dump(doc, f)
+    return revoked

@@ -32,6 +32,17 @@ defmodule Esr.Capabilities.Grants do
 
   defp matches?("*", _required), do: true
 
+  # PR-21s 2026-04-29: exact-string fallback for flat dotted caps like
+  # `workspace.create` and `session.list`. The original split-based
+  # matcher requires the `prefix:name/perm` shape and rejects flat
+  # names — but Esr.Admin.permissions/0 declares both shapes (`session.list`,
+  # `workspace.create`, `cap.manage`, `notify.send` are flat;
+  # `session:default/create`, `session:default/end` use prefix:name/perm).
+  # docs/notes/capability-name-format-mismatch.md tracks the legacy
+  # spec/code drift; this fallback lets the runtime accept either form
+  # without forcing a yaml schema migration.
+  defp matches?(held, required) when held == required, do: true
+
   defp matches?(held, required) do
     with {:ok, {h_prefix, h_name, h_perm}} <- split(held),
          {:ok, {r_prefix, r_name, r_perm}} <- split(required),

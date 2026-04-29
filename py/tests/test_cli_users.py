@@ -172,3 +172,76 @@ def test_unbind_feishu_unknown_id_fails(esrd_home: Path) -> None:
     )
     assert result.exit_code == 1
     assert "not bound" in result.output
+
+
+def test_bind_feishu_writes_bootstrap_caps(esrd_home: Path) -> None:
+    """PR-21q: bind-feishu auto-grants 4 bootstrap caps to the open_id."""
+    runner = CliRunner()
+    runner.invoke(cli, ["user", "add", "linyilun"])
+    result = runner.invoke(
+        cli, ["user", "bind-feishu", "linyilun", "ou_aaa"]
+    )
+    assert result.exit_code == 0
+    assert "auto-granted" in result.output
+
+    caps_path = esrd_home / "default" / "capabilities.yaml"
+    assert caps_path.exists()
+    caps_doc = yaml.safe_load(caps_path.read_text()) or {}
+    principal = next(
+        (p for p in caps_doc.get("principals", []) if p.get("id") == "ou_aaa"),
+        None,
+    )
+    assert principal is not None
+    held = set(principal.get("capabilities") or [])
+    assert "workspace.create" in held
+    assert "session:default/create" in held
+    assert "session:default/end" in held
+    assert "session.list" in held
+
+
+def test_unbind_feishu_revokes_only_bootstrap_caps(esrd_home: Path) -> None:
+    """PR-21s: unbind-feishu revokes the 4 bootstrap caps but preserves
+    other manually-granted caps on the same open_id (e.g. `cap grant
+    ou_xxx admin`)."""
+    runner = CliRunner()
+    runner.invoke(cli, ["user", "add", "linyilun"])
+    runner.invoke(cli, ["user", "bind-feishu", "linyilun", "ou_aaa"])
+
+    # Manually add an `admin` cap to the same principal (simulating
+    # `esr cap grant ou_aaa admin`).
+    caps_path = esrd_home / "default" / "capabilities.yaml"
+    caps_doc = yaml.safe_load(caps_path.read_text()) or {}
+    for p in caps_doc["principals"]:
+        if p["id"] == "ou_aaa":
+            p["capabilities"].append("*")
+    caps_path.write_text(yaml.safe_dump(caps_doc))
+
+    result = runner.invoke(cli, ["user", "unbind-feishu", "linyilun", "ou_aaa"])
+    assert result.exit_code == 0
+    assert "auto-revoked 4 bootstrap cap(s)" in result.output
+
+    # Verify yaml: only the 4 bootstrap caps removed; `*` survives.
+    caps_doc = yaml.safe_load(caps_path.read_text()) or {}
+    principal = next(
+        (p for p in caps_doc.get("principals", []) if p.get("id") == "ou_aaa"),
+        None,
+    )
+    assert principal is not None
+    assert principal["capabilities"] == ["*"]
+
+
+def test_unbind_feishu_no_other_caps_drops_principal_entry(
+    esrd_home: Path,
+) -> None:
+    """PR-21s: when unbind removes the LAST cap from a principal,
+    the entire principal entry is pruned (clean state)."""
+    runner = CliRunner()
+    runner.invoke(cli, ["user", "add", "linyilun"])
+    runner.invoke(cli, ["user", "bind-feishu", "linyilun", "ou_aaa"])
+
+    runner.invoke(cli, ["user", "unbind-feishu", "linyilun", "ou_aaa"])
+
+    caps_path = esrd_home / "default" / "capabilities.yaml"
+    caps_doc = yaml.safe_load(caps_path.read_text()) or {}
+    principal_ids = [p.get("id") for p in caps_doc.get("principals", [])]
+    assert "ou_aaa" not in principal_ids
