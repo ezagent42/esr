@@ -18,12 +18,27 @@ monitoring) follow in subsequent commits.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from typing import Any
 
 from esr.adapter import AdapterConfig, adapter
 
 logger = logging.getLogger(__name__)
+
+
+def _tmux_socket_args() -> list[str]:
+    """Return ``["-S", "<path>"]`` if a per-env tmux socket is configured.
+
+    PR-21e (D11 follow-on for the cc_tmux Python adapter): mirror the
+    Elixir runtime's `:tmux_socket_override` plumbing so adapter-spawned
+    sessions land on the same socket as Esr.Peers.TmuxProcess. Reads
+    ``ESR_TMUX_SOCKET`` (set by launchd plists in production) — empty
+    or absent → bare ``tmux`` against the default socket (legacy
+    behaviour for tests / CLI usage).
+    """
+    sock = os.environ.get("ESR_TMUX_SOCKET", "").strip()
+    return ["-S", sock] if sock else []
 
 SENTINEL_PREFIX = "[esr-cc] "
 """Marker lines produced by the launched CC process (PRD 04 F21)."""
@@ -99,7 +114,7 @@ class CcTmuxAdapter:
             return self._tmux_available
         try:
             subprocess.run(
-                ["tmux", "--version"], capture_output=True, text=True
+                ["tmux", *_tmux_socket_args(), "--version"], capture_output=True, text=True
             )
             self._tmux_available = True
         except FileNotFoundError:
@@ -108,13 +123,13 @@ class CcTmuxAdapter:
         return self._tmux_available
 
     def _new_session(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Run ``tmux new-session -d -s <name> [-e K=V ...] [-c <cwd>] <cmd>`` (F17 + v0.2)."""
+        """Run ``tmux [-S <sock>] new-session -d -s <name> [-e K=V ...] [-c <cwd>] <cmd>`` (F17 + v0.2 + PR-21e socket isolation)."""
         session_name = args["session_name"]
         start_cmd = args["start_cmd"]
         env: dict[str, str] = args.get("env") or {}
         cwd: str | None = args.get("cwd")
 
-        argv = ["tmux", "new-session", "-d", "-s", session_name]
+        argv = ["tmux", *_tmux_socket_args(), "new-session", "-d", "-s", session_name]
         for k, v in env.items():
             argv.extend(["-e", f"{k}={v}"])
         if cwd:
@@ -127,7 +142,7 @@ class CcTmuxAdapter:
         return {"ok": False, "error": result.stderr.strip()}
 
     def _send_keys(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Run ``tmux send-keys -t <session_name> <content> Enter`` (F18).
+        """Run ``tmux [-S <sock>] send-keys -t <session_name> <content> Enter`` (F18).
 
         Content is passed as its own argv element — tmux receives it
         verbatim without shell interpretation, so $vars / backticks /
@@ -136,7 +151,7 @@ class CcTmuxAdapter:
         session_name = args["session_name"]
         content = args["content"]
         result = subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, content, "Enter"],
+            ["tmux", *_tmux_socket_args(), "send-keys", "-t", session_name, content, "Enter"],
             capture_output=True,
             text=True,
         )
@@ -145,10 +160,10 @@ class CcTmuxAdapter:
         return {"ok": False, "error": result.stderr.strip()}
 
     def _kill_session(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Run ``tmux kill-session -t <session_name>`` (F19)."""
+        """Run ``tmux [-S <sock>] kill-session -t <session_name>`` (F19)."""
         session_name = args["session_name"]
         result = subprocess.run(
-            ["tmux", "kill-session", "-t", session_name],
+            ["tmux", *_tmux_socket_args(), "kill-session", "-t", session_name],
             capture_output=True,
             text=True,
         )
@@ -157,10 +172,10 @@ class CcTmuxAdapter:
         return {"ok": False, "error": result.stderr.strip()}
 
     def _capture_pane(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Run ``tmux capture-pane -t <session_name> -p`` returning pane text (F20)."""
+        """Run ``tmux [-S <sock>] capture-pane -t <session_name> -p`` returning pane text (F20)."""
         session_name = args["session_name"]
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p"],
+            ["tmux", *_tmux_socket_args(), "capture-pane", "-t", session_name, "-p"],
             capture_output=True,
             text=True,
         )

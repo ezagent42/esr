@@ -88,6 +88,11 @@ defmodule Esr.Application do
       # Workspaces / Capabilities; ordering is informational only.
       Esr.Users.Supervisor,
 
+      # 4f.2 PendingActions (PR-21e) — TTL state machine for two-step
+      # destructive confirms (D12/D15). Inbound message interception
+      # is wired in feishu_app_adapter; no other dependencies.
+      EsrWeb.PendingActions,
+
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER
