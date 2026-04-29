@@ -20,6 +20,7 @@ Living index of findings surfaced during ESR development that are worth preservi
 | cc_mcp PubSub race on auto-create (2026-04-24) | [cc-mcp-pubsub-race.md](cc-mcp-pubsub-race.md) | CCProcess broadcasts `send_input` via pubsub before cc_mcp has joined `cli:channel/<sid>`; Phoenix drops 0-subscriber broadcasts. Fix: buffer + flush on join. |
 | Testing-pyramid lessons from PR-9 T12 (2026-04-24) | [e2e-pyramid-lessons.md](e2e-pyramid-lessons.md) | 18-commit retrospective: which of the E2E-surfaced bugs belonged at which layer (E2E-only vs contract vs integration vs scenario drift), and the walking-skeleton + contract-test + "hard to unit test is a signal" practice to avoid repeating the pattern. |
 | mock_feishu fidelity audit (2026-04-25) | [mock-feishu-fidelity.md](mock-feishu-fidelity.md) | Pre-PR-A precondition: 9-section gap analysis between scripts/mock_feishu.py and real Feishu / lark_oapi sourced from live-capture fixtures + cc-openclaw production adapter. Mock supports text DMs only; group chat / multi-app / non-text msg_types / token-auth / reaction events all need work. Sign-off checklist for "good enough for PR-A" included. |
+| `esr://` URI grammar (2026-04-29) | [esr-uri-grammar.md](esr-uri-grammar.md) | Practical reference for the canonical addressing scheme: grammar, registered types (legacy 2-segment + path-style RESTful), every emit site with file:line, builder/parser examples in both Elixir and Python, when to add a new type. Read this before inventing any cross-process identifier. |
 
 ---
 
