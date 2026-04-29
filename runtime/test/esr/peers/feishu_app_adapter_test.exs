@@ -332,7 +332,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
             "chat_id" => "oc_user_test",
             "app_id" => "inst_user_guide",
             "thread_id" => "",
-            "content" => "/help"
+            "content" => "hello"
           }
         }
       }
@@ -427,7 +427,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
             "chat_id" => "oc_chat_unbound",
             "app_id" => "inst_chat_first",
             "thread_id" => "",
-            "content" => "/help"
+            "content" => "hello"
           }
         }
       }
@@ -503,6 +503,95 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
       assert content =~ "user bind-feishu"
 
       refute_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 200
+    end
+  end
+
+  describe "PR-21q bootstrap slash bypass" do
+    test "/help in unbound chat returns help text inline (chat-guide bypassed)",
+         %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_help_test")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_help_test", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_help_user",
+        "principal_id" => "ou_help_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_unbound_help",
+            "app_id" => "inst_help_test",
+            "thread_id" => "",
+            "content" => "/help"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{
+                           "args" => %{"chat_id" => "oc_unbound_help", "content" => content}
+                         }
+                       }
+                     },
+                     500
+
+      # /help text mentions the canonical bootstrap commands
+      assert content =~ "/whoami"
+      assert content =~ "/new-workspace"
+      assert content =~ "ESR 帮助"
+      # Chat-binding status reflected (unbound)
+      assert content =~ "❌"
+    end
+
+    test "/whoami in unbound chat returns identity diagnostic", %{sup: sup} do
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_whoami_test")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_whoami_test", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_whoami_user",
+        "principal_id" => "ou_whoami_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_whoami_test",
+            "app_id" => "inst_whoami_test",
+            "thread_id" => "",
+            "content" => "/whoami"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{
+                           "args" => %{"content" => content}
+                         }
+                       }
+                     },
+                     500
+
+      assert content =~ "ou_whoami_user"
+      assert content =~ "ESR 身份"
     end
   end
 

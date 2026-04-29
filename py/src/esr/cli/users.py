@@ -183,7 +183,82 @@ def user_bind_feishu(name: str, feishu_user_id: str) -> None:
     user_row["feishu_ids"] = ids
     doc["users"][name] = user_row
     _write_doc(path, doc)
+
+    # PR-21q: auto-grant the bootstrap caps to the freshly-bound
+    # feishu open_id. Without these, the operator's first slash
+    # command in Feishu (e.g. `/new-workspace`) would fail the
+    # cap check (`workspace.create` required by Workspace.New).
+    # Grants are keyed by the raw `ou_*` because the runtime's
+    # cap check uses `principal_id` from the inbound envelope, which
+    # is the open_id today (PR-21b's user-URI rekey is graceful
+    # fallback only — caps haven't been re-keyed onto esr usernames).
+    _bootstrap_grant_caps(feishu_user_id)
+
     click.echo(f"bound {feishu_user_id} to esr user {name}")
+    click.echo(
+        f"  + auto-granted workspace.create / session:default/create / "
+        f"session:default/end / session.list to {feishu_user_id}"
+    )
+
+
+def _bootstrap_grant_caps(feishu_user_id: str) -> None:
+    """PR-21q: write a default cap grant for a freshly-bound feishu id.
+
+    The four bootstrap caps an active operator needs:
+
+    - workspace.create        — for `/new-workspace` slash
+    - session:default/create  — for `/new-session` slash
+    - session:default/end     — for `/end-session` slash
+    - session.list            — for `/sessions`, `/workspace info`, etc.
+
+    Pure file-write — uses the same ruamel round-trip as the rest of
+    this module so existing comments / formatting in capabilities.yaml
+    survive. Skips silently when a grant is already present
+    (idempotent — re-running `bind-feishu` with the same args
+    won't duplicate cap entries).
+    """
+    from esr.cli.paths import capabilities_yaml_path
+
+    target_caps = [
+        "workspace.create",
+        "session:default/create",
+        "session:default/end",
+        "session.list",
+    ]
+
+    caps_path = Path(capabilities_yaml_path())
+    if caps_path.exists():
+        with caps_path.open("r") as f:
+            doc = _yaml.load(f) or {}
+    else:
+        doc = {}
+
+    principals = doc.setdefault("principals", [])
+
+    # Find or create the principal entry
+    principal_entry = None
+    for p in principals:
+        if isinstance(p, dict) and p.get("id") == feishu_user_id:
+            principal_entry = p
+            break
+
+    if principal_entry is None:
+        principal_entry = {
+            "id": feishu_user_id,
+            "kind": "feishu_user",
+            "capabilities": [],
+        }
+        principals.append(principal_entry)
+
+    held = list(principal_entry.get("capabilities") or [])
+    for cap in target_caps:
+        if cap not in held:
+            held.append(cap)
+    principal_entry["capabilities"] = held
+
+    caps_path.parent.mkdir(parents=True, exist_ok=True)
+    with caps_path.open("w") as f:
+        _yaml.dump(doc, f)
 
 
 @user.command("unbind-feishu")
