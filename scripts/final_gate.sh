@@ -315,7 +315,7 @@ uv run --project py esr workspace add esr-dev \
   echo "FAIL to add workspace"; cat /tmp/fg.live.ws.log; exit 1; }
 
 # -------------------- L1: /new-session spawn --------------------
-section "9/13 live L1 — /new-session esr-dev tag=$tag"
+section "9/13 live L1 — /new-session esr-dev name=$tag"
 # Spawn mock_cc_worker BEFORE posting /new-session so it's ready to join
 # cli:channel/$tag as soon as feishu-thread-session is instantiated.
 uv run --project py python scripts/mock_cc_worker.py \
@@ -324,7 +324,7 @@ uv run --project py python scripts/mock_cc_worker.py \
 echo $! > "/tmp/mock_cc.$tag.pid"
 sleep 1  # give worker time to connect before the topology spawns
 
-l1_message_id=$(lark_post "/new-session esr-dev tag=$tag") || {
+l1_message_id=$(lark_post "/new-session esr-dev name=$tag") || {
   echo "FAIL — L1 post error"; exit 1; }
 if [[ -z "$l1_message_id" ]]; then
   echo "FAIL — L1 post returned no message_id"; exit 1
@@ -429,9 +429,9 @@ uv run --project py python scripts/mock_cc_worker.py \
 echo $! > "/tmp/mock_cc.${tag}-b.pid"
 sleep 1  # give workers time to connect
 
-l6a_spawn_id=$(lark_post "/new-session esr-dev tag=${tag}-a") || {
+l6a_spawn_id=$(lark_post "/new-session esr-dev name=${tag}-a") || {
   echo "FAIL — L6 spawn-a post error"; exit 1; }
-l6b_spawn_id=$(lark_post "/new-session esr-dev tag=${tag}-b") || {
+l6b_spawn_id=$(lark_post "/new-session esr-dev name=${tag}-b") || {
   echo "FAIL — L6 spawn-b post error"; exit 1; }
 
 # Wait for both sessions to be ready (bot reply "session ... ready").
