@@ -114,7 +114,7 @@ defmodule Esr.Peers.SlashHandlerTest do
     assert text =~ "unknown command"
   end
 
-  test "new-session parses --agent cc --dir /tmp/test into session_new" do
+  test "new-session (PR-21d) parses workspace name= cwd= worktree= into session_new" do
     {:ok, pid} =
       GenServer.start_link(
         SlashHandler,
@@ -128,7 +128,11 @@ defmodule Esr.Peers.SlashHandlerTest do
 
     envelope = %{
       "principal_id" => "p_user",
-      "payload" => %{"text" => "/new-session --agent cc --dir /tmp/test", "chat_id" => "oc_z"}
+      "payload" => %{
+        "text" =>
+          "/new-session esr-dev name=feature-foo cwd=/tmp/wt worktree=feature-foo",
+        "chat_id" => "oc_z"
+      }
     }
 
     send(pid, {:slash_cmd, envelope, self()})
@@ -137,7 +141,13 @@ defmodule Esr.Peers.SlashHandlerTest do
                     {:execute,
                      %{
                        "kind" => "session_new",
-                       "args" => %{"agent" => "cc", "dir" => "/tmp/test"}
+                       "args" => %{
+                         "workspace" => "esr-dev",
+                         "name" => "feature-foo",
+                         "tag" => "feature-foo",
+                         "cwd" => "/tmp/wt",
+                         "worktree" => "feature-foo"
+                       }
                      }, {:reply_to, {:pid, ^pid, _ref}}}},
                    500
   end
@@ -157,7 +167,8 @@ defmodule Esr.Peers.SlashHandlerTest do
     envelope = %{
       "principal_id" => "p_user",
       "payload" => %{
-        "text" => "/new-session --agent cc --dir /tmp/test",
+        "text" =>
+          "/new-session esr-dev name=foo cwd=/tmp/wt worktree=foo",
         "chat_id" => "oc_A",
         "thread_id" => "om_B"
       }
@@ -170,8 +181,8 @@ defmodule Esr.Peers.SlashHandlerTest do
                      %{
                        "kind" => "session_new",
                        "args" => %{
-                         "agent" => "cc",
-                         "dir" => "/tmp/test",
+                         "workspace" => "esr-dev",
+                         "name" => "foo",
                          "chat_id" => "oc_A",
                          "thread_id" => "om_B"
                        }
@@ -193,7 +204,9 @@ defmodule Esr.Peers.SlashHandlerTest do
 
     envelope = %{
       "principal_id" => "p_user",
-      "payload" => %{"text" => "/new-session --agent cc --dir /tmp/test"}
+      "payload" => %{
+        "text" => "/new-session esr-dev name=foo cwd=/tmp/wt worktree=foo"
+      }
     }
 
     send(pid, {:slash_cmd, envelope, self()})
@@ -207,7 +220,7 @@ defmodule Esr.Peers.SlashHandlerTest do
     refute Map.has_key?(args, "thread_id")
   end
 
-  test "new-session without --agent returns user-facing error" do
+  test "new-session without name= returns user-facing error" do
     {:ok, pid} =
       GenServer.start_link(
         SlashHandler,
@@ -221,14 +234,66 @@ defmodule Esr.Peers.SlashHandlerTest do
 
     envelope = %{
       "principal_id" => "p_user",
-      "payload" => %{"text" => "/new-session --dir /tmp/test", "chat_id" => "oc_z"}
+      "payload" => %{"text" => "/new-session esr-dev cwd=/tmp", "chat_id" => "oc_z"}
     }
 
     send(pid, {:slash_cmd, envelope, self()})
 
     assert_receive {:reply, text}, 500
-    assert text =~ "unknown command"
+    assert text =~ "name="
+  end
+
+  test "new-session with legacy --agent/--dir returns hint pointing to new grammar" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{"text" => "/new-session --agent cc --dir /tmp/test", "chat_id" => "oc_z"}
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:reply, text}, 500
     assert text =~ "--agent"
+    assert text =~ "PR-21d"
+    assert text =~ "name="
+  end
+
+  test "new-session accepts tag= as alias for name= during rollout" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{"text" => "/new-session esr-dev tag=foo", "chat_id" => "oc_z"}
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:"$gen_cast",
+                    {:execute,
+                     %{
+                       "kind" => "session_new",
+                       "args" => %{"name" => "foo", "tag" => "foo"}
+                     }, {:reply_to, {:pid, ^pid, _ref}}}},
+                   500
   end
 
   test "end-session parses session id argument" do
