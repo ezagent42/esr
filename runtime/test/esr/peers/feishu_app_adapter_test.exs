@@ -647,6 +647,62 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     end
   end
 
+  describe "PR-21t /new-workspace bypass (routed to SlashHandler)" do
+    setup do
+      # Use a stub SlashHandler that just records what it receives.
+      # AdminSessionProcess.slash_handler_ref/0 looks up by name in
+      # AdminSessionProcess; spawn a recording pid + register.
+      test_self = self()
+
+      slash_pid =
+        spawn_link(fn ->
+          receive do
+            msg -> send(test_self, {:slash_received, msg})
+          end
+        end)
+
+      :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, slash_pid)
+
+      on_exit(fn ->
+        # Clean up the registration so other tests get the real
+        # slash_handler. AdminSessionProcess only keeps one entry per
+        # name; re-registration on real boot will overwrite anyway.
+        :ok
+      end)
+
+      :ok
+    end
+
+    test "/new-workspace in unbound chat routes to SlashHandler (chat-guide bypassed)",
+         %{sup: sup} do
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter,
+           %{instance_id: "inst_newws_test", neighbors: [], proxy_ctx: %{}}}
+        )
+
+      envelope = %{
+        "user_id" => "ou_newws_user",
+        "principal_id" => "ou_newws_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_newws_test",
+            "app_id" => "inst_newws_test",
+            "thread_id" => "",
+            "content" => "/new-workspace my-bootstrap-ws"
+          }
+        }
+      }
+
+      send(pid, {:inbound_event, envelope})
+
+      # SlashHandler stub recorded the slash_cmd
+      assert_receive {:slash_received, {:slash_cmd, _envelope, _reply_to}}, 500
+    end
+  end
+
   describe "handle_downstream wrap_as_directive/2 (PR-9 T10/T11b)" do
     # The downstream path broadcasts on `adapter:feishu/<instance_id>` with
     # event="envelope" and a *directive*-shaped payload. Subscribe to the

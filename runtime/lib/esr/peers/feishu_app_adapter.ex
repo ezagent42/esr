@@ -139,46 +139,96 @@ defmodule Esr.Peers.FeishuAppAdapter do
         {:forward, [], state}
 
       _ ->
-        # PR-21q (2026-04-29): handle bootstrap slashes (`/help`,
-        # `/new-workspace`, `/whoami`) inline BEFORE the unbound-chat /
-        # unbound-user guide gates. Without this, the chat-guide DM
-        # tells operators to do something the chat-guide itself
+        # PR-21q + PR-21t: handle bootstrap slashes BEFORE the unbound-
+        # chat / unbound-user guide gates. Without this, the chat-guide
+        # DM tells operators to do something the chat-guide itself
         # prevents (chicken-and-egg).
-        if bootstrap_slash?(text) do
-          handle_bootstrap_slash(text, chat_id, principal_id, args, state)
-        else
-          # PR-21i: user-guide DM when user_id unbound AND chat IS
-          # workspace-bound. Mutually exclusive with chat-guide below.
-          app_id = args["app_id"] || state.instance_id
-          user_id = envelope["user_id"] || args["user_id"]
+        cond do
+          inline_bootstrap_slash?(text) ->
+            # /help, /whoami, /doctor: handled inline (no SlashHandler
+            # hop) so we can DM the result directly without binding
+            # requirements.
+            handle_inline_bootstrap_slash(text, chat_id, principal_id, args, state)
 
-          case maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id) do
-            {:guided, new_state} ->
-              {:drop, :unbound_user_guide_sent, new_state}
+          routed_bootstrap_slash?(text) ->
+            # /new-workspace: route to SlashHandler → Dispatcher →
+            # Workspace.New. Cap check happens at the Dispatcher (so
+            # workspace.create is enforced); chat-binding requirement
+            # is bypassed (chat-guide doesn't intercept).
+            route_to_slash_handler(envelope, chat_id, state)
 
-            _ ->
-              do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
-          end
+          true ->
+            # PR-21i: user-guide DM when user_id unbound AND chat IS
+            # workspace-bound. Mutually exclusive with chat-guide below.
+            app_id = args["app_id"] || state.instance_id
+            user_id = envelope["user_id"] || args["user_id"]
+
+            case maybe_emit_unbound_user_guide(state, user_id, chat_id, app_id) do
+              {:guided, new_state} ->
+                {:drop, :unbound_user_guide_sent, new_state}
+
+              _ ->
+                do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
+            end
         end
     end
   end
 
-  # PR-21q: bootstrap slashes that must work in ANY chat state — chat
-  # unbound, user unbound, or both. Inline-parsed (not routed through
-  # SlashHandler) so we can DM the result directly without the slash
-  # round-trip's chat-binding requirements.
-  defp bootstrap_slash?(text) do
-    head =
-      text
-      |> to_string()
-      |> String.trim()
-      |> String.split(~r/\s+/, parts: 2, trim: true)
-      |> List.first()
+  # PR-21q + PR-21t: split bootstrap slashes by handling style.
+  #
+  # `inline_bootstrap_slash?/1` — read-only helpers that just emit text:
+  #   /help, /whoami, /doctor
+  #
+  # `routed_bootstrap_slash?/1` — slash that creates state but should
+  # work even in unbound chat:
+  #   /new-workspace (operator-facing exit from "chat unbound" state)
 
-    head in ~w(/help /whoami /doctor)
+  defp inline_bootstrap_slash?(text), do: slash_head(text) in ~w(/help /whoami /doctor)
+
+  defp routed_bootstrap_slash?(text), do: slash_head(text) in ~w(/new-workspace)
+
+  defp slash_head(text) do
+    text
+    |> to_string()
+    |> String.trim()
+    |> String.split(~r/\s+/, parts: 2, trim: true)
+    |> List.first()
   end
 
-  defp handle_bootstrap_slash(text, chat_id, principal_id, args, state) do
+  # PR-21t: route an unbound-chat-eligible slash to the AdminSession
+  # SlashHandler, exactly as a chat-bound inbound would. Cap check
+  # happens at Dispatcher, so workspace.create / etc. are still
+  # enforced. The SlashHandler reply lands at the FeishuChatProxy of
+  # whichever chat owns the inbound — but in the unbound-chat case,
+  # there's no proxy. So we use ourself (FAA) as the reply target,
+  # then convert {:reply, text} into a chat DM via the outbound path.
+  defp route_to_slash_handler(envelope, chat_id, state) do
+    case Esr.AdminSessionProcess.slash_handler_ref() do
+      {:ok, slash_pid} ->
+        # SlashHandler reads text from envelope.payload.text. Construct
+        # it from envelope.payload.args.content to match the legacy
+        # chat-bound shape SlashHandler expects.
+        text = (get_in(envelope, ["payload", "args", "content"]) || "") |> to_string()
+        envelope_with_text = put_in(envelope, ["payload", "text"], text)
+
+        # Track the chat_id so when SlashHandler sends {:reply, _},
+        # we know where to DM it back. The map is small (~few entries
+        # at any time, all bootstrap flows are interactive).
+        new_state =
+          state
+          |> Map.put(:bootstrap_pending_chat, Map.put(state[:bootstrap_pending_chat] || %{}, slash_pid, chat_id))
+
+        send(slash_pid, {:slash_cmd, envelope_with_text, self()})
+        {:drop, :bootstrap_slash_routed, new_state}
+
+      :error ->
+        require Logger
+        Logger.warning("FeishuAppAdapter: routed bootstrap slash but no SlashHandler registered")
+        {:drop, :no_slash_handler, state}
+    end
+  end
+
+  defp handle_inline_bootstrap_slash(text, chat_id, principal_id, args, state) do
     text = String.trim(text)
     app_id = args["app_id"] || state.instance_id
 
@@ -502,6 +552,37 @@ defmodule Esr.Peers.FeishuAppAdapter do
   def handle_info({:outbound, _envelope} = msg, state),
     do: Esr.Peer.Stateful.dispatch_downstream(msg, state, __MODULE__)
 
+  # PR-21t: SlashHandler replies arrive as {:reply, text} after we
+  # routed a bootstrap slash via route_to_slash_handler/3. Convert to
+  # an outbound DM directed at the chat the inbound came from. The
+  # `bootstrap_pending_chat` map (FAA state) tracks the slash_pid →
+  # chat_id binding; we drain it on each reply (single-flight is
+  # the common case for bootstrap interactions).
+  def handle_info({:reply, text}, state) when is_binary(text) do
+    pending = state[:bootstrap_pending_chat] || %{}
+
+    chat_id =
+      if map_size(pending) > 0 do
+        pending |> Map.values() |> List.first()
+      else
+        nil
+      end
+
+    if is_binary(chat_id) and chat_id != "" do
+      send(
+        self(),
+        {:outbound,
+         %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
+      )
+
+      {:noreply, Map.put(state, :bootstrap_pending_chat, %{})}
+    else
+      require Logger
+      Logger.warning("FeishuAppAdapter: SlashHandler reply but no pending bootstrap chat_id")
+      {:noreply, state}
+    end
+  end
+
   # Drop-Lane-A T1.3: Lane B deny-DM dispatch. `peer_server.ex`'s
   # inbound gate emits this message after capability denial; here we
   # rate-limit per principal (10 min window, see @deny_dm_interval_ms)
@@ -670,21 +751,23 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
     A. 在本 chat 直接发 slash 命令（推荐 — 自动绑当前 chat）：
 
-       /new-workspace <workspace_name> root=<主 git 仓库路径>
+       /new-workspace <workspace_name>
 
-       owner 缺省 = 你（已绑定的 esr user）；role / start_cmd 也有缺省值。
+       owner 缺省 = 你（已绑定的 esr user）；role / start_cmd 用默认值。
+       PR-22 之后 workspace 不再绑特定 git 仓库——repo 是 per-session 的。
 
     B. 在 esr 仓库 CLI 里跑（注意 --env 选 prod 或 dev）：
 
        ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
            --owner <esr_username> \\
-           --root <主 git 仓库路径> \\
            --start-cmd scripts/esr-cc.sh \\
            --role dev \\
            --chat #{chat_id}:#{app_id}:dm
 
     注册后给本 bot 发：
-      /new-session <workspace_name> name=<session_name> cwd=<worktree 路径> worktree=<分支名>
+
+      /new-session <workspace_name> name=<session_name> \\
+          root=<主 git 仓库路径> cwd=<worktree 路径> worktree=<分支名>
 
     会话就会拉起来（每个 session 一个独立 worktree，从 origin/main fork）。
 
