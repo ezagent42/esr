@@ -175,7 +175,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
       |> String.split(~r/\s+/, parts: 2, trim: true)
       |> List.first()
 
-    head in ~w(/help /whoami)
+    head in ~w(/help /whoami /doctor)
   end
 
   defp handle_bootstrap_slash(text, chat_id, principal_id, args, state) do
@@ -185,14 +185,15 @@ defmodule Esr.Peers.FeishuAppAdapter do
     reply =
       cond do
         text == "/help" or String.starts_with?(text, "/help ") ->
-          help_text(principal_id, chat_id, app_id, state.instance_id)
+          help_text()
 
         text == "/whoami" or String.starts_with?(text, "/whoami ") ->
           whoami_text(principal_id, chat_id, app_id)
 
+        text == "/doctor" or String.starts_with?(text, "/doctor ") ->
+          doctor_text(principal_id, chat_id, app_id)
+
         true ->
-          # Bootstrap dispatch table miss — shouldn't reach here given
-          # bootstrap_slash?/1 already filtered. Defensive fallback.
           "unknown bootstrap slash"
       end
 
@@ -204,54 +205,33 @@ defmodule Esr.Peers.FeishuAppAdapter do
     {:drop, :bootstrap_slash_replied, state}
   end
 
-  defp help_text(principal_id, chat_id, app_id, _instance_id) do
-    user_status =
-      if Process.whereis(Esr.Users.Registry) do
-        case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
-          {:ok, username} -> "✅ 已绑定到 esr user: #{username}"
-          :not_found -> "❌ 未绑定 esr user (你的 open_id: #{principal_id})"
-        end
-      else
-        "(Esr.Users.Registry 未运行)"
-      end
-
-    chat_status =
-      case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
-        {:ok, ws} -> "✅ 已绑定到 workspace: #{ws}"
-        :not_found -> "❌ chat 未绑定任何 workspace"
-      end
-
+  # PR-21r 2026-04-29: /help is a clean command reference (man-style).
+  # Status check + bootstrap walk-through moved to /doctor.
+  defp help_text do
     """
-    👋 ESR 帮助
+    📖 ESR slash commands
 
-    你的当前状态：
-      • 用户身份: #{user_status}
-      • Chat 绑定: #{chat_status}
+    诊断（任何状态都可用）：
+      /help            — 显示这份命令清单
+      /whoami          — 显示你的身份 + chat / workspace 绑定状态
+      /doctor          — 状态检查 + 卡在哪步的 bootstrap 步骤建议
 
-    可用的 slash 命令：
-
-    bootstrap（任何状态都可用）:
-      /help            — 显示这条帮助
-      /whoami          — 显示你的身份和 chat 绑定状态
-
-    需要 user + workspace 都绑定:
+    Workspace（需要 user 已绑 + workspace.create cap）：
       /new-workspace <name>
-        创建新 workspace 并自动绑当前 chat
+                       — 创建新 workspace，自动绑当前 chat
+      /workspace info [<name>]
+                       — 显示 workspace 配置（owner/role/chats/metadata）
+
+    Sessions（需要 user 已绑 + chat 绑了 workspace）：
       /new-session <ws> name=<…> root=<repo> cwd=<wt> worktree=<branch>
-        启 CC session
-      /sessions / /workspace info / /workspace sessions
+                       — 启 CC session（git worktree fork from origin/main）
+      /sessions
+      /workspace sessions [<name>]
+                       — 列当前 workspace 的 live sessions
       /end-session <name>
+                       — 结束 session（worktree 干净则自动 prune）
 
-    Bootstrap 步骤（如果你状态有 ❌）：
-
-    1. 终端跑（绑 feishu id）：
-       ./esr.sh --env=<prod|dev> user bind-feishu <esr_user> <你的 open_id>
-
-    2. 然后在本 chat 直接：
-       /new-workspace <name>
-
-    3. 之后启 session：
-       /new-session <ws> name=<…> root=<repo路径> cwd=<wt路径> worktree=<分支>
+    诊断细节（cap、URI、状态）请用 /doctor。
     """
   end
 
@@ -282,6 +262,94 @@ defmodule Esr.Peers.FeishuAppAdapter do
     workspace: #{workspace}
     """
   end
+
+  # PR-21r 2026-04-29: /doctor — full state diagnostic + bootstrap
+  # walk-through tailored to whichever blocker the operator is hitting.
+  # Replaces the status-aware text formerly emitted by /help.
+  defp doctor_text(principal_id, chat_id, app_id) do
+    {user_line, user_ok} =
+      if Process.whereis(Esr.Users.Registry) do
+        case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
+          {:ok, username} ->
+            {"  ✅ 用户身份: 已绑定 esr user `#{username}`", true}
+
+          :not_found ->
+            {"  ❌ 用户身份: 未绑定 (你的 open_id: `#{principal_id}`)", false}
+        end
+      else
+        {"  ⚠️ 用户身份: Esr.Users.Registry 未运行", false}
+      end
+
+    {chat_line, chat_ok, ws_name} =
+      case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+        {:ok, ws} -> {"  ✅ Chat 绑定: workspace `#{ws}`", true, ws}
+        :not_found -> {"  ❌ Chat 绑定: 未绑定任何 workspace", false, nil}
+      end
+
+    next_steps =
+      cond do
+        not user_ok ->
+          """
+          ## 下一步：先绑定 esr user
+
+          在终端跑：
+
+            ./esr.sh --env=#{env_hint(app_id)} user list
+            ./esr.sh --env=#{env_hint(app_id)} user bind-feishu <esr_user> #{principal_id}
+
+          这会顺带 grant `workspace.create` / `session:default/create` 等 4 个
+          基础 cap，你之后就能在 chat 里直接发 slash 命令。
+
+          需要全权限（admin）的话：
+
+            ./esr.sh --env=#{env_hint(app_id)} cap grant #{principal_id} admin
+          """
+
+        not chat_ok ->
+          """
+          ## 下一步：在本 chat 创建 workspace
+
+          直接在这个 chat 里发：
+
+            /new-workspace <workspace_name>
+
+          自动绑当前 chat。然后：
+
+            /new-session <workspace_name> name=<session_name> \\
+                root=<主 git 仓库路径> \\
+                cwd=<worktree 路径> \\
+                worktree=<分支名>
+          """
+
+        true ->
+          """
+          ## 状态健康 ✅
+
+          Workspace `#{ws_name}` 已绑。可用：
+
+            /new-session #{ws_name} name=<session_name> \\
+                root=<repo> cwd=<worktree 路径> worktree=<分支>
+            /sessions
+            /end-session <name>
+          """
+      end
+
+    """
+    🩺 ESR 状态诊断
+
+    #{user_line}
+    #{chat_line}
+
+    #{String.trim(next_steps)}
+    """
+  end
+
+  # Best-effort env hint from instance_id. Conventions:
+  # - "esr_helper" / "esr_dev_helper" map to prod / dev
+  # - everything else: ambiguous — operator picks
+  defp env_hint("esr_dev_helper"), do: "dev"
+  defp env_hint("esr_helper"), do: "prod"
+  defp env_hint(_), do: "<prod|dev>"
 
   defp do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state) do
     # PR-A T1: prefer args["app_id"] (Python adapter sets it post-PR-A);
