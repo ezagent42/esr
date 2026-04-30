@@ -371,7 +371,7 @@ defmodule Esr.Peers.SlashHandler do
   # session_new needs chat_thread_key threading + (PR-21g) username
   # resolution from envelope.user_id via Esr.Users.Registry. session_end
   # also needs username when args carries `name=` (PR-21g resolver).
-  defp merge_chat_context(args, kind, envelope) when kind in ["session_new", "session_end"] do
+  defp merge_chat_context(args, "session_new", envelope) do
     chat_id = envelope_chat_id(envelope)
     thread_id = envelope_thread_id(envelope)
     username = resolve_username(envelope)
@@ -380,6 +380,30 @@ defmodule Esr.Peers.SlashHandler do
     |> maybe_put("chat_id", chat_id)
     |> maybe_put("thread_id", thread_id)
     |> maybe_put("username", username)
+  end
+
+  # session_end by `name` (PR-21g resolver) needs `(env, username,
+  # workspace, name)` to find the session_id. The slash form
+  # `/end-session <name>` doesn't carry workspace; resolve it from
+  # the chat's binding (same convention as session_list /
+  # workspace_info). PR-21π 2026-05-01.
+  defp merge_chat_context(args, "session_end", envelope) do
+    chat_id = envelope_chat_id(envelope)
+    thread_id = envelope_thread_id(envelope)
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    username = resolve_username(envelope)
+
+    args =
+      args
+      |> maybe_put("chat_id", chat_id)
+      |> maybe_put("thread_id", thread_id)
+      |> maybe_put("username", username)
+
+    if Map.get(args, "workspace") in [nil, ""] do
+      maybe_put(args, "workspace", resolve_workspace(chat_id, app_id))
+    else
+      args
+    end
   end
 
   # PR-21j: session_list (when called with workspace=) and workspace_info
