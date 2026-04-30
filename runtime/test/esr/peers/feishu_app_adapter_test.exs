@@ -661,7 +661,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
       {:ok, peer: pid, instance: instance}
     end
 
-    test "msg_received inbound emits TYPING react with the message_id", %{peer: peer} do
+    test "msg_received inbound emits Typing react with the message_id", %{peer: peer} do
       envelope = %{
         "user_id" => "ou_react_user",
         "principal_id" => "ou_react_user",
@@ -683,7 +683,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
                          "kind" => "directive",
                          "payload" => %{
                            "action" => "react",
-                           "args" => %{"msg_id" => "om_msg_42", "emoji_type" => "TYPING"}
+                           "args" => %{"msg_id" => "om_msg_42", "emoji_type" => "Typing"}
                          }
                        }
                      },
@@ -744,13 +744,13 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
          }}
       )
 
-      # FAA should emit un_react first (matching the tracked TYPING),
+      # FAA should emit un_react first (matching the tracked Typing),
       # then the reply send_message directive.
       assert_receive %Phoenix.Socket.Broadcast{
                        payload: %{
                          "payload" => %{
                            "action" => "un_react",
-                           "args" => %{"msg_id" => "om_track", "emoji_type" => "TYPING"}
+                           "args" => %{"msg_id" => "om_track", "emoji_type" => "Typing"}
                          }
                        }
                      },
