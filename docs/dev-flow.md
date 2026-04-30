@@ -29,8 +29,15 @@ feature/foo  ─────────────────►  dev  ──
 ### Promotion PR (`dev → main`)
 
 - Open: `bash scripts/promote-dev-to-main.sh` (auto-generates the PR description listing every commit on `dev` since `main`)
-- Merge: `gh pr merge <#> --rebase --delete-branch` — fast-forward only (preserves the original commits as-is on main)
-- Result: main moves to dev's HEAD; PR auto-closes; promotion branch is the same `dev` branch (no temp branch needed)
+- Merge: **do NOT use `gh pr merge --rebase`** — that's a rebase merge which rewrites SHAs even when fast-forward is possible, causing dev and main to diverge by SHA. Instead, push `dev` directly to `main` (true fast-forward) and then close the PR with a comment.
+
+```bash
+# After PR opens (PR number $N):
+( cd ~/Workspace/esr && git fetch origin && git push origin origin/dev:main )
+gh pr close $N -c "Fast-forwarded via direct push (preserves SHAs across dev/main)."
+```
+
+- Result: main moves to dev's HEAD with **identical SHAs**; future promotions stay clean.
 
 ### Invariant enforcement
 

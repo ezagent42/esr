@@ -43,16 +43,18 @@ git --no-pager log --oneline origin/main..origin/dev >>"$BODY_FILE"
 cat >>"$BODY_FILE" <<EOF
 
 
-### Merge instructions
+### Merge instructions (do NOT use \`gh pr merge --rebase\`)
+
+\`gh pr merge --rebase\` re-creates commits with new SHAs even when a
+fast-forward is possible. Use a direct push instead so dev and main
+stay SHA-equal — required for future promotions to FF cleanly.
 
 \`\`\`
-gh pr merge <#> --rebase --delete-branch=false
+( cd ~/Workspace/esr && git fetch origin && git push origin origin/dev:main )
+gh pr close <#> -c "Fast-forwarded via direct push (preserves SHAs across dev/main)."
 \`\`\`
 
-\`--rebase\` performs a fast-forward (no merge commit). \`--delete-branch=false\`
-keeps \`dev\` alive — it's a permanent branch, not a feature branch.
-
-After merge, sync the primary worktree:
+After merge, sync the primary worktree + restart prod esrd:
 \`\`\`
 ( cd ~/Workspace/esr && git pull --ff-only origin main )
 launchctl kickstart -k gui/\$(id -u)/com.ezagent.esrd

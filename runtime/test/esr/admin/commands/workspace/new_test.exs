@@ -108,18 +108,67 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
              WorkspaceNew.execute(cmd)
   end
 
-  test "duplicate workspace name → name_exists" do
+  test "duplicate workspace name without chat context → name_exists (CLI path)" do
+    # PR-21η: name_exists is preserved for the CLI path where no
+    # chat_id / app_id are supplied. Only the slash path (chat
+    # context present) gets the new idempotent add-chat behaviour.
     cmd = %{
       "submitted_by" => "ou_known",
       "args" => %{
-        "name" => "test-dup",
-        "root" => "/tmp/dup",
+        "name" => "test-dup-cli",
         "owner" => "linyilun"
       }
     }
 
     assert {:ok, _} = WorkspaceNew.execute(cmd)
     assert {:error, %{"type" => "name_exists"}} = WorkspaceNew.execute(cmd)
+  end
+
+  test "PR-21η: re-running /new-workspace with new chat appends chat (idempotent path)" do
+    create_cmd = %{
+      "submitted_by" => "ou_known",
+      "args" => %{
+        "name" => "test-rerun",
+        "owner" => "linyilun",
+        "chat_id" => "oc_first",
+        "app_id" => "cli_a"
+      }
+    }
+
+    assert {:ok, %{"action" => "created", "chats" => chats1}} = WorkspaceNew.execute(create_cmd)
+    assert chats1 == [%{"chat_id" => "oc_first", "app_id" => "cli_a", "kind" => "dm"}]
+
+    # Re-run from a DIFFERENT chat — should append rather than error.
+    second_cmd = %{
+      "submitted_by" => "ou_known",
+      "args" => %{
+        "name" => "test-rerun",
+        "owner" => "linyilun",
+        "chat_id" => "oc_second",
+        "app_id" => "cli_a"
+      }
+    }
+
+    assert {:ok, %{"action" => "added_chat", "chats" => chats2}} = WorkspaceNew.execute(second_cmd)
+    assert length(chats2) == 2
+    assert %{"chat_id" => "oc_first", "app_id" => "cli_a"} = Enum.at(chats2, 0)
+    assert %{"chat_id" => "oc_second", "app_id" => "cli_a"} = Enum.at(chats2, 1)
+  end
+
+  test "PR-21η: re-running /new-workspace from same chat → already_bound (no write)" do
+    cmd = %{
+      "submitted_by" => "ou_known",
+      "args" => %{
+        "name" => "test-same-chat",
+        "owner" => "linyilun",
+        "chat_id" => "oc_same",
+        "app_id" => "cli_a"
+      }
+    }
+
+    assert {:ok, %{"action" => "created"}} = WorkspaceNew.execute(cmd)
+    assert {:ok, %{"action" => "already_bound", "chats" => chats}} = WorkspaceNew.execute(cmd)
+    assert length(chats) == 1
   end
 
   test "invalid name (special chars) → invalid_name" do
