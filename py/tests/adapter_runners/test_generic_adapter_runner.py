@@ -9,15 +9,18 @@ Semantics to assert:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import warnings
 
 
 def test_generic_adapter_runner_help_exits_clean() -> None:
+    # PR-21β: ESR_SPAWN_TOKEN guard requires a token for CLI invocation.
+    env = {**os.environ, "ESR_SPAWN_TOKEN": "__debug__"}
     result = subprocess.run(
         [sys.executable, "-m", "generic_adapter_runner", "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, env=env,
     )
     assert result.returncode == 0, result.stderr
     assert "--adapter" in result.stdout

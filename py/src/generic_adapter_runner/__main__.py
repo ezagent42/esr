@@ -42,4 +42,18 @@ def _entry() -> int:
 
 
 if __name__ == "__main__":
+    # PR-21β 2026-04-30 — see feishu_adapter_runner.__main__ for rationale.
+    import os
+
+    if not os.environ.get("ESR_SPAWN_TOKEN"):
+        sys.stderr.write(
+            "generic_adapter_runner: must be spawned by esrd via erlexec; "
+            "manual `uv run` invocation is unsupported.\n"
+            "To debug locally:\n"
+            "  esr daemon stop\n"
+            "  ESR_SPAWN_TOKEN=__debug__ uv run --project py python -m "
+            "generic_adapter_runner ...\n"
+        )
+        sys.exit(2)
+
     sys.exit(_entry())
