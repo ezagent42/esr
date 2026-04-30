@@ -1,0 +1,24 @@
+name: Enforce PR-from-dev
+
+# Prevents accidental feature → main PRs. Per the PR-21ζ git flow
+# (docs/dev-flow.md): main only accepts merges from `dev`. Feature PRs
+# target `dev`; promotion `dev → main` is its own (zero-diff) PR opened
+# by `scripts/promote-dev-to-main.sh`.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-head-is-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject non-dev sources
+        run: |
+          if [ "${GITHUB_HEAD_REF}" != "dev" ]; then
+            echo "::error::PRs to main must come from dev branch only (head_ref=${GITHUB_HEAD_REF})."
+            echo "::error::Open this PR against base=dev instead. Promotion dev → main is a separate PR."
+            echo "See docs/dev-flow.md for the full workflow."
+            exit 1
+          fi
+          echo "OK: head=dev → main is the canonical promotion shape."
