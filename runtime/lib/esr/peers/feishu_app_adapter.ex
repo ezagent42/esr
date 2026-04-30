@@ -440,7 +440,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
   # reply via downstream, or guide DM sent). Tracking the message_id
   # in `pending_reacts` lets us drop duplicate un_reacts (idempotent).
 
-  @typing_emoji "TYPING"
+  # Feishu's emoji_type table uses mixed case — `Typing` not `TYPING`.
+  # Live Lark API rejects unknown variants with `code: 231001
+  # "reaction type is invalid"`. See
+  # https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce
+  @typing_emoji "Typing"
 
   defp maybe_emit_react("", state), do: state
 
