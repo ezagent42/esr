@@ -68,7 +68,7 @@ esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>
 /new-session <workspace> name=<…> cwd=<…> worktree=<…>
 ```
 
-`tag=` is accepted as alias for `name=` during the rollout window. `cwd` is a git worktree path (always); `worktree` is a branch name forked from `origin/main` per workspace's `root:` field. See spec [`docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md`](docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md).
+`cwd` is a git worktree path (always); `worktree` is a branch name forked from `origin/main` per workspace's `root:` field. See spec [`docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md`](docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md).
 
 ## Three gotchas worth recalling
 

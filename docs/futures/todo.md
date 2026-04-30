@@ -34,7 +34,7 @@
 | Auto-bind feishu Option B/C (full automation with confirmation DM) | PR-21i shipped Option D (instructional DM only) | Original brainstorm in conversation 2026-04-29 ~02:00. User chose Option D for now. Revisit if instructional-DM friction is still too high after live use. |
 | OAuth-based esr user registration | Spec §"Out of scope" | Manual `esr user add` for now. Real OAuth needs Feishu Open Platform integration. |
 | Deprecate `cc_tmux` Python adapter | PR-21e mentioned as "out of scope" | `cc_mcp + TmuxProcess` is the new path. cc_tmux still referenced by `worker_supervisor.ex:46` + tests. Cleanup PR if it's truly dead. |
-| `tag=` alias removal in slash parser (D14) | PR-21d kept it as rollout-friendly alias | After all real callers migrate to `name=`, drop the alias. Currently still used by `final_gate.sh` `--param` tags (different layer; not slash). Verify before removal. |
+| `tag=` alias removal in slash parser (D14) | done | PR-21α #104. Removed in slash parser; `final_gate.sh` `--param tag=` is `cmd run` template layer, untouched. |
 
 ## Pending — observability / ops
 
@@ -78,4 +78,5 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21x `#101` — `Esr.Peers.CapGuard` extracted from `Esr.PeerServer` Lane B + FAA deny-DM rate limit
 - PR-21y `#102` — Cap principal_id rekey to esr-username (bind-feishu migrates existing `ou_*` caps + grants bootstrap under username)
 - PR-21z `#103` — `describe_topology` users.yaml security audit + regression tests + `docs/notes/describe-topology-security.md`
+- PR-21α `#104` — remove `tag=` alias from slash parser (`/new-session`)
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session

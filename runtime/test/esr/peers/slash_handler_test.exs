@@ -141,15 +141,16 @@ defmodule Esr.Peers.SlashHandlerTest do
                     {:execute,
                      %{
                        "kind" => "session_new",
-                       "args" => %{
-                         "workspace" => "esr-dev",
-                         "name" => "feature-foo",
-                         "tag" => "feature-foo",
-                         "cwd" => "/tmp/wt",
-                         "worktree" => "feature-foo"
-                       }
+                       "args" => args
                      }, {:reply_to, {:pid, ^pid, _ref}}}},
                    500
+
+    assert args["workspace"] == "esr-dev"
+    assert args["name"] == "feature-foo"
+    assert args["cwd"] == "/tmp/wt"
+    assert args["worktree"] == "feature-foo"
+    # PR-21 tag-alias-removal: parser no longer emits the `tag` arg.
+    refute Map.has_key?(args, "tag")
   end
 
   test "new-session threads chat_id/thread_id from envelope into args (PR-8 T2)" do
@@ -268,7 +269,11 @@ defmodule Esr.Peers.SlashHandlerTest do
     assert text =~ "name="
   end
 
-  test "new-session accepts tag= as alias for name= during rollout" do
+  test "new-session no longer accepts tag= as alias for name= (PR-21 tag-alias-removal)" do
+    # PR-21d kept `tag=` working as an alias for `name=` during the
+    # rollout window. PR-21 tag-alias-removal drops the alias — `tag=`
+    # alone now hits the same "name= required" error path as any other
+    # missing-required-arg call.
     {:ok, pid} =
       GenServer.start_link(
         SlashHandler,
@@ -287,13 +292,8 @@ defmodule Esr.Peers.SlashHandlerTest do
 
     send(pid, {:slash_cmd, envelope, self()})
 
-    assert_receive {:"$gen_cast",
-                    {:execute,
-                     %{
-                       "kind" => "session_new",
-                       "args" => %{"name" => "foo", "tag" => "foo"}
-                     }, {:reply_to, {:pid, ^pid, _ref}}}},
-                   500
+    assert_receive {:reply, text}, 500
+    assert text =~ "name="
   end
 
   test "end-session parses session id argument" do
