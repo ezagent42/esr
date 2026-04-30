@@ -196,9 +196,10 @@ defmodule Esr.Peers.SlashHandler do
   #   /list-sessions | /sessions
   #   /list-agents
   #
-  # `tag=<…>` is accepted as an alias for `name=<…>` during rollout;
   # `--agent <…>` / `--dir <…>` (the pre-PR-21d Elixir-only form) are
-  # rejected with a hint pointing at the new grammar.
+  # rejected with a hint pointing at the new grammar. `tag=<…>` was
+  # accepted as an alias for `name=<…>` during the PR-21d rollout window
+  # — removed in PR-21 tag-alias-removal (no callers remained).
   #
   # Cap check is the Dispatcher's job, not SlashHandler's.
   # --------------------------------------------------------------------
@@ -313,11 +314,11 @@ defmodule Esr.Peers.SlashHandler do
         workspace == "" ->
           {:error, "/new-session requires <workspace> as first arg"}
 
-        is_nil(kv["name"]) and is_nil(kv["tag"]) ->
+        is_nil(kv["name"]) ->
           {:error, "/new-session requires name=<…>"}
 
         true ->
-          name = kv["name"] || kv["tag"]
+          name = kv["name"]
 
           # PR-22: thread per-session `root=` (the git repo to fork
           # worktree from) into args. Optional in the parser — Session.New
@@ -325,7 +326,7 @@ defmodule Esr.Peers.SlashHandler do
           # (i.e., spawn would need git access). Sessions without
           # worktree= can still spawn without root=, just no worktree fork.
           args =
-            %{"workspace" => workspace, "name" => name, "tag" => name}
+            %{"workspace" => workspace, "name" => name}
             |> maybe_put("root", kv["root"])
             |> maybe_put("cwd", kv["cwd"])
             |> maybe_put("worktree", kv["worktree"])

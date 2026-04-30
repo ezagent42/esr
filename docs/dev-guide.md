@@ -10,7 +10,7 @@
 4. `uv run --project py esr workspace add esr-dev \
        --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
        --role dev --chat <chat_id>:<app_id>:dm`
-5. In Feishu, DM the bot: `/new-session esr-dev tag=root`
+5. In Feishu, DM the bot: `/new-session esr-dev name=root`
 6. A tmux window `smoke-root` appears hosting a CC session with
    `esr-channel` MCP loaded. Subsequent messages to the bot (or with
    `@root <message>` prefix) get routed into that session's prompt.
