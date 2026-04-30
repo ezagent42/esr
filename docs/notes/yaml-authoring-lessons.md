@@ -100,6 +100,27 @@ end
 
 ExUnit excludes unknown tags by default — passing `--include priv_default_loads` opts in. Once all referenced modules exist (Phase 2 done), enable the tag in CI to catch yaml drift.
 
+### Pattern: priv-default preload in `test_helper.exs`
+
+When yaml-driven lookup tables have many cross-test consumers (Dispatcher reads SlashRoutes for every test that fires a kind), a single test wiping the snapshot for isolation breaks every later test. Two fixes work together:
+
+1. **Preload at boot:** `test_helper.exs` calls `FileLoader.load(priv_default)` once after `ExUnit.start` so every test starts with the production table.
+2. **Restore on_exit:** any test that calls `load_snapshot(%{slashes: [], internal_kinds: []})` for isolation MUST add an `on_exit` that re-loads the priv default.
+
+Without (1) you have a chicken-and-egg: tests run before the Watcher can load anything from disk. Without (2) the first test that wipes leaks empty state to all subsequent tests in the same VM.
+
+### Pattern: cross-file global-state pollution → @moduletag :integration
+
+When test setup writes to global ETS-backed registries (`Workspaces.Registry.put`, `Users.Registry.load_snapshot`), even `on_exit` restoration leaves a window during the test where other VMs may observe the polluted state. Tests that need this kind of setup belong on the integration tier — `@moduletag :integration` excludes them from `mix test` (default tags) and the user opts in with `--include integration`.
+
+Heuristic: if your setup touches more than one named GenServer's state and the tests assert on real cross-process behavior, it's an integration test.
+
+### Pattern: dispatch resolution via `*Process` registry, not `__MODULE__`
+
+When the GenServer is spawned under a DynamicSupervisor (and not via `start_link(args, name: __MODULE__)`), `GenServer.cast(__MODULE__, ...)` will fail in production with `{:noproc, ...}`. Resolve the live pid through whatever registry your supervisor populates (in this codebase, `Esr.AdminSessionProcess.slash_handler_ref/0`). Test stubs override the registry entry, not a name-binding.
+
+This caught us in PR-21κ Phase 4: unit tests passed because they bound the test pid to the module name; production failed silently because the production handler isn't named-registered. Phase 6 fixed by switching `dispatch/3` to look up via the registry.
+
 ---
 
 ## Traps that bit
