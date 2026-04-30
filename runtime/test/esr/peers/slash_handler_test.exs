@@ -114,7 +114,10 @@ defmodule Esr.Peers.SlashHandlerTest do
     assert text =~ "unknown command"
   end
 
-  test "new-session (PR-21d) parses workspace name= cwd= worktree= into session_new" do
+  test "new-session (PR-21θ) parses workspace name= root= worktree= and derives cwd" do
+    # PR-21θ 2026-04-30: cwd= removed from slash grammar. The
+    # worktree path is derived as `<root>/.worktrees/<branch>`
+    # automatically.
     {:ok, pid} =
       GenServer.start_link(
         SlashHandler,
@@ -130,7 +133,7 @@ defmodule Esr.Peers.SlashHandlerTest do
       "principal_id" => "p_user",
       "payload" => %{
         "text" =>
-          "/new-session esr-dev name=feature-foo cwd=/tmp/wt worktree=feature-foo",
+          "/new-session esr-dev name=feature-foo root=/Users/me/repo worktree=feature-foo",
         "chat_id" => "oc_z"
       }
     }
@@ -147,10 +150,103 @@ defmodule Esr.Peers.SlashHandlerTest do
 
     assert args["workspace"] == "esr-dev"
     assert args["name"] == "feature-foo"
-    assert args["cwd"] == "/tmp/wt"
+    assert args["root"] == "/Users/me/repo"
     assert args["worktree"] == "feature-foo"
-    # PR-21 tag-alias-removal: parser no longer emits the `tag` arg.
+    # PR-21θ: cwd derived as <root>/.worktrees/<branch>
+    assert args["cwd"] == "/Users/me/repo/.worktrees/feature-foo"
     refute Map.has_key?(args, "tag")
+  end
+
+  test "PR-21θ: explicit cwd= is rejected with hint to use CLI" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{
+        "text" =>
+          "/new-session esr-dev name=foo cwd=/tmp/wt worktree=foo",
+        "chat_id" => "oc_z"
+      }
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:reply, text}, 500
+    assert text =~ "cwd="
+    assert text =~ "no longer accepted"
+    assert text =~ "<root>/.worktrees/<worktree>"
+  end
+
+  test "PR-21θ: worktree= without root= returns error" do
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{
+        "text" => "/new-session esr-dev name=foo worktree=foo",
+        "chat_id" => "oc_z"
+      }
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:reply, text}, 500
+    assert text =~ "worktree="
+    assert text =~ "root="
+  end
+
+  test "PR-21θ: name= alone (no root/worktree) succeeds with empty optional args" do
+    # Sessions can spawn without git worktree fork (legacy support).
+    {:ok, pid} =
+      GenServer.start_link(
+        SlashHandler,
+        %{
+          dispatcher: :test_admin_dispatcher,
+          session_id: "admin",
+          neighbors: [],
+          proxy_ctx: %{}
+        }
+      )
+
+    envelope = %{
+      "principal_id" => "p_user",
+      "payload" => %{
+        "text" => "/new-session esr-dev name=foo",
+        "chat_id" => "oc_z"
+      }
+    }
+
+    send(pid, {:slash_cmd, envelope, self()})
+
+    assert_receive {:"$gen_cast",
+                    {:execute,
+                     %{"kind" => "session_new", "args" => args},
+                     {:reply_to, {:pid, ^pid, _ref}}}},
+                   500
+
+    assert args["workspace"] == "esr-dev"
+    assert args["name"] == "foo"
+    refute Map.has_key?(args, "cwd")
+    refute Map.has_key?(args, "root")
+    refute Map.has_key?(args, "worktree")
   end
 
   test "new-session threads chat_id/thread_id from envelope into args (PR-8 T2)" do
@@ -169,7 +265,7 @@ defmodule Esr.Peers.SlashHandlerTest do
       "principal_id" => "p_user",
       "payload" => %{
         "text" =>
-          "/new-session esr-dev name=foo cwd=/tmp/wt worktree=foo",
+          "/new-session esr-dev name=foo root=/tmp/repo worktree=foo",
         "chat_id" => "oc_A",
         "thread_id" => "om_B"
       }
@@ -206,7 +302,7 @@ defmodule Esr.Peers.SlashHandlerTest do
     envelope = %{
       "principal_id" => "p_user",
       "payload" => %{
-        "text" => "/new-session esr-dev name=foo cwd=/tmp/wt worktree=foo"
+        "text" => "/new-session esr-dev name=foo root=/tmp/repo worktree=foo"
       }
     }
 

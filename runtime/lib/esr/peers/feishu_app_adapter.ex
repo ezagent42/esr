@@ -257,8 +257,9 @@ defmodule Esr.Peers.FeishuAppAdapter do
                        — 显示 workspace 配置（owner/role/chats/metadata）
 
     Sessions（需要 user 已绑 + chat 绑了 workspace）：
-      /new-session <ws> name=<…> root=<repo> cwd=<wt> worktree=<branch>
-                       — 启 CC session（git worktree fork from origin/main）
+      /new-session <ws> name=<…> root=<repo> worktree=<branch>
+                       — 启 CC session（worktree 自动派生为 <root>/.worktrees/<branch>，
+                          fork from origin/main）
       /sessions
       /workspace sessions [<name>]
                        — 列当前 workspace 的 live sessions
@@ -351,8 +352,9 @@ defmodule Esr.Peers.FeishuAppAdapter do
 
             /new-session <workspace_name> name=<session_name> \\
                 root=<主 git 仓库路径> \\
-                cwd=<worktree 路径> \\
                 worktree=<分支名>
+
+          worktree 检出路径自动派生为 `<root>/.worktrees/<分支名>`。
           """
 
         true ->
@@ -362,9 +364,11 @@ defmodule Esr.Peers.FeishuAppAdapter do
           Workspace `#{ws_name}` 已绑。可用：
 
             /new-session #{ws_name} name=<session_name> \\
-                root=<repo> cwd=<worktree 路径> worktree=<分支>
+                root=<repo> worktree=<分支>
             /sessions
             /end-session <name>
+
+          worktree 检出路径自动派生为 `<root>/.worktrees/<分支>`。
           """
       end
 
