@@ -85,6 +85,21 @@ end
 
 **Caveat (PR-21κ Phase 1)**: `Esr.Capabilities.Supervisor.maybe_bootstrap_file/1` looks similar but is **not** the same pattern — it writes a synthesized string conditional on `ESR_BOOTSTRAP_PRINCIPAL_ID` env var. Pre-PR-21κ no module did `priv/`-based copy. PR-21κ's `Esr.SlashRoutes` is the canonical first example.
 
+### Pattern: priv-default smoke test gated by `@tag`
+
+When the priv default references modules that don't exist yet (multi-phase rollout — yaml ships Phase 1, target modules ship Phase 2), the FileLoader's `unknown_module` validator will reject the file. Tests that exercise the priv default need to skip until those modules land.
+
+```elixir
+@tag :priv_default_loads
+test "loads the priv default yaml shipped with the app" do
+  priv_path = Application.app_dir(:esr, "priv/<file>.default.yaml")
+  assert :ok = FileLoader.load(priv_path)
+  ...
+end
+```
+
+ExUnit excludes unknown tags by default — passing `--include priv_default_loads` opts in. Once all referenced modules exist (Phase 2 done), enable the tag in CI to catch yaml drift.
+
 ---
 
 ## Traps that bit
