@@ -39,6 +39,8 @@ defmodule Esr.Admin.Commands.Workspace.New do
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
   @spec execute(map()) :: result()
+  def execute(cmd)
+
   def execute(%{"args" => %{"name" => name} = args})
       when is_binary(name) and name != "" do
     owner = args["owner"] || args["username"] || ""
@@ -74,59 +76,64 @@ defmodule Esr.Admin.Commands.Workspace.New do
          }}
 
       true ->
-        chats = build_chats(chat_id, app_id)
+        new_chat = build_chat(chat_id, app_id)
 
         path = Esr.Paths.workspaces_yaml()
         {:ok, doc} = read_or_empty(path)
         ws_map = doc["workspaces"] || %{}
 
-        if Map.has_key?(ws_map, name) do
-          {:error,
-           %{
-             "type" => "name_exists",
-             "name" => name,
-             "message" => "workspace #{inspect(name)} already exists; pick another name or delete the old one"
-           }}
-        else
-          new_entry = %{
-            "owner" => owner,
-            "role" => role,
-            "start_cmd" => start_cmd,
-            "chats" => chats,
-            "env" => %{}
-          }
+        case Map.fetch(ws_map, name) do
+          {:ok, existing} ->
+            # PR-21η 2026-04-30: idempotent path. Pre-PR-21η this was a
+            # `name_exists` error, which made sense before slash auto-
+            # binding existed. Now that `/new-workspace <existing>` from
+            # an unbound chat is a legitimate "please add my chat to
+            # this workspace" gesture (the alternative is asking
+            # operators to hand-edit workspaces.yaml), we treat it as
+            # add-chat-if-missing and return :ok with `action: "added_chat"`.
+            handle_existing_workspace(name, existing, new_chat, ws_map, doc, path)
 
-          updated_doc =
-            doc
-            |> Map.put("schema_version", doc["schema_version"] || 1)
-            |> Map.put("workspaces", Map.put(ws_map, name, new_entry))
+          :error ->
+            new_entry = %{
+              "owner" => owner,
+              "role" => role,
+              "start_cmd" => start_cmd,
+              "chats" => new_chat |> List.wrap(),
+              "env" => %{}
+            }
 
-          case Esr.Yaml.Writer.write(path, updated_doc) do
-            :ok ->
-              # Proactively populate the in-memory Registry so this very
-              # request's chat finds the workspace bound — without
-              # waiting for the FSEvents watcher tick.
-              :ok =
-                Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
-                  name: name,
-                  owner: owner,
-                  role: role,
-                  start_cmd: start_cmd,
-                  chats: chats,
-                  env: %{}
-                })
+            updated_doc =
+              doc
+              |> Map.put("schema_version", doc["schema_version"] || 1)
+              |> Map.put("workspaces", Map.put(ws_map, name, new_entry))
 
-              {:ok,
-               %{
-                 "name" => name,
-                 "owner" => owner,
-                 "role" => role,
-                 "chats" => chats
-               }}
+            case Esr.Yaml.Writer.write(path, updated_doc) do
+              :ok ->
+                # Proactively populate the in-memory Registry so this very
+                # request's chat finds the workspace bound — without
+                # waiting for the FSEvents watcher tick.
+                :ok =
+                  Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+                    name: name,
+                    owner: owner,
+                    role: role,
+                    start_cmd: start_cmd,
+                    chats: List.wrap(new_chat),
+                    env: %{}
+                  })
 
-            {:error, reason} ->
-              {:error, %{"type" => "write_failed", "details" => inspect(reason)}}
-          end
+                {:ok,
+                 %{
+                   "name" => name,
+                   "owner" => owner,
+                   "role" => role,
+                   "chats" => List.wrap(new_chat),
+                   "action" => "created"
+                 }}
+
+              {:error, reason} ->
+                {:error, %{"type" => "write_failed", "details" => inspect(reason)}}
+            end
         end
     end
   end
@@ -138,6 +145,80 @@ defmodule Esr.Admin.Commands.Workspace.New do
        "message" => "workspace_new requires args.name (non-empty string)"
      }}
   end
+
+  # PR-21η: when /new-workspace targets an existing workspace, decide
+  # what to do based on whether the current chat is already in chats:
+  #
+  #   - chat already bound → :ok, action="already_bound" (no write)
+  #   - chat not yet bound + we know the chat → append to chats: + write
+  #   - no chat known (CLI invocation, no slash context) → :error
+  #     (preserves the pre-PR-21η name_exists behavior for that path)
+  defp handle_existing_workspace(name, existing, new_chat, ws_map, doc, path) do
+    existing_chats = existing["chats"] || []
+
+    cond do
+      new_chat == nil ->
+        {:error,
+         %{
+           "type" => "name_exists",
+           "name" => name,
+           "message" =>
+             "workspace #{inspect(name)} already exists; pick another name or delete the old one (`esr workspace remove #{name}`)"
+         }}
+
+      chat_already_bound?(existing_chats, new_chat) ->
+        {:ok,
+         %{
+           "name" => name,
+           "owner" => existing["owner"],
+           "role" => existing["role"],
+           "chats" => existing_chats,
+           "action" => "already_bound"
+         }}
+
+      true ->
+        updated_chats = existing_chats ++ [new_chat]
+        updated_entry = Map.put(existing, "chats", updated_chats)
+
+        updated_doc =
+          doc
+          |> Map.put("schema_version", doc["schema_version"] || 1)
+          |> Map.put("workspaces", Map.put(ws_map, name, updated_entry))
+
+        case Esr.Yaml.Writer.write(path, updated_doc) do
+          :ok ->
+            :ok =
+              Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+                name: name,
+                owner: existing["owner"],
+                role: existing["role"],
+                start_cmd: existing["start_cmd"],
+                chats: updated_chats,
+                env: existing["env"] || %{}
+              })
+
+            {:ok,
+             %{
+               "name" => name,
+               "owner" => existing["owner"],
+               "role" => existing["role"],
+               "chats" => updated_chats,
+               "action" => "added_chat"
+             }}
+
+          {:error, reason} ->
+            {:error, %{"type" => "write_failed", "details" => inspect(reason)}}
+        end
+    end
+  end
+
+  defp chat_already_bound?(chats, %{"chat_id" => cid, "app_id" => aid}) do
+    Enum.any?(chats, fn c ->
+      is_map(c) and c["chat_id"] == cid and c["app_id"] == aid
+    end)
+  end
+
+  defp chat_already_bound?(_chats, _new_chat), do: false
 
   # ------------------------------------------------------------------
   # Internals
@@ -155,12 +236,15 @@ defmodule Esr.Admin.Commands.Workspace.New do
     end
   end
 
-  defp build_chats(chat_id, app_id)
+  # PR-21η: returns a single chat map or nil (instead of a list). nil
+  # signals "no slash context" — used by handle_existing_workspace/6 to
+  # distinguish CLI invocations from slash invocations.
+  defp build_chat(chat_id, app_id)
        when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
-    [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}]
+    %{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}
   end
 
-  defp build_chats(_chat_id, _app_id), do: []
+  defp build_chat(_chat_id, _app_id), do: nil
 
   defp read_or_empty(path) do
     case YamlElixir.read_from_file(path) do
