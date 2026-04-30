@@ -93,6 +93,14 @@ defmodule Esr.Application do
       # watcher reuses Registry's ETS table.
       {Esr.Workspaces.Watcher, path: Esr.Paths.workspaces_yaml()},
 
+      # 4e.2 SlashRoutes subsystem (PR-21κ 2026-04-30) — yaml-driven
+      # slash command routing + dispatcher kind→{permission, command_module}
+      # lookup. Independent of Workspaces and Capabilities (stores
+      # references to caps as strings; doesn't validate against Permissions
+      # Registry). Loaded BEFORE Admin.Supervisor since Dispatcher consumes it.
+      Esr.SlashRoutes,
+      {Esr.SlashRoutes.Watcher, path: Esr.Paths.slash_routes_yaml()},
+
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
