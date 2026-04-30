@@ -61,12 +61,10 @@ defmodule Esr.Peers.FeishuChatProxy do
       principal_id:
         Map.get(args, :principal_id) || Map.get(ctx, :principal_id) || "",
       neighbors: Map.get(args, :neighbors, []),
-      proxy_ctx: ctx,
-      # PR-9 T5b: track message_ids we've emitted a `react` for so
-      # T5c's un_react path can fire without a lookup. Map values are
-      # the emoji_type that was reacted with (future v2 may un-react a
-      # different emoji than the one reacted; v1 uses the same default).
-      pending_reacts: %{}
+      proxy_ctx: ctx
+      # PR-21λ 2026-05-01: `pending_reacts` removed — FAA owns the
+      # universal react/un_react lifecycle now (PR-9 T5's per-FCP
+      # bookkeeping was redundant once FAA went one-react-per-inbound).
     }
 
     # D1 new pattern — explicitly lift a ctx field into state under a
@@ -466,12 +464,16 @@ defmodule Esr.Peers.FeishuChatProxy do
   # envelope. CCProcess accepts both the new 3-tuple and legacy 2-tuple
   # `{:text, text}` (for backward compat with any unit-test callers that
   # haven't been migrated yet).
-  defp forward_text_and_react(text, message_id, meta, state) do
+  defp forward_text_and_react(text, _message_id, meta, state) do
+    # PR-21λ 2026-05-01: react side-effect deleted — FAA already
+    # emitted the universal `TYPING` (敲键盘) react when the inbound
+    # arrived. Function name kept (callers below) but it now just
+    # forwards to CC; the un_react still fires on CC's reply path
+    # via FAA's `handle_downstream` watching for `reply_to_message_id`.
     case Keyword.get(state.neighbors, :cc_process) do
       pid when is_pid(pid) ->
         send(pid, {:text, text, meta})
-        new_state = maybe_emit_react(message_id, state)
-        {:forward, [], new_state}
+        {:forward, [], state}
 
       _ ->
         Logger.warning(
@@ -483,78 +485,26 @@ defmodule Esr.Peers.FeishuChatProxy do
     end
   end
 
-  defp maybe_emit_react("", state), do: state
-
-  defp maybe_emit_react(message_id, state) when is_binary(message_id) do
-    case emit_to_feishu_app_proxy(
-           %{
-             "kind" => "react",
-             "args" => %{"msg_id" => message_id, "emoji_type" => @default_react_emoji}
-           },
-           state
-         ) do
-      :ok ->
-        Map.update!(state, :pending_reacts, fn pr ->
-          Map.put(pr, message_id, @default_react_emoji)
-        end)
-
-      {:drop, _reason} ->
-        # Already logged inside emit_to_feishu_app_proxy; keep state clean
-        # so a missing neighbor on react doesn't leave phantom pending
-        # entries that would later trigger an un_react we can't fulfil.
-        state
-    end
-  end
-
-  defp maybe_emit_react(_, state), do: state
-
-  # CC outbound reply path — un-react first (if we have a pending react
-  # for the referenced message_id) then forward the reply text to the
-  # feishu_app_proxy neighbor. When reply_to_message_id is nil (legacy
-  # caller that didn't pass the optional field), skip the un-react and
-  # forward the reply as-is — backward compat per PR-9 T5 D4.
+  # CC outbound reply path. Threads `reply_to_message_id` through the
+  # outbound envelope so FAA's `handle_downstream` can un_react the
+  # original inbound's universal "received" emoji (PR-21λ). When
+  # `reply_to_message_id` is nil, FAA skips the un_react and just
+  # broadcasts the reply.
   defp forward_reply(text, reply_to_message_id, state) do
-    state = maybe_emit_un_react(reply_to_message_id, state)
+    args = %{"chat_id" => state.chat_id, "text" => text}
 
-    case emit_to_feishu_app_proxy(
-           %{
-             "kind" => "reply",
-             "args" => %{"chat_id" => state.chat_id, "text" => text}
-           },
-           state
-         ) do
+    args =
+      if is_binary(reply_to_message_id) and reply_to_message_id != "" do
+        Map.put(args, "reply_to_message_id", reply_to_message_id)
+      else
+        args
+      end
+
+    case emit_to_feishu_app_proxy(%{"kind" => "reply", "args" => args}, state) do
       :ok -> {:forward, [], state}
       {:drop, reason} -> {:drop, reason, state}
     end
   end
-
-  defp maybe_emit_un_react(nil, state), do: state
-
-  defp maybe_emit_un_react(message_id, state) when is_binary(message_id) do
-    case Map.get(state.pending_reacts, message_id) do
-      nil ->
-        # No pending react for this message_id — nothing to un-react.
-        # This is the v1 "optimistic" policy: if CC references a
-        # message we never reacted to (e.g. the user edited their
-        # message, or the react emit failed silently), skip rather
-        # than firing a best-effort DELETE that's very likely to 404.
-        state
-
-      emoji ->
-        _ =
-          emit_to_feishu_app_proxy(
-            %{
-              "kind" => "un_react",
-              "args" => %{"msg_id" => message_id, "emoji_type" => emoji}
-            },
-            state
-          )
-
-        Map.update!(state, :pending_reacts, &Map.delete(&1, message_id))
-    end
-  end
-
-  defp maybe_emit_un_react(_, state), do: state
 
   # D1: FeishuChatProxy's own outbound emit channel. We send directly
   # to the `feishu_app_proxy` neighbor as an `{:outbound, envelope}`

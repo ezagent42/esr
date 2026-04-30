@@ -647,6 +647,145 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     end
   end
 
+  describe "PR-21λ universal react / un_react" do
+    setup %{sup: sup} do
+      instance = "inst_react_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter, %{instance_id: instance, neighbors: [], proxy_ctx: %{}}}
+        )
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/#{instance}")
+      {:ok, peer: pid, instance: instance}
+    end
+
+    test "msg_received inbound emits TYPING react with the message_id", %{peer: peer} do
+      envelope = %{
+        "user_id" => "ou_react_user",
+        "principal_id" => "ou_react_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_react",
+            "content" => "hello",
+            "message_id" => "om_msg_42"
+          }
+        }
+      }
+
+      send(peer, {:inbound_event, envelope})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{
+                           "action" => "react",
+                           "args" => %{"msg_id" => "om_msg_42", "emoji_type" => "TYPING"}
+                         }
+                       }
+                     },
+                     500
+    end
+
+    test "non-msg_received envelope (e.g. event_type empty) does NOT emit react", %{peer: peer} do
+      envelope = %{
+        "principal_id" => "ou_x",
+        "payload" => %{
+          "event_type" => "system_notify",
+          "args" => %{"message_id" => "om_sys_1"}
+        }
+      }
+
+      send(peer, {:inbound_event, envelope})
+
+      refute_receive %Phoenix.Socket.Broadcast{
+                       payload: %{"payload" => %{"action" => "react"}}
+                     },
+                     200
+    end
+
+    test "downstream reply with reply_to_message_id un_reacts the tracked react",
+         %{peer: peer} do
+      # First fire an inbound to register the react.
+      inbound = %{
+        "principal_id" => "ou_x",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{"chat_id" => "oc_x", "content" => "hi", "message_id" => "om_track"}
+        }
+      }
+
+      send(peer, {:inbound_event, inbound})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       payload: %{
+                         "payload" => %{
+                           "action" => "react",
+                           "args" => %{"msg_id" => "om_track"}
+                         }
+                       }
+                     },
+                     500
+
+      # Now simulate FCP's CC-reply outbound carrying reply_to_message_id.
+      send(
+        peer,
+        {:outbound,
+         %{
+           "kind" => "reply",
+           "args" => %{
+             "chat_id" => "oc_x",
+             "text" => "done",
+             "reply_to_message_id" => "om_track"
+           }
+         }}
+      )
+
+      # FAA should emit un_react first (matching the tracked TYPING),
+      # then the reply send_message directive.
+      assert_receive %Phoenix.Socket.Broadcast{
+                       payload: %{
+                         "payload" => %{
+                           "action" => "un_react",
+                           "args" => %{"msg_id" => "om_track", "emoji_type" => "TYPING"}
+                         }
+                       }
+                     },
+                     500
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       payload: %{
+                         "payload" => %{
+                           "action" => "send_message",
+                           "args" => %{"chat_id" => "oc_x", "content" => "done"}
+                         }
+                       }
+                     },
+                     500
+    end
+
+    test "downstream reply without reply_to_message_id does NOT un_react", %{peer: peer} do
+      send(
+        peer,
+        {:outbound,
+         %{"kind" => "reply", "args" => %{"chat_id" => "oc_x", "text" => "proactive"}}}
+      )
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       payload: %{"payload" => %{"action" => "send_message"}}
+                     },
+                     500
+
+      refute_receive %Phoenix.Socket.Broadcast{
+                       payload: %{"payload" => %{"action" => "un_react"}}
+                     },
+                     100
+    end
+  end
+
   describe "handle_downstream wrap_as_directive/2 (PR-9 T10/T11b)" do
     # The downstream path broadcasts on `adapter:feishu/<instance_id>` with
     # event="envelope" and a *directive*-shaped payload. Subscribe to the
