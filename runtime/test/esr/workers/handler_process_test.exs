@@ -1,5 +1,6 @@
 defmodule Esr.Workers.HandlerProcessTest do
-  use ExUnit.Case, async: true
+  # async: false — see adapter_process_test.exs for rationale.
+  use ExUnit.Case, async: false
 
   alias Esr.Workers.HandlerProcess
 

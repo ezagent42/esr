@@ -7,6 +7,7 @@ envelopes until cancelled.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from typing import Any
@@ -46,9 +47,11 @@ def test_handler_worker_main_invokes_run() -> None:
 
 
 def test_handler_worker_cli_module_runnable() -> None:
+    # PR-21β: ESR_SPAWN_TOKEN guard requires a token for CLI invocation.
+    env = {**os.environ, "ESR_SPAWN_TOKEN": "__debug__"}
     result = subprocess.run(
         [sys.executable, "-m", "esr.ipc.handler_worker", "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, env=env,
     )
     assert result.returncode == 0, result.stderr
     assert "--module" in result.stdout

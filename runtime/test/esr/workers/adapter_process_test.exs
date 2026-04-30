@@ -1,5 +1,7 @@
 defmodule Esr.Workers.AdapterProcessTest do
-  use ExUnit.Case, async: true
+  # async: false because this test mutates `Application.put_env(:esr,
+  # :spawn_token, _)` which is global; concurrent tests would race.
+  use ExUnit.Case, async: false
 
   alias Esr.Workers.AdapterProcess
 

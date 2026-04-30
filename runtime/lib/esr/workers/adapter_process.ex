@@ -29,6 +29,20 @@ defmodule Esr.Workers.AdapterProcess do
     GenServer.start_link(__MODULE__.OSProcessWorker, args)
   end
 
+  # Required by DynamicSupervisor (the OSProcess macro defines an
+  # OSProcessWorker module but doesn't expose a top-level child_spec
+  # for us). Default `:transient` restart so a normal exit (status=0)
+  # doesn't trigger respawn but a crash (non-zero) does.
+  def child_spec(args) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [args]},
+      restart: :transient,
+      type: :worker,
+      shutdown: 10_000
+    }
+  end
+
   @impl Esr.OSProcess
   def os_cmd(state) do
     [
@@ -61,10 +75,10 @@ defmodule Esr.Workers.AdapterProcess do
   def on_os_exit(0, _state), do: {:stop, :normal}
   def on_os_exit(status, _state), do: {:stop, {:py_crashed, status}}
 
-  @impl true
-  def init(args) do
-    {:ok, args}
-  end
+  # Called by the generated OSProcessWorker.init/1 (not a GenServer
+  # callback — the worker module uses GenServer; this module passes
+  # through the args as the initial peer state).
+  def init(args), do: {:ok, args}
 
   @impl Esr.Peer.Stateful
   def handle_upstream({:os_stdout, line}, state) do

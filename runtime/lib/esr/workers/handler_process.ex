@@ -21,6 +21,16 @@ defmodule Esr.Workers.HandlerProcess do
     GenServer.start_link(__MODULE__.OSProcessWorker, args)
   end
 
+  def child_spec(args) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [args]},
+      restart: :transient,
+      type: :worker,
+      shutdown: 5_000
+    }
+  end
+
   @impl Esr.OSProcess
   def os_cmd(state) do
     [
@@ -51,7 +61,6 @@ defmodule Esr.Workers.HandlerProcess do
   def on_os_exit(0, _state), do: {:stop, :normal}
   def on_os_exit(status, _state), do: {:stop, {:py_crashed, status}}
 
-  @impl true
   def init(args), do: {:ok, args}
 
   @impl Esr.Peer.Stateful
