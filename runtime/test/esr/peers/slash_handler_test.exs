@@ -506,6 +506,99 @@ defmodule Esr.Peers.SlashHandlerTest do
       refute Map.has_key?(args, "root")
     end
 
+    test "PR-21δ: resolves username from envelope.principal_id when user_id absent" do
+      # The Python adapter populates `principal_id` (top-level) but not
+      # `user_id`. Pre-PR-21δ resolve_username only looked at user_id /
+      # payload.user_id and always returned nil → workspace_new fell
+      # through to "owner empty" → invalid_args. Real-world inbound
+      # uses principal_id; this test pins the lookup chain.
+      if Process.whereis(Esr.Users.Registry) == nil do
+        start_supervised!(Esr.Users.Registry)
+      end
+
+      :ok =
+        Esr.Users.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Users.Registry.User{
+            username: "linyilun",
+            feishu_ids: ["ou_real_open_id"]
+          }
+        })
+
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        # No `user_id` field — exactly as the Python adapter sends it.
+        "principal_id" => "ou_real_open_id",
+        "payload" => %{"text" => "/new-workspace my-ws", "chat_id" => "oc_z"}
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_new",
+                         "args" => %{
+                           "name" => "my-ws",
+                           "username" => "linyilun"
+                         }
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
+    test "PR-21δ: resolves username from payload.args.sender_id as fallback" do
+      if Process.whereis(Esr.Users.Registry) == nil do
+        start_supervised!(Esr.Users.Registry)
+      end
+
+      :ok =
+        Esr.Users.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Users.Registry.User{
+            username: "linyilun",
+            feishu_ids: ["ou_via_sender_id"]
+          }
+        })
+
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        # Neither user_id NOR principal_id present — fallback to sender_id.
+        "payload" => %{
+          "text" => "/new-workspace my-ws",
+          "chat_id" => "oc_z",
+          "args" => %{"sender_id" => "ou_via_sender_id"}
+        }
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_new",
+                         "args" => %{"username" => "linyilun"}
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
     test "missing name returns user-facing error" do
       {:ok, pid} =
         GenServer.start_link(

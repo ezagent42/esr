@@ -169,7 +169,19 @@ defmodule Esr.Peers.SlashHandler do
   defp resolve_workspace(_chat_id, _app_id), do: nil
 
   defp resolve_username(envelope) do
-    open_id = envelope["user_id"] || get_in(envelope, ["payload", "user_id"])
+    # PR-21δ 2026-04-30: extend the lookup chain to match the real
+    # inbound envelope shape from the Python adapter. The Feishu adapter
+    # populates `principal_id` (top-level) + `payload.args.sender_id`.
+    # The pre-PR-21δ shape (`user_id` / `payload.user_id`) was based on
+    # an earlier draft that never made it to the adapter wire format —
+    # `resolve_username/1` always returned nil for real inbounds, which
+    # broke `/new-workspace` (Workspace.New rejected with invalid_args
+    # when owner couldn't be inferred from username).
+    open_id =
+      envelope["user_id"] ||
+        envelope["principal_id"] ||
+        get_in(envelope, ["payload", "user_id"]) ||
+        get_in(envelope, ["payload", "args", "sender_id"])
 
     cond do
       not is_binary(open_id) or open_id == "" ->
