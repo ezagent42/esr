@@ -357,10 +357,46 @@ defmodule Esr.SessionRouter do
           :not_found -> "default"
         end
 
+    # PR-21ξ 2026-05-01: read the workspace's `start_cmd` (when set in
+    # workspaces.yaml) and inject as a peer param so TmuxProcess uses
+    # the operator-configured launcher instead of the hardcoded
+    # `claude …` argv. Without this, `start_cmd: scripts/esr-cc.sh`
+    # was dead config — TmuxProcess always fell through to the default
+    # `["claude", …]`, which the tmux pane's zsh couldn't find on
+    # PATH (claude lives at ~/.local/bin/claude). esr-cc.sh sources
+    # ~/.zshrc + adds ~/.local/bin to PATH, so routing through it is
+    # the right fix.
+    start_cmd = resolve_workspace_start_cmd(workspace_name, params)
+
     params
     |> Map.put(:session_id, session_id)
     |> Map.put(:workspace_name, workspace_name)
+    |> maybe_put_start_cmd(start_cmd)
   end
+
+  defp resolve_workspace_start_cmd(workspace_name, params)
+       when is_binary(workspace_name) do
+    # Caller-supplied :start_cmd wins (test injection, future per-session
+    # override). Otherwise look up workspaces.yaml.
+    case get_param(params, :start_cmd) do
+      cmd when is_binary(cmd) and cmd != "" ->
+        cmd
+
+      _ ->
+        case Esr.Workspaces.Registry.get(workspace_name) do
+          {:ok, %{start_cmd: cmd}} when is_binary(cmd) and cmd != "" ->
+            cmd
+
+          _ ->
+            nil
+        end
+    end
+  end
+
+  defp resolve_workspace_start_cmd(_, _), do: nil
+
+  defp maybe_put_start_cmd(params, nil), do: params
+  defp maybe_put_start_cmd(params, cmd), do: Map.put(params, :start_cmd, cmd)
 
   defp fetch_agent_name(params) do
     case params[:agent] || params["agent"] do
