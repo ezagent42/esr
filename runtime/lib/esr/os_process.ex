@@ -85,6 +85,10 @@ defmodule Esr.OSProcess do
         def start_link(init_args), do: GenServer.start_link(__MODULE__, init_args)
 
         def os_pid(pid), do: GenServer.call(pid, :os_pid)
+        # 2026-04-30 — exposed for tests / diagnostics in
+        # `Esr.Workers.AdapterProcess` / `Esr.Workers.HandlerProcess`,
+        # which need to assert "this exec port is dead after BEAM stop".
+        def exec_pid(pid), do: GenServer.call(pid, :exec_pid)
         def write_stdin(pid, bytes), do: GenServer.cast(pid, {:write_stdin, bytes})
 
         @wrapper unquote(wrapper)
@@ -134,6 +138,7 @@ defmodule Esr.OSProcess do
 
         @impl true
         def handle_call(:os_pid, _from, s), do: {:reply, {:ok, s.os_pid}, s}
+        def handle_call(:exec_pid, _from, s), do: {:reply, {:ok, s.exec_pid}, s}
 
         @impl true
         def handle_cast({:write_stdin, bytes}, s) do
