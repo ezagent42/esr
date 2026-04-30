@@ -84,4 +84,5 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21z `#103` — `describe_topology` users.yaml security audit + regression tests + `docs/notes/describe-topology-security.md`
 - PR-21α `#104` — remove `tag=` alias from slash parser (`/new-session`)
 - PR-21β `#105` 2026-04-30 — `Esr.WorkerSupervisor` migrated to erlexec; deletes pidfile/cleanup_orphans/spawn_worker.sh; adds `ESR_SPAWN_TOKEN` guard
+- PR-21γ `#106` 2026-04-30 — `validate_scope` accepts `session:` prefix + full-cap fallback; fixes prod `unauthorized` for `linyilun` despite `*`. Discovered while debugging the orphan-adapter follow-up.
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session
