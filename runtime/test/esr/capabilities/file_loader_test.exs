@@ -17,6 +17,8 @@ defmodule Esr.Capabilities.FileLoaderTest do
     # Registry must declare the permissions used in fixtures
     Registry.register("msg.send", declared_by: Test)
     Registry.register("session.create", declared_by: Test)
+    Registry.register("session:default/create", declared_by: Test)
+    Registry.register("session:default/end", declared_by: Test)
     :ok
   end
 
@@ -46,5 +48,42 @@ defmodule Esr.Capabilities.FileLoaderTest do
       FileLoader.load(Path.join(@fixtures, "unknown_permission.yaml"))
 
     assert Grants.has?("ou_alice", "workspace:proj-a/msg.send")
+  end
+
+  describe "PR-21γ — session: scope prefix accepted (regression for prod blocker)" do
+    test "session:default/create + session:default/end load successfully" do
+      yaml = """
+      principals:
+        - id: linyilun
+          kind: esr_user
+          capabilities:
+            - "session:default/create"
+            - "session:default/end"
+      """
+
+      path = Path.join(System.tmp_dir!(), "session_scope_caps_#{System.unique_integer()}.yaml")
+      File.write!(path, yaml)
+      on_exit(fn -> File.rm(path) end)
+
+      assert :ok = FileLoader.load(path)
+      assert Grants.has?("linyilun", "session:default/create")
+      assert Grants.has?("linyilun", "session:default/end")
+    end
+
+    test "unknown scope prefix still fails — only `session:` and `workspace:` are accepted" do
+      yaml = """
+      principals:
+        - id: linyilun
+          kind: esr_user
+          capabilities:
+            - "totally-fake:thing/perm"
+      """
+
+      path = Path.join(System.tmp_dir!(), "bad_scope_caps_#{System.unique_integer()}.yaml")
+      File.write!(path, yaml)
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:error, {:bad_scope_prefix, "totally-fake:thing"}} = FileLoader.load(path)
+    end
   end
 end

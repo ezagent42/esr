@@ -91,12 +91,26 @@ defmodule Esr.Capabilities.FileLoader do
       true ->
         with [scope, perm] <- String.split(cap, "/", parts: 2),
              :ok <- validate_scope(scope),
-             :ok <- validate_perm(perm, pid) do
+             :ok <- validate_perm_with_full_fallback(perm, cap, pid) do
           :ok
         else
           {:error, _} = err -> err
           _ -> {:error, {:malformed_cap, cap, pid}}
         end
+    end
+  end
+
+  # PR-21γ 2026-04-30 — `Esr.Admin.permissions/0` declares some scoped
+  # caps as full strings (`session:default/create`, `session:default/end`)
+  # rather than just the perm part (`create`, `end`). The split-based
+  # validate_perm/2 only sees the post-`/` segment, which doesn't match
+  # the full registered string. Fall back to checking whether the full
+  # cap is registered as a literal — covers the legacy declaration shape
+  # without forcing a registry rewrite.
+  defp validate_perm_with_full_fallback(perm, full_cap, pid) do
+    case validate_perm(perm, pid) do
+      :ok -> :ok
+      {:error, _} -> if Registry.declared?(full_cap), do: :ok, else: {:error, {:unknown_permission, perm, pid}}
     end
   end
 
@@ -123,6 +137,18 @@ defmodule Esr.Capabilities.FileLoader do
   end
 
   defp validate_scope("*"), do: :ok
+
+  # PR-21γ 2026-04-30: accept `session:<name>` scope prefix. The runtime's
+  # admin command surface (`Esr.Admin.permissions/0`) declares
+  # `session:default/create` and `session:default/end` for the agent-
+  # session lifecycle (PR-3 P3-8/P3-9). Without this clause, any yaml
+  # carrying those caps would fail validation with `:bad_scope_prefix`
+  # and the entire `capabilities.yaml` snapshot would be rejected —
+  # leaving the runtime with empty grants and every check denying.
+  # We don't cross-check session names against any registry (sessions
+  # are dynamic, not pre-declared in a yaml file like workspaces).
+  defp validate_scope("session:" <> _name), do: :ok
+
   defp validate_scope(scope), do: {:error, {:bad_scope_prefix, scope}}
 
   # Esr.Workspaces.Registry exposes get/1 returning {:ok, ws} | :error.
