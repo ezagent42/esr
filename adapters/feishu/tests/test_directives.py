@@ -123,8 +123,12 @@ class _StubReactionApi:
 
 
 def _make_stub_with_reaction_api() -> _StubClient:
+    # PR-21λ 2026-05-01: SDK module is `message_reaction`, not
+    # `message.reaction` (the latter never existed — pre-PR-21λ this
+    # was a typo in adapter.py that no production traffic exercised
+    # until universal-react-on-inbound made every msg fire it).
     stub = _StubClient()
-    stub.im.v1.message.reaction = _StubReactionApi()
+    stub.im.v1.message_reaction = _StubReactionApi()
     return stub
 
 
@@ -138,7 +142,7 @@ async def test_react_calls_lark_reaction_create() -> None:
     )
     assert ack == {"ok": True, "result": {"reaction_id": "reaction_id_1"}}
 
-    req = stub.im.v1.message.reaction.last_request
+    req = stub.im.v1.message_reaction.last_request
     assert req is not None
     assert req.message_id == "om_abc"
     assert req.request_body.reaction_type.emoji_type == "THUMBSUP"
@@ -147,7 +151,7 @@ async def test_react_calls_lark_reaction_create() -> None:
 async def test_react_surfaces_lark_error() -> None:
     instance = _make_adapter()
     stub = _make_stub_with_reaction_api()
-    stub.im.v1.message.reaction.canned_response = _StubResponse(False, error="nope")
+    stub.im.v1.message_reaction.canned_response = _StubResponse(False, error="nope")
     instance._lark_client = stub
 
     ack = await instance.on_directive(

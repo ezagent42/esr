@@ -567,6 +567,13 @@ defmodule Esr.Peers.SlashHandler do
   defp format_result({:ok, %{"session_id" => sid}}),
     do: "session started: #{sid}"
 
+  # PR-21λ 2026-05-01: command modules that produce free-form display
+  # text (Help, Whoami, Doctor, Agent.List) all return
+  # `{:ok, %{"text" => "..."}}`. Render the text directly — pre-PR-21λ
+  # this clause didn't exist and the user saw `ok: %{"text" => "..."}`
+  # via the catch-all `inspect/1` clause below.
+  defp format_result({:ok, %{"text" => text}}) when is_binary(text), do: text
+
   defp format_result({:ok, %{} = m}), do: "ok: " <> inspect(m)
 
   # P3-8: Session.New emits string "missing_capabilities" (not atom); match
