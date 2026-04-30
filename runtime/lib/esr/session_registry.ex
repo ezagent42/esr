@@ -43,6 +43,12 @@ defmodule Esr.SessionRegistry do
   def load_agents(path), do: GenServer.call(__MODULE__, {:load_agents, path})
   def agent_def(name), do: GenServer.call(__MODULE__, {:agent_def, name})
 
+  @doc """
+  List all known agent names (PR-21κ — surfaces `/list-agents` data).
+  Sorted alphabetically.
+  """
+  def list_agents, do: GenServer.call(__MODULE__, :list_agents)
+
   def register_session(session_id, chat_thread_key, peer_refs),
     do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
 
@@ -163,6 +169,10 @@ defmodule Esr.SessionRegistry do
       {:ok, def_} -> {:reply, {:ok, def_}, state}
       :error -> {:reply, {:error, :not_found}, state}
     end
+  end
+
+  def handle_call(:list_agents, _from, state) do
+    {:reply, state.agents |> Map.keys() |> Enum.sort(), state}
   end
 
   def handle_call(

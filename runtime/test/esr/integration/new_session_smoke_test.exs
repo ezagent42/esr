@@ -47,6 +47,12 @@ defmodule Esr.Integration.NewSessionSmokeTest do
   """
   use ExUnit.Case, async: false
 
+  # PR-21κ Phase 6: tagged :integration because dispatch/3 enforces
+  # workspace + user binding; setup writes to the global Workspaces /
+  # Users registries, polluting other unit tests in the same VM.
+  # Run via `mix test --include integration` for the full pipeline check.
+  @moduletag :integration
+
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
   import Esr.TestSupport.TmuxIsolation, only: [isolated_tmux_socket: 1]
@@ -136,15 +142,63 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     {_, 0} = System.cmd("git", ["-C", smoke_repo, "remote", "add", "origin", smoke_repo])
     {_, 0} = System.cmd("git", ["-C", smoke_repo, "fetch", "origin", "-q"])
 
+    # PR-21κ Phase 6: dispatch/3 enforces requires_workspace_binding
+    # for /new-session per slash-routes.yaml. Register an in-memory
+    # workspace binding for the smoke chat so the precondition passes.
+    test_app_id = "smoke_app_#{System.unique_integer([:positive])}"
+    smoke_chat_id = "oc_smoke"
+
+    workspace = %Esr.Workspaces.Registry.Workspace{
+      name: "esr-dev",
+      owner: @test_principal,
+      role: "dev",
+      chats: [%{"chat_id" => smoke_chat_id, "app_id" => test_app_id}],
+      metadata: %{}
+    }
+
+    prior_ws =
+      case Esr.Workspaces.Registry.get("esr-dev") do
+        {:ok, ws} -> ws
+        :not_found -> nil
+      end
+
+    Esr.Workspaces.Registry.put(workspace)
+
+    # PR-21κ Phase 6: dispatch/3 also enforces requires_user_binding
+    # for /new-session. Bind both test principals to esr users via
+    # an in-memory snapshot.
+    prior_users = Esr.Users.Registry.list()
+
+    Esr.Users.Registry.load_snapshot(%{
+      "smoke_user" => %Esr.Users.Registry.User{
+        username: "smoke_user",
+        feishu_ids: [@test_principal]
+      },
+      "smoke_nocap_user" => %Esr.Users.Registry.User{
+        username: "smoke_nocap_user",
+        feishu_ids: [@test_principal_nocap]
+      }
+    })
+
     on_exit(fn ->
       File.rm_rf!(smoke_repo)
+      if prior_ws, do: Esr.Workspaces.Registry.put(prior_ws)
+
+      # Restore prior users snapshot (best-effort; cross-test pollution
+      # bounded because this is async: false).
+      restored =
+        prior_users
+        |> Enum.map(fn %Esr.Users.Registry.User{username: u} = user -> {u, user} end)
+        |> Map.new()
+
+      Esr.Users.Registry.load_snapshot(restored)
     end)
 
-    {:ok, slash: slash_pid, smoke_repo: smoke_repo}
+    {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id, chat_id: smoke_chat_id}
   end
 
   test "/new-session esr-dev name=test root=<tmp> worktree=test succeeds through the full slash path",
-       %{smoke_repo: smoke_repo} do
+       %{smoke_repo: smoke_repo, app_id: app_id, chat_id: chat_id} do
     # PR-21θ 2026-04-30: cwd= removed from slash grammar; derived as
     # `<root>/.worktrees/<branch>`. This smoke test exercises the full
     # slash → cap check → worktree creation → session spawn path.
@@ -155,14 +209,17 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       "principal_id" => @test_principal,
       "payload" => %{
         "text" => "/new-session esr-dev name=test root=#{smoke_repo} worktree=#{branch}",
-        "chat_id" => "oc_smoke",
+        "args" => %{"app_id" => app_id, "chat_id" => chat_id},
+        "chat_id" => chat_id,
         "thread_id" => "om_smoke"
       }
     }
 
-    send(slash, {:slash_cmd, envelope, self()})
+    # PR-21κ Phase 6: dispatch/3 (yaml-driven) replaces the legacy
+    # `:slash_cmd` send. Reply lands ref-tagged.
+    ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
-    assert_receive {:reply, text}, 2_000
+    assert_receive {:reply, text, ^ref}, 2_000
     assert text =~ "session started:", "expected session-started reply, got: #{text}"
 
     # Extract the session_id from "session started: <sid>".
@@ -184,41 +241,47 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     assert DynamicSupervisor.count_children(peers_sup).active == 3
   end
 
-  test "/new-session without --agent returns a readable error reply" do
-    {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
+  test "/new-session without --agent returns a readable error reply",
+       %{app_id: app_id, chat_id: chat_id} do
+    {:ok, _slash} = Esr.AdminSessionProcess.slash_handler_ref()
 
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
         "text" => "/new-session esr-dev cwd=/tmp/x",
-        "chat_id" => "oc_smoke",
+        "args" => %{"app_id" => app_id, "chat_id" => chat_id},
+        "chat_id" => chat_id,
         "thread_id" => "om_smoke"
       }
     }
 
-    send(slash, {:slash_cmd, envelope, self()})
+    ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
-    assert_receive {:reply, text}, 1_000
-    # PR-21d unified grammar: error mentions name= instead of --agent.
-    assert text =~ "name=",
-           "expected name= missing error, got: #{text}"
+    assert_receive {:reply, text, ^ref}, 1_000
+    # PR-21κ: dispatch's `parse_route_args` rejects required-arg miss
+    # for `name`. Pre-PR-21κ the legacy parser also rejected `cwd=`
+    # explicitly — both paths surface a hint at user-typed keys.
+    assert text =~ "name",
+           "expected name missing error, got: #{text}"
   end
 
-  test "/new-session without matching capability returns an error reply" do
-    {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
+  test "/new-session without matching capability returns an error reply",
+       %{app_id: app_id, chat_id: chat_id} do
+    {:ok, _slash} = Esr.AdminSessionProcess.slash_handler_ref()
 
     envelope = %{
       "principal_id" => @test_principal_nocap,
       "payload" => %{
         "text" => "/new-session esr-dev name=y root=/tmp/y-repo worktree=y",
-        "chat_id" => "oc_smoke",
+        "args" => %{"app_id" => app_id, "chat_id" => chat_id},
+        "chat_id" => chat_id,
         "thread_id" => "om_smoke"
       }
     }
 
-    send(slash, {:slash_cmd, envelope, self()})
+    ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
-    assert_receive {:reply, text}, 1_000
+    assert_receive {:reply, text, ^ref}, 1_000
 
     # Dispatcher rejects the cast before Session.New runs (see
     # module-level "Drift from expansion doc"); text carries the
