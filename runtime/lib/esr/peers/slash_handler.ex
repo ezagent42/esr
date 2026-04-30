@@ -108,8 +108,8 @@ defmodule Esr.Peers.SlashHandler do
   # resolution from envelope.user_id via Esr.Users.Registry. session_end
   # also needs username when args carries `name=` (PR-21g resolver).
   defp merge_chat_context(args, kind, envelope) when kind in ["session_new", "session_end"] do
-    chat_id = get_in(envelope, ["payload", "chat_id"])
-    thread_id = get_in(envelope, ["payload", "thread_id"])
+    chat_id = envelope_chat_id(envelope)
+    thread_id = envelope_thread_id(envelope)
     username = resolve_username(envelope)
 
     args
@@ -122,7 +122,7 @@ defmodule Esr.Peers.SlashHandler do
   # need both `username` (URI uniqueness scoping) and `workspace`
   # (defaults to the chat's bound workspace when absent from args).
   defp merge_chat_context(args, kind, envelope) when kind in ["session_list", "workspace_info"] do
-    chat_id = get_in(envelope, ["payload", "chat_id"])
+    chat_id = envelope_chat_id(envelope)
     app_id = get_in(envelope, ["payload", "args", "app_id"])
     username = resolve_username(envelope)
 
@@ -144,7 +144,7 @@ defmodule Esr.Peers.SlashHandler do
   # PR-21k: workspace_new threads chat_id + app_id (for auto-binding
   # the new workspace to this chat) + username (for owner default).
   defp merge_chat_context(args, "workspace_new", envelope) do
-    chat_id = get_in(envelope, ["payload", "chat_id"])
+    chat_id = envelope_chat_id(envelope)
     app_id = get_in(envelope, ["payload", "args", "app_id"])
     username = resolve_username(envelope)
 
@@ -155,6 +155,21 @@ defmodule Esr.Peers.SlashHandler do
   end
 
   defp merge_chat_context(args, _kind, _envelope), do: args
+
+  # PR-21ε 2026-04-30: real adapter inbound carries chat_id /
+  # thread_id under `payload.args` (the Python adapter's wire shape).
+  # The legacy slash_handler tests + earlier internal callers used
+  # `payload.chat_id` directly. Read both for compat — production wins
+  # via the fallback. Same fix shape as PR-21δ for resolve_username.
+  defp envelope_chat_id(envelope) do
+    get_in(envelope, ["payload", "chat_id"]) ||
+      get_in(envelope, ["payload", "args", "chat_id"])
+  end
+
+  defp envelope_thread_id(envelope) do
+    get_in(envelope, ["payload", "thread_id"]) ||
+      get_in(envelope, ["payload", "args", "thread_id"])
+  end
 
   # Resolve the workspace name a chat is bound to. Returns nil when no
   # binding (caller decides whether that's an error).
