@@ -46,19 +46,13 @@ setup:
       -o ~/.esrd/default/commands/.compiled/feishu-thread-session.yaml
     expect_exit: 0
     timeout_sec: 15
-  # 6. Fire-and-forget the adapter + handler worker subprocesses *before*
-  #    any cmd run — Topology.Instantiator's init_directive broadcasts need
-  #    a joined adapter on the other end or they time out at 30 s. The
-  #    helper pre-spawns cc_tmux (per thread) + feishu-shared adapters and
-  #    feishu_thread / cc_session / tmux_proxy handler workers (per thread
-  #    id alpha/beta/gamma) with pidfiles at /tmp/esr-worker-*.pid.
-  - command: >-
-      bash scripts/spawn_scenario_workers.sh
-      ws://127.0.0.1:4001/handler_hub/socket/websocket?vsn=2.0.0
-      ws://127.0.0.1:4001/adapter_hub/socket/websocket?vsn=2.0.0
-      alpha beta gamma
-    expect_exit: 0
-    timeout_sec: 30
+  # PR-21β 2026-04-30: pre-spawn step removed. Adapter and handler
+  # workers now spawn on-demand under Esr.WorkerSupervisor's
+  # DynamicSupervisor (via erlexec) when topology calls reach them.
+  # The 30s ensure_handler timeout in HandlerRouter.call/3 covers the
+  # cold-start latency. If you see flakes here, the fix is to seed
+  # adapters.yaml + agents.yaml so restore_*_from_disk handles them
+  # at boot — not to reintroduce the pre-spawn helper.
 
 steps:
 

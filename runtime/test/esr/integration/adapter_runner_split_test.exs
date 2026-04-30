@@ -53,9 +53,9 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
   end
 
   defp await_alive(pid, budget_ms) do
-    # WorkerSupervisor's `ensure_adapter` spawns via scripts/spawn_worker.sh
-    # which daemonises through two forks; give the child a moment to
-    # exec `uv run`.
+    # PR-21β: ensure_adapter now spawns via Esr.OSProcess (erlexec).
+    # The OS pid is reported synchronously; brief wait covers the
+    # python interpreter import time.
     deadline = System.monotonic_time(:millisecond) + budget_ms
 
     Stream.repeatedly(fn ->

@@ -59,19 +59,9 @@ setup:
       -o ~/.esrd/default/commands/.compiled/feishu-thread-session.yaml
     expect_exit: 0
     timeout_sec: 20
-  # 6. Fire-and-forget adapter + handler worker subprocesses. v0.2 adds
-  #    the esr-channel pseudo-adapter (no WS; uses SessionRegistry.push)
-  #    and mock_mcp workers that speak the ChannelChannel WS protocol in
-  #    lieu of real CC. The helper pre-spawns cc_tmux/feishu-shared
-  #    adapters, feishu_thread/cc_session/tmux_proxy handler workers,
-  #    and mock_mcp instances for tags root/alt/beta.
-  - command: >-
-      bash scripts/spawn_scenario_workers.sh
-      ws://127.0.0.1:4001/handler_hub/socket/websocket?vsn=2.0.0
-      ws://127.0.0.1:4001/adapter_hub/socket/websocket?vsn=2.0.0
-      root alt beta
-    expect_exit: 0
-    timeout_sec: 30
+  # PR-21β 2026-04-30: pre-spawn step removed. Adapter and handler
+  # workers spawn on-demand via WorkerSupervisor's DynamicSupervisor
+  # (erlexec). See e2e-feishu-cc.yaml for the same note + remediation.
   # 7. Pre-seed a workspace entry so `/new-session esr-dev tag=...` can
   #    resolve a workspace by name (v0.2 §5.1). Remove first for
   #    re-run idempotency (non-fatal if not present).
