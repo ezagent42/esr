@@ -131,13 +131,10 @@ defmodule Esr.Peers.FeishuChatProxy do
       principal_id: envelope["principal_id"] || args["principal_id"]
     }
 
-    cond do
-      slash?(text) ->
-        dispatch_slash(envelope, state)
-
-      true ->
-        forward_text_and_react(text, message_id, meta, state)
-    end
+    # PR-21κ Phase 6: slash detection moved upstream into the FAA's
+    # handle_upstream gate — slashes never reach FCP anymore. FCP is
+    # now purely "forward inbound text to the CC session".
+    forward_text_and_react(text, message_id, meta, state)
   end
 
   # PR-9 T5c: CC's reply lands here via the cc_process neighbor (see
@@ -464,22 +461,6 @@ defmodule Esr.Peers.FeishuChatProxy do
     send(channel_pid, {:push_envelope, payload})
   end
 
-  defp dispatch_slash(envelope, state) do
-    case Esr.AdminSessionProcess.slash_handler_ref() do
-      {:ok, slash_pid} ->
-        send(slash_pid, {:slash_cmd, envelope, self()})
-        {:drop, :slash_dispatched, state}
-
-      :error ->
-        Logger.warning(
-          "feishu_chat_proxy: slash received but no SlashHandler registered " <>
-            "(session_id=#{state.session_id})"
-        )
-
-        {:drop, :no_slash_handler, state}
-    end
-  end
-
   # PR-9 T11b.6a: upstream tuple is now `{:text, text, meta}` (3-tuple)
   # so CCProcess has message_id/sender_id/thread_id for the notification
   # envelope. CCProcess accepts both the new 3-tuple and legacy 2-tuple
@@ -599,10 +580,4 @@ defmodule Esr.Peers.FeishuChatProxy do
     end
   end
 
-  defp slash?(text) do
-    case String.trim_leading(text) do
-      "/" <> _rest -> true
-      _ -> false
-    end
-  end
 end

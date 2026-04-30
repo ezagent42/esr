@@ -31,6 +31,12 @@ defmodule Esr.Peers.SlashHandlerDispatchTest do
     on_exit(fn ->
       if Process.whereis(:test_admin_dispatcher),
         do: Process.unregister(:test_admin_dispatcher)
+
+      # Restore the priv default so cross-file tests (Dispatcher,
+      # Notify) keep working — they look up kind → permission via
+      # SlashRoutes ETS post-PR-21κ Phase 6.
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      if File.exists?(priv), do: Esr.SlashRoutes.FileLoader.load(priv)
     end)
 
     :ok

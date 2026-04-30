@@ -15,6 +15,15 @@ defmodule Esr.Admin.Commands.HelpTest do
   setup do
     if Process.whereis(SlashRoutes) == nil, do: start_supervised!(SlashRoutes)
     SlashRoutes.load_snapshot(%{slashes: [], internal_kinds: []})
+
+    # Restore the priv default after the test so cross-file Dispatcher
+    # tests (which look up kind → permission via SlashRoutes ETS) keep
+    # working post-PR-21κ Phase 6.
+    on_exit(fn ->
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      if File.exists?(priv), do: Esr.SlashRoutes.FileLoader.load(priv)
+    end)
+
     :ok
   end
 

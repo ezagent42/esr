@@ -5,9 +5,18 @@ defmodule Esr.SlashRoutesTest do
   alias Esr.SlashRoutes.FileLoader
 
   setup do
-    # Ensure SlashRoutes is up. Reset to empty between tests.
+    # Ensure SlashRoutes is up. Reset to empty between tests, then
+    # restore the priv default on_exit so other test files (Dispatcher
+    # in particular — looks up kind → permission via SlashRoutes) see
+    # the production kind table.
     if Process.whereis(SlashRoutes) == nil, do: start_supervised!(SlashRoutes)
     SlashRoutes.load_snapshot(%{slashes: [], internal_kinds: []})
+
+    on_exit(fn ->
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      if File.exists?(priv), do: FileLoader.load(priv)
+    end)
+
     :ok
   end
 

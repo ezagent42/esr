@@ -534,19 +534,24 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
           loop.(loop)
         end)
 
-      # The production `dispatch/3` calls `GenServer.cast(__MODULE__,
-      # ...)` so the named registration must use the module atom.
-      old_pid = Process.whereis(Esr.Peers.SlashHandler)
-      if old_pid, do: Process.unregister(Esr.Peers.SlashHandler)
-      Process.register(slash_pid, Esr.Peers.SlashHandler)
+      # PR-21κ Phase 6: production `dispatch/3` resolves the slash
+      # handler via `Esr.AdminSessionProcess.slash_handler_ref/0`.
+      # Override the registration with our recording stub so the FAA's
+      # cast lands in the test mailbox. on_exit tries to restart the
+      # production slash_handler via the AdminSession bootstrap helper
+      # — re-registering the dead test pid would leave the registry
+      # broken for subsequent tests.
+      :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, slash_pid)
 
       on_exit(fn ->
-        if Process.whereis(Esr.Peers.SlashHandler) == slash_pid do
-          Process.unregister(Esr.Peers.SlashHandler)
-        end
-
-        if old_pid && Process.alive?(old_pid) do
-          Process.register(old_pid, Esr.Peers.SlashHandler)
+        # Re-bootstrap the production handler so other tests find a
+        # live pid under :slash_handler. Idempotent under the production
+        # supervisor; safely no-op when supervisor_test has torn it down
+        # (try/rescue covers the GenServer.call to a dead supervisor).
+        try do
+          Esr.AdminSession.bootstrap_slash_handler()
+        catch
+          :exit, _ -> :ok
         end
       end)
 
