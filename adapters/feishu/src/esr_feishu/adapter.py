@@ -364,7 +364,14 @@ class FeishuAdapter:
             )
             .build()
         )
-        response = self.client().im.v1.message.reaction.create(request)
+        # lark_oapi SDK: the resource module is `message_reaction`,
+        # not `message.reaction` — pre-PR-21λ this path was never
+        # actually exercised on prod inbounds (FCP only fired react
+        # for non-slash text against a session that already had a
+        # CC up; bare 'hi' to an unbound chat skipped FCP entirely).
+        # PR-21λ universal-react makes every msg_received trigger
+        # this code path, so the SDK-attribute typo is now visible.
+        response = self.client().im.v1.message_reaction.create(request)
         if response.success():
             reaction_id = getattr(response.data, "reaction_id", None) or getattr(
                 response.data, "message_id", ""
@@ -398,13 +405,17 @@ class FeishuAdapter:
             return {"ok": False, "error": f"mock react failed: {exc}"}
 
     def _un_react(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Remove a reaction from a message. PR-9 T5c.
+        """Remove a reaction from a message.
 
-        v1 shape: delete by ``msg_id`` alone (no reaction_id). Mock path
-        calls the DELETE-by-message_id endpoint; live path enumerates
-        reactions on the message and deletes the first matching one —
-        kept as a stub until the live path is exercised (parity with
-        ``_send_file_live``).
+        Caller passes ``msg_id`` + ``emoji_type``. Lark's DELETE endpoint
+        requires a ``reaction_id`` — so we LIST reactions filtered by
+        ``reaction_type`` first, take the first one (we only emit one
+        react per message, so no ambiguity), and delete by id.
+
+        PR-21λ 2026-05-01: previously a stub returning
+        ``"live un_react not yet implemented"``. The PR-21λ universal
+        TYPING react makes this path actually fire on every Feishu
+        reply, so the live implementation lands now.
         """
         msg_id = args["msg_id"]
         emoji_type = args.get("emoji_type", "")
@@ -413,14 +424,37 @@ class FeishuAdapter:
         if base_url.startswith(("http://127.0.0.1", "http://localhost")):
             return self._un_react_mock(base_url, msg_id, emoji_type)
 
-        import lark_oapi.api.im.v1 as im_v1  # noqa: F401 — import guard
-        # Live path deferred: Lark's DELETE reaction API requires a
-        # reaction_id; FeishuChatProxy's v1 tracking carries only the
-        # message_id + emoji_type. Implementing this live path means
-        # enumerating reactions on the message first. Safe no-op here —
-        # the production un-react path against the real Lark API is a
-        # follow-up (the delivery-ack react itself is cosmetic).
-        return {"ok": False, "error": "live un_react not yet implemented"}
+        import lark_oapi.api.im.v1 as im_v1
+
+        list_req = (
+            im_v1.ListMessageReactionRequest.builder()
+            .message_id(msg_id)
+            .reaction_type(emoji_type)
+            .page_size(50)
+            .build()
+        )
+        list_resp = self.client().im.v1.message_reaction.list(list_req)
+        if not list_resp.success():
+            return _lark_failure(list_resp, "un_react list failed")
+
+        items = list(list_resp.data.items or [])
+        if not items:
+            # No matching reaction to delete — likely already removed,
+            # or the original react failed. Treat as success so the
+            # caller's pipeline doesn't error on cleanup.
+            return {"ok": True, "result": {"deleted": 0}}
+
+        reaction_id = items[0].reaction_id
+        del_req = (
+            im_v1.DeleteMessageReactionRequest.builder()
+            .message_id(msg_id)
+            .reaction_id(reaction_id)
+            .build()
+        )
+        del_resp = self.client().im.v1.message_reaction.delete(del_req)
+        if del_resp.success():
+            return {"ok": True, "result": {"deleted": 1, "reaction_id": reaction_id}}
+        return _lark_failure(del_resp, "un_react delete failed")
 
     def _un_react_mock(
         self, base_url: str, msg_id: str, emoji_type: str
