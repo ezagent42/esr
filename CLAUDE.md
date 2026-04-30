@@ -15,6 +15,7 @@ This file is loaded as context for any Claude Code session that runs
 - Module tree + PR-by-PR architecture map: [`docs/architecture.md`](docs/architecture.md)
 - Authoring (handlers / adapters / patterns): [`docs/dev-guide.md`](docs/dev-guide.md)
 - Authoring (agent topology, business topology, metadata): [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)
+- **Git flow (feature → dev → main)**: [`docs/dev-flow.md`](docs/dev-flow.md)
 - Field notes, indexed by topic: [`docs/notes/README.md`](docs/notes/README.md)
 - Specs (every shipped feature): [`docs/superpowers/specs/`](docs/superpowers/specs/)
 
