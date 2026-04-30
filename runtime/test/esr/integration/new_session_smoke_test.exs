@@ -1,6 +1,6 @@
 defmodule Esr.Integration.NewSessionSmokeTest do
   @moduledoc """
-  P2-13: E2E smoke test for `/new-session esr-dev name=test cwd=/tmp/test worktree=test`.
+  P2-13: E2E smoke test for `/new-session esr-dev name=test root=/tmp/test-repo worktree=test`.
 
   Exercises the full PR-2 slash-command path end-to-end:
 
@@ -125,16 +125,36 @@ defmodule Esr.Integration.NewSessionSmokeTest do
           pid
       end
 
-    {:ok, slash: slash_pid}
+    # PR-21θ 2026-04-30: smoke test now uses real git infrastructure
+    # because cwd= no longer auto-fills the dir from a literal arg.
+    # Set up a tmp git repo with origin/main so `Esr.Worktree.add/3`
+    # can succeed when triggered by `root= worktree=`.
+    smoke_repo = Path.join(System.tmp_dir!(), "esr_smoke_repo_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(smoke_repo)
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "init", "-q", "-b", "main"])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "commit", "--allow-empty", "-q", "-m", "init"])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "remote", "add", "origin", smoke_repo])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "fetch", "origin", "-q"])
+
+    on_exit(fn ->
+      File.rm_rf!(smoke_repo)
+    end)
+
+    {:ok, slash: slash_pid, smoke_repo: smoke_repo}
   end
 
-  test "/new-session esr-dev name=test cwd=/tmp/test worktree=test succeeds through the full slash path" do
+  test "/new-session esr-dev name=test root=<tmp> worktree=test succeeds through the full slash path",
+       %{smoke_repo: smoke_repo} do
+    # PR-21θ 2026-04-30: cwd= removed from slash grammar; derived as
+    # `<root>/.worktrees/<branch>`. This smoke test exercises the full
+    # slash → cap check → worktree creation → session spawn path.
     {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
+    branch = "smoke-#{System.unique_integer([:positive])}"
 
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session esr-dev name=test cwd=/tmp/test worktree=test",
+        "text" => "/new-session esr-dev name=test root=#{smoke_repo} worktree=#{branch}",
         "chat_id" => "oc_smoke",
         "thread_id" => "om_smoke"
       }
@@ -151,7 +171,8 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     # SessionProcess came up with the expected args.
     state = Esr.SessionProcess.state(sid)
     assert state.agent_name == "cc"
-    assert state.dir == "/tmp/test"
+    # PR-21θ: dir = derived cwd = <root>/.worktrees/<branch>
+    assert state.dir == Path.join([smoke_repo, ".worktrees", branch])
     assert state.metadata.principal_id == @test_principal
 
     # PR-8 T4 update: the chat-bound /new-session path now routes through
@@ -189,7 +210,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     envelope = %{
       "principal_id" => @test_principal_nocap,
       "payload" => %{
-        "text" => "/new-session esr-dev name=y cwd=/tmp/y worktree=y",
+        "text" => "/new-session esr-dev name=y root=/tmp/y-repo worktree=y",
         "chat_id" => "oc_smoke",
         "thread_id" => "om_smoke"
       }

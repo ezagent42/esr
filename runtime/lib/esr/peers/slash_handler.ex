@@ -332,7 +332,7 @@ defmodule Esr.Peers.SlashHandler do
     if has_legacy_flags?(toks) do
       {:error,
        "/new-session: --agent / --dir are removed (PR-21d). Use " <>
-         "/new-session <workspace> name=<…> cwd=<…> worktree=<…>"}
+         "/new-session <workspace> name=<…> root=<repo> worktree=<branch>"}
     else
       [workspace | kvs] = toks ++ [""]
       kv = parse_kv_pairs(kvs)
@@ -344,6 +344,20 @@ defmodule Esr.Peers.SlashHandler do
         is_nil(kv["name"]) ->
           {:error, "/new-session requires name=<…>"}
 
+        # PR-21θ 2026-04-30: cwd= is removed from the slash grammar.
+        # The worktree path is always derived as `<root>/.worktrees/
+        # <branch>` (Convention B). Operators wanting a non-standard
+        # path fall back to the CLI (`esr workspace ...` / `git
+        # worktree add` directly).
+        not is_nil(kv["cwd"]) ->
+          {:error,
+           "/new-session: `cwd=` is no longer accepted. The worktree path " <>
+             "is derived as `<root>/.worktrees/<worktree>` automatically. " <>
+             "If you need a custom worktree location, use the CLI."}
+
+        not is_nil(kv["worktree"]) and is_nil(kv["root"]) ->
+          {:error, "/new-session: `worktree=<branch>` requires `root=<repo>` (the source git repo)"}
+
         true ->
           name = kv["name"]
 
@@ -352,16 +366,30 @@ defmodule Esr.Peers.SlashHandler do
           # rejects with a clear error if absent AND worktree= was given
           # (i.e., spawn would need git access). Sessions without
           # worktree= can still spawn without root=, just no worktree fork.
+          # PR-21θ: derive cwd from root + worktree.
+          derived_cwd = derive_worktree_cwd(kv["root"], kv["worktree"])
+
           args =
             %{"workspace" => workspace, "name" => name}
             |> maybe_put("root", kv["root"])
-            |> maybe_put("cwd", kv["cwd"])
+            |> maybe_put("cwd", derived_cwd)
             |> maybe_put("worktree", kv["worktree"])
 
           {:ok, "session_new", args}
       end
     end
   end
+
+  # PR-21θ 2026-04-30: per Convention B, the worktree's checkout path
+  # is always `<root>/.worktrees/<branch>`. Returns nil when either
+  # input is missing — caller's `maybe_put` then drops the key, which
+  # is correct for the no-worktree-needed slash form.
+  defp derive_worktree_cwd(root, branch)
+       when is_binary(root) and root != "" and is_binary(branch) and branch != "" do
+    Path.join([root, ".worktrees", branch])
+  end
+
+  defp derive_worktree_cwd(_root, _branch), do: nil
 
   defp has_legacy_flags?(toks),
     do: Enum.any?(toks, &(&1 in ["--agent", "--dir"]))

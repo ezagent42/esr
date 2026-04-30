@@ -5,7 +5,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   Simulates:
 
     1. User DMs bot: envelope with `content_text`
-       `"/new-session esr-dev name=t3 cwd=/tmp/t3-int worktree=t3"`, `chat_id "oc_slashsession"`,
+       `"/new-session esr-dev name=t3"`, `chat_id "oc_slashsession"`,
        `thread_id "om_slashsession"`.
     2. FeishuChatProxy detects the slash (via a direct send to the
        SlashHandler, mirroring `FeishuChatProxy.handle_upstream/2`'s
@@ -113,17 +113,29 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       end
     end)
 
-    {:ok, slash: slash_pid}
+    # PR-21θ 2026-04-30: tmp git repo so `root= worktree=` succeeds.
+    smoke_repo = Path.join(System.tmp_dir!(), "feishu_slash_repo_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(smoke_repo)
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "init", "-q", "-b", "main"])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "commit", "--allow-empty", "-q", "-m", "init"])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "remote", "add", "origin", smoke_repo])
+    {_, 0} = System.cmd("git", ["-C", smoke_repo, "fetch", "origin", "-q"])
+
+    on_exit(fn -> File.rm_rf!(smoke_repo) end)
+
+    {:ok, slash: slash_pid, smoke_repo: smoke_repo}
   end
 
-  test "slash /new-session binds session in SessionRegistry; 2nd inbound resolves to it" do
+  test "slash /new-session binds session in SessionRegistry; 2nd inbound resolves to it",
+       %{smoke_repo: smoke_repo} do
     {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
+    branch = "t3-#{System.unique_integer([:positive])}"
 
     # Step 1: inbound slash envelope, shaped as FeishuChatProxy would build it.
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session esr-dev name=t3 cwd=/tmp/t3-int worktree=t3",
+        "text" => "/new-session esr-dev name=t3 root=#{smoke_repo} worktree=#{branch}",
         "chat_id" => @chat_id,
         "thread_id" => @thread_id
       }
