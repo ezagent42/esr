@@ -31,6 +31,14 @@ defmodule Esr.Peers.SlashHandler do
 
   @default_dispatcher Esr.Admin.Dispatcher
 
+  # PR-21κ Phase 3 (2026-04-30): adapter-agnostic dispatch path is
+  # gated by a per-call timeout. The dispatcher cast is one-shot
+  # (Task.start in the dispatcher), but a stuck command module would
+  # leave the original adapter waiting forever. 5s is generous for
+  # everything except worktree creation; see futures/todo.md for the
+  # async-worktree improvement.
+  @dispatch_timeout_ms 5_000
+
   # start_link/1 inherits the dual-shape (map | keyword) default from
   # Esr.Peer.Stateful (PR-6 B1). All current callers pass %{}.
 
@@ -41,11 +49,90 @@ defmodule Esr.Peers.SlashHandler do
     state = %{
       dispatcher: Map.get(args, :dispatcher, @default_dispatcher),
       session_id: Map.fetch!(args, :session_id),
-      # ref -> reply_to_proxy pid
+      # Tests override this for fast timeout-path coverage; production
+      # uses the @dispatch_timeout_ms default.
+      dispatch_timeout_ms: Map.get(args, :dispatch_timeout_ms, @dispatch_timeout_ms),
+      # ref -> legacy: pid (reply_to_proxy)
+      #     -> dispatch path: {:dispatch, reply_to_pid, timer_ref}
       pending: %{}
     }
 
     {:ok, state}
+  end
+
+  # ====================================================================
+  # PR-21κ Phase 3 — adapter-agnostic dispatch/2 (yaml-driven)
+  # ====================================================================
+
+  @doc """
+  Adapter-agnostic slash dispatch (PR-21κ).
+
+  Looks `text` up in `Esr.SlashRoutes`, applies binding/permission
+  preconditions, and casts the command to `Esr.Admin.Dispatcher`. The
+  reply (or error) is delivered to `reply_to` as
+  `{:reply, text, ref}` — the caller correlates by `ref`.
+
+  Returns the `ref` so the caller can stash it (e.g. FAA's
+  `slash_pending_chat`) for delivery routing on the inbound side.
+
+  Runs in parallel to the legacy `:slash_cmd` handle_info path during
+  the PR-21κ rollout. Phase 6 deletes the legacy path; for now both
+  work — adapters opt-in by switching from `send(slash_handler,
+  {:slash_cmd, ...})` to `SlashHandler.dispatch(...)`.
+  """
+  @spec dispatch(map(), pid()) :: reference()
+  def dispatch(envelope, reply_to) when is_pid(reply_to) do
+    dispatch(envelope, reply_to, make_ref())
+  end
+
+  @spec dispatch(map(), pid(), reference()) :: reference()
+  def dispatch(envelope, reply_to, ref)
+      when is_pid(reply_to) and is_reference(ref) do
+    GenServer.cast(__MODULE__, {:dispatch, envelope, reply_to, ref})
+    ref
+  end
+
+  @impl GenServer
+  def handle_cast({:dispatch, envelope, reply_to, ref}, state) do
+    text = extract_text(envelope)
+    principal_id = envelope["principal_id"] || "ou_unknown"
+
+    case Esr.SlashRoutes.lookup(text) do
+      :not_found ->
+        send(reply_to, {:reply, "unknown command: #{slash_head(text)}", ref})
+        {:noreply, state}
+
+      {:ok, route} ->
+        with {:ok, parsed_args} <- parse_route_args(text, route),
+             :ok <- check_workspace_binding(route, envelope),
+             :ok <- check_user_binding(route, envelope) do
+          merged =
+            parsed_args
+            |> inject_envelope_args(envelope)
+            |> merge_chat_context(route.kind, envelope)
+            |> maybe_derive_session_new_cwd(route.kind)
+
+          cmd = %{
+            "id" => generate_id(),
+            "kind" => route.kind,
+            "submitted_by" => principal_id,
+            "args" => merged
+          }
+
+          timer = Process.send_after(self(), {:slash_dispatch_timeout, ref}, state.dispatch_timeout_ms)
+
+          GenServer.cast(
+            state.dispatcher,
+            {:execute, cmd, {:reply_to, {:pid, self(), ref}}}
+          )
+
+          {:noreply, put_in(state.pending[ref], {:dispatch, reply_to, timer})}
+        else
+          {:error, msg} when is_binary(msg) ->
+            send(reply_to, {:reply, msg, ref})
+            {:noreply, state}
+        end
+    end
   end
 
   # handle_upstream/2 and handle_downstream/2 inherit the no-op
@@ -96,13 +183,208 @@ defmodule Esr.Peers.SlashHandler do
 
         {:noreply, state}
 
-      {reply_to_proxy, rest} ->
+      # PR-21κ Phase 3 dispatch path: ref-tagged reply with cancelled timer.
+      {{:dispatch, reply_to, timer}, rest} ->
+        _ = Process.cancel_timer(timer)
+        send(reply_to, {:reply, format_result(result), ref})
+        {:noreply, %{state | pending: rest}}
+
+      # Legacy :slash_cmd path: bare pid, untagged reply.
+      {reply_to_proxy, rest} when is_pid(reply_to_proxy) ->
         send(reply_to_proxy, {:reply, format_result(result)})
         {:noreply, %{state | pending: rest}}
     end
   end
 
+  # PR-21κ Phase 3: per-dispatch timeout. Fires only if Dispatcher
+  # never responds — usually means a command module hung. We notify
+  # the original adapter so the operator gets a clear "timed out"
+  # message rather than silent death.
+  def handle_info({:slash_dispatch_timeout, ref}, state) when is_reference(ref) do
+    case Map.pop(state.pending, ref) do
+      {{:dispatch, reply_to, _timer}, rest} ->
+        Logger.warning("slash_handler: dispatch timeout for ref #{inspect(ref)}")
+        send(reply_to, {:reply, "command timed out (>5s)", ref})
+        {:noreply, %{state | pending: rest}}
+
+      _ ->
+        # Already completed before timer fired, or unknown ref.
+        {:noreply, state}
+    end
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  # ====================================================================
+  # PR-21κ Phase 3 helpers — text → args, binding checks, envelope inject
+  # ====================================================================
+
+  defp extract_text(envelope) do
+    (get_in(envelope, ["payload", "text"]) ||
+       get_in(envelope, ["payload", "args", "content"]) ||
+       "")
+    |> to_string()
+  end
+
+  defp slash_head(text) do
+    text
+    |> String.trim()
+    |> String.split(~r/\s+/, parts: 2, trim: true)
+    |> List.first("")
+  end
+
+  # Strip the matched slash prefix (`route.slash` is the literal
+  # whitespace-joined key, e.g. "/workspace info") from the front of
+  # the user's text. Returns the trimmed remainder ready for tokenize.
+  defp strip_slash_prefix(text, slash) do
+    trimmed = String.trim(text)
+
+    case String.split(trimmed, slash, parts: 2) do
+      ["", rest] -> String.trim(rest)
+      [^trimmed] -> trimmed
+      _ -> trimmed
+    end
+  end
+
+  # Generic parser. Convention:
+  #   * args list with at least one entry → first remainder token
+  #     (without `=`) binds to the first arg as a positional value.
+  #   * All other tokens must be `key=value` form.
+  #   * Required args missing → `{:error, message}`.
+  #   * Optional args carry their `default` if absent from input.
+  defp parse_route_args(text, route) do
+    remainder = strip_slash_prefix(text, route.slash)
+    toks = tokenize(remainder)
+    arg_specs = route.args || []
+
+    case arg_specs do
+      [] ->
+        {:ok, %{}}
+
+      [first_spec | _rest_specs] ->
+        {positional, kvs} = peel_positional(toks)
+        kv_map = parse_kv_pairs(kvs)
+
+        args =
+          if positional do
+            Map.put_new(kv_map, first_spec.name, positional)
+          else
+            kv_map
+          end
+          |> apply_defaults(arg_specs)
+
+        case validate_required(args, arg_specs, route.slash) do
+          :ok -> {:ok, args}
+          {:error, _} = err -> err
+        end
+    end
+  end
+
+  # If the first token has no `=`, treat it as a positional value.
+  # Otherwise leave all tokens in the kv stream.
+  defp peel_positional([first | rest]) when is_binary(first) do
+    if String.contains?(first, "=") do
+      {nil, [first | rest]}
+    else
+      {first, rest}
+    end
+  end
+
+  defp peel_positional([]), do: {nil, []}
+
+  defp apply_defaults(args, arg_specs) do
+    Enum.reduce(arg_specs, args, fn
+      %{name: name, default: default}, acc when not is_nil(default) ->
+        Map.put_new(acc, name, default)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp validate_required(args, arg_specs, slash) do
+    missing =
+      arg_specs
+      |> Enum.filter(fn
+        %{required: true, name: name} -> Map.get(args, name) in [nil, ""]
+        _ -> false
+      end)
+      |> Enum.map(& &1.name)
+
+    case missing do
+      [] -> :ok
+      [name] -> {:error, "#{slash}: missing required arg `#{name}=<…>`"}
+      names -> {:error, "#{slash}: missing required args: #{Enum.join(names, ", ")}"}
+    end
+  end
+
+  defp check_workspace_binding(%{requires_workspace_binding: true}, envelope) do
+    chat_id = envelope_chat_id(envelope)
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+
+    case resolve_workspace(chat_id, app_id) do
+      ws when is_binary(ws) and ws != "" ->
+        :ok
+
+      _ ->
+        {:error,
+         "this command requires the chat to be bound to a workspace; run `/new-workspace <name>` first"}
+    end
+  end
+
+  defp check_workspace_binding(_route, _envelope), do: :ok
+
+  defp check_user_binding(%{requires_user_binding: true}, envelope) do
+    case resolve_username(envelope) do
+      u when is_binary(u) and u != "" ->
+        :ok
+
+      _ ->
+        principal = envelope["principal_id"] || envelope["user_id"] || "(unknown open_id)"
+
+        {:error,
+         "this command requires your Feishu identity to be bound to an esr user; " <>
+           "run `./esr.sh user bind-feishu <esr_user> #{principal}` first (or /doctor for guidance)"}
+    end
+  end
+
+  defp check_user_binding(_route, _envelope), do: :ok
+
+  # Inject envelope-derived args (chat/app/principal) for command
+  # modules that consume them — Whoami, Doctor, and any future
+  # command needing the calling context. Idempotent: doesn't overwrite
+  # values the user explicitly typed (unlikely for these names).
+  defp inject_envelope_args(args, envelope) do
+    chat_id = envelope_chat_id(envelope)
+    thread_id = envelope_thread_id(envelope)
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    principal_id = envelope["principal_id"] || envelope["user_id"]
+
+    args
+    |> maybe_put("chat_id", chat_id)
+    |> maybe_put("thread_id", thread_id)
+    |> maybe_put("app_id", app_id)
+    |> maybe_put("principal_id", principal_id)
+  end
+
+  # PR-21θ derivation lifted from parse_new_session/1. The legacy
+  # parser already did this; the dispatch path needs the same
+  # behavior so Session.New receives `cwd` when root + worktree are
+  # set. Per yaml-authoring-lessons.md, derivations belong in the
+  # command module, but Session.New currently expects cwd pre-derived
+  # — moving the derivation into Session.New is a cleanup left for
+  # PR-21κ Phase 6 / a follow-up.
+  defp maybe_derive_session_new_cwd(args, "session_new") do
+    case {args["root"], args["worktree"], args["cwd"]} do
+      {root, branch, nil} when is_binary(root) and root != "" and is_binary(branch) and branch != "" ->
+        Map.put(args, "cwd", Path.join([root, ".worktrees", branch]))
+
+      _ ->
+        args
+    end
+  end
+
+  defp maybe_derive_session_new_cwd(args, _kind), do: args
 
   # session_new needs chat_thread_key threading + (PR-21g) username
   # resolution from envelope.user_id via Esr.Users.Registry. session_end
