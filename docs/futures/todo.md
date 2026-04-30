@@ -16,15 +16,13 @@
 
 ## In flight (current PR)
 
-| What | Status | Notes |
-|---|---|---|
-| Brainstorm: esrd / adapter / handler lifecycle audit | in-flight (2026-04-30) | Output: feishu summary (path C — no spec file). Direction settled: migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec). Eliminate pidfile / `cleanup_orphans` / `spawn_worker.sh` entirely. Add `ESR_SPAWN_TOKEN` env-var guard to Python entry points. Will spawn the migration PR after brainstorm wraps. |
+(none — PR-21β shipped, see Done section below)
 
 ## Pending — concrete next PRs
 
 | What | Tracked PR | Notes |
 |---|---|---|
-| Migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec) | pending — comes out of in-flight brainstorm | Replace `spawn_worker.sh` + pidfile + `cleanup_orphans` with erlexec-managed Ports. Add `ESR_SPAWN_TOKEN` env-var guard in Python entry points. ~150 LOC net deletion + 4-5 Python entry-point edits. Goal: BEAM owns 100% of subprocess lifecycle; zero orphans on restart. Follow-up to today's 8x-orphan-adapter prod incident. |
+| Migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec) | done | PR-21β — `spawn_worker.sh` + pidfile + `cleanup_orphans` deleted; erlexec-managed DynamicSupervisor pattern; `ESR_SPAWN_TOKEN` Python guards. Net -230 LOC. See `docs/notes/erlexec-worker-lifecycle.md`. |
 | Investigate: why E2E missed multi-adapter orphan duplication | pending | See task #222. Audit final_gate.sh + tests/e2e/ for assertions that would catch "1 user message → N replies" — likely none. May get folded into the lifecycle migration PR's testing chapter. |
 | Spec: structured error/notification response system | pending design | Task #220. "error: unauthorized" 粒度不够; design ToolUseResponse/AssistantResponse-style envelope to compose 错误 + 操作建议. Brainstorm separately. |
 | Spec: unify slash-command business logic into topology yaml | pending design | Task #221. Move slash routing from Elixir code into yaml so future changes don't need esrd restart. Brainstorm separately. |
@@ -85,4 +83,5 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21y `#102` — Cap principal_id rekey to esr-username (bind-feishu migrates existing `ou_*` caps + grants bootstrap under username)
 - PR-21z `#103` — `describe_topology` users.yaml security audit + regression tests + `docs/notes/describe-topology-security.md`
 - PR-21α `#104` — remove `tag=` alias from slash parser (`/new-session`)
+- PR-21β `#105` 2026-04-30 — `Esr.WorkerSupervisor` migrated to erlexec; deletes pidfile/cleanup_orphans/spawn_worker.sh; adds `ESR_SPAWN_TOKEN` guard
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session
