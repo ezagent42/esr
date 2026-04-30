@@ -39,6 +39,7 @@
 | OAuth-based esr user registration | Spec §"Out of scope" | Manual `esr user add` for now. Real OAuth needs Feishu Open Platform integration. |
 | Deprecate `cc_tmux` Python adapter | PR-21e mentioned as "out of scope" | `cc_mcp + TmuxProcess` is the new path. cc_tmux still referenced by `worker_supervisor.ex:46` + tests. Cleanup PR if it's truly dead. |
 | `tag=` alias removal in slash parser (D14) | done | PR-21α #104. Removed in slash parser; `final_gate.sh` `--param tag=` is `cmd run` template layer, untouched. |
+| **Yaml file visualization / pretty-print** | New 2026-04-30 | Today operators `cat ~/.esrd/<env>/workspaces.yaml` etc. to inspect runtime state. After PR-21κ ships, the yaml surface grows: `slash-routes.yaml` + `workspaces.yaml` + `users.yaml` + `capabilities.yaml` + `agents.yaml` + `adapters.yaml` — cross-references hard to follow. Candidates: (a) `/topology` slash that renders all the connections, (b) `esr show` CLI that pretty-prints with cross-refs, (c) mermaid/graphviz diagrams generated at boot, (d) web view via Phoenix LiveView. Brainstorm + scope decision needed before implementation. |
 
 ## Pending — observability / ops
 
