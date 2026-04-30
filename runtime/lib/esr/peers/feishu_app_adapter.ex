@@ -82,12 +82,20 @@ defmodule Esr.Peers.FeishuAppAdapter do
        app_id: args[:app_id] || instance_id,
        neighbors: args[:neighbors] || [],
        proxy_ctx: args[:proxy_ctx] || %{},
-       # PR-21κ Phase 4: ref → chat_id for slash dispatches in flight.
-       # When SlashHandler.dispatch returns `{:reply, text, ref}` we
-       # look up the originating chat to DM the reply back to.
+       # PR-21κ Phase 4: ref → {chat_id, message_id} for slash dispatches
+       # in flight. When SlashHandler.dispatch returns `{:reply, text,
+       # ref}` we look up the originating chat to DM the reply, and the
+       # message_id to un_react PR-21λ's universal "received" emoji.
        # Replaces the pre-PR-21κ on-demand `bootstrap_pending_chat`
        # map populated by the deleted `route_to_slash_handler/3`.
-       slash_pending_chat: %{}
+       slash_pending_chat: %{},
+       # PR-21λ 2026-05-01: universal react/un_react. Every inbound
+       # `event_type=msg_received` gets a TYPING (敲键盘) react so the
+       # operator gets immediate feedback that ESR received the message.
+       # We track message_id → emoji so the various un_react sites
+       # (slash reply, CC reply via downstream, guide DM, pending-action
+       # consume) can clear the right react.
+       pending_reacts: %{}
        # PR-21w: rate-limit state for unbound-chat / unbound-user guide
        # DMs lives in `Esr.Peers.UnboundChatGuard` / `UnboundUserGuard`.
        # PR-21x: deny-DM rate-limit moved to `Esr.Peers.CapGuard`.
@@ -107,6 +115,20 @@ defmodule Esr.Peers.FeishuAppAdapter do
     args = get_in(envelope, ["payload", "args"]) || %{}
     chat_id = args["chat_id"] || ""
     thread_id = args["thread_id"] || ""
+    message_id = args["message_id"] || ""
+    event_type = get_in(envelope, ["payload", "event_type"]) || ""
+
+    # PR-21λ 2026-05-01: emit the universal "received" react BEFORE any
+    # classification. Operators get a 敲键盘 emoji on every msg_received
+    # inbound — confirms ESR is alive and got the message. un_react
+    # fires from whichever exit branch (PendingActionsGuard consume,
+    # slash reply, guide DM, CC reply via handle_downstream).
+    state =
+      if event_type == "msg_received" do
+        maybe_emit_react(message_id, state)
+      else
+        state
+      end
 
     # PR-21f: PendingActionsGuard interception (D15). If this principal+chat
     # has a registered destructive-action prompt awaiting confirm/cancel,
@@ -120,7 +142,9 @@ defmodule Esr.Peers.FeishuAppAdapter do
     case Process.whereis(EsrWeb.PendingActionsGuard) &&
            EsrWeb.PendingActionsGuard.intercept?(principal_id, chat_id, text) do
       {:consume, _verdict} ->
-        # Drop the inbound — consumer already notified.
+        # Drop the inbound — consumer already notified. PR-21λ:
+        # un_react since this is a terminal exit.
+        state = maybe_emit_un_react(message_id, state)
         {:forward, [], state}
 
       _ ->
@@ -132,7 +156,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
         # cond here pre-PR-21κ and is now data in the yaml.
         cond do
           slash?(text) ->
-            dispatch_slash(envelope, text, chat_id, state)
+            dispatch_slash(envelope, text, chat_id, message_id, state)
 
           true ->
             # PR-21i: user-guide DM when user_id unbound AND chat IS
@@ -146,12 +170,19 @@ defmodule Esr.Peers.FeishuAppAdapter do
             case Esr.Peers.UnboundUserGuard.check(user_id, chat_id, app_id) do
               {:emit, text} ->
                 send_guide_dm(chat_id, text)
+                # PR-21λ: guide DM is a terminal "we replied" — un_react.
+                state = maybe_emit_un_react(message_id, state)
                 {:drop, :unbound_user_guide_sent, state}
 
               :rate_limited ->
+                # No DM emitted (we already DM'd this chat recently),
+                # but still un_react so the user isn't confused.
+                state = maybe_emit_un_react(message_id, state)
                 {:drop, :unbound_user_guide_rate_limited, state}
 
               :passthrough ->
+                # CC will (eventually) reply via FCP → handle_downstream;
+                # un_react fires there based on `reply_to_message_id`.
                 do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state)
             end
         end
@@ -169,12 +200,15 @@ defmodule Esr.Peers.FeishuAppAdapter do
   # tracks it in `slash_pending_chat`, and asks SlashHandler to do
   # the actual routing. The reply lands here as
   # `{:reply, text, ref}` (handle_info clause below).
-  defp dispatch_slash(envelope, text, chat_id, state) do
+  #
+  # PR-21λ: also threads `message_id` so the reply handler can
+  # un_react the original inbound message.
+  defp dispatch_slash(envelope, text, chat_id, message_id, state) do
     envelope_with_text = put_in(envelope, ["payload", "text"], text)
     ref = make_ref()
     Esr.Peers.SlashHandler.dispatch(envelope_with_text, self(), ref)
 
-    new_state = put_in(state, [:slash_pending_chat, ref], chat_id)
+    new_state = put_in(state, [:slash_pending_chat, ref], {chat_id, message_id})
     {:drop, :slash_dispatched, new_state}
   end
 
@@ -250,6 +284,21 @@ defmodule Esr.Peers.FeishuAppAdapter do
     # PR-9 T11a e2e RCA where "ack" replies left FCP but never reached
     # mock_feishu because the adapter's directive filter dropped them.
     # The topic suffix is `instance_id`, not Feishu-platform `app_id`.
+
+    # PR-21λ: when CC's reply (via FCP) carries `reply_to_message_id`
+    # we un_react the original inbound's universal "received" emoji
+    # before forwarding the reply. This closes the loop for non-slash
+    # inbound — slash replies un_react in `handle_info({:reply, _, ref})`.
+    state =
+      case envelope do
+        %{"kind" => "reply", "args" => %{"reply_to_message_id" => mid}}
+        when is_binary(mid) and mid != "" ->
+          maybe_emit_un_react(mid, state)
+
+        _ ->
+          state
+      end
+
     directive = wrap_as_directive(envelope, state)
 
     EsrWeb.Endpoint.broadcast(
@@ -334,15 +383,23 @@ defmodule Esr.Peers.FeishuAppAdapter do
   def handle_info({:outbound, _envelope} = msg, state),
     do: Esr.Peer.Stateful.dispatch_downstream(msg, state, __MODULE__)
 
-  # PR-21κ Phase 4: SlashHandler.dispatch replies arrive as
+  # PR-21κ Phase 4 / PR-21λ: SlashHandler.dispatch replies arrive as
   # `{:reply, text, ref}`. Look up the ref in `slash_pending_chat`
-  # (set when we cast dispatch in `dispatch_slash/4`) to find the
-  # originating chat, then DM the formatted reply.
+  # to find the originating chat (DM target) + message_id (un_react
+  # target), then emit un_react + the chat reply.
   def handle_info({:reply, text, ref}, state) when is_reference(ref) and is_binary(text) do
     pending = state[:slash_pending_chat] || %{}
 
     case Map.pop(pending, ref) do
-      {chat_id, rest} when is_binary(chat_id) and chat_id != "" ->
+      {{chat_id, message_id}, rest}
+      when is_binary(chat_id) and chat_id != "" ->
+        # Order matters: un_react FIRST so the user sees the emoji
+        # disappear right before the reply DM lands. Both are async
+        # broadcasts on the adapter topic; if we reverse the order
+        # the directives can interleave but visual order on Feishu
+        # tends to follow send order.
+        state = maybe_emit_un_react(message_id, state)
+
         send(
           self(),
           {:outbound,
@@ -375,4 +432,50 @@ defmodule Esr.Peers.FeishuAppAdapter do
       {:outbound, %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
     )
   end
+
+  # PR-21λ universal-react helpers
+  # ---------------------------------------------------------------
+  # Emit a TYPING (敲键盘) react on every inbound msg_received and
+  # un_react when the message has been answered (slash reply, CC
+  # reply via downstream, or guide DM sent). Tracking the message_id
+  # in `pending_reacts` lets us drop duplicate un_reacts (idempotent).
+
+  @typing_emoji "TYPING"
+
+  defp maybe_emit_react("", state), do: state
+
+  defp maybe_emit_react(message_id, state) when is_binary(message_id) do
+    send(
+      self(),
+      {:outbound,
+       %{"kind" => "react", "args" => %{"msg_id" => message_id, "emoji_type" => @typing_emoji}}}
+    )
+
+    update_in(state.pending_reacts, &Map.put(&1, message_id, @typing_emoji))
+  end
+
+  defp maybe_emit_react(_, state), do: state
+
+  defp maybe_emit_un_react("", state), do: state
+
+  defp maybe_emit_un_react(message_id, state) when is_binary(message_id) do
+    case Map.pop(state.pending_reacts, message_id) do
+      {nil, _} ->
+        # No active react for this message_id — either the inbound
+        # carried no message_id (empty string filtered above) or this
+        # un_react has already fired. Both are non-errors.
+        state
+
+      {emoji, rest} ->
+        send(
+          self(),
+          {:outbound,
+           %{"kind" => "un_react", "args" => %{"msg_id" => message_id, "emoji_type" => emoji}}}
+        )
+
+        %{state | pending_reacts: rest}
+    end
+  end
+
+  defp maybe_emit_un_react(_, state), do: state
 end
