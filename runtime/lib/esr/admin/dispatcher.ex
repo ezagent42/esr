@@ -67,70 +67,11 @@ defmodule Esr.Admin.Dispatcher do
   # PR-3 P3-8.7: `session_new` now means the **agent-session** command
   # (`Esr.Admin.Commands.Session.New`, formerly Session.AgentNew); the
   # legacy branch-worktree path is `session_branch_new`. Both share the
-  # `session:default/create` permission (canonical prefix:name/perm form
-  # required by `Grants.matches?/2`). Legacy `session.create` dotted
-  # permission strings are still accepted via wildcard grants (`"*"`),
-  # which every test principal uses.
-  #
-  # PR-3 P3-9.3: `session_end` now means the **agent-session** teardown
-  # command (`Esr.Admin.Commands.Session.End`, delegating to
-  # `Esr.SessionRouter.end_session/1`); the legacy branch-worktree
-  # teardown path is `session_branch_end`. Both share the canonical
-  # `session:default/end` permission.
-  @required_permissions %{
-    "notify" => "notify.send",
-    "reload" => "runtime.reload",
-    "register_adapter" => "adapter.register",
-    "session_new" => "session:default/create",
-    "session_branch_new" => "session:default/create",
-    "session_switch" => "session.switch",
-    "session_end" => "session:default/end",
-    "session_branch_end" => "session:default/end",
-    "session_list" => "session.list",
-    # PR-21j: workspace_info shares session.list scope — both are
-    # read-only introspection of the routing namespace.
-    "workspace_info" => "session.list",
-    # PR-21k: workspace_new — anyone with this cap can create
-    # workspaces (writes workspaces.yaml). Operators bootstrap
-    # themselves via `esr cap grant <ou_*> workspace.create` after
-    # initial user binding.
-    "workspace_new" => "workspace.create",
-    "grant" => "cap.manage",
-    "revoke" => "cap.manage",
-    # PR-A T9: cross_app_test is e2e-only; gate behind a wildcard-
-    # only permission so it can't fire under non-test grants.
-    "cross_app_test" => "cross_app_test.invoke"
-  }
-
-  # Map kind → Commands.<Module>. Missing entries surface as
-  # {:error, %{type: "unknown_kind"}} so unsupported kinds fail fast.
-  #
-  # PR-3 P3-8: `session_new` → `Session.New` (agent-session, formerly
-  # AgentNew); `session_branch_new` → `Session.BranchNew` (the renamed
-  # legacy branch-worktree command).
-  #
-  # PR-3 P3-9: `session_end` → `Session.End` (agent-session teardown via
-  # SessionRouter); `session_branch_end` → `Session.BranchEnd` (the
-  # renamed legacy branch-worktree teardown command).
-  @command_modules %{
-    "notify" => Esr.Admin.Commands.Notify,
-    "reload" => Esr.Admin.Commands.Reload,
-    "register_adapter" => Esr.Admin.Commands.RegisterAdapter,
-    "session_new" => Esr.Admin.Commands.Session.New,
-    "session_branch_new" => Esr.Admin.Commands.Session.BranchNew,
-    "session_switch" => Esr.Admin.Commands.Session.Switch,
-    "session_end" => Esr.Admin.Commands.Session.End,
-    "session_branch_end" => Esr.Admin.Commands.Session.BranchEnd,
-    "session_list" => Esr.Admin.Commands.Session.List,
-    "workspace_info" => Esr.Admin.Commands.Workspace.Info,
-    "workspace_new" => Esr.Admin.Commands.Workspace.New,
-    "grant" => Esr.Admin.Commands.Cap.Grant,
-    "revoke" => Esr.Admin.Commands.Cap.Revoke,
-    # PR-A T9: e2e-only test-harness command — synthesizes a
-    # tool_invoke into FCP, bypassing claude. See
-    # Esr.Admin.Commands.CrossAppTest for rationale.
-    "cross_app_test" => Esr.Admin.Commands.CrossAppTest
-  }
+  # PR-21κ Phase 6 (2026-04-30): `@required_permissions` and
+  # `@command_modules` constants deleted. `Esr.SlashRoutes` is now the
+  # single source of truth — kind → {permission, command_module} lives
+  # in `slash-routes.yaml` (slashes:) + `internal_kinds:` blocks.
+  # `dispatch_kind/1` below resolves both via SlashRoutes ETS reads.
 
   # ------------------------------------------------------------------
   # Public API
@@ -182,13 +123,20 @@ defmodule Esr.Admin.Dispatcher do
     kind = command["kind"]
     submitted_by = command["submitted_by"] || "ou_unknown"
 
-    required = @required_permissions[kind]
+    # PR-21κ Phase 6: kind → required permission via SlashRoutes ETS.
+    # `:not_found` ⇒ unknown kind. `nil` ⇒ no permission required
+    # (e.g. /help, /whoami). Anything else is the cap string.
+    required =
+      case is_binary(kind) && Esr.SlashRoutes.permission_for(kind) do
+        :not_found -> :unknown_kind
+        other -> other
+      end
 
     cond do
       is_nil(kind) or not is_binary(kind) ->
         unauthorized_or_error(id, command, reply_to, {:error, %{"type" => "invalid_kind"}}, state)
 
-      is_nil(required) ->
+      required == :unknown_kind ->
         unauthorized_or_error(
           id,
           command,
@@ -197,7 +145,7 @@ defmodule Esr.Admin.Dispatcher do
           state
         )
 
-      not Esr.Capabilities.has?(submitted_by, required) ->
+      not is_nil(required) and not Esr.Capabilities.has?(submitted_by, required) ->
         unauthorized_or_error(
           id,
           command,
@@ -338,8 +286,11 @@ defmodule Esr.Admin.Dispatcher do
   end
 
   defp run_command(kind, command) do
-    case Map.fetch(@command_modules, kind) do
-      {:ok, mod} ->
+    case Esr.SlashRoutes.command_module_for(kind) do
+      :not_found ->
+        {:error, %{"type" => "unknown_kind", "kind" => kind}}
+
+      mod when is_atom(mod) ->
         try do
           mod.execute(command)
         rescue
@@ -351,9 +302,6 @@ defmodule Esr.Admin.Dispatcher do
                "message" => Exception.message(exc)
              }}
         end
-
-      :error ->
-        {:error, %{"type" => "unknown_kind", "kind" => kind}}
     end
   end
 

@@ -35,6 +35,10 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   """
   use ExUnit.Case, async: false
 
+  # PR-21κ Phase 6: tagged :integration — dispatch/3 enforces workspace +
+  # user binding; setup writes to global Workspaces / Users registries.
+  @moduletag :integration
+
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
   import Esr.TestSupport.TmuxIsolation, only: [isolated_tmux_socket: 1]
@@ -123,11 +127,36 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
     on_exit(fn -> File.rm_rf!(smoke_repo) end)
 
-    {:ok, slash: slash_pid, smoke_repo: smoke_repo}
+    # PR-21κ Phase 6: dispatch/3 enforces requires_workspace_binding +
+    # requires_user_binding for /new-session per slash-routes.yaml.
+    # Set up an in-memory workspace + user for the test chat so the
+    # preconditions pass. These pre-existed at the legacy `:slash_cmd`
+    # path's level (it had no gates), so this setup is new for the
+    # production-equivalent dispatch path.
+    test_app_id = "default"
+
+    workspace = %Esr.Workspaces.Registry.Workspace{
+      name: "esr-dev",
+      owner: "t3_user",
+      role: "dev",
+      chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}],
+      metadata: %{}
+    }
+
+    Esr.Workspaces.Registry.put(workspace)
+
+    Esr.Users.Registry.load_snapshot(%{
+      "t3_user" => %Esr.Users.Registry.User{
+        username: "t3_user",
+        feishu_ids: [@test_principal]
+      }
+    })
+
+    {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id}
   end
 
   test "slash /new-session binds session in SessionRegistry; 2nd inbound resolves to it",
-       %{smoke_repo: smoke_repo} do
+       %{smoke_repo: smoke_repo, app_id: app_id} do
     {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
     branch = "t3-#{System.unique_integer([:positive])}"
 
@@ -136,15 +165,19 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       "principal_id" => @test_principal,
       "payload" => %{
         "text" => "/new-session esr-dev name=t3 root=#{smoke_repo} worktree=#{branch}",
+        "args" => %{"app_id" => app_id, "chat_id" => @chat_id},
         "chat_id" => @chat_id,
         "thread_id" => @thread_id
       }
     }
 
-    # Step 2 + 3 + 4: FeishuChatProxy→SlashHandler→Dispatcher→Session.New.
-    send(slash, {:slash_cmd, envelope, self()})
+    # Step 2 + 3 + 4: SlashHandler.dispatch/3 → Dispatcher → Session.New.
+    # (PR-21κ Phase 6: legacy `:slash_cmd` send replaced by yaml-driven
+    # dispatch/3.)
+    _ = slash
+    ref = Esr.Peers.SlashHandler.dispatch(envelope, self(), make_ref())
 
-    assert_receive {:reply, text}, 2_000
+    assert_receive {:reply, text, ^ref}, 2_000
 
     assert text =~ "session started:",
            "expected session-started reply, got: #{inspect(text)}"

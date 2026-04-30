@@ -14,29 +14,12 @@ defmodule Esr.Peers.FeishuChatProxyTest do
     :ok
   end
 
-  test "slash-prefix messages route to slash_handler via AdminSessionProcess" do
-    test_pid = self()
-    :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, test_pid)
-
-    {:ok, peer} =
-      GenServer.start_link(FeishuChatProxy, %{
-        session_id: "s1",
-        chat_id: "oc_x",
-        thread_id: "om_1",
-        neighbors: [],
-        proxy_ctx: %{}
-      })
-
-    send(peer, {:feishu_inbound, %{
-      "payload" => %{
-        "event_type" => "msg_received",
-        "args" => %{"chat_id" => "oc_x", "content" => "/new-session esr-dev name=w cwd=/tmp/w worktree=w"}
-      }
-    }})
-
-    assert_receive {:slash_cmd, _env, reply_to}, 500
-    assert reply_to == peer
-  end
+  # PR-21κ Phase 6: the "slash-prefix messages route to slash_handler"
+  # test deleted. Slashes never reach FCP anymore — the FAA intercepts
+  # them upstream and dispatches via `Esr.Peers.SlashHandler.dispatch/3`.
+  # FCP is now purely "forward inbound text to the CC session"; the
+  # tests in the next describe block exercise that single
+  # responsibility.
 
   describe "non-slash text forward to CC (PR-9 T5a)" do
     test "forwards {:text, bytes} to cc_process neighbor and emits react to feishu_app_proxy" do

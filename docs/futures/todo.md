@@ -25,7 +25,7 @@
 | Migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec) | done | PR-21β — `spawn_worker.sh` + pidfile + `cleanup_orphans` deleted; erlexec-managed DynamicSupervisor pattern; `ESR_SPAWN_TOKEN` Python guards. Net -230 LOC. See `docs/notes/erlexec-worker-lifecycle.md`. |
 | Investigate: why E2E missed multi-adapter orphan duplication | pending | See task #222. Audit final_gate.sh + tests/e2e/ for assertions that would catch "1 user message → N replies" — likely none. May get folded into the lifecycle migration PR's testing chapter. |
 | Spec: structured error/notification response system | pending design | Task #220. "error: unauthorized" 粒度不够; design ToolUseResponse/AssistantResponse-style envelope to compose 错误 + 操作建议. Brainstorm separately. |
-| Spec: unify slash-command business logic into topology yaml | pending design | Task #221. Move slash routing from Elixir code into yaml so future changes don't need esrd restart. Brainstorm separately. |
+| Spec: unify slash-command business logic into topology yaml | done | PR-21κ — `slash-routes.yaml` + `Esr.SlashRoutes` ETS registry + adapter-agnostic `SlashHandler.dispatch/3`. ~660 LOC of legacy bypass-list / per-command parsers / dispatcher dispatch tables deleted; yaml is the single source of truth for kind → permission + command_module + binding requirements. Editor-edit + watcher reload — no esrd restart needed. See `docs/notes/yaml-authoring-lessons.md` for the patterns. |
 | `Esr.Peers.CapGuard` — extract Lane B from `Esr.PeerServer` | done | PR-21x #101. `deny_dm_last_emit` migrated; rate-limit globally consistent. |
 | Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | done | PR-21y #102. `bind-feishu` migrates existing `ou_xxx` caps + grants bootstrap under username. `unbind-feishu` revokes bootstrap when last binding goes. `cap grant ou_*` emits operator hint. PR-21s graceful resolve stays as backstop. |
 | `describe_topology` filter for `users.yaml` | done | PR-21z #103. Allowlist hardened in `filter_workspace_for_describe/1` + 5 regression tests + `docs/notes/describe-topology-security.md`. |
@@ -93,3 +93,9 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21β `#105` 2026-04-30 — `Esr.WorkerSupervisor` migrated to erlexec; deletes pidfile/cleanup_orphans/spawn_worker.sh; adds `ESR_SPAWN_TOKEN` guard
 - PR-21γ `#106` 2026-04-30 — `validate_scope` accepts `session:` prefix + full-cap fallback; fixes prod `unauthorized` for `linyilun` despite `*`. Discovered while debugging the orphan-adapter follow-up.
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session
+- PR-21δ `#108` 2026-04-30 — `resolve_username` lookup chain matches real adapter envelope (principal_id + payload.args.sender_id); `/new-workspace` no longer rejects with `invalid_args`
+- PR-21ε `#110` 2026-04-30 — slash-handler reads `chat_id`/`thread_id` from real adapter envelope shape (`payload.args.X` fallback for `payload.X`)
+- PR-21ζ `#112` 2026-04-30 — git flow `dev → main` enforcement: `enforce-pr-from-dev.yml` GHA + `scripts/promote-dev-to-main.sh` + `docs/dev-flow.md`
+- PR-21η `#113` 2026-04-30 — `Workspace.New` idempotent (re-runs on already-bound chats append vs reject)
+- PR-21θ `#114` 2026-04-30 — derive cwd from `<root>/.worktrees/<branch>` (Convention B); cwd= removed from slash grammar
+- PR-21κ Phase 1-6 (this PR) — yaml-driven slash routing: `slash-routes.yaml` + `Esr.SlashRoutes` registry + `SlashHandler.dispatch/3`; deletes `inline_bootstrap_slash?` quartet, `parse_command/1` per-command parsers, Dispatcher's `@required_permissions` + `@command_modules` constants. Adapter-agnostic. ~660 LOC net deletion.

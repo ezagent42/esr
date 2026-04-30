@@ -1,0 +1,186 @@
+# slash-routes.yaml — declarative slash command routing.
+#
+# Schema:
+#   schema_version: 1
+#   slashes:
+#     "/<text>":
+#       kind: <internal name>
+#       permission: <cap string or null>
+#       command_module: <Elixir module name>
+#       requires_workspace_binding: bool
+#       requires_user_binding: bool
+#       category: <group label for /help rendering>
+#       description: <user-facing text>
+#       aliases: [list of alternate slash strings]   # optional
+#       args:                                          # list of {name, required, default}
+#         - { name: <kw>, required: bool }
+#   internal_kinds:
+#     <kind>:
+#       permission: <cap string>
+#       command_module: <module>
+#
+# `slashes:` entries are slash-callable (FAA / Telegram / etc. routes "/"-prefixed
+# inbound text here). `internal_kinds:` entries are kind-only — used by the
+# Esr.Admin.CommandQueue.Watcher CLI path and other internal callers; never
+# appear in /help output.
+
+schema_version: 1
+
+slashes:
+  "/help":
+    kind: help
+    permission: null
+    command_module: "Esr.Admin.Commands.Help"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "诊断"
+    description: "显示这份命令清单 / show command reference"
+    args: []
+
+  "/whoami":
+    kind: whoami
+    permission: null
+    command_module: "Esr.Admin.Commands.Whoami"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "诊断"
+    description: "显示你的身份 + chat / workspace 绑定状态"
+    args: []
+
+  "/doctor":
+    kind: doctor
+    permission: null
+    command_module: "Esr.Admin.Commands.Doctor"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "诊断"
+    description: "状态检查 + 卡在哪步的 bootstrap 步骤建议"
+    args: []
+
+  "/new-workspace":
+    kind: workspace_new
+    permission: "workspace.create"
+    command_module: "Esr.Admin.Commands.Workspace.New"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "创建新 workspace，自动绑当前 chat"
+    args:
+      - { name: name, required: true }
+      - { name: role, required: false, default: "dev" }
+      - { name: start_cmd, required: false }
+      - { name: owner, required: false }
+
+  "/workspace info":
+    kind: workspace_info
+    permission: "session.list"
+    command_module: "Esr.Admin.Commands.Workspace.Info"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Workspace"
+    description: "显示 workspace 配置（owner/role/chats/metadata）"
+    args:
+      - { name: workspace, required: false }
+
+  "/workspace sessions":
+    kind: session_list
+    permission: "session.list"
+    command_module: "Esr.Admin.Commands.Session.List"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Sessions"
+    description: "列当前 workspace 的 live sessions（显式形式）"
+    args:
+      - { name: workspace, required: false }
+
+  "/sessions":
+    aliases: ["/list-sessions"]
+    kind: session_list
+    permission: "session.list"
+    command_module: "Esr.Admin.Commands.Session.List"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Sessions"
+    description: "列当前 workspace 的 live sessions"
+    args:
+      - { name: workspace, required: false }
+
+  "/new-session":
+    aliases: ["/session new"]
+    kind: session_new
+    permission: "session:default/create"
+    command_module: "Esr.Admin.Commands.Session.New"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Sessions"
+    description: "启 CC session（git worktree fork from origin/main）"
+    args:
+      - { name: workspace, required: true }
+      - { name: name, required: true }
+      - { name: root, required: false }
+      - { name: worktree, required: false }
+
+  "/end-session":
+    aliases: ["/session end"]
+    kind: session_end
+    permission: "session:default/end"
+    command_module: "Esr.Admin.Commands.Session.End"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Sessions"
+    description: "结束 session（worktree 干净则自动 prune）"
+    args:
+      - { name: name, required: true }
+      - { name: root, required: false }
+      - { name: cwd, required: false }
+
+  "/list-agents":
+    kind: agent_list
+    permission: null
+    command_module: "Esr.Admin.Commands.Agent.List"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Agents"
+    description: "列所有可用 agent"
+    args: []
+
+# Internal-only kinds. Submitted from CLI tools via
+# Esr.Admin.CommandQueue.Watcher (file-queue path); never appear as
+# slash commands. They share the same Dispatcher dispatch table — yaml
+# is the single source of truth for kind → {permission, command_module}.
+internal_kinds:
+  notify:
+    permission: "notify.send"
+    command_module: "Esr.Admin.Commands.Notify"
+
+  reload:
+    permission: "runtime.reload"
+    command_module: "Esr.Admin.Commands.Reload"
+
+  register_adapter:
+    permission: "adapter.register"
+    command_module: "Esr.Admin.Commands.RegisterAdapter"
+
+  session_branch_new:
+    permission: "session:default/create"
+    command_module: "Esr.Admin.Commands.Session.BranchNew"
+
+  session_switch:
+    permission: "session.switch"
+    command_module: "Esr.Admin.Commands.Session.Switch"
+
+  session_branch_end:
+    permission: "session:default/end"
+    command_module: "Esr.Admin.Commands.Session.BranchEnd"
+
+  grant:
+    permission: "cap.manage"
+    command_module: "Esr.Admin.Commands.Cap.Grant"
+
+  revoke:
+    permission: "cap.manage"
+    command_module: "Esr.Admin.Commands.Cap.Revoke"
+
+  cross_app_test:
+    permission: "cross_app_test.invoke"
+    command_module: "Esr.Admin.Commands.CrossAppTest"

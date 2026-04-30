@@ -506,26 +506,116 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     end
   end
 
-  describe "PR-21q bootstrap slash bypass" do
-    test "/help returns clean command reference (no status — that's /doctor)",
-         %{sup: sup} do
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_help_test")
+  describe "PR-21κ slash dispatch (yaml-driven)" do
+    # PR-21κ Phase 4: any inbound text starting with `/` is forwarded
+    # to `Esr.Peers.SlashHandler` via `dispatch/3`. The pre-PR-21κ
+    # tests asserted the FAA's inline `/help` / `/whoami` / `/doctor`
+    # text replies — those now live in the command modules and are
+    # exercised by their own unit tests. What this describe block
+    # cares about: the FAA-side wiring, i.e. "slash → dispatch cast".
+    #
+    # We register a fake SlashHandler under the same name the
+    # production handler uses, so `Esr.Peers.SlashHandler.dispatch/3`'s
+    # `GenServer.cast(__MODULE__, ...)` lands in our test mailbox.
+
+    setup do
+      test_self = self()
+
+      slash_pid =
+        spawn_link(fn ->
+          loop = fn loop ->
+            receive do
+              msg ->
+                send(test_self, {:slash_received, msg})
+                loop.(loop)
+            end
+          end
+
+          loop.(loop)
+        end)
+
+      # PR-21κ Phase 6: production `dispatch/3` resolves the slash
+      # handler via `Esr.AdminSessionProcess.slash_handler_ref/0`.
+      # Override the registration with our recording stub so the FAA's
+      # cast lands in the test mailbox. on_exit tries to restart the
+      # production slash_handler via the AdminSession bootstrap helper
+      # — re-registering the dead test pid would leave the registry
+      # broken for subsequent tests.
+      :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, slash_pid)
+
+      on_exit(fn ->
+        # Re-bootstrap the production handler so other tests find a
+        # live pid under :slash_handler. Idempotent under the production
+        # supervisor; safely no-op when supervisor_test has torn it down
+        # (try/rescue covers the GenServer.call to a dead supervisor).
+        try do
+          Esr.AdminSession.bootstrap_slash_handler()
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+      :ok
+    end
+
+    for slash <- ["/help", "/whoami", "/doctor", "/new-workspace my-ws"] do
+      @slash slash
+      test "FAA forwards #{@slash} to SlashHandler.dispatch/3", %{sup: sup} do
+        instance = "inst_dispatch_#{System.unique_integer([:positive])}"
+
+        {:ok, pid} =
+          DynamicSupervisor.start_child(
+            sup,
+            {FeishuAppAdapter, %{instance_id: instance, neighbors: [], proxy_ctx: %{}}}
+          )
+
+        envelope = %{
+          "user_id" => "ou_dispatch_user",
+          "principal_id" => "ou_dispatch_user",
+          "payload" => %{
+            "event_type" => "msg_received",
+            "args" => %{
+              "chat_id" => "oc_dispatch_test",
+              "app_id" => instance,
+              "thread_id" => "",
+              "content" => @slash
+            }
+          }
+        }
+
+        send(pid, {:inbound_event, envelope})
+
+        # GenServer.cast lands in the registered slash_pid as
+        # {:"$gen_cast", {:dispatch, envelope, reply_to, ref}}.
+        assert_receive {:slash_received,
+                        {:"$gen_cast",
+                         {:dispatch, dispatched_envelope, ^pid, ref}}},
+                       500
+
+        assert is_reference(ref)
+        # FAA threads the original text into payload.text for the dispatch.
+        assert get_in(dispatched_envelope, ["payload", "text"]) == @slash
+      end
+    end
+
+    test "FAA delivers the SlashHandler reply as a chat DM keyed by ref", %{sup: sup} do
+      instance = "inst_dispatch_reply_#{System.unique_integer([:positive])}"
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/#{instance}")
 
       {:ok, pid} =
         DynamicSupervisor.start_child(
           sup,
-          {FeishuAppAdapter,
-           %{instance_id: "inst_help_test", neighbors: [], proxy_ctx: %{}}}
+          {FeishuAppAdapter, %{instance_id: instance, neighbors: [], proxy_ctx: %{}}}
         )
 
       envelope = %{
-        "user_id" => "ou_help_user",
-        "principal_id" => "ou_help_user",
+        "user_id" => "ou_reply_user",
+        "principal_id" => "ou_reply_user",
         "payload" => %{
           "event_type" => "msg_received",
           "args" => %{
-            "chat_id" => "oc_unbound_help",
-            "app_id" => "inst_help_test",
+            "chat_id" => "oc_reply_chat",
+            "app_id" => instance,
             "thread_id" => "",
             "content" => "/help"
           }
@@ -534,172 +624,26 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
       send(pid, {:inbound_event, envelope})
 
+      assert_receive {:slash_received,
+                      {:"$gen_cast", {:dispatch, _env, ^pid, ref}}},
+                     500
+
+      # Simulate SlashHandler's reply
+      send(pid, {:reply, "test help text", ref})
+
+      # FAA should DM the reply on the adapter:feishu/<instance> topic
       assert_receive %Phoenix.Socket.Broadcast{
                        event: "envelope",
                        payload: %{
                          "kind" => "directive",
                          "payload" => %{
-                           "args" => %{"chat_id" => "oc_unbound_help", "content" => content}
+                           "args" => %{"chat_id" => "oc_reply_chat", "content" => content}
                          }
                        }
                      },
                      500
 
-      # PR-21r: /help is now a clean command reference (man-style).
-      # Lists the slash commands with one-line descriptions; does NOT
-      # include the operator's user/chat status or bootstrap walk-
-      # through (that's /doctor).
-      assert content =~ "ESR slash commands"
-      assert content =~ "/help"
-      assert content =~ "/whoami"
-      assert content =~ "/doctor"
-      assert content =~ "/new-workspace"
-      assert content =~ "/new-session"
-      # Status checkmarks / bootstrap commands NOT in /help output
-      refute content =~ "✅"
-      refute content =~ "你的当前状态"
-      refute content =~ "Bootstrap 步骤"
-    end
-
-    test "/doctor returns status + bootstrap walk-through (the old /help content)",
-         %{sup: sup} do
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_doctor_test")
-
-      {:ok, pid} =
-        DynamicSupervisor.start_child(
-          sup,
-          {FeishuAppAdapter,
-           %{instance_id: "inst_doctor_test", neighbors: [], proxy_ctx: %{}}}
-        )
-
-      envelope = %{
-        "user_id" => "ou_doctor_user",
-        "principal_id" => "ou_doctor_user",
-        "payload" => %{
-          "event_type" => "msg_received",
-          "args" => %{
-            "chat_id" => "oc_doctor_test",
-            "app_id" => "inst_doctor_test",
-            "thread_id" => "",
-            "content" => "/doctor"
-          }
-        }
-      }
-
-      send(pid, {:inbound_event, envelope})
-
-      assert_receive %Phoenix.Socket.Broadcast{
-                       event: "envelope",
-                       payload: %{
-                         "kind" => "directive",
-                         "payload" => %{"args" => %{"content" => content}}
-                       }
-                     },
-                     500
-
-      assert content =~ "ESR 状态诊断"
-      assert content =~ "❌"
-      # /doctor's "next step" branch should be the user-bind one
-      # since ou_doctor_user is unbound
-      assert content =~ "user bind-feishu"
-      assert content =~ "ou_doctor_user"
-    end
-
-    test "/whoami in unbound chat returns identity diagnostic", %{sup: sup} do
-      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_whoami_test")
-
-      {:ok, pid} =
-        DynamicSupervisor.start_child(
-          sup,
-          {FeishuAppAdapter,
-           %{instance_id: "inst_whoami_test", neighbors: [], proxy_ctx: %{}}}
-        )
-
-      envelope = %{
-        "user_id" => "ou_whoami_user",
-        "principal_id" => "ou_whoami_user",
-        "payload" => %{
-          "event_type" => "msg_received",
-          "args" => %{
-            "chat_id" => "oc_whoami_test",
-            "app_id" => "inst_whoami_test",
-            "thread_id" => "",
-            "content" => "/whoami"
-          }
-        }
-      }
-
-      send(pid, {:inbound_event, envelope})
-
-      assert_receive %Phoenix.Socket.Broadcast{
-                       event: "envelope",
-                       payload: %{
-                         "kind" => "directive",
-                         "payload" => %{
-                           "args" => %{"content" => content}
-                         }
-                       }
-                     },
-                     500
-
-      assert content =~ "ou_whoami_user"
-      assert content =~ "ESR 身份"
-    end
-  end
-
-  describe "PR-21t /new-workspace bypass (routed to SlashHandler)" do
-    setup do
-      # Use a stub SlashHandler that just records what it receives.
-      # AdminSessionProcess.slash_handler_ref/0 looks up by name in
-      # AdminSessionProcess; spawn a recording pid + register.
-      test_self = self()
-
-      slash_pid =
-        spawn_link(fn ->
-          receive do
-            msg -> send(test_self, {:slash_received, msg})
-          end
-        end)
-
-      :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, slash_pid)
-
-      on_exit(fn ->
-        # Clean up the registration so other tests get the real
-        # slash_handler. AdminSessionProcess only keeps one entry per
-        # name; re-registration on real boot will overwrite anyway.
-        :ok
-      end)
-
-      :ok
-    end
-
-    test "/new-workspace in unbound chat routes to SlashHandler (chat-guide bypassed)",
-         %{sup: sup} do
-      {:ok, pid} =
-        DynamicSupervisor.start_child(
-          sup,
-          {FeishuAppAdapter,
-           %{instance_id: "inst_newws_test", neighbors: [], proxy_ctx: %{}}}
-        )
-
-      envelope = %{
-        "user_id" => "ou_newws_user",
-        "principal_id" => "ou_newws_user",
-        "payload" => %{
-          "event_type" => "msg_received",
-          "args" => %{
-            "chat_id" => "oc_newws_test",
-            "app_id" => "inst_newws_test",
-            "thread_id" => "",
-            "content" => "/new-workspace my-bootstrap-ws"
-          }
-        }
-      }
-
-      send(pid, {:inbound_event, envelope})
-
-      # SlashHandler stub recorded the slash_cmd
-      assert_receive {:slash_received, {:slash_cmd, _envelope, _reply_to}}, 500
+      assert content == "test help text"
     end
   end
 
