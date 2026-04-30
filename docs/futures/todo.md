@@ -39,6 +39,12 @@
 | OAuth-based esr user registration | Spec §"Out of scope" | Manual `esr user add` for now. Real OAuth needs Feishu Open Platform integration. |
 | Deprecate `cc_tmux` Python adapter | PR-21e mentioned as "out of scope" | `cc_mcp + TmuxProcess` is the new path. cc_tmux still referenced by `worker_supervisor.ex:46` + tests. Cleanup PR if it's truly dead. |
 | `tag=` alias removal in slash parser (D14) | done | PR-21α #104. Removed in slash parser; `final_gate.sh` `--param tag=` is `cmd run` template layer, untouched. |
+| **Yaml-ify adapter sidecar dispatch** (`@sidecar_dispatch`) | Workshop 2 | After Workshop 1 (slash routing) ships. `worker_supervisor.ex:45` map. Adding new adapter type today touches Elixir. |
+| **Yaml-ify permissions registry** | Workshop 2 | Centralize the `permissions/0` callbacks scattered across `Esr.Admin`, `Esr.PeerServer`, future handlers. Single `permissions.yaml` listing perms + scope prefixes (would have prevented PR-21γ's `validate_scope` bug). |
+| **Yaml-ify default values** (agent="cc", role="dev", start_cmd, kill_timeout) | Workshop 3 | `defaults.yaml`. Currently scattered across 5+ modules; tests + dev quirks suffer from no central spec. |
+| **Yaml-ify rate-limit windows** (`@deny_dm_interval_ms`, `@guide_dm_interval_ms`) | Workshop 3 | Operator-tunable. Dev / prod / e2e want different values. |
+| **Externalize doctor / help text to markdown** | Edge / cosmetic | Long Chinese heredoc strings in `feishu_app_adapter.ex`. Not strictly yaml-able (multi-line markdown is friendlier than yaml). Operator wants to tweak phrasing without restart. |
+| **Per-workspace worktree path convention** | Speculative | Today PR-21θ hardcodes `<root>/.worktrees/<branch>`. Workspace yaml could carry `worktree_pattern:` to override (e.g. `<root>-<branch>` sibling-dir). |
 | **Yaml file visualization / pretty-print** | New 2026-04-30 | Today operators `cat ~/.esrd/<env>/workspaces.yaml` etc. to inspect runtime state. After PR-21κ ships, the yaml surface grows: `slash-routes.yaml` + `workspaces.yaml` + `users.yaml` + `capabilities.yaml` + `agents.yaml` + `adapters.yaml` — cross-references hard to follow. Candidates: (a) `/topology` slash that renders all the connections, (b) `esr show` CLI that pretty-prints with cross-refs, (c) mermaid/graphviz diagrams generated at boot, (d) web view via Phoenix LiveView. Brainstorm + scope decision needed before implementation. |
 
 ## Pending — observability / ops
