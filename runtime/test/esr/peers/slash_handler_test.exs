@@ -599,6 +599,62 @@ defmodule Esr.Peers.SlashHandlerTest do
                      500
     end
 
+    test "PR-21ε: reads chat_id from payload.args.chat_id (real adapter shape)" do
+      # The Python feishu_adapter_runner places chat_id at
+      # payload.args.chat_id (the wire format). Pre-PR-21ε
+      # merge_chat_context only checked payload.chat_id and got nil for
+      # real inbounds — workspace_new succeeded but chats=[] (no
+      # auto-bind). This test pins the fallback.
+      if Process.whereis(Esr.Users.Registry) == nil do
+        start_supervised!(Esr.Users.Registry)
+      end
+
+      :ok =
+        Esr.Users.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Users.Registry.User{
+            username: "linyilun",
+            feishu_ids: ["ou_real_id"]
+          }
+        })
+
+      {:ok, pid} =
+        GenServer.start_link(
+          SlashHandler,
+          %{
+            dispatcher: :test_admin_dispatcher,
+            session_id: "admin",
+            neighbors: [],
+            proxy_ctx: %{}
+          }
+        )
+
+      envelope = %{
+        "principal_id" => "ou_real_id",
+        "payload" => %{
+          "text" => "/new-workspace my-ws",
+          "args" => %{
+            "chat_id" => "oc_real_chat",
+            "app_id" => "esr_helper"
+          }
+        }
+      }
+
+      send(pid, {:slash_cmd, envelope, self()})
+
+      assert_receive {:"$gen_cast",
+                      {:execute,
+                       %{
+                         "kind" => "workspace_new",
+                         "args" => %{
+                           "name" => "my-ws",
+                           "chat_id" => "oc_real_chat",
+                           "app_id" => "esr_helper",
+                           "username" => "linyilun"
+                         }
+                       }, {:reply_to, {:pid, ^pid, _ref}}}},
+                     500
+    end
+
     test "missing name returns user-facing error" do
       {:ok, pid} =
         GenServer.start_link(
