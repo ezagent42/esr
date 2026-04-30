@@ -186,19 +186,12 @@ def daemon_restart() -> None:
 
 
 @daemon.command("doctor")
-@click.option(
-    "--cleanup-orphans",
-    is_flag=True,
-    default=False,
-    help="Sweep /tmp/esr-worker-*.pid for orphan subprocesses and SIGTERM them.",
-)
-def daemon_doctor(cleanup_orphans: bool) -> None:
-    """Health snapshot + on-demand orphan cleanup (PR-21m).
+def daemon_doctor() -> None:
+    """Health snapshot.
 
-    By default just reports the current state (workers tracked,
-    users / workspaces loaded). Pass --cleanup-orphans to actually
-    SIGTERM any subprocess found in /tmp/esr-worker-*.pid that this
-    esrd doesn't own — the same logic the boot path runs.
+    PR-21β 2026-04-30: --cleanup-orphans flag removed. Subprocess
+    lifecycle is now BEAM-bound via erlexec; orphan accumulation
+    is no longer possible.
     """
     from esr.cli.runtime_bridge import RuntimeUnreachable, call_runtime
 
@@ -212,14 +205,6 @@ def daemon_doctor(cleanup_orphans: bool) -> None:
         return (reply.get("response") or {}).get("data") or {}
 
     try:
-        if cleanup_orphans:
-            stats = _data(call_runtime(topic="cli:daemon/cleanup_orphans", payload={}))
-            click.echo(f"esrd ({label}) orphan sweep:")
-            click.echo(f"  pidfiles checked: {stats.get('checked', 0)}")
-            click.echo(f"  orphans killed:   {stats.get('orphans_killed', 0)}")
-            click.echo(f"  stale unlinked:   {stats.get('stale_unlinked', 0)}")
-            return
-
         data = _data(call_runtime(topic="cli:daemon/doctor", payload={}))
 
         click.echo(f"🩺 esrd ({label}) health")

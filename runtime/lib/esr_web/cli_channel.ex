@@ -179,15 +179,10 @@ defmodule EsrWeb.CliChannel do
     }
   end
 
-  # PR-21m (2026-04-29): on-demand orphan cleanup via `esr daemon doctor`.
-  # Same logic the boot path runs in Esr.Application.start_link/2; CLI
-  # surfaces it for runtime invocation when an operator suspects orphans
-  # (e.g. subprocess log-tail shows multiple Feishu WS sessions
-  # competing).
-  def dispatch("cli:daemon/cleanup_orphans", _payload) do
-    stats = Esr.WorkerSupervisor.cleanup_orphans()
-    %{"data" => stats}
-  end
+  # PR-21β 2026-04-30: cli:daemon/cleanup_orphans removed — erlexec owns
+  # subprocess lifecycle so orphan accumulation is no longer possible.
+  # `esr daemon doctor` keeps reporting workers_tracked but the on-demand
+  # cleanup flag is gone too.
 
   # PR-21m: comprehensive runtime health snapshot for `esr daemon doctor`.
   # Pulls together state from multiple subsystems so operators can see

@@ -12,15 +12,23 @@ Three-case shape mirrors what the other two per-type sidecars
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 
 def test_feishu_adapter_runner_help_exits_clean() -> None:
-    """``python -m feishu_adapter_runner --help`` prints usage and exits 0."""
+    """``python -m feishu_adapter_runner --help`` prints usage and exits 0.
+
+    PR-21β 2026-04-30: ESR_SPAWN_TOKEN guard requires a token (or
+    `__debug__` literal) for CLI invocation. Tests use the debug
+    literal — same escape hatch documented in the guard's error
+    message.
+    """
+    env = {**os.environ, "ESR_SPAWN_TOKEN": "__debug__"}
     result = subprocess.run(
         [sys.executable, "-m", "feishu_adapter_runner", "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, env=env,
     )
     assert result.returncode == 0, result.stderr
     assert "--adapter" in result.stdout

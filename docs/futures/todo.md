@@ -16,12 +16,16 @@
 
 ## In flight (current PR)
 
-(none — PR-21w shipped)
+(none — PR-21β shipped, see Done section below)
 
 ## Pending — concrete next PRs
 
 | What | Tracked PR | Notes |
 |---|---|---|
+| Migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec) | done | PR-21β — `spawn_worker.sh` + pidfile + `cleanup_orphans` deleted; erlexec-managed DynamicSupervisor pattern; `ESR_SPAWN_TOKEN` Python guards. Net -230 LOC. See `docs/notes/erlexec-worker-lifecycle.md`. |
+| Investigate: why E2E missed multi-adapter orphan duplication | pending | See task #222. Audit final_gate.sh + tests/e2e/ for assertions that would catch "1 user message → N replies" — likely none. May get folded into the lifecycle migration PR's testing chapter. |
+| Spec: structured error/notification response system | pending design | Task #220. "error: unauthorized" 粒度不够; design ToolUseResponse/AssistantResponse-style envelope to compose 错误 + 操作建议. Brainstorm separately. |
+| Spec: unify slash-command business logic into topology yaml | pending design | Task #221. Move slash routing from Elixir code into yaml so future changes don't need esrd restart. Brainstorm separately. |
 | `Esr.Peers.CapGuard` — extract Lane B from `Esr.PeerServer` | done | PR-21x #101. `deny_dm_last_emit` migrated; rate-limit globally consistent. |
 | Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | done | PR-21y #102. `bind-feishu` migrates existing `ou_xxx` caps + grants bootstrap under username. `unbind-feishu` revokes bootstrap when last binding goes. `cap grant ou_*` emits operator hint. PR-21s graceful resolve stays as backstop. |
 | `describe_topology` filter for `users.yaml` | done | PR-21z #103. Allowlist hardened in `filter_workspace_for_describe/1` + 5 regression tests + `docs/notes/describe-topology-security.md`. |
@@ -79,4 +83,5 @@ Track only PR-21 series + immediate context. Older PRs are in git log.
 - PR-21y `#102` — Cap principal_id rekey to esr-username (bind-feishu migrates existing `ou_*` caps + grants bootstrap under username)
 - PR-21z `#103` — `describe_topology` users.yaml security audit + regression tests + `docs/notes/describe-topology-security.md`
 - PR-21α `#104` — remove `tag=` alias from slash parser (`/new-session`)
+- PR-21β `#105` 2026-04-30 — `Esr.WorkerSupervisor` migrated to erlexec; deletes pidfile/cleanup_orphans/spawn_worker.sh; adds `ESR_SPAWN_TOKEN` guard
 - PR-22 `#89` — remove `workspace.root`, repo becomes per-session

@@ -17,6 +17,23 @@ defmodule Esr.Application do
   def start(_type, _args) do
     apply_tmux_socket_env()
 
+    # PR-21β 2026-04-30: per-boot random token injected into every
+    # worker subprocess via Esr.Workers.{AdapterProcess,HandlerProcess}.
+    # Python-side guards refuse to start when the env var is missing,
+    # preventing operator-spawned rogue adapters from competing with
+    # the esrd-managed ones (today's 8x-orphan incident motivated this).
+    # Generated BEFORE Supervisor.start_link/2 so children find the
+    # token via Application.get_env/2.
+    spawn_token = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+    Application.put_env(:esr, :spawn_token, spawn_token)
+
+    # PR-21β: one-shot residue cleanup. Pre-PR-21β builds wrote pidfiles
+    # + log files under /tmp/esr-worker-*. They're now obsolete; sweep
+    # them at boot once. Idempotent: subsequent boots find nothing.
+    for f <- Path.wildcard("/tmp/esr-worker-*.pid") ++ Path.wildcard("/tmp/esr-worker-*.log") do
+      _ = File.rm(f)
+    end
+
     children = [
       # 1. Cluster / default Phoenix-generated children first.
       {DNSCluster, query: Application.get_env(:esr, :dns_cluster_query) || :ignore},
@@ -189,32 +206,9 @@ defmodule Esr.Application do
       _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
 
-      # PR-21m (2026-04-29): clean up orphan subprocesses BEFORE
-      # restore_adapters_from_disk re-spawns them. Origin: BEAM
-      # crashes during PR-21 dev cycles re-parented subprocesses to
-      # launchd (PID 1) — they outlived their parent esrd, kept
-      # holding Feishu app credentials, and produced silent message-
-      # loss when restore_adapters spawned a new sibling. The
-      # boot-time sweep ensures the new generation owns the Feishu
-      # WS without contention.
-      try do
-        stats = Esr.WorkerSupervisor.cleanup_orphans()
-        require Logger
-
-        Logger.info(
-          "WorkerSupervisor.cleanup_orphans at boot: " <>
-            "checked=#{stats.checked} orphans_killed=#{stats.orphans_killed} " <>
-            "stale_unlinked=#{stats.stale_unlinked}"
-        )
-      catch
-        kind, reason ->
-          require Logger
-
-          Logger.warning(
-            "WorkerSupervisor.cleanup_orphans failed (#{kind}: #{inspect(reason)}); " <>
-              "continuing boot"
-          )
-      end
+      # PR-21β 2026-04-30: cleanup_orphans is gone. erlexec owns
+      # subprocess lifecycle — when the previous BEAM exited, all
+      # workers died with it. No orphan accumulation possible.
 
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
 

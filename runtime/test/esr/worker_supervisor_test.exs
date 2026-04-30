@@ -1,9 +1,10 @@
 defmodule Esr.WorkerSupervisorTest do
   @moduledoc """
-  Phase 8f — Esr.WorkerSupervisor spawns Python adapter/handler worker
-  subprocesses on demand for Topology.Instantiator. These tests cover
-  idempotency: a second call with the same key is a no-op, and an
-  externally-provided pidfile (the scenario-setup path) is respected.
+  PR-21β 2026-04-30 — Esr.WorkerSupervisor as a thin GenServer over an
+  internal DynamicSupervisor of `Esr.Workers.{AdapterProcess,HandlerProcess}`
+  children. Tests cover idempotency + tracking surface; subprocess
+  lifecycle is covered by the per-peer test suites and the integration
+  tests below.
   """
 
   use ExUnit.Case, async: false
@@ -11,19 +12,20 @@ defmodule Esr.WorkerSupervisorTest do
   alias Esr.WorkerSupervisor
 
   setup do
-    # WorkerSupervisor is started by the Application supervisor in
-    # test env. Clear any leftover state by listing and terminating
-    # tracked workers. State is process-local, so a restart is cleanest.
-    existing = WorkerSupervisor.list()
+    Application.put_env(:esr, :spawn_token, "test-token-#{System.unique_integer()}")
+    on_exit(fn -> Application.delete_env(:esr, :spawn_token) end)
 
-    for {_k, _n, _i, pid} <- existing do
-      _ = System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
+    # Best-effort cleanup of any tracked workers leaked from a previous
+    # test. With erlexec, supervisor termination cascades to children,
+    # so this is just for state isolation between tests.
+    for {kind, name, id, _pid} <- WorkerSupervisor.list() do
+      if kind == :adapter, do: WorkerSupervisor.terminate_adapter(name, id)
     end
 
     :ok
   end
 
-  describe "sidecar_module/1 (PR-4b dispatch table)" do
+  describe "sidecar_module/1" do
     test "known adapters dispatch to dedicated sidecars" do
       assert WorkerSupervisor.sidecar_module("feishu") == "feishu_adapter_runner"
       assert WorkerSupervisor.sidecar_module("cc_tmux") == "cc_adapter_runner"
@@ -36,74 +38,89 @@ defmodule Esr.WorkerSupervisorTest do
     end
   end
 
-  describe "ensure_adapter/4" do
-    test "second call with same key is a no-op (already_running)" do
-      # Use a definitely-nonexistent adapter name; the subprocess will
-      # fail *inside* adapter_runner.main but from our POV the OS pid
-      # comes back successfully — idempotency is what's being tested.
+  describe "ensure_adapter/4 idempotency" do
+    test "second call with same key returns :already_running" do
       key_name = "noop_adapter_#{System.unique_integer([:positive])}"
       instance = "inst_#{System.unique_integer([:positive])}"
       url = "ws://127.0.0.1:65535/adapter_hub/socket/websocket?vsn=2.0.0"
 
       try do
         first = WorkerSupervisor.ensure_adapter(key_name, instance, %{}, url)
-        assert first == :ok or match?({:error, _}, first)
+        assert first == :ok
 
-        # A live pid is listed.
-        assert Enum.any?(WorkerSupervisor.list(), fn
-                 {:adapter, ^key_name, ^instance, _pid} -> true
-                 _ -> false
-               end) or first != :ok
-
-        # Second call: if the first process is still alive this returns
-        # :already_running. The subprocess has a bad URL so it may exit
-        # before the second call lands — either outcome is valid, but
-        # a successful re-spawn would NOT reappear as a new pid in
-        # list/0 if the key was still tracked. So assert the weaker
-        # invariant: we never crash and the list stays bounded at 1.
+        # Second call: the child is alive (subprocess may be busy
+        # failing to connect, but the BEAM peer is up).
         second = WorkerSupervisor.ensure_adapter(key_name, instance, %{}, url)
+        assert second == :already_running
 
-        assert second == :already_running or second == :ok or
-                 match?({:error, _}, second)
-
+        # list/0 contains exactly one entry for this key.
         matching =
           Enum.count(WorkerSupervisor.list(), fn
             {:adapter, ^key_name, ^instance, _pid} -> true
             _ -> false
           end)
 
-        assert matching <= 1
+        assert matching == 1
       after
-        # Best-effort cleanup — the test's subprocess has a bad URL,
-        # which makes it exit quickly; any survivor gets killed below.
-        for {:adapter, ^key_name, ^instance, pid} <- WorkerSupervisor.list() do
-          _ = System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
-        end
+        WorkerSupervisor.terminate_adapter(key_name, instance)
       end
     end
   end
 
   describe "ensure_handler/3" do
-    test "tracks the key in list/0" do
+    test "tracks the key in list/0 and returns :ok" do
       module = "noop_module_#{System.unique_integer([:positive])}"
       worker_id = "w_#{System.unique_integer([:positive])}"
       url = "ws://127.0.0.1:65535/handler_hub/socket/websocket?vsn=2.0.0"
 
       try do
         result = WorkerSupervisor.ensure_handler(module, worker_id, url)
-        assert result == :ok or match?({:error, _}, result)
+        assert result == :ok
 
-        if result == :ok do
-          assert Enum.any?(WorkerSupervisor.list(), fn
-                   {:handler, ^module, ^worker_id, _pid} -> true
-                   _ -> false
-                 end)
-        end
+        assert Enum.any?(WorkerSupervisor.list(), fn
+                 {:handler, ^module, ^worker_id, pid} -> is_pid(pid)
+                 _ -> false
+               end)
+
+        # Idempotency
+        assert WorkerSupervisor.ensure_handler(module, worker_id, url) == :already_running
       after
         for {:handler, ^module, ^worker_id, pid} <- WorkerSupervisor.list() do
-          _ = System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
+          if Process.alive?(pid), do: GenServer.stop(pid, :shutdown, 1_000)
         end
       end
+    end
+  end
+
+  describe "terminate_adapter/2" do
+    test "live key → :ok, removes from list" do
+      key_name = "term_adapter_#{System.unique_integer([:positive])}"
+      instance = "i_#{System.unique_integer([:positive])}"
+      url = "ws://127.0.0.1:65535/adapter_hub/socket/websocket?vsn=2.0.0"
+
+      :ok = WorkerSupervisor.ensure_adapter(key_name, instance, %{}, url)
+      assert :ok = WorkerSupervisor.terminate_adapter(key_name, instance)
+
+      refute Enum.any?(WorkerSupervisor.list(), fn
+               {:adapter, ^key_name, ^instance, _pid} -> true
+               _ -> false
+             end)
+    end
+
+    test "absent key → :not_found" do
+      assert :not_found = WorkerSupervisor.terminate_adapter("nope", "missing")
+    end
+  end
+
+  describe "list/0" do
+    test "returns BEAM pids (PR-21β: switched from OS pids)" do
+      assert is_list(WorkerSupervisor.list())
+
+      Enum.each(WorkerSupervisor.list(), fn {kind, name, id, pid} ->
+        assert kind in [:adapter, :handler]
+        assert is_binary(name) and is_binary(id)
+        assert is_pid(pid)
+      end)
     end
   end
 end

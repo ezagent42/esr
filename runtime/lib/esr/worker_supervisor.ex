@@ -1,48 +1,47 @@
 defmodule Esr.WorkerSupervisor do
   @moduledoc """
-  Spawns and tracks Python adapter/handler subprocesses (Phase 8f).
+  Tracks Python adapter/handler subprocesses spawned via `:erlexec`
+  through the `Esr.Workers.{AdapterProcess,HandlerProcess}` peer
+  modules (PR-21β, 2026-04-30).
 
-  When Topology.Instantiator binds an adapter or starts a PeerServer,
-  the Python-side counterpart (the per-type adapter sidecars —
-  ``feishu_adapter_runner``, ``cc_adapter_runner``,
-  ``generic_adapter_runner`` — and ``esr.ipc.handler_worker``) must be
-  joined to the matching Phoenix channel *before* the first
-  directive/call broadcasts. `scripts/
-  spawn_scenario_workers.sh` pre-spawns these externally for the mock
-  scenario, but `final_gate.sh --live` is SHA-pinned and can't take
-  that extra step — so the runtime launches them itself, on demand,
-  keyed by (adapter_name, instance_id) or (module, worker_id).
+  Replaces the pre-PR-21β `bash & disown` + pidfile + `cleanup_orphans`
+  apparatus. BEAM owns subprocess lifecycle: when esrd exits, every
+  worker dies with it (handled by the erlexec C++ port program).
+  Zero pidfiles, zero orphan-management, zero on-disk state.
 
   ## Idempotency
 
   `ensure_adapter/4` and `ensure_handler/3` are both idempotent:
 
-    * If this supervisor already spawned a live Python process for
-      that key, returns `:already_running` without touching the shell.
-    * If the external fixture (spawn_scenario_workers.sh) spawned a
-      worker under `/tmp/esr-worker-<slug>.pid`, the pidfile check
-      here will see the live pid and skip re-spawning.
+    * If a child for this `(adapter, instance_id)` / `(module, worker_id)`
+      key is already alive, returns `:already_running`.
+    * Otherwise spawns a new child under the internal DynamicSupervisor.
 
-  ## Shutdown
+  ## Crash policy
 
-  On supervisor termination the GenServer kills every tracked pid
-  with SIGTERM (then SIGKILL after 2 s). The pidfile directory is not
-  cleaned — operators can still see what ran.
+  The internal DynamicSupervisor has `max_restarts: 3, max_seconds: 60`.
+  A child that exits non-zero is restarted (`:transient` semantics).
+  Budget exhaustion (4 crashes within 60s) takes down the
+  WorkerSupervisor itself, escalating to esrd shutdown — launchd
+  respawns the whole tree, which is the correct response to a
+  systemic problem.
+
+  ## Sidecar dispatch
+
+  `sidecar_module/1` maps an adapter name to the Python module that
+  hosts its sidecar (e.g. `"feishu" → "feishu_adapter_runner"`).
+  Unknown names fall back to `generic_adapter_runner`.
   """
 
   @behaviour Esr.Role.OTP
 
   use GenServer
-
   require Logger
-
-  @pidfile_dir "/tmp"
 
   # PR-4b: per-adapter-type sidecar dispatch. Adapters we ship own code
   # for get a dedicated Python module so their dependency footprint stays
   # scoped; anything not in the map falls through to generic_adapter_runner
-  # (which emits a DeprecationWarning on stderr at startup so operators
-  # know to add the adapter to a dedicated sidecar's allowlist).
+  # (which emits a DeprecationWarning on stderr at startup).
   @sidecar_dispatch %{
     "feishu" => "feishu_adapter_runner",
     "cc_tmux" => "cc_adapter_runner",
@@ -56,11 +55,8 @@ defmodule Esr.WorkerSupervisor do
   @doc """
   Map an adapter name to the Python module that should host its sidecar.
 
-  Known adapters route to dedicated sidecars (e.g. `feishu_adapter_runner`,
-  `cc_adapter_runner`). Unknown names fall back to `generic_adapter_runner`,
-  which is a migration shim that prints a DeprecationWarning — add new
-  adapters to a dedicated sidecar's allowlist instead of relying on the
-  generic fallback.
+  Known adapters route to dedicated sidecars; unknown names fall back
+  to `generic_adapter_runner`.
   """
   @spec sidecar_module(String.t()) :: String.t()
   def sidecar_module(name) when is_binary(name),
@@ -75,9 +71,9 @@ defmodule Esr.WorkerSupervisor do
   Ensure a Python adapter sidecar subprocess is joined for
   `(adapter_name, instance_id)` against `url`.
 
-  `config` is a map (or JSON-encoded string) passed verbatim to
-  the sidecar CLI (`python -m <sidecar_module> --config-json ...`).
-  `sidecar_module/1` picks the per-adapter module name.
+  Returns `:ok` on fresh spawn, `:already_running` if a live child for
+  the key exists, or `{:error, reason}` if the DynamicSupervisor
+  rejected the spawn.
   """
   @spec ensure_adapter(String.t(), String.t(), map() | String.t(), String.t()) ::
           :ok | :already_running | {:error, term()}
@@ -105,38 +101,14 @@ defmodule Esr.WorkerSupervisor do
   end
 
   @doc "List every (kind, name, id, pid) tuple currently tracked."
-  @spec list() :: [{:adapter | :handler, String.t(), String.t(), integer()}]
+  @spec list() :: [{:adapter | :handler, String.t(), String.t(), pid()}]
   def list do
     GenServer.call(__MODULE__, :list)
   end
 
   @doc """
-  PR-21m (2026-04-29): scan ``/tmp/esr-worker-*.pid`` for orphan
-  subprocesses (alive but not tracked by this WorkerSupervisor) and
-  SIGTERM them. Stale pidfiles for already-dead pids are unlinked.
-
-  Origin: BEAM crashes during PR-21 dev cycles caused subprocesses
-  to be re-parented to launchd (PID 1) without their parent esrd
-  knowing — the result was multiple Python feishu_adapter_runners
-  competing for the same Feishu app credential, producing the
-  silent message-loss the user reported. erlexec normally handles
-  same-process-tree cleanup; orphans require this pidfile-driven
-  sweep at boot.
-
-  Returns ``%{checked: n, orphans_killed: m, stale_unlinked: k}``
-  for the caller (Application boot logs it; ``esr daemon doctor``
-  surfaces it on demand).
-  """
-  @spec cleanup_orphans() :: %{checked: non_neg_integer(), orphans_killed: non_neg_integer(), stale_unlinked: non_neg_integer()}
-  def cleanup_orphans do
-    GenServer.call(__MODULE__, :cleanup_orphans)
-  end
-
-  @doc """
-  Stop the Python adapter sidecar for `(adapter_name, instance_id)` and
-  forget it. PR-L: counterpart to `ensure_adapter/4` so
-  `cli:adapters/remove` can clean up the OS process. Idempotent — a
-  no-op when the worker isn't tracked.
+  Stop the worker for `(adapter_name, instance_id)` and forget it.
+  Idempotent — `:not_found` when no live child exists for the key.
   """
   @spec terminate_adapter(String.t(), String.t()) :: :ok | :not_found
   def terminate_adapter(adapter_name, instance_id)
@@ -148,13 +120,22 @@ defmodule Esr.WorkerSupervisor do
   # GenServer callbacks
   # ------------------------------------------------------------------
 
-  @impl GenServer
+  @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)
-    {:ok, %{workers: %{}}}
+
+    {:ok, sup} =
+      DynamicSupervisor.start_link(
+        strategy: :one_for_one,
+        max_restarts: 3,
+        max_seconds: 60
+      )
+
+    # workers: %{ {:adapter | :handler, name, id} => pid }
+    {:ok, %{sup: sup, workers: %{}}}
   end
 
-  @impl GenServer
+  @impl true
   def handle_call(
         {:ensure_adapter, adapter_name, instance_id, config, url},
         _from,
@@ -163,29 +144,14 @@ defmodule Esr.WorkerSupervisor do
     key = {:adapter, adapter_name, instance_id}
     cfg_json = normalise_config(config)
 
-    {reply, new_state} =
-      ensure(
-        state,
-        key,
-        pidfile_path(key),
-        url,
-        fn ->
-          spawn_python([
-            "-m",
-            sidecar_module(adapter_name),
-            "--adapter",
-            adapter_name,
-            "--instance-id",
-            instance_id,
-            "--url",
-            url,
-            "--config-json",
-            cfg_json
-          ])
-        end
-      )
+    args = %{
+      adapter: adapter_name,
+      instance_id: instance_id,
+      url: url,
+      config_json: cfg_json
+    }
 
-    {:reply, reply, new_state}
+    spawn_or_already(state, key, {Esr.Workers.AdapterProcess, args})
   end
 
   def handle_call(
@@ -195,120 +161,61 @@ defmodule Esr.WorkerSupervisor do
       ) do
     key = {:handler, handler_module, worker_id}
 
-    {reply, new_state} =
-      ensure(
-        state,
-        key,
-        pidfile_path(key),
-        url,
-        fn ->
-          spawn_python([
-            "-m",
-            "esr.ipc.handler_worker",
-            "--module",
-            handler_module,
-            "--worker-id",
-            worker_id,
-            "--url",
-            url
-          ])
-        end
-      )
+    args = %{
+      module: handler_module,
+      worker_id: worker_id,
+      url: url
+    }
 
-    {:reply, reply, new_state}
+    spawn_or_already(state, key, {Esr.Workers.HandlerProcess, args})
   end
 
   def handle_call({:terminate, key}, _from, state) do
     case Map.get(state.workers, key) do
+      pid when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(state.sup, pid)
+        {:reply, :ok, %{state | workers: Map.delete(state.workers, key)}}
+
       nil ->
         {:reply, :not_found, state}
-
-      %{pid: pid} = worker ->
-        kill_pid(pid)
-        # Best-effort pidfile cleanup so a future ensure_adapter doesn't
-        # see a dead pid and assume the worker is external/already-up.
-        case worker do
-          %{pidfile: pf} when is_binary(pf) -> _ = File.rm(pf)
-          _ -> :ok
-        end
-
-        new_workers = Map.delete(state.workers, key)
-        {:reply, :ok, %{state | workers: new_workers}}
     end
   end
 
   def handle_call(:list, _from, state) do
     list =
-      for {{kind, name, id}, %{pid: pid}} <- state.workers do
+      for {{kind, name, id}, pid} <- state.workers do
         {kind, name, id, pid}
       end
 
     {:reply, list, state}
   end
 
-  def handle_call(:cleanup_orphans, _from, state) do
-    require Logger
-
-    tracked_pids =
-      state.workers
-      |> Map.values()
-      |> Enum.map(fn %{pid: pid} -> pid end)
-      |> MapSet.new()
-
-    stats =
-      Path.wildcard(Path.join(@pidfile_dir, "esr-worker-*.pid"))
-      |> Enum.reduce(%{checked: 0, orphans_killed: 0, stale_unlinked: 0}, fn path, acc ->
-        acc = Map.update!(acc, :checked, &(&1 + 1))
-
-        with {:ok, content} <- File.read(path),
-             {pid, _} <- Integer.parse(String.trim(content)),
-             true <- pid > 0 do
-          cond do
-            not pid_alive?(pid) ->
-              File.rm(path)
-              Map.update!(acc, :stale_unlinked, &(&1 + 1))
-
-            MapSet.member?(tracked_pids, pid) ->
-              # Tracked — leave alone
-              acc
-
-            true ->
-              Logger.info(
-                "WorkerSupervisor.cleanup_orphans: SIGTERM orphan subprocess pid=#{pid} pidfile=#{path}"
-              )
-
-              kill_pid(pid)
-              File.rm(path)
-              Map.update!(acc, :orphans_killed, &(&1 + 1))
-          end
-        else
-          # Malformed pidfile (empty / non-numeric) — treat as stale.
-          _ ->
-            File.rm(path)
-            Map.update!(acc, :stale_unlinked, &(&1 + 1))
-        end
-      end)
-
-    {:reply, stats, state}
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    # Worker died; DynamicSupervisor will restart it under :transient
+    # semantics if exit was abnormal. Drop the stale pid from our
+    # index — the next ensure_* call will re-spawn or pick up the
+    # restarted child via DynamicSupervisor's own bookkeeping.
+    workers = for {k, p} <- state.workers, p != pid, into: %{}, do: {k, p}
+    {:noreply, %{state | workers: workers}}
   end
 
-  @impl GenServer
-  def handle_info({:EXIT, _port, _reason}, state) do
-    # System.cmd under :trap_exit sends EXIT signals from its short-lived
-    # Port back to us. They correspond to completed `kill -0` / `kill`
-    # probes, not to tracked Python workers (those aren't linked to us —
-    # they're detached via setsid). Swallow.
+  def handle_info({:EXIT, _from, _reason}, state) do
+    # Trapped exits from the linked DynamicSupervisor are handled by
+    # standard supervisor crash semantics (we crash too). Other linked
+    # exits (none expected) are swallowed.
     {:noreply, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  @impl GenServer
+  @impl true
   def terminate(_reason, state) do
-    for {_key, %{pid: pid}} <- state.workers do
-      kill_pid(pid)
-    end
-
+    # DynamicSupervisor.terminate_child cascades: each child's
+    # OSProcessWorker.terminate/2 calls :exec.stop/1 which SIGTERMs
+    # then SIGKILLs after kill_timeout. All workers gone before BEAM
+    # exits.
+    if Process.alive?(state.sup), do: Process.exit(state.sup, :shutdown)
     :ok
   end
 
@@ -316,196 +223,39 @@ defmodule Esr.WorkerSupervisor do
   # Internals
   # ------------------------------------------------------------------
 
-  # PR-M 2026-04-28: ensure now takes the target URL so we can detect
-  # orphan subprocesses left over from a previous esrd that bound a
-  # different port. Pidfile content grew from `<PID>` to
-  # `<PID>\n<URL>`; missing 2nd line treated as "stale, respawn"
-  # (covers pre-PR-M pidfiles without losing them entirely).
-  defp ensure(state, key, pidfile, url, spawn_fn) do
-    cond do
-      tracked_alive_for_url?(state, key, url) ->
-        {:already_running, state}
-
-      tracked_alive?(state, key) ->
-        # Tracked but URL drifted (esrd kickstart picked a new port).
-        # Kill the stale one and fall through to spawn fresh.
-        kill_tracked(state, key)
-        spawn_fresh(Map.update!(state, :workers, &Map.delete(&1, key)), key, pidfile, url, spawn_fn)
-
-      external_alive_for_url?(pidfile, url) ->
-        {:already_running, record_external(state, key, pidfile, url)}
-
-      external_alive_any_url?(pidfile) ->
-        # Pidfile says alive but URL doesn't match (or pre-PR-M pidfile
-        # lacks URL). Same drift case as tracked-but-stale — kill it.
-        case read_pidfile(pidfile) do
-          {:ok, pid, _} -> kill_pid(pid)
-          _ -> :ok
+  defp spawn_or_already(state, key, child_spec) do
+    case Map.get(state.workers, key) do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid) do
+          {:reply, :already_running, state}
+        else
+          spawn_and_track(state, key, child_spec)
         end
 
-        spawn_fresh(state, key, pidfile, url, spawn_fn)
-
-      true ->
-        spawn_fresh(state, key, pidfile, url, spawn_fn)
+      nil ->
+        spawn_and_track(state, key, child_spec)
     end
   end
 
-  defp spawn_fresh(state, key, pidfile, url, spawn_fn) do
-    case spawn_fn.() do
+  defp spawn_and_track(state, key, child_spec) do
+    case DynamicSupervisor.start_child(state.sup, child_spec) do
       {:ok, pid} ->
-        File.write(pidfile, "#{pid}\n#{url}")
-        {:ok, put_in(state.workers[key], %{pid: pid, pidfile: pidfile, url: url})}
+        Process.monitor(pid)
+        {:reply, :ok, %{state | workers: Map.put(state.workers, key, pid)}}
+
+      {:error, {:already_started, pid}} ->
+        Process.monitor(pid)
+        {:reply, :already_running, %{state | workers: Map.put(state.workers, key, pid)}}
 
       {:error, reason} ->
-        Logger.warning("WorkerSupervisor spawn failed for #{inspect(key)}: #{inspect(reason)}")
-        {{:error, reason}, state}
+        Logger.warning(
+          "WorkerSupervisor spawn failed key=#{inspect(key)} reason=#{inspect(reason)}"
+        )
+
+        {:reply, {:error, reason}, state}
     end
-  end
-
-  defp kill_tracked(state, key) do
-    case Map.get(state.workers, key) do
-      %{pid: pid} -> kill_pid(pid)
-      _ -> :ok
-    end
-  end
-
-  defp tracked_alive?(state, key) do
-    case Map.get(state.workers, key) do
-      %{pid: pid} -> pid_alive?(pid)
-      nil -> false
-    end
-  end
-
-  defp tracked_alive_for_url?(state, key, url) do
-    case Map.get(state.workers, key) do
-      %{pid: pid, url: ^url} -> pid_alive?(pid)
-      _ -> false
-    end
-  end
-
-  defp external_alive_any_url?(pidfile) do
-    case read_pidfile(pidfile) do
-      {:ok, pid, _} -> pid_alive?(pid)
-      _ -> false
-    end
-  end
-
-  defp external_alive_for_url?(pidfile, url) do
-    case read_pidfile(pidfile) do
-      {:ok, pid, ^url} -> pid_alive?(pid)
-      _ -> false
-    end
-  end
-
-  # Returns {:ok, pid, url_or_nil} | :error. URL is nil for pre-PR-M
-  # pidfiles that only contained the PID — caller treats this as
-  # "URL mismatch, respawn" since we can't prove they match.
-  defp read_pidfile(pidfile) do
-    with {:ok, contents} <- File.read(pidfile),
-         [pid_s | rest] <- String.split(String.trim(contents), "\n", parts: 2),
-         {pid, _} <- Integer.parse(pid_s) do
-      url = case rest do
-        [u] when is_binary(u) and u != "" -> u
-        _ -> nil
-      end
-
-      {:ok, pid, url}
-    else
-      _ -> :error
-    end
-  end
-
-  defp record_external(state, key, pidfile, url) do
-    {:ok, pid, _} = read_pidfile(pidfile)
-    put_in(state.workers[key], %{pid: pid, pidfile: pidfile, url: url, external: true})
-  end
-
-  defp pid_alive?(pid) when is_integer(pid) do
-    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
-      {_, 0} -> true
-      _ -> false
-    end
-  end
-
-  defp pid_alive?(_), do: false
-
-  defp pidfile_path({:adapter, name, id}) do
-    slug = "adapter-" <> name <> "-" <> slugify(id)
-    Path.join(@pidfile_dir, "esr-worker-" <> slug <> ".pid")
-  end
-
-  defp pidfile_path({:handler, module, worker_id}) do
-    slug = "handler-" <> slugify(module) <> "-" <> slugify(worker_id)
-    Path.join(@pidfile_dir, "esr-worker-" <> slug <> ".pid")
-  end
-
-  defp slugify(s) do
-    s
-    |> String.replace(~r/[^A-Za-z0-9_.-]/, "_")
   end
 
   defp normalise_config(cfg) when is_binary(cfg), do: cfg
   defp normalise_config(cfg) when is_map(cfg), do: Jason.encode!(cfg)
-
-  # Spawn `uv run --project py python <args>` detached from our stdio
-  # with output redirected to /tmp/esr-worker-<slug>.log. Returns the
-  # OS pid of the Python process (best-effort; uv forks so the captured
-  # pid may be uv's — good enough for liveness checks).
-  defp spawn_python(extra_args) do
-    repo = repo_root()
-    log_path = log_path_for(extra_args)
-    # scripts/spawn_worker.sh daemonises the process and prints its pid —
-    # solves the bash-in-bash-in-elixir stdin/stdout-inheritance hang the
-    # inline `cmd & echo $!` invocation triggered on macOS.
-    wrapper = Path.join(repo, "scripts/spawn_worker.sh")
-    argv = [wrapper, log_path, "uv", "run", "--project", "py", "python"] ++ extra_args
-
-    case System.cmd(hd(argv), tl(argv), cd: repo, stderr_to_stdout: false) do
-      {out, 0} ->
-        case out |> String.trim() |> Integer.parse() do
-          {pid, _} when pid > 0 -> {:ok, pid}
-          _ -> {:error, {:spawn_bad_output, out}}
-        end
-
-      {out, code} ->
-        {:error, {:spawn_failed, code, out}}
-    end
-  end
-
-  defp repo_root do
-    case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
-      {path, 0} -> String.trim(path)
-      _ -> File.cwd!()
-    end
-  end
-
-  defp log_path_for(args) do
-    # Mirror the pidfile naming so operators can cross-reference. The
-    # module in argv is one of the three per-type sidecars:
-    # `{feishu,cc,generic}_adapter_runner`.
-    case args do
-      ["-m", module, "--adapter", name, "--instance-id", id | _]
-      when module in [
-             "feishu_adapter_runner",
-             "cc_adapter_runner",
-             "generic_adapter_runner"
-           ] ->
-        Path.join(@pidfile_dir, "esr-worker-adapter-" <> name <> "-" <> slugify(id) <> ".log")
-
-      ["-m", "esr.ipc.handler_worker", "--module", module, "--worker-id", wid | _] ->
-        Path.join(
-          @pidfile_dir,
-          "esr-worker-handler-" <> slugify(module) <> "-" <> slugify(wid) <> ".log"
-        )
-
-      _ ->
-        Path.join(@pidfile_dir, "esr-worker-unknown.log")
-    end
-  end
-
-  defp kill_pid(pid) do
-    _ = System.cmd("kill", ["-TERM", Integer.to_string(pid)], stderr_to_stdout: true)
-    :timer.sleep(500)
-    _ = System.cmd("kill", ["-KILL", Integer.to_string(pid)], stderr_to_stdout: true)
-  end
 end
