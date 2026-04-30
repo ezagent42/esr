@@ -16,12 +16,18 @@
 
 ## In flight (current PR)
 
-(none — PR-21w shipped)
+| What | Status | Notes |
+|---|---|---|
+| Brainstorm: esrd / adapter / handler lifecycle audit | in-flight (2026-04-30) | Output: feishu summary (path C — no spec file). Direction settled: migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec). Eliminate pidfile / `cleanup_orphans` / `spawn_worker.sh` entirely. Add `ESR_SPAWN_TOKEN` env-var guard to Python entry points. Will spawn the migration PR after brainstorm wraps. |
 
 ## Pending — concrete next PRs
 
 | What | Tracked PR | Notes |
 |---|---|---|
+| Migrate `Esr.WorkerSupervisor` (adapter + handler) to `Esr.OSProcess` (erlexec) | pending — comes out of in-flight brainstorm | Replace `spawn_worker.sh` + pidfile + `cleanup_orphans` with erlexec-managed Ports. Add `ESR_SPAWN_TOKEN` env-var guard in Python entry points. ~150 LOC net deletion + 4-5 Python entry-point edits. Goal: BEAM owns 100% of subprocess lifecycle; zero orphans on restart. Follow-up to today's 8x-orphan-adapter prod incident. |
+| Investigate: why E2E missed multi-adapter orphan duplication | pending | See task #222. Audit final_gate.sh + tests/e2e/ for assertions that would catch "1 user message → N replies" — likely none. May get folded into the lifecycle migration PR's testing chapter. |
+| Spec: structured error/notification response system | pending design | Task #220. "error: unauthorized" 粒度不够; design ToolUseResponse/AssistantResponse-style envelope to compose 错误 + 操作建议. Brainstorm separately. |
+| Spec: unify slash-command business logic into topology yaml | pending design | Task #221. Move slash routing from Elixir code into yaml so future changes don't need esrd restart. Brainstorm separately. |
 | `Esr.Peers.CapGuard` — extract Lane B from `Esr.PeerServer` | done | PR-21x #101. `deny_dm_last_emit` migrated; rate-limit globally consistent. |
 | Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | done | PR-21y #102. `bind-feishu` migrates existing `ou_xxx` caps + grants bootstrap under username. `unbind-feishu` revokes bootstrap when last binding goes. `cap grant ou_*` emits operator hint. PR-21s graceful resolve stays as backstop. |
 | `describe_topology` filter for `users.yaml` | done | PR-21z #103. Allowlist hardened in `filter_workspace_for_describe/1` + 5 regression tests + `docs/notes/describe-topology-security.md`. |
