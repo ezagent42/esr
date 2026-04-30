@@ -21,8 +21,8 @@ defmodule Esr.Peers.FeishuChatProxyTest do
   # tests in the next describe block exercise that single
   # responsibility.
 
-  describe "non-slash text forward to CC (PR-9 T5a)" do
-    test "forwards {:text, bytes} to cc_process neighbor and emits react to feishu_app_proxy" do
+  describe "non-slash text forward to CC (PR-9 T5a / PR-21λ)" do
+    test "forwards {:text, bytes} to cc_process neighbor; FCP no longer emits react (PR-21λ — FAA owns it)" do
       me = self()
       cc_process = spawn_link(fn -> relay(me, :cc) end)
       app_proxy = spawn_link(fn -> relay(me, :app) end)
@@ -56,19 +56,9 @@ defmodule Esr.Peers.FeishuChatProxyTest do
                        %{message_id: "om_inbound_abc", sender_id: _, thread_id: _}}},
                      500
 
-      assert_receive {:relay, :app,
-                      {:outbound,
-                       %{
-                         "kind" => "react",
-                         "args" => %{
-                           "msg_id" => "om_inbound_abc",
-                           "emoji_type" => "EYES"
-                         }
-                       }}},
-                     500
-
-      # Pending react tracked in state so T5c's un_react path has the emoji.
-      assert %{pending_reacts: %{"om_inbound_abc" => "EYES"}} = :sys.get_state(peer)
+      # PR-21λ: FCP no longer emits the inbound react —
+      # FAA emits the universal "received" emoji on every inbound.
+      refute_receive {:relay, :app, {:outbound, %{"kind" => "react"}}}, 100
     end
 
     test "drops + warns when no cc_process neighbor is present" do
@@ -128,8 +118,8 @@ defmodule Esr.Peers.FeishuChatProxyTest do
     end
   end
 
-  describe "CC reply → un_react then forward reply (PR-9 T5c)" do
-    test "{:reply, text, %{reply_to_message_id: mid}} un-reacts then forwards reply" do
+  describe "CC reply → forward reply with reply_to_message_id passthrough (PR-21λ)" do
+    test "{:reply, text, %{reply_to_message_id: mid}} threads mid into outbound for FAA un_react" do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -142,40 +132,28 @@ defmodule Esr.Peers.FeishuChatProxyTest do
           proxy_ctx: %{}
         })
 
-      # Seed pending_reacts as if a prior inbound had triggered a react.
-      :sys.replace_state(peer, fn s ->
-        Map.put(s, :pending_reacts, %{"om_inbound_42" => "EYES"})
-      end)
+      send(peer, {:reply, "done", %{reply_to_message_id: "om_inbound_42"}})
 
-      send(peer, {:reply, "done",
-                  %{reply_to_message_id: "om_inbound_42"}})
-
-      # Un_react fires BEFORE the reply text.
-      assert_receive {:relay, :app,
-                      {:outbound,
-                       %{
-                         "kind" => "un_react",
-                         "args" => %{
-                           "msg_id" => "om_inbound_42",
-                           "emoji_type" => "EYES"
-                         }
-                       }}},
-                     500
-
+      # PR-21λ: FCP no longer un_reacts itself. It threads
+      # `reply_to_message_id` through the outbound envelope so FAA's
+      # `handle_downstream` can un_react the universal "received" emoji.
       assert_receive {:relay, :app,
                       {:outbound,
                        %{
                          "kind" => "reply",
-                         "args" => %{"chat_id" => "oc_un", "text" => "done"}
+                         "args" => %{
+                           "chat_id" => "oc_un",
+                           "text" => "done",
+                           "reply_to_message_id" => "om_inbound_42"
+                         }
                        }}},
                      500
 
-      # Pending react cleared so a retry cannot double-un-react.
-      assert %{pending_reacts: pr} = :sys.get_state(peer)
-      refute Map.has_key?(pr, "om_inbound_42")
+      # And NOT a separate un_react envelope (FCP doesn't emit one anymore).
+      refute_receive {:relay, :app, {:outbound, %{"kind" => "un_react"}}}, 100
     end
 
-    test "{:reply, text} (no opts) forwards reply without un_react (backward compat)" do
+    test "{:reply, text} (no opts) forwards reply without reply_to_message_id" do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -188,44 +166,15 @@ defmodule Esr.Peers.FeishuChatProxyTest do
           proxy_ctx: %{}
         })
 
-      # Pending react exists for a different message — must not be touched.
-      :sys.replace_state(peer, fn s ->
-        Map.put(s, :pending_reacts, %{"om_other" => "EYES"})
-      end)
-
       send(peer, {:reply, "proactive message"})
 
       assert_receive {:relay, :app,
-                      {:outbound,
-                       %{
-                         "kind" => "reply",
-                         "args" => %{"chat_id" => "oc_bwc", "text" => "proactive message"}
-                       }}},
+                      {:outbound, %{"kind" => "reply", "args" => args}}},
                      500
 
-      refute_receive {:relay, :app, {:outbound, %{"kind" => "un_react"}}}, 100
-
-      # State unchanged.
-      assert %{pending_reacts: %{"om_other" => "EYES"}} = :sys.get_state(peer)
-    end
-
-    test "reply with reply_to_message_id for an un-tracked message skips un_react" do
-      me = self()
-      app_proxy = spawn_link(fn -> relay(me, :app) end)
-
-      {:ok, peer} =
-        GenServer.start_link(FeishuChatProxy, %{
-          session_id: "s_untrack",
-          chat_id: "oc_untrack",
-          thread_id: "om_untrack",
-          neighbors: [feishu_app_proxy: app_proxy],
-          proxy_ctx: %{}
-        })
-
-      # No pending reacts — CC references an inbound we never reacted to.
-      send(peer, {:reply, "x", %{reply_to_message_id: "om_unknown"}})
-
-      assert_receive {:relay, :app, {:outbound, %{"kind" => "reply"}}}, 500
+      assert args["text"] == "proactive message"
+      assert args["chat_id"] == "oc_bwc"
+      refute Map.has_key?(args, "reply_to_message_id")
       refute_receive {:relay, :app, {:outbound, %{"kind" => "un_react"}}}, 100
     end
   end
