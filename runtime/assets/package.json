@@ -1,0 +1,12 @@
+{
+  "name": "esr_web_assets",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "phoenix": "file:../deps/phoenix",
+    "phoenix_html": "file:../deps/phoenix_html",
+    "phoenix_live_view": "file:../deps/phoenix_live_view",
+    "xterm": "5.3.0",
+    "xterm-addon-fit": "0.8.0"
+  }
+}

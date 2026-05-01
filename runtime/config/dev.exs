@@ -6,10 +6,22 @@ import Config
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
+# PR-22: ESR_HTTP_BIND env lets operator open the dev endpoint to the
+# Tailnet (e.g. ESR_HTTP_BIND=0.0.0.0). Default loopback for safety.
+http_bind =
+  case System.get_env("ESR_HTTP_BIND") do
+    nil -> {127, 0, 0, 1}
+    "0.0.0.0" -> {0, 0, 0, 0}
+    "::0" -> {0, 0, 0, 0, 0, 0, 0, 0}
+    other ->
+      other
+      |> String.split(".")
+      |> Enum.map(&String.to_integer/1)
+      |> List.to_tuple()
+  end
+
 config :esr, EsrWeb.Endpoint,
-  # Binding to loopback ipv4 address prevents access from other machines.
-  # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
-  http: [ip: {127, 0, 0, 1}, port: String.to_integer(System.get_env("PORT") || "4000")],
+  http: [ip: http_bind, port: String.to_integer(System.get_env("PORT") || "4000")],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,

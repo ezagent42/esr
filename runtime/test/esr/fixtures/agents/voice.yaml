@@ -13,9 +13,9 @@ agents:
         - { name: voice_asr,         impl: Esr.Peers.VoiceASRProxy }
         - { name: cc_proxy,          impl: Esr.Peers.CCProxy }
         - { name: cc_process,        impl: Esr.Peers.CCProcess }
-        - { name: tmux_process,      impl: Esr.Peers.TmuxProcess }
+        - { name: pty_process,      impl: Esr.Peers.PtyProcess }
       outbound:
-        - tmux_process
+        - pty_process
         - cc_process
         - cc_proxy
         - voice_tts

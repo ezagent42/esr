@@ -44,6 +44,9 @@ defmodule Esr.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.8.0"},
+      # PR-22: LiveView surface for /sessions/:sid/attach (xterm.js).
+      {:phoenix_live_view, "~> 1.0"},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:phoenix_pubsub, "~> 2.1"},
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
@@ -58,7 +61,10 @@ defmodule Esr.MixProject do
       # Migration history: docs/notes/erlexec-migration.md.
       {:erlexec, "~> 2.2"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      # PR-22: lazy_html is required by Phoenix.LiveViewTest's `live/2`
+      # connector to render HEEx templates from the test process.
+      {:lazy_html, ">= 0.1.0", only: :test}
     ]
   end
 
