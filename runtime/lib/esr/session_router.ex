@@ -315,8 +315,8 @@ defmodule Esr.SessionRouter do
   # session's FeishuChatProxy. The SessionRegistry entry is already
   # populated because `do_create/1` calls `register_session/3` on its
   # success path; we just need to look it up and send the message.
-  defp redeliver_triggering_envelope(chat_id, app_id, thread_id, envelope) do
-    case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id) do
+  defp redeliver_triggering_envelope(chat_id, app_id, _thread_id, envelope) do
+    case Esr.SessionRegistry.lookup_by_chat(chat_id, app_id) do
       {:ok, _sid, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         :ok
@@ -458,15 +458,17 @@ defmodule Esr.SessionRouter do
   defp start_session_sup(sid, agent_name, params, agent_def) do
     chat_id = get_param(params, :chat_id) || ""
     app_id = get_param(params, :app_id) || "default"
-    thread_id = get_param(params, :thread_id) || ""
     principal_id = get_param(params, :principal_id)
     dir = get_param(params, :dir)
 
+    # PR-21λ: chat_thread_key narrowed to the 2-tuple routing key.
+    # `thread_id` for Feishu reply rendering still flows through the
+    # FCP via per-peer params, not via this struct.
     Esr.SessionsSupervisor.start_session(%{
       session_id: sid,
       agent_name: agent_name,
       dir: dir,
-      chat_thread_key: %{chat_id: chat_id, app_id: app_id, thread_id: thread_id},
+      chat_thread_key: %{chat_id: chat_id, app_id: app_id},
       metadata: %{principal_id: principal_id, agent_def: agent_def}
     })
   end
@@ -746,12 +748,14 @@ defmodule Esr.SessionRouter do
   end
 
   defp register(session_id, params, refs_map) do
+    # PR-21λ: routing key dropped thread_id. The full chat-binding map
+    # still lives in `params` for FCP/CC reply rendering — this only
+    # narrows what `SessionRegistry` indexes on.
     Esr.SessionRegistry.register_session(
       session_id,
       %{
         chat_id: get_param(params, :chat_id) || "",
-        app_id: get_param(params, :app_id) || "default",
-        thread_id: get_param(params, :thread_id) || ""
+        app_id: get_param(params, :app_id) || "default"
       },
       refs_map
     )
