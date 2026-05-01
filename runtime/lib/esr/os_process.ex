@@ -53,6 +53,12 @@ defmodule Esr.OSProcess do
 
   @callback os_cmd(state :: term()) :: [String.t()]
   @callback os_env(state :: term()) :: [{String.t(), String.t()}]
+  # PR-22: optional raw-stdout hook. Called BEFORE line-splitting with
+  # the entire chunk erlexec delivered. Used by PtyProcess to fan ANSI
+  # escapes intact to xterm.js subscribers (line-splitting would corrupt
+  # cursor / clear sequences that span chunk boundaries).
+  @callback on_raw_stdout(data :: binary, state :: term()) :: :ok
+  @optional_callbacks on_raw_stdout: 2
   @callback on_os_exit(exit_status :: non_neg_integer(), state :: term()) ::
               {:stop, reason :: term()} | {:restart, new_state :: term()}
   @callback on_terminate(state :: term()) :: :ok
@@ -146,11 +152,26 @@ defmodule Esr.OSProcess do
           {:noreply, s}
         end
 
+        # PR-22: SIGWINCH propagation for PTY-wrapped processes.
+        # xterm.js → AttachLive → PtyProcess.resize/3 → here.
+        def handle_cast({:winsz, cols, rows}, %{os_pid: os_pid} = s)
+            when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 do
+          if os_pid, do: :exec.winsz(os_pid, cols, rows)
+          {:noreply, s}
+        end
+
         # ------------------------------------------------------------------
         # erlexec stdout/stderr messages.
         # ------------------------------------------------------------------
         @impl true
         def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = s) do
+          # PR-22: give peers that need raw bytes (e.g. PtyProcess for
+          # xterm.js fan-out) a chance to consume the chunk BEFORE
+          # line-splitting destroys ANSI escape sequences.
+          if function_exported?(s.parent, :on_raw_stdout, 2) do
+            s.parent.on_raw_stdout(data, s.state)
+          end
+
           {lines, rest} = Esr.OSProcess.split_lines(s.stdout_buf <> data)
 
           new_state =

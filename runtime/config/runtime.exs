@@ -20,6 +20,15 @@ if System.get_env("PHX_SERVER") do
   config :esr, EsrWeb.Endpoint, server: true
 end
 
+# PR-22: Public-host override for /attach URL rendering. Without this,
+# Esr.Uri.to_http_url falls back to config.exs's host: "localhost",
+# which a Tailnet operator at 100.64.0.27 can't reach. Set via launchd
+# plist EnvironmentVariables (or shell env) at boot.
+if public_host = System.get_env("ESR_PUBLIC_HOST") do
+  public_port = String.to_integer(System.get_env("PORT") || "4000")
+  config :esr, EsrWeb.Endpoint, url: [host: public_host, port: public_port]
+end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

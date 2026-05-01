@@ -59,7 +59,8 @@ defmodule Esr.SessionRouter do
   @stateful_impls MapSet.new([
                     Esr.Peers.FeishuChatProxy,
                     Esr.Peers.CCProcess,
-                    Esr.Peers.TmuxProcess,
+                    # PR-22: PtyProcess replaces TmuxProcess.
+                    Esr.Peers.PtyProcess,
                     Esr.Peers.FeishuAppAdapter,
                     # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
                     # AdminSession and NOT spawned per-session (the
@@ -478,7 +479,7 @@ defmodule Esr.SessionRouter do
   # spawned with a forward-only neighbors keyword list (only peers
   # already spawned were visible). That left FeishuChatProxy without
   # its `:cc_process` or `:feishu_app_proxy` neighbors and CCProcess
-  # without its `:tmux_process` or `:feishu_chat_proxy` neighbors — so
+  # without its `:pty_process` or `:feishu_chat_proxy` neighbors — so
   # T5's react-emit path dropped with `:no_app_proxy_neighbor` and the
   # CC reply path had nowhere to go.
   #

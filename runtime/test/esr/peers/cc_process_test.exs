@@ -27,7 +27,7 @@ defmodule Esr.Peers.CCProcessTest do
       CCProcess.start_link(%{
         session_id: "sid1",
         handler_module: @handler_module,
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -75,7 +75,7 @@ defmodule Esr.Peers.CCProcessTest do
       CCProcess.start_link(%{
         session_id: "sid2",
         handler_module: @handler_module,
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -107,7 +107,7 @@ defmodule Esr.Peers.CCProcessTest do
       CCProcess.start_link(%{
         session_id: "sid3",
         handler_module: @handler_module,
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -130,7 +130,7 @@ defmodule Esr.Peers.CCProcessTest do
         session_id: "sid4",
         handler_module: @handler_module,
         initial_state: %{"turn" => 0},
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -159,7 +159,7 @@ defmodule Esr.Peers.CCProcessTest do
       CCProcess.start_link(%{
         session_id: "sid5",
         handler_module: @handler_module,
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -279,7 +279,7 @@ defmodule Esr.Peers.CCProcessTest do
         CCProcess.start_link(%{
           session_id: "sC4_a",
           handler_module: @handler_module,
-          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
           proxy_ctx: %{}
         })
 
@@ -316,7 +316,7 @@ defmodule Esr.Peers.CCProcessTest do
         CCProcess.start_link(%{
           session_id: "sC4_b",
           handler_module: @handler_module,
-          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
           proxy_ctx: %{workspace_name: "ws_x"}
         })
 
@@ -336,7 +336,7 @@ defmodule Esr.Peers.CCProcessTest do
         CCProcess.start_link(%{
           session_id: "sC4_c",
           handler_module: @handler_module,
-          neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
           proxy_ctx: %{}
         })
 

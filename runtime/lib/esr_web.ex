@@ -26,6 +26,8 @@ defmodule EsrWeb do
       # Import common connection and controller functions to use in pipelines
       import Plug.Conn
       import Phoenix.Controller
+      # PR-22: live/2 macro for LiveView routes
+      import Phoenix.LiveView.Router
     end
   end
 
@@ -41,6 +43,25 @@ defmodule EsrWeb do
 
       import Plug.Conn
 
+      unquote(verified_routes())
+    end
+  end
+
+  # PR-22: HTML helpers + LiveView surface for /sessions/:sid/attach.
+  def html do
+    quote do
+      use Phoenix.Component
+      import Phoenix.HTML
+      alias Phoenix.LiveView.JS
+      unquote(verified_routes())
+    end
+  end
+
+  def live_view do
+    quote do
+      use Phoenix.LiveView, layout: {EsrWeb.Layouts, :root}
+      import Phoenix.HTML
+      alias Phoenix.LiveView.JS
       unquote(verified_routes())
     end
   end

@@ -187,11 +187,11 @@ defmodule Esr.Integration.CCE2ETest do
 
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
-    assert is_pid(refs.tmux_process)
+    assert is_pid(refs.pty_process)
 
     fcp_pid = refs.feishu_chat_proxy
     cc_pid = refs.cc_process
-    tmux_pid = refs.tmux_process
+    tmux_pid = refs.pty_process
 
     assert Process.alive?(fcp_pid)
     assert Process.alive?(cc_pid)
@@ -214,7 +214,7 @@ defmodule Esr.Integration.CCE2ETest do
     # PR will either reverse the spawn order for downstream-oriented
     # peers or add a post-spawn wire-back pass. For the integration test
     # we patch the `cc_process` state directly (test-only).
-    :ok = patch_cc_neighbor(cc_pid, :tmux_process, tmux_pid)
+    :ok = patch_cc_neighbor(cc_pid, :pty_process, tmux_pid)
 
     # 6. INBOUND LEG — send text to CCProcess directly. (FCP drops
     # non-slash in PR-3, so we bypass it for the data-plane test. The
@@ -275,7 +275,7 @@ defmodule Esr.Integration.CCE2ETest do
     }
 
     {:forward, _, _} =
-      Esr.Peers.TmuxProcess.handle_upstream(
+      Esr.Peers.PtyProcess.handle_upstream(
         {:os_stdout, "%output %0 synthetic_out\n"},
         synth_tmux_state
       )

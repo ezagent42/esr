@@ -24,6 +24,19 @@ config :esr, EsrWeb.Endpoint,
   pubsub_server: EsrWeb.PubSub,
   live_view: [signing_salt: "5RJhXWZR"]
 
+# PR-22: esbuild bundles assets/js/app.js → priv/static/assets/app.js
+# (xterm.js + Phoenix LiveView client). Run via `mix esbuild default`
+# at build time; in dev with `mix phx.server` the watcher rebuilds
+# automatically (configured in dev.exs).
+config :esbuild,
+  version: "0.21.5",
+  default: [
+    args:
+      ~w(js/app.js --bundle --target=es2020 --outdir=../priv/static/assets --loader:.css=css),
+    cd: Path.expand("../assets", __DIR__),
+    env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
+  ]
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

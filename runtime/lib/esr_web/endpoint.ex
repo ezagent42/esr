@@ -11,9 +11,10 @@ defmodule EsrWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # socket "/live", Phoenix.LiveView.Socket,
-  #   websocket: [connect_info: [session: @session_options]],
-  #   longpoll: [connect_info: [session: @session_options]]
+  # PR-22: LiveView for /sessions/:sid/attach (xterm.js terminal).
+  socket "/live", Phoenix.LiveView.Socket,
+    websocket: [connect_info: [session: @session_options]],
+    longpoll: [connect_info: [session: @session_options]]
 
   # Adapter WebSocket — Python adapter processes join
   # adapter:<name>/<instance_id> topics here (PRD 01 F09, spec §7.1).

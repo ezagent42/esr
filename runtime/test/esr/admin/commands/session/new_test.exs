@@ -434,7 +434,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
 
       # Sanity: the full CC chain from simple.yaml is present.
       assert is_pid(refs.cc_process)
-      assert is_pid(refs.tmux_process)
+      assert is_pid(refs.pty_process)
 
       on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
     end
