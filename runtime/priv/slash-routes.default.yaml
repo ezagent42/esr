@@ -144,6 +144,16 @@ slashes:
     description: "列所有可用 agent"
     args: []
 
+  "/attach":
+    kind: attach
+    permission: null
+    command_module: "Esr.Admin.Commands.Attach"
+    requires_workspace_binding: true
+    requires_user_binding: true
+    category: "Sessions"
+    description: "返回浏览器 attach 链接（连接 claude TUI）"
+    args: []
+
 # Internal-only kinds. Submitted from CLI tools via
 # Esr.Admin.CommandQueue.Watcher (file-queue path); never appear as
 # slash commands. They share the same Dispatcher dispatch table — yaml
