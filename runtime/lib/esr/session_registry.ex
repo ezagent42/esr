@@ -4,11 +4,24 @@ defmodule Esr.SessionRegistry do
 
   Single source of truth for:
   - `agents.yaml` compiled agent definitions
-  - `(chat_id, app_id, thread_id) → session_id` lookup (PR-A T1)
+  - `(chat_id, app_id) → session_id` routing lookup
   - `(session_id, peer_name) → pid` lookup
   - yaml hot-reload
 
   See spec §3.3, §3.5, and PR-A multi-app spec §2.1.
+
+  ## PR-21λ: chat-current single-session model
+
+  A `(chat_id, app_id)` slot binds at most one active session.
+  `/new-session` always overwrites the slot, leaving any prior
+  session as an orphan reachable only by sid (e.g. via
+  `/end-session`). Pre-PR-21λ the key was a 3-tuple including the
+  inbound `thread_id`, but Feishu surfaces a fresh thread_id for
+  every top-level message in some chats — sessions registered under
+  one thread_id were unreachable from a follow-up message that
+  carried a different thread_id, causing every "hi" after
+  `/new-session` to miss the slot and silently auto-spawn or land
+  on a dead old session.
   """
 
   @behaviour Esr.Role.State
@@ -17,9 +30,8 @@ defmodule Esr.SessionRegistry do
 
   @reserved_fields ~w(rate_limits timeout_ms allowed_principals)a
 
-  # ETS index for (chat_id, app_id, thread_id) → {session_id, refs}.
-  # PR-A T1 extended the key from a 2-tuple to a 3-tuple so two apps
-  # with overlapping chat_ids never collide (spec §2.1).
+  # ETS index for (chat_id, app_id) → {session_id, refs}. PR-21λ
+  # collapsed the historic thread_id slot — see moduledoc.
   #
   # Owned by the GenServer; writes route through the owner (handle_call)
   # so consistency with the in-memory `sessions` map is preserved. Reads
@@ -112,12 +124,12 @@ defmodule Esr.SessionRegistry do
   Direct ETS lookup — runs in the caller process with no GenServer hop.
   See `@ets_table` docstring above for the read/write split rationale.
 
-  PR-A T1: 3-arity (chat_id, app_id, thread_id). The 2-arity wrapper
-  was removed deliberately — keys would silently miss for rows that
-  didn't have an app_id (write-after-upgrade hazard, spec §2.1).
+  Returns the chat-current session for `(chat_id, app_id)`. PR-21λ
+  collapsed the prior 3-tuple `(chat_id, app_id, thread_id)` key —
+  see moduledoc.
   """
-  def lookup_by_chat_thread(chat_id, app_id, thread_id) do
-    case :ets.lookup(@ets_table, {chat_id, app_id, thread_id}) do
+  def lookup_by_chat(chat_id, app_id) do
+    case :ets.lookup(@ets_table, {chat_id, app_id}) do
       [{_k, sid, refs}] -> {:ok, sid, refs}
       [] -> :not_found
     end
@@ -176,21 +188,34 @@ defmodule Esr.SessionRegistry do
   end
 
   def handle_call(
-        {:register_session, session_id, %{chat_id: c, app_id: a, thread_id: t} = key, refs},
+        {:register_session, session_id, %{chat_id: c, app_id: a} = key, refs},
         _from,
         state
       ) do
-    # Mirror into the ETS index so `lookup_by_chat_thread/3` can serve
-    # direct-reads from the caller process. `:ets.insert/2` on a `:set`
-    # table overwrites, matching the re-register semantics of the
-    # in-memory state update. PR-A T1: key is the (chat_id, app_id,
-    # thread_id) 3-tuple.
-    :ets.insert(@ets_table, {{c, a, t}, session_id, refs})
+    # PR-21λ: chat-current overwrite. `:ets.insert/2` on a `:set` table
+    # already replaces by key; we additionally log when the previous
+    # occupant was a different sid so operators can correlate orphaned
+    # sessions back to the slash that displaced them.
+    case Map.get(state.chat_to_session, {c, a}) do
+      nil ->
+        :ok
+
+      ^session_id ->
+        :ok
+
+      prev_sid ->
+        Logger.info(
+          "session_registry: chat_current slot {#{c}, #{a}} reassigned " <>
+            "#{prev_sid} → #{session_id} (prior session is now an orphan)"
+        )
+    end
+
+    :ets.insert(@ets_table, {{c, a}, session_id, refs})
 
     state =
       state
       |> put_in([:sessions, session_id], %{key: key, refs: refs})
-      |> put_in([:chat_to_session, {c, a, t}], session_id)
+      |> put_in([:chat_to_session, {c, a}], session_id)
 
     {:reply, :ok, state}
   end
@@ -203,13 +228,21 @@ defmodule Esr.SessionRegistry do
       nil ->
         {:reply, :ok, state}
 
-      %{key: %{chat_id: c, app_id: a, thread_id: t}} ->
-        :ets.delete(@ets_table, {c, a, t})
+      %{key: %{chat_id: c, app_id: a}} ->
+        # PR-21λ: only clear the chat slot if it still belongs to this
+        # sid. An orphan session (displaced by a later `/new-session`)
+        # tearing down later must not kick the chat-current session
+        # that overwrote it.
+        if Map.get(state.chat_to_session, {c, a}) == sid do
+          :ets.delete(@ets_table, {c, a})
+        end
 
         state =
           state
           |> update_in([:sessions], &Map.delete(&1, sid))
-          |> update_in([:chat_to_session], &Map.delete(&1, {c, a, t}))
+          |> update_in([:chat_to_session], fn map ->
+            if Map.get(map, {c, a}) == sid, do: Map.delete(map, {c, a}), else: map
+          end)
 
         {:reply, :ok, state}
     end

@@ -232,7 +232,10 @@ defmodule Esr.Peers.FeishuAppAdapter do
         "instance_id=#{inspect(state.instance_id)}"
     )
 
-    case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id) do
+    # PR-21λ: routing key is (chat_id, app_id) only. thread_id still
+    # flows downstream via the envelope so FCP/CC can quote-reply, but
+    # it does not select the session anymore.
+    case Esr.SessionRegistry.lookup_by_chat(chat_id, app_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         {:forward, [], state}

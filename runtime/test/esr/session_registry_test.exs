@@ -23,25 +23,24 @@ defmodule Esr.SessionRegistryTest do
     assert {:error, :not_found} = Esr.SessionRegistry.agent_def("nonexistent")
   end
 
-  test "registers session and looks up by chat_thread" do
+  test "registers session and looks up by chat" do
     :ok =
       Esr.SessionRegistry.register_session(
         "session-1",
-        %{chat_id: "c1", app_id: "a1", thread_id: "t1"},
+        %{chat_id: "c1", app_id: "a1"},
         %{}
       )
 
     assert {:ok, "session-1", _peer_refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread("c1", "a1", "t1")
+             Esr.SessionRegistry.lookup_by_chat("c1", "a1")
   end
 
-  test "lookup_by_chat_thread/3 does not call into the SessionRegistry GenServer" do
+  test "lookup_by_chat/2 does not call into the SessionRegistry GenServer" do
     sid = "no-gs-call-#{System.unique_integer([:positive])}"
 
     chat = %{
       chat_id: "oc_#{System.unique_integer([:positive])}",
-      app_id: "app_#{System.unique_integer([:positive])}",
-      thread_id: "om_#{System.unique_integer([:positive])}"
+      app_id: "app_#{System.unique_integer([:positive])}"
     }
 
     :ok =
@@ -53,25 +52,24 @@ defmodule Esr.SessionRegistryTest do
       Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
 
     assert {:ok, ^sid, _refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat.chat_id, chat.app_id)
 
     {:message_queue_len, after_lookup} =
       Process.info(Process.whereis(Esr.SessionRegistry), :message_queue_len)
 
     assert after_lookup <= before,
-           "lookup_by_chat_thread should not enqueue any message on the SessionRegistry mailbox"
+           "lookup_by_chat should not enqueue any message on the SessionRegistry mailbox"
 
     Esr.SessionRegistry.unregister_session(sid)
   end
 
-  test "SessionRegistry has no handle_call clause for :lookup_by_chat_thread after P6-A1" do
-    # Authoritative source-grep gate. Post-A1 the function is a direct
-    # ETS read — no `handle_call({:lookup_by_chat_thread, ...}, ...)`
-    # clause must exist.
+  test "SessionRegistry has no handle_call clause for :lookup_by_chat" do
+    # Authoritative source-grep gate. The lookup is a direct ETS read —
+    # no `handle_call({:lookup_by_chat, ...}, ...)` clause must exist.
     src = File.read!("lib/esr/session_registry.ex")
 
-    refute src =~ ~r/handle_call\(\s*\{:lookup_by_chat_thread/,
-           "lookup_by_chat_thread must be a direct ETS read, not a handle_call"
+    refute src =~ ~r/handle_call\(\s*\{:lookup_by_chat/,
+           "lookup_by_chat must be a direct ETS read, not a handle_call"
   end
 
   test "unregister_session removes the ETS entry so subsequent lookup returns :not_found" do
@@ -79,19 +77,18 @@ defmodule Esr.SessionRegistryTest do
 
     chat = %{
       chat_id: "oc_unreg_#{System.unique_integer([:positive])}",
-      app_id: "app_unreg_#{System.unique_integer([:positive])}",
-      thread_id: "om_unreg_#{System.unique_integer([:positive])}"
+      app_id: "app_unreg_#{System.unique_integer([:positive])}"
     }
 
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: self()})
 
     assert {:ok, ^sid, _} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat.chat_id, chat.app_id)
 
     :ok = Esr.SessionRegistry.unregister_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat.chat_id, chat.app_id)
   end
 
   test "re-registering a session overwrites refs in the ETS index" do
@@ -99,8 +96,7 @@ defmodule Esr.SessionRegistryTest do
 
     chat = %{
       chat_id: "oc_rereg_#{System.unique_integer([:positive])}",
-      app_id: "app_rereg_#{System.unique_integer([:positive])}",
-      thread_id: "om_rereg_#{System.unique_integer([:positive])}"
+      app_id: "app_rereg_#{System.unique_integer([:positive])}"
     }
 
     pid1 = spawn(fn -> :timer.sleep(:infinity) end)
@@ -109,61 +105,90 @@ defmodule Esr.SessionRegistryTest do
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid1})
 
     assert {:ok, ^sid, %{feishu_chat_proxy: ^pid1}} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat.chat_id, chat.app_id)
 
     :ok = Esr.SessionRegistry.register_session(sid, chat, %{feishu_chat_proxy: pid2})
 
     assert {:ok, ^sid, %{feishu_chat_proxy: ^pid2}} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat.chat_id, chat.app_id, chat.thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat.chat_id, chat.app_id)
 
     Esr.SessionRegistry.unregister_session(sid)
     Process.exit(pid1, :kill)
     Process.exit(pid2, :kill)
   end
 
-  describe "PR-A multi-app: 3-tuple key" do
-    test "register + lookup uses (chat_id, app_id, thread_id)" do
-      sid = "S_PRA1"
-
-      :ok =
-        Esr.SessionRegistry.register_session(
-          sid,
-          %{chat_id: "oc_X", app_id: "feishu_dev", thread_id: ""},
-          %{}
-        )
-
-      assert {:ok, ^sid, %{}} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_X", "feishu_dev", "")
-
-      assert :not_found =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_X", "feishu_kanban", "")
-
-      Esr.SessionRegistry.unregister_session(sid)
-    end
-
+  describe "PR-A multi-app: chat-current 2-tuple key" do
     test "two apps over the same chat_id keep distinct sessions" do
       :ok =
         Esr.SessionRegistry.register_session(
           "S_DEV",
-          %{chat_id: "oc_shared", app_id: "feishu_dev", thread_id: ""},
+          %{chat_id: "oc_shared", app_id: "feishu_dev"},
           %{}
         )
 
       :ok =
         Esr.SessionRegistry.register_session(
           "S_KANBAN",
-          %{chat_id: "oc_shared", app_id: "feishu_kanban", thread_id: ""},
+          %{chat_id: "oc_shared", app_id: "feishu_kanban"},
           %{}
         )
 
       assert {:ok, "S_DEV", _} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_shared", "feishu_dev", "")
+               Esr.SessionRegistry.lookup_by_chat("oc_shared", "feishu_dev")
 
       assert {:ok, "S_KANBAN", _} =
-               Esr.SessionRegistry.lookup_by_chat_thread("oc_shared", "feishu_kanban", "")
+               Esr.SessionRegistry.lookup_by_chat("oc_shared", "feishu_kanban")
 
       Esr.SessionRegistry.unregister_session("S_DEV")
       Esr.SessionRegistry.unregister_session("S_KANBAN")
+    end
+  end
+
+  describe "PR-21λ: chat-current overwrite" do
+    test "second `/new-session` in same (chat, app) overwrites the first" do
+      chat_id = "oc_chatcur_#{System.unique_integer([:positive])}"
+      app_id = "app_chatcur_#{System.unique_integer([:positive])}"
+      key = %{chat_id: chat_id, app_id: app_id}
+
+      pid_first = spawn(fn -> :timer.sleep(:infinity) end)
+      pid_second = spawn(fn -> :timer.sleep(:infinity) end)
+
+      :ok =
+        Esr.SessionRegistry.register_session("sid_first", key, %{
+          feishu_chat_proxy: pid_first
+        })
+
+      :ok =
+        Esr.SessionRegistry.register_session("sid_second", key, %{
+          feishu_chat_proxy: pid_second
+        })
+
+      assert {:ok, "sid_second", %{feishu_chat_proxy: ^pid_second}} =
+               Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+
+      Esr.SessionRegistry.unregister_session("sid_first")
+      Esr.SessionRegistry.unregister_session("sid_second")
+      Process.exit(pid_first, :kill)
+      Process.exit(pid_second, :kill)
+    end
+
+    test "orphaned sid teardown does not evict the chat-current sid" do
+      # Regression guard: pre-PR-21λ, unregister_session unconditionally
+      # deleted the slot keyed by its own (chat, app), which after a
+      # `/new-session` overwrite would kick the *new* (live) session.
+      chat_id = "oc_orphan_#{System.unique_integer([:positive])}"
+      app_id = "app_orphan_#{System.unique_integer([:positive])}"
+      key = %{chat_id: chat_id, app_id: app_id}
+
+      :ok = Esr.SessionRegistry.register_session("sid_orphan", key, %{})
+      :ok = Esr.SessionRegistry.register_session("sid_live", key, %{})
+
+      :ok = Esr.SessionRegistry.unregister_session("sid_orphan")
+
+      assert {:ok, "sid_live", _} =
+               Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+
+      Esr.SessionRegistry.unregister_session("sid_live")
     end
   end
 
