@@ -150,7 +150,7 @@ defmodule Esr.Integration.CCVoiceTest do
     # Stateful peers are live pids.
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
-    assert is_pid(refs.tmux_process)
+    assert is_pid(refs.pty_process)
 
     # Stateless proxies (in the yaml `proxies:` list) are symbolic
     # markers in refs. `cc_proxy` is in `inbound:` but CCProxy has no

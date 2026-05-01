@@ -95,10 +95,10 @@ defmodule Esr.SessionRouterTest do
     # via spawn (see drift note in moduledoc).
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
-    assert is_pid(refs.tmux_process)
+    assert is_pid(refs.pty_process)
     assert Process.alive?(refs.feishu_chat_proxy)
     assert Process.alive?(refs.cc_process)
-    assert Process.alive?(refs.tmux_process)
+    assert Process.alive?(refs.pty_process)
   end
 
   test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)",
@@ -267,7 +267,7 @@ defmodule Esr.SessionRouterTest do
       # VoiceTTSProxy is only referenced as a proxies-block entry.
       assert is_pid(refs.feishu_chat_proxy)
       assert is_pid(refs.cc_process)
-      assert is_pid(refs.tmux_process)
+      assert is_pid(refs.pty_process)
 
       # VoiceASR/VoiceTTS live in AdminSession's pool — NOT in refs.
       refute Map.has_key?(refs, :voice_asr_worker)
@@ -397,7 +397,7 @@ defmodule Esr.SessionRouterTest do
 
     fcp = refs.feishu_chat_proxy
     cc = refs.cc_process
-    tmux = refs.tmux_process
+    tmux = refs.pty_process
 
     assert is_pid(fcp)
     assert is_pid(cc)
@@ -417,7 +417,7 @@ defmodule Esr.SessionRouterTest do
 
     cc_state = :sys.get_state(cc)
 
-    assert is_pid(Keyword.get(cc_state.neighbors, :tmux_process)),
+    assert is_pid(Keyword.get(cc_state.neighbors, :pty_process)),
            "cc → tmux_process neighbor missing"
 
     assert is_pid(Keyword.get(cc_state.neighbors, :feishu_chat_proxy)),

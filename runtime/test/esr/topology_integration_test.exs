@@ -69,7 +69,7 @@ defmodule Esr.TopologyIntegrationTest do
       CCProcess.start_link(%{
         session_id: "topo_int_session",
         handler_module: "cc_adapter_runner",
-        neighbors: [tmux_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
         proxy_ctx: %{
           "channel_adapter" => "feishu",
           workspace_name: "ws_dev",

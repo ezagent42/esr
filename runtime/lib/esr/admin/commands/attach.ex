@@ -19,7 +19,6 @@ defmodule Esr.Admin.Commands.Attach do
   alias Esr.SessionRegistry
   alias Esr.Uri, as: EsrUri
 
-  @impl true
   def execute(%{"args" => args}) do
     chat_id = Map.get(args, "chat_id", "")
     app_id = Map.get(args, "app_id", "")

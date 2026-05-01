@@ -25,8 +25,6 @@ defmodule Esr.Peers.CCProcess do
 
     * `handle_upstream({:text, bytes}, state)` — from `CCProxy`; invoke
       handler, dispatch resulting actions
-    * `handle_upstream({:tmux_output, bytes}, state)` — from
-      `TmuxProcess`; invoke handler, dispatch resulting actions
     * `handle_downstream(_, state)` — no-op in PR-3 (the upward path is
       handled via direct dispatch of `:reply` actions to the `cc_proxy`
       neighbor; no downstream message arrives here today)
@@ -162,17 +160,6 @@ defmodule Esr.Peers.CCProcess do
   # for backward compat with unit tests that haven't migrated yet.
   def handle_upstream({:text, _bytes, _meta} = msg, state), do: invoke_and_dispatch(msg, state)
 
-  # PR-9 T11b.8 e2e RCA: tmux_output bytes (CC's TUI chrome — ANSI
-  # escapes, box drawing, partial-UTF8 bursts when reads split a
-  # multibyte char) should NOT be invoked as a handler event. Jason
-  # encoding crashed on truncated UTF-8 sequences, killing CCProcess.
-  # Post-T11b the conversation path runs through the MCP channel
-  # (cli:channel/<sid>), not tmux stdout capture — so tmux_output is
-  # diagnostic-only. Drop at this layer; future diagnostic handlers
-  # can subscribe to the raw :tmux_event topic separately.
-  def handle_upstream({:tmux_output, _bytes}, state),
-    do: {:drop, :tmux_diagnostic, state}
-
   def handle_upstream(_other, state), do: {:drop, :unknown_upstream, state}
 
   # handle_downstream/2 inherits the no-op `{:forward, [], state}` default
@@ -195,10 +182,6 @@ defmodule Esr.Peers.CCProcess do
 
   def handle_info({:text, _, _meta} = msg, state),
     do: Esr.Peer.Stateful.dispatch_upstream(msg, state, __MODULE__)
-
-  # T11b.8: tmux_output is diagnostic only — drop silently at the
-  # GenServer boundary too (mirrors the handle_upstream clause above).
-  def handle_info({:tmux_output, _}, state), do: {:noreply, state}
 
   # T12-comms-3c: ChannelChannel's join-for-this-session broadcasts
   # {:cc_mcp_ready, session_id} on the "cc_mcp_ready/<sid>" topic.
@@ -629,7 +612,4 @@ defmodule Esr.Peers.CCProcess do
           |> Map.new()
         )
     }
-
-  defp event_to_map({:tmux_output, bytes}),
-    do: %{"event_type" => "tmux_output", "args" => %{"bytes" => bytes}}
 end
