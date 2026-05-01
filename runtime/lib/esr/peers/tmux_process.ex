@@ -494,7 +494,16 @@ defmodule Esr.Peers.TmuxProcess do
   end
 
   @impl Esr.OSProcess
-  def on_os_exit(0, _state), do: {:stop, :normal}
+  # PR-21ω''  2026-05-01 (issue 02 stopgap): treat ANY tmux exit as
+  # abnormal so peers DynamicSupervisor's `:transient` restart fires.
+  # Pre-fix: exit 0 → `:normal` → no restart → cc_process / FCP /
+  # SessionRegistry stayed alive holding dead pids while claude / cc_mcp
+  # were gone, every subsequent inbound silently dropped (PubSub
+  # broadcast had no subscribers). Now: any exit triggers restart →
+  # PR-21ω' rewire patches new tmux pid into siblings → operator sees
+  # claude resume (mid-conversation context lost; session-ids.yaml
+  # write-side is half-built — separate todo).
+  def on_os_exit(0, _state), do: {:stop, :tmux_died_unexpectedly}
   def on_os_exit(status, _state), do: {:stop, {:tmux_crashed, status}}
 
   @impl Esr.OSProcess
