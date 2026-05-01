@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/esr-cc.sh — ESR v0.2 CC session launcher (spec §3.5 / §5.2).
 #
-# Spawned inside a tmux window by Topology.Instantiator's init_directive
-# (or manually by an operator); reads the workspace config from
+# Spawned by Esr.Peers.PtyProcess via erlexec PTY (PR-22; pre-PR-22
+# was inside a tmux -C window). Reads the workspace config from
 # `ESR_WORKSPACE` + `~/.esrd/<instance>/workspaces.yaml`, renders
 # `.mcp.json` at the workspace cwd, and execs `claude` with the right
 # flags for stdio-parented esr-channel MCP.
@@ -60,8 +60,8 @@ elif [ -n "$root" ] && [ "$root" != "null" ]; then
   cwd="$root"
 else
   # PR-21τ 2026-05-01: PR-22 removed workspace.root; auto-create
-  # sessions don't set ESR_CWD. Fall back to the tmux pane's cwd
-  # (already set via tmux's -c flag from `state.dir` in TmuxProcess)
+  # sessions don't set ESR_CWD. Fall back to the inherited cwd
+  # (erlexec sets it via {:cd, state.dir} from PtyProcess.os_cwd/1)
   # so the script doesn't hard-fail. Operators wanting a specific
   # location should pass ESR_CWD or use /new-session with root=.
   cwd="$(pwd)"
@@ -119,5 +119,6 @@ CLAUDE_FLAGS=(
 settings_file="$REPO_ROOT/roles/$role/settings.json"
 [ -f "$settings_file" ] && CLAUDE_FLAGS+=(--settings "$settings_file")
 
-# Exec claude (replacing the shell process; tmux remains parent)
+# Exec claude (replacing the shell process; erlexec PTY remains parent
+# via PtyProcess in the BEAM)
 exec claude $resume_arg "${CLAUDE_FLAGS[@]}"
