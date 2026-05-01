@@ -314,15 +314,13 @@ defmodule Esr.Peers.TmuxProcess do
           state
       end
 
-    # PR-21ψ 2026-05-01: when restarted by the peers DynamicSupervisor
-    # (TmuxProcess crashed / tmux server died / claude exited), our pid
-    # changes but FCP / cc_process still hold the OLD :tmux_process
-    # neighbor pid. Without this, send_input falls into a dead pid and
-    # the operator-facing UX is "session became silent". Push the new
-    # pid into siblings via :sys.replace_state — same idiom
-    # SessionRouter.backwire_neighbors uses at initial spawn. Idempotent
-    # at first-spawn (no siblings exist yet → loop is a no-op).
-    rewire_session_siblings(state)
+    # PR-21ψ ROLLBACK 2026-05-01: synchronous rewire-on-init caused a
+    # supervisor deadlock — `DynamicSupervisor.which_children` is a
+    # `GenServer.call` to peers_sup, but peers_sup is BUSY waiting for
+    # this very init to return (it processes start_child synchronously).
+    # The first chat-bound /new-session or auto-create after BEAM boot
+    # froze. Disabled until re-implemented as `Process.send_after`-
+    # delivered post-init dispatch. Issue #02 to track.
 
     # PR-9 T12a: auto-confirm the claude trust-folder dialog that fires
     # on first use of a new `--add-dir` path. Schedule a delayed
