@@ -6,7 +6,7 @@ defmodule Esr.SessionProcess do
     - session_id (ULID string)
     - agent_name (e.g. "cc")
     - dir (workspace path)
-    - chat_thread_key (%{chat_id:, thread_id:})
+    - chat_thread_key (%{chat_id:, app_id:}) — PR-21λ chat-current routing key
     - metadata (free-form map)
 
   PR-3 (P3-3a) adds the **session-scoped capability projection**

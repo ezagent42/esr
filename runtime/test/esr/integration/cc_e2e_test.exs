@@ -183,7 +183,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # 4. Resolve the spawned peer pids from SessionRegistry.
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
 
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
@@ -326,7 +326,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # Registry reflects the teardown.
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
   end
 
   # ------------------------------------------------------------------

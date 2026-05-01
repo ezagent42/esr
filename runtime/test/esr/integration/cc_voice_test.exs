@@ -145,7 +145,7 @@ defmodule Esr.Integration.CCVoiceTest do
       })
 
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
 
     # Stateful peers are live pids.
     assert is_pid(refs.feishu_chat_proxy)
@@ -196,6 +196,6 @@ defmodule Esr.Integration.CCVoiceTest do
     :ok = Esr.SessionRouter.end_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
   end
 end

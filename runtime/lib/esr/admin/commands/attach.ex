@@ -7,11 +7,13 @@ defmodule Esr.Admin.Commands.Attach do
   Reads from args:
     * `chat_id` — Feishu chat id
     * `app_id`  — adapter instance id
-    * `thread_id` — thread id (or chat_id when not in a thread)
 
   Returns a Feishu-renderable string carrying both the operator-friendly
   HTTP URL and the canonical `esr://` URI. The HTTP path mirrors URI
   path segments (PR-22 rule: HTTP path = URI path).
+
+  PR-21λ: dropped `thread_id` — `/attach` resolves the chat-current
+  session, matching the routing semantics of every other inbound.
   """
 
   @behaviour Esr.Role.Control
@@ -22,9 +24,8 @@ defmodule Esr.Admin.Commands.Attach do
   def execute(%{"args" => args}) do
     chat_id = Map.get(args, "chat_id", "")
     app_id = Map.get(args, "app_id", "")
-    thread_id = Map.get(args, "thread_id", "")
 
-    case SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id) do
+    case SessionRegistry.lookup_by_chat(chat_id, app_id) do
       {:ok, sid, _refs} ->
         uri = EsrUri.build_path(["sessions", sid, "attach"], "localhost")
         http_url = EsrUri.to_http_url(uri, EsrWeb.Endpoint)
