@@ -321,18 +321,19 @@ defmodule Esr.Peers.PtyProcess do
     |> Path.expand()
   end
 
-  # Mirrors TmuxProcess.channel_ws_url/0 — derives the esrd channel
-  # endpoint URL for cc_mcp to connect to.
+  # Returns the esrd base WebSocket URL for cc_mcp's ESR_ESRD_URL env.
+  # cc_mcp's ws_client.py appends `/channel/socket/websocket?vsn=2.0.0`
+  # itself — we must return JUST the base (ws://host:port), no path.
   defp channel_ws_url do
     case Application.get_env(:esr, EsrWeb.Endpoint) do
       nil ->
-        "ws://localhost:4001/channel/socket/websocket"
+        "ws://localhost:4001"
 
       cfg ->
         url = Keyword.get(cfg, :url, [])
         host = Keyword.get(url, :host, "localhost")
         port = Keyword.get(url, :port) || Keyword.get(cfg, :http, [])[:port] || 4001
-        "ws://#{host}:#{port}/channel/socket/websocket"
+        "ws://#{host}:#{port}"
     end
   end
 end
