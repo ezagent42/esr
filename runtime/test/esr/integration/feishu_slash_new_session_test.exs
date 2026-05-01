@@ -199,8 +199,8 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # double-checked here so T3 failures are easy to diagnose).
     state = Esr.SessionProcess.state(sid)
 
-    assert state.chat_thread_key ==
-             %{chat_id: @chat_id, app_id: "default", thread_id: @thread_id}
+    # PR-21λ: chat_thread_key narrowed to the (chat_id, app_id) routing key.
+    assert state.chat_thread_key == %{chat_id: @chat_id, app_id: "default"}
 
     assert state.metadata.principal_id == @test_principal
   end
