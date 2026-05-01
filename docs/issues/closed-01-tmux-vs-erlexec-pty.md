@@ -1,13 +1,13 @@
 # Issue 01 — tmux as claude wrapper: still needed post-erlexec PTY?
 
-Open. Brainstorm in progress 2026-05-01.
+Closed 2026-05-01.
 
 ## TLDR
 
 - **Problem:** tonight's PR-21κ live-test surfaced a zombie-session bug — when the tmux server backing a CC session dies (manual kill, claude crash, host reboot), `TmuxProcess.on_terminate` fires but `cc_process` / FCP / `SessionRegistry` don't notice. Next inbound routes into a dead path. Worked around by full BEAM kickstart. The deeper question: **is tmux still earning its keep?**
-- **Decision:** TBD — brainstorming.
-- **Why:** TBD.
-- **Where it landed:** TBD.
+- **Decision:** **Keep tmux.** Fix the zombie via back-wire-on-restart (approach D), not via session teardown.
+- **Why:** Operator multi-attach (副驾) is a daily-used workflow; erlexec PTY is point-to-point and can't multi-attach without re-implementing tmux. So the only option that preserves UX is keeping tmux. The zombie symptom was supervisor strategy + missing back-wire, not a tmux-vs-erlexec architectural issue.
+- **Where it landed:** PR-21ψ — `TmuxProcess.init/1` calls `rewire_session_siblings/1` which `:sys.replace_state`-patches the new tmux pid into FCP / cc_process `state.neighbors[:tmux_process]`. Repeated crashes cascade naturally via DynamicSupervisor's `max_restarts/max_seconds` thresholds → the outer `Esr.Session` `:one_for_all` supervisor tears the session down → next inbound auto-creates fresh.
 
 ## Context
 
