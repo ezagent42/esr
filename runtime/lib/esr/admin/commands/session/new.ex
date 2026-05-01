@@ -72,11 +72,14 @@ defmodule Esr.Admin.Commands.Session.New do
     # currently registered in agents.yaml.
     agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
     dir = args["dir"] || args["cwd"]
-    # PR-8 T2: thread the originating Feishu chat through so the session
-    # is registered under the real {chat_id, thread_id}. Falls back to
-    # "pending" when args don't carry them (direct admin CLI submits).
+    # PR-8 T2 / PR-21λ: thread the originating Feishu chat through so the
+    # session is registered under the chat-current `(chat_id, app_id)`
+    # slot. Falls back to "pending" when args don't carry chat_id (direct
+    # admin CLI submits) — those bypass SessionRouter and so never touch
+    # the registry's chat slot. `thread_id` is still propagated downstream
+    # for Feishu reply rendering, but is no longer part of the routing key.
     chat_id = Map.get(args, "chat_id", "pending")
-    thread_id = Map.get(args, "thread_id", "pending")
+    thread_id = Map.get(args, "thread_id", "")
     create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
     start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
 
@@ -251,7 +254,7 @@ defmodule Esr.Admin.Commands.Session.New do
          create_session_fn,
          _start_session_fn
        )
-       when chat_id != "pending" and thread_id != "pending" do
+       when chat_id != "pending" do
     params = %{
       agent: agent,
       dir: dir,
@@ -283,16 +286,15 @@ defmodule Esr.Admin.Commands.Session.New do
          dir,
          submitter,
          chat_id,
-         thread_id,
+         _thread_id,
          _create_session_fn,
          start_session_fn
        ) do
     sid = :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
-    # PR-A T1: legacy admin-CLI submit path has no chat context, so the
-    # placeholders persist; app_id matches by mirroring the chat_id slot
-    # so the SessionRegistry 3-tuple is well-formed if/when this path
-    # later registers it.
-    key = %{chat_id: chat_id, app_id: chat_id, thread_id: thread_id}
+    # PR-A T1 / PR-21λ: legacy admin-CLI submit path has no chat context
+    # — the placeholders persist and `app_id` mirrors `chat_id` so the
+    # routing key is well-formed if/when this path later registers.
+    key = %{chat_id: chat_id, app_id: chat_id}
 
     case start_session_fn.(%{
            session_id: sid,

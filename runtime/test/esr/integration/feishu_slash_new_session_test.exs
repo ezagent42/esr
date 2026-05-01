@@ -110,7 +110,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     on_exit(fn ->
       # PR-A T1: SessionRouter defaults app_id to "default" when the
       # slash flow doesn't carry one (T3 will surface app_id explicitly).
-      Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, "default", @thread_id)
+      Esr.SessionRegistry.lookup_by_chat(@chat_id, "default")
       |> case do
         {:ok, sid, _} -> Esr.SessionRegistry.unregister_session(sid)
         _ -> :ok
@@ -189,7 +189,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # PR-A T1: slash flow doesn't yet supply app_id so SessionRouter
     # defaults to "default".
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(@chat_id, "default", @thread_id),
+             Esr.SessionRegistry.lookup_by_chat(@chat_id, "default"),
            "SessionRegistry.lookup_by_chat_thread/3 must return the session " <>
              "created by the slash command"
 

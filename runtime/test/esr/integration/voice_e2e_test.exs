@@ -64,7 +64,7 @@ defmodule Esr.Integration.VoiceE2ETest do
     # Resolve VoiceE2E pid from SessionRegistry refs. PR-A T1: no app_id
     # was passed at create_session, so the router defaults to "default".
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, "default", thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, "default")
 
     voice_pid = refs[:voice_e2e]
     assert is_pid(voice_pid)
@@ -97,6 +97,6 @@ defmodule Esr.Integration.VoiceE2ETest do
     :ok = Esr.SessionRouter.end_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat_thread(chat_id, "default", thread_id)
+             Esr.SessionRegistry.lookup_by_chat(chat_id, "default")
   end
 end
