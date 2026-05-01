@@ -140,27 +140,18 @@ defmodule Esr.Peers.PtyProcess do
       Process.send_after(self(), :rewire_siblings, 50)
     end
 
-    schedule_trust_confirm(state)
-
     {:ok, state}
   end
 
-  # T12a auto-confirm of claude trust dialogs — port from TmuxProcess's
-  # 5s/8s/20s schedule. Sends raw "1\r" via the worker's write_stdin
-  # cast (no tmux send-keys layer).
-  defp schedule_trust_confirm(%{session_id: sid}) when is_binary(sid) and sid != "" do
-    if Application.get_env(:esr, :tmux_force_claude_launch, Mix.env() != :test) do
-      base = Application.get_env(:esr, :tmux_startup_keys_delay_ms, 5_000)
-      gap = Application.get_env(:esr, :tmux_startup_keys_gap_ms, 3_000)
-      Process.send_after(self(), :pty_trust_confirm, base)
-      Process.send_after(self(), :pty_trust_confirm, base + gap)
-      Process.send_after(self(), :pty_trust_confirm, base + gap * 4)
-    end
-
-    :ok
-  end
-
-  defp schedule_trust_confirm(_), do: :ok
+  # T12a auto-confirm dropped in PR-22 live test: pre-PR-22 TmuxProcess
+  # used `tmux send-keys ["1", :enter]` whose key events were absorbed
+  # by claude's trust dialogs (no-op when no dialog showing). In PR-22's
+  # raw-PTY world, `1\r` lands as plain stdin and shows up as user
+  # input post-dialog — leaked "1"s into the conversation. Solution:
+  # drop the auto-confirm entirely; CLAUDE_FLAGS in esr-cc.sh already
+  # includes `--permission-mode bypassPermissions` +
+  # `--dangerously-load-development-channels`, so the trust dialog
+  # doesn't appear in the first place.
 
   # ------------------------------------------------------------------
   # OSProcess lifecycle hooks (signatures match os_process.ex callbacks)
@@ -245,11 +236,6 @@ defmodule Esr.Peers.PtyProcess do
   @impl Esr.Peer.Stateful
   def handle_downstream(:rewire_siblings, state) do
     rewire_session_siblings(state)
-    {:forward, [], state}
-  end
-
-  def handle_downstream(:pty_trust_confirm, state) do
-    __MODULE__.OSProcessWorker.write_stdin(self(), "1\r")
     {:forward, [], state}
   end
 

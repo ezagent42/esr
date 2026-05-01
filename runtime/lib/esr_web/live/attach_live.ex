@@ -36,15 +36,16 @@ defmodule EsrWeb.AttachLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div style="height:100vh;display:flex;flex-direction:column;">
-      <div :if={@ended?} style="background:#332200;color:#ffaa33;padding:6px 10px;font-size:12px;">
+    <div style="position:fixed;inset:0;display:flex;flex-direction:column;background:#1e1e1e;">
+      <div :if={@ended?} style="background:#332200;color:#ffaa33;padding:6px 10px;font-size:12px;font-family:monospace;">
         [session ended — link no longer attached to a live PTY]
       </div>
       <div
         id={@terminal_id}
         phx-hook="XtermAttach"
+        phx-update="ignore"
         data-sid={@sid}
-        style="flex:1;min-height:0;padding:8px;"
+        style="flex:1;min-height:0;width:100%;"
       >
       </div>
     </div>
