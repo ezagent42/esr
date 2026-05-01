@@ -11,10 +11,12 @@ defmodule EsrWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # PR-22: LiveView for /sessions/:sid/attach (xterm.js terminal).
-  socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+  # PR-23: AttachSocket for browser xterm.js terminal attach. Replaces
+  # the PR-22 LiveView path; raw Phoenix.Channel avoids the DOM-diffing
+  # render jitter LiveView introduced.
+  socket "/attach_socket", EsrWeb.AttachSocket,
+    websocket: true,
+    longpoll: false
 
   # Adapter WebSocket — Python adapter processes join
   # adapter:<name>/<instance_id> topics here (PRD 01 F09, spec §7.1).
