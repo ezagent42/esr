@@ -45,6 +45,25 @@ defmodule EsrWeb do
     end
   end
 
+  # PR-22: HTML helpers + LiveView surface for /sessions/:sid/attach.
+  def html do
+    quote do
+      use Phoenix.Component
+      import Phoenix.HTML
+      alias Phoenix.LiveView.JS
+      unquote(verified_routes())
+    end
+  end
+
+  def live_view do
+    quote do
+      use Phoenix.LiveView, layout: {EsrWeb.Layouts, :root}
+      import Phoenix.HTML
+      alias Phoenix.LiveView.JS
+      unquote(verified_routes())
+    end
+  end
+
   def verified_routes do
     quote do
       use Phoenix.VerifiedRoutes,

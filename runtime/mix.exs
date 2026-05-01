@@ -44,6 +44,9 @@ defmodule Esr.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.8.0"},
+      # PR-22: LiveView surface for /sessions/:sid/attach (xterm.js).
+      {:phoenix_live_view, "~> 1.0"},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:phoenix_pubsub, "~> 2.1"},
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
