@@ -14,8 +14,13 @@ ESR_INSTANCE="${ESR_INSTANCE:-default}"
 dir="$ESRD_HOME/$ESR_INSTANCE"
 mkdir -p "$dir/logs"
 
-# Pre-select a free port (fallback path). Future: pass PORT=0 for post-bind.
-port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); print(p)')
+# PR-22: honor PORT from plist env (operator override). When unset,
+# pre-select a free port for two-esrd-on-one-host coexistence.
+if [ -z "${PORT:-}" ]; then
+  port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); print(p)')
+else
+  port="$PORT"
+fi
 echo "$port" > "$dir/esrd.port"
 
 cd "${ESR_REPO_DIR:-$(git rev-parse --show-toplevel)}"
