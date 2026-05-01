@@ -59,8 +59,13 @@ if [ -n "${ESR_CWD:-}" ]; then
 elif [ -n "$root" ] && [ "$root" != "null" ]; then
   cwd="$root"
 else
-  echo "esr-cc.sh: workspace '$ws' has no root: in $WORKSPACES_YAML and no ESR_CWD env var" >&2
-  exit 2
+  # PR-21τ 2026-05-01: PR-22 removed workspace.root; auto-create
+  # sessions don't set ESR_CWD. Fall back to the tmux pane's cwd
+  # (already set via tmux's -c flag from `state.dir` in TmuxProcess)
+  # so the script doesn't hard-fail. Operators wanting a specific
+  # location should pass ESR_CWD or use /new-session with root=.
+  cwd="$(pwd)"
+  echo "esr-cc.sh: workspace '$ws' has no root: + no ESR_CWD; using pwd=$cwd" >&2
 fi
 
 # Expand ~
