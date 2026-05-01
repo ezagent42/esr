@@ -142,7 +142,8 @@ defmodule Esr.SessionRouter do
 
   @impl true
   def init(_) do
-    _ = subscribe_to_new_chat_thread()
+    sub_result = subscribe_to_new_chat_thread()
+    Logger.info("SessionRouter.init: subscribe_to_new_chat_thread returned #{inspect(sub_result)}")
     {:ok, %{monitors: %{}}}
   end
 
@@ -187,6 +188,11 @@ defmodule Esr.SessionRouter do
 
   @impl true
   def handle_info({:new_chat_thread, app_id, chat_id, thread_id, envelope}, state) do
+    Logger.info(
+      "SessionRouter.handle_info(:new_chat_thread): RECEIVED " <>
+        "app_id=#{inspect(app_id)} chat_id=#{inspect(chat_id)}"
+    )
+
     # P3-7: auto-spawn a session for a previously-unseen (chat_id,
     # thread_id). Tuple order is `{app_id, chat_id, thread_id, envelope}`
     # — app_id first, matching the wiring owned by FeishuAppAdapter.

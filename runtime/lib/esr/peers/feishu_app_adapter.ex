@@ -226,40 +226,41 @@ defmodule Esr.Peers.FeishuAppAdapter do
     # 01 still pass against an unchanged Python wire shape.
     app_id = args["app_id"] || state.instance_id
 
+    Logger.info(
+      "FAA.do_handle_upstream_inbound: chat_id=#{inspect(chat_id)} " <>
+        "app_id=#{inspect(app_id)} thread_id=#{inspect(thread_id)} " <>
+        "instance_id=#{inspect(state.instance_id)}"
+    )
+
     case Esr.SessionRegistry.lookup_by_chat_thread(chat_id, app_id, thread_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         {:forward, [], state}
 
       :not_found ->
-        # PR-N 2026-04-28 / PR-21w: before falling through to session
-        # creation, check whether this chat is even bound to a workspace
-        # via Esr.Peers.UnboundChatGuard. Without the gate, SessionRouter
-        # would silently fall back to workspace="default" and the
-        # operator gets no signal that their chat isn't configured.
-        case Esr.Peers.UnboundChatGuard.check(chat_id, app_id, state.instance_id) do
+        Logger.info("FAA.do_handle_upstream_inbound: lookup=:not_found, calling UnboundChatGuard")
+
+        guard_result = Esr.Peers.UnboundChatGuard.check(chat_id, app_id, state.instance_id)
+        Logger.info("FAA.do_handle_upstream_inbound: UnboundChatGuard=#{inspect(guard_result)}")
+
+        case guard_result do
           {:emit, text} ->
             send_guide_dm(chat_id, text)
             {:drop, :unbound_chat_guide_sent, state}
 
           :rate_limited ->
-            # Already DM'd this chat recently — silently drop without
-            # also broadcasting (the operator hasn't acted on the
-            # earlier guide yet, no point making more sessions either).
             {:drop, :unbound_chat_guide_rate_limited, state}
 
           :passthrough ->
-            # P3-7: broadcast on the `session_router` topic. Tuple's second
-            # slot is the resolved app_id — args["app_id"] when the Python
-            # adapter populated it, else state.instance_id. Downstream
-            # consumers (SessionRouter → FeishuAppProxy) look the peer up
-            # by registry name `:feishu_app_adapter_<instance_id>`; the
-            # PR-A T1 spec locks app_id == instance_id in our system.
+            Logger.info("FAA.do_handle_upstream_inbound: broadcasting new_chat_thread to session_router")
+
             Phoenix.PubSub.broadcast(
               EsrWeb.PubSub,
               "session_router",
               {:new_chat_thread, app_id, chat_id, thread_id, envelope}
             )
+
+            Logger.info("FAA.do_handle_upstream_inbound: broadcast returned (no result)")
 
             {:drop, :new_chat_thread_pending, state}
         end
