@@ -314,6 +314,16 @@ defmodule Esr.Peers.TmuxProcess do
           state
       end
 
+    # PR-21ψ 2026-05-01: when restarted by the peers DynamicSupervisor
+    # (TmuxProcess crashed / tmux server died / claude exited), our pid
+    # changes but FCP / cc_process still hold the OLD :tmux_process
+    # neighbor pid. Without this, send_input falls into a dead pid and
+    # the operator-facing UX is "session became silent". Push the new
+    # pid into siblings via :sys.replace_state — same idiom
+    # SessionRouter.backwire_neighbors uses at initial spawn. Idempotent
+    # at first-spawn (no siblings exist yet → loop is a no-op).
+    rewire_session_siblings(state)
+
     # PR-9 T12a: auto-confirm the claude trust-folder dialog that fires
     # on first use of a new `--add-dir` path. Schedule a delayed
     # send_keys(["1", :enter]) if we're in production mode (session_id
@@ -738,4 +748,61 @@ defmodule Esr.Peers.TmuxProcess do
   defp escape(text), do: String.replace(text, ~S("), ~S(\"))
 
   defp name_for(%{session_name: n}), do: String.to_atom("esr_tmux_#{n}")
+
+  # PR-21ψ 2026-05-01: re-attach this TmuxProcess pid into every
+  # sibling peer's `state.neighbors[:tmux_process]` after a restart.
+  # Mirrors `Esr.SessionRouter.backwire_neighbors/3` (which runs at
+  # initial spawn). At first spawn here, peers Supervisor only has
+  # this child — the loop is a no-op. At restart, FCP + cc_process
+  # exist and get patched in-place.
+  defp rewire_session_siblings(%{session_id: sid}) when is_binary(sid) and sid != "" do
+    peers_sup_via = {:via, Registry, {Esr.Session.Registry, {:peers_sup, sid}}}
+
+    case GenServer.whereis(peers_sup_via) do
+      nil ->
+        :ok
+
+      sup_pid ->
+        my_pid = self()
+
+        sup_pid
+        |> DynamicSupervisor.which_children()
+        |> Enum.each(fn
+          {_id, child_pid, _type, _modules} when is_pid(child_pid) and child_pid != my_pid ->
+            patch_neighbor_in_state(child_pid, :tmux_process, my_pid)
+
+          _ ->
+            :ok
+        end)
+    end
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp rewire_session_siblings(_state), do: :ok
+
+  # Idiom borrowed from `Esr.SessionRouter.backwire_neighbors/3` —
+  # peer state may be raw (FCP, cc_process) or OSProcessWorker-wrapped
+  # (`%{parent: _, state: inner}`). Update neighbors in either shape.
+  defp patch_neighbor_in_state(pid, name, new_pid) do
+    _ =
+      :sys.replace_state(pid, fn
+        %{parent: _, state: inner} = ws when is_map(inner) ->
+          %{ws | state: %{inner | neighbors: Keyword.put(inner.neighbors, name, new_pid)}}
+
+        %{neighbors: nb} = s when is_list(nb) ->
+          %{s | neighbors: Keyword.put(nb, name, new_pid)}
+
+        other ->
+          other
+      end)
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
 end
