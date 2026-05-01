@@ -146,6 +146,14 @@ defmodule Esr.OSProcess do
           {:noreply, s}
         end
 
+        # PR-22: SIGWINCH propagation for PTY-wrapped processes.
+        # xterm.js → AttachLive → PtyProcess.resize/3 → here.
+        def handle_cast({:winsz, cols, rows}, %{os_pid: os_pid} = s)
+            when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 do
+          if os_pid, do: :exec.winsz(os_pid, cols, rows)
+          {:noreply, s}
+        end
+
         # ------------------------------------------------------------------
         # erlexec stdout/stderr messages.
         # ------------------------------------------------------------------
