@@ -378,22 +378,54 @@ defmodule Esr.SessionRouter do
        when is_binary(workspace_name) do
     # Caller-supplied :start_cmd wins (test injection, future per-session
     # override). Otherwise look up workspaces.yaml.
-    case get_param(params, :start_cmd) do
-      cmd when is_binary(cmd) and cmd != "" ->
-        cmd
+    raw =
+      case get_param(params, :start_cmd) do
+        cmd when is_binary(cmd) and cmd != "" ->
+          cmd
 
-      _ ->
-        case Esr.Workspaces.Registry.get(workspace_name) do
-          {:ok, %{start_cmd: cmd}} when is_binary(cmd) and cmd != "" ->
-            cmd
+        _ ->
+          case Esr.Workspaces.Registry.get(workspace_name) do
+            {:ok, %{start_cmd: cmd}} when is_binary(cmd) and cmd != "" ->
+              cmd
 
-          _ ->
-            nil
-        end
-    end
+            _ ->
+              nil
+          end
+      end
+
+    expand_start_cmd(raw)
   end
 
   defp resolve_workspace_start_cmd(_, _), do: nil
+
+  # PR-21ρ 2026-05-01: workspaces.yaml's `start_cmd` is conventionally a
+  # repo-relative path (`scripts/esr-cc.sh`). The tmux pane's cwd is the
+  # session's worktree (or `/tmp` for auto-created sessions), so a
+  # relative path won't resolve. Prepend `$ESR_REPO_DIR` (set by the
+  # launchd plist) when the start_cmd doesn't already look absolute.
+  defp expand_start_cmd(nil), do: nil
+  defp expand_start_cmd(""), do: nil
+
+  defp expand_start_cmd(cmd) when is_binary(cmd) do
+    [head | rest] = String.split(cmd, " ", parts: 2, trim: true)
+
+    head =
+      cond do
+        String.starts_with?(head, "/") ->
+          head
+
+        String.starts_with?(head, "~") ->
+          String.replace_prefix(head, "~", System.get_env("HOME") || "")
+
+        true ->
+          case System.get_env("ESR_REPO_DIR") do
+            repo when is_binary(repo) and repo != "" -> Path.join(repo, head)
+            _ -> head
+          end
+      end
+
+    Enum.join([head | rest], " ")
+  end
 
   defp maybe_put_start_cmd(params, nil), do: params
   defp maybe_put_start_cmd(params, cmd), do: Map.put(params, :start_cmd, cmd)
