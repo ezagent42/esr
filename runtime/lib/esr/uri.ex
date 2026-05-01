@@ -114,6 +114,31 @@ defmodule Esr.Uri do
     end
   end
 
+  @doc """
+  Renders an `esr://` URI as an HTTP URL pointing at the given Phoenix
+  Endpoint. Path segments and query string are preserved verbatim;
+  scheme + authority come from `endpoint.url/0`.
+
+  Used by `/attach` slash and any future operator-facing UI that maps
+  ESR resources to HTTP views — the rule is HTTP path = URI path.
+
+      iex> Esr.Uri.to_http_url("esr://localhost/sessions/abc/attach", EsrWeb.Endpoint)
+      "http://localhost:4001/sessions/abc/attach"
+  """
+  @spec to_http_url(String.t(), module()) :: String.t()
+  def to_http_url("esr://" <> rest, endpoint) when is_atom(endpoint) do
+    case String.split(rest, "/", parts: 2) do
+      [_authority, path_and_query] ->
+        endpoint.url() <> "/" <> path_and_query
+
+      _ ->
+        raise ArgumentError, "esr URI missing path: esr://#{rest}"
+    end
+  end
+
+  def to_http_url(other, _endpoint),
+    do: raise(ArgumentError, "not an esr:// URI: #{inspect(other)}")
+
   defp authority(host, opts) do
     case Keyword.get(opts, :org) do
       nil -> host

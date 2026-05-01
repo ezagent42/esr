@@ -180,4 +180,40 @@ defmodule Esr.UriTest do
       refute :actor in Esr.Uri.path_style_types()
     end
   end
+
+  describe "to_http_url/2" do
+    test "renders esr URI to HTTP URL using endpoint host:port" do
+      uri = Esr.Uri.build_path(["sessions", "sess_42", "attach"], "localhost")
+      assert uri == "esr://localhost/sessions/sess_42/attach"
+
+      http = Esr.Uri.to_http_url(uri, EsrWeb.Endpoint)
+      assert http =~ ~r{^https?://[^/]+/sessions/sess_42/attach$}
+    end
+
+    test "preserves query params" do
+      uri = "esr://localhost/sessions/abc/attach?foo=bar"
+      http = Esr.Uri.to_http_url(uri, EsrWeb.Endpoint)
+      assert String.ends_with?(http, "/sessions/abc/attach?foo=bar")
+    end
+
+    test "raises on malformed input" do
+      assert_raise ArgumentError, fn ->
+        Esr.Uri.to_http_url("not-an-esr-uri", EsrWeb.Endpoint)
+      end
+    end
+
+    test "delegates host/port resolution to the given endpoint module" do
+      # to_http_url is a thin wrapper over endpoint.url/0. We verify
+      # the delegation explicitly by stubbing a fake endpoint module —
+      # the production integration (ESR_PUBLIC_HOST → Endpoint.url())
+      # is exercised in the e2e scenario, not at the unit level.
+      defmodule FakeEndpoint do
+        def url, do: "http://100.64.0.27:4001"
+      end
+
+      uri = Esr.Uri.build_path(["sessions", "abc", "attach"], "localhost")
+      assert Esr.Uri.to_http_url(uri, FakeEndpoint) ==
+               "http://100.64.0.27:4001/sessions/abc/attach"
+    end
+  end
 end
