@@ -26,6 +26,8 @@ defmodule EsrWeb do
       # Import common connection and controller functions to use in pipelines
       import Plug.Conn
       import Phoenix.Controller
+      # PR-22: live/2 macro for LiveView routes
+      import Phoenix.LiveView.Router
     end
   end
 
