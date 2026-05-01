@@ -60,6 +60,10 @@ defmodule Esr.SessionRouter do
                     Esr.Peers.FeishuChatProxy,
                     Esr.Peers.CCProcess,
                     Esr.Peers.TmuxProcess,
+                    # PR-22: PtyProcess replaces TmuxProcess. Both listed
+                    # during transition; TmuxProcess gets removed in P10
+                    # alongside the file deletion.
+                    Esr.Peers.PtyProcess,
                     Esr.Peers.FeishuAppAdapter,
                     # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
                     # AdminSession and NOT spawned per-session (the
