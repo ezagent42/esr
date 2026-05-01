@@ -14,7 +14,7 @@ defmodule Esr.Peers.CCProcess do
       `HandlerRouter.call/3`
     * `:cc_state` — the handler's opaque state blob, threaded through
       each invocation (`payload["state"]` in, `new_state` out)
-    * `:neighbors` — keyword: `:tmux_process`, `:cc_proxy`
+    * `:neighbors` — keyword: `:pty_process`, `:cc_proxy` (PR-22; was `:tmux_process` pre-PR-22)
     * `:proxy_ctx` — shared context snapshot (principal_id, etc.) used
       by downstream Peer.Proxy ctx hooks
     * `:handler_override` — optional 3-arity fun for tests to stub the
