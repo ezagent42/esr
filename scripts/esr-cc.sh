@@ -14,14 +14,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ESRD_INSTANCE="${ESRD_INSTANCE:-default}"
-WORKSPACES_YAML="$HOME/.esrd/$ESRD_INSTANCE/workspaces.yaml"
+# PR-21σ 2026-05-01: support `ESRD_HOME` (set by launchd plist for
+# esrd-prod and esrd-dev). Falls back to `~/.esrd` for legacy
+# operator paths that didn't set the env var.
+ESRD_HOME_DIR="${ESRD_HOME:-$HOME/.esrd}"
+WORKSPACES_YAML="$ESRD_HOME_DIR/$ESRD_INSTANCE/workspaces.yaml"
 
-# Source shell rcs (tmux non-interactive shells need PATH setup)
-for rc in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
-  [ -f "$rc" ] && source "$rc" 2>/dev/null || true
-done
-
-# Fallback PATH additions
+# PR-21σ: explicit PATH only — do NOT source `~/.zshrc` etc. zsh
+# rcs frequently contain zsh-only constructs (oh-my-posh, fzf-tab)
+# that bash chokes on, and `set -e` then silently kills this script
+# at the source line. Everything we actually need (yq, claude, uv) is
+# in /opt/homebrew/bin or ~/.local/bin, both already covered below.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
 
 # Local overrides (proxy, secrets)
@@ -65,6 +68,12 @@ cwd="${cwd/#\~/$HOME}"
 mkdir -p "$cwd"
 cd "$cwd"
 
+# PR-21σ 2026-05-01: MCP env values must be strings (claude rejects
+# the config with `Does not adhere to MCP server configuration schema`
+# when ESR_CHAT_IDS comes through as a raw JSON array). JSON-encode
+# the chats array as a string by escaping internal double quotes.
+chats_string="${chats_json//\"/\\\"}"
+
 # Write .mcp.json at workspace cwd
 cat > .mcp.json <<EOF
 {
@@ -76,7 +85,7 @@ cat > .mcp.json <<EOF
         "ESR_ESRD_URL": "${ESR_ESRD_URL:-ws://127.0.0.1:4001}",
         "ESR_SESSION_ID": "$ESR_SESSION_ID",
         "ESR_WORKSPACE": "$ws",
-        "ESR_CHAT_IDS": $chats_json,
+        "ESR_CHAT_IDS": "$chats_string",
         "ESR_ROLE": "$role"
       }
     }
@@ -85,7 +94,7 @@ cat > .mcp.json <<EOF
 EOF
 
 # Compute claude --resume handling (spec §3.3 CC session resumption)
-session_ids_yaml="$HOME/.esrd/$ESRD_INSTANCE/session-ids.yaml"
+session_ids_yaml="$ESRD_HOME_DIR/$ESRD_INSTANCE/session-ids.yaml"
 resume_arg=""
 if [ -f "$session_ids_yaml" ]; then
   prior_session_id=$(yq -r ".sessions.\"${ws}:${ESR_SESSION_ID}\" // \"\"" "$session_ids_yaml")
