@@ -299,12 +299,15 @@ defmodule Esr.Admin.Commands.Session.NewTest do
   end
 
   describe "execute/1 SessionRegistry binding (PR-8 T3)" do
-    test "chat_id + thread_id args register the session in SessionRegistry" do
-      # PR-8 T3: Session.New must register the session so
-      # FeishuAppAdapter.lookup_by_chat_thread/3 resolves to it on the
-      # next inbound event. PR-8 T4: registration is now performed
-      # inside `SessionRouter.create_session/1` (this test still asserts
-      # the visible behaviour — a lookup hits with the right sid).
+    test "chat_id + app_id args register the session under the real app_id" do
+      # PR-8 T3 / T4 / PR-21λ-fix: Session.New must register the session
+      # so `FeishuAppAdapter` lookups resolve to it on the next inbound.
+      # The lookup uses `(chat_id, app_id)` where app_id is the adapter
+      # instance id (e.g. "esr_dev_helper"). Pre-fix, Session.New dropped
+      # args["app_id"] and let SessionRouter fall back to "default" —
+      # inbound messages then missed every time. Regression guard: the
+      # registration key must equal the adapter instance id, not the
+      # "default" fallback.
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
       cmd = %{
@@ -313,21 +316,21 @@ defmodule Esr.Admin.Commands.Session.NewTest do
           "agent" => "cc",
           "dir" => "/tmp/t3-bound",
           "chat_id" => "oc_T3",
-          "thread_id" => "om_T3"
+          "thread_id" => "om_T3",
+          "app_id" => "esr_dev_helper"
         }
       }
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
-      # Registry now returns the new session for this chat/thread key.
-      # PR-A T1: Session.New doesn't yet thread app_id through, so
-      # SessionRouter defaults it to "default".
       assert {:ok, ^sid, refs} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3", "default")
+               Esr.SessionRegistry.lookup_by_chat("oc_T3", "esr_dev_helper")
+
+      # The "default" fallback slot must remain empty — proves the fix
+      # threaded app_id rather than letting it default.
+      assert :not_found = Esr.SessionRegistry.lookup_by_chat("oc_T3", "default")
 
       # Post-T4: refs is populated with the spawned pipeline peer pids.
-      # The specific pid assertions live in the T4 describe block; here
-      # we only guard the shape invariant the old T3 behaviour relied on.
       assert is_map(refs)
 
       on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
@@ -369,21 +372,22 @@ defmodule Esr.Admin.Commands.Session.NewTest do
           "agent" => "cc",
           "dir" => "/tmp/t3-first",
           "chat_id" => "oc_T3_reuse",
-          "thread_id" => "om_T3_reuse"
+          "thread_id" => "om_T3_reuse",
+          "app_id" => "esr_dev_helper"
         }
       }
 
       assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
 
       assert {:ok, ^sid1, _} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "default")
+               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
 
       cmd2 = put_in(cmd1["args"]["dir"], "/tmp/t3-second")
       assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
       refute sid2 == sid1, "second execute yields a fresh session_id"
 
       assert {:ok, ^sid2, _} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "default")
+               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
 
       on_exit(fn ->
         Esr.SessionRegistry.unregister_session(sid1)
@@ -410,7 +414,8 @@ defmodule Esr.Admin.Commands.Session.NewTest do
           "agent" => "cc",
           "dir" => "/tmp/t4-router",
           "chat_id" => "oc_T4",
-          "thread_id" => "om_T4"
+          "thread_id" => "om_T4",
+          "app_id" => "cli_test"
         }
       }
 
@@ -419,7 +424,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       # Post-T4 invariant: refs contains a real feishu_chat_proxy pid
       # spawned by SessionRouter.spawn_pipeline/3, not an empty map.
       assert {:ok, ^sid, %{feishu_chat_proxy: proxy_pid} = refs} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T4", "default")
+               Esr.SessionRegistry.lookup_by_chat("oc_T4", "cli_test")
 
       assert is_pid(proxy_pid)
       assert Process.alive?(proxy_pid)
