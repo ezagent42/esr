@@ -78,8 +78,17 @@ defmodule Esr.Admin.Commands.Session.New do
     # admin CLI submits) — those bypass SessionRouter and so never touch
     # the registry's chat slot. `thread_id` is still propagated downstream
     # for Feishu reply rendering, but is no longer part of the routing key.
+    #
+    # PR-21λ-fix 2026-05-01: `app_id` was previously dropped on the floor
+    # here — Session.New extracted only chat_id + thread_id, then the
+    # SessionRouter `register/3` fallback pinned every chat-bound session
+    # to `app_id = "default"`. Inbound messages (which carry the real
+    # adapter instance id, e.g. `"esr_dev_helper"`) then lookup
+    # `(chat_id, "esr_dev_helper")` and miss every time. Read app_id
+    # explicitly so the registration key matches the lookup key.
     chat_id = Map.get(args, "chat_id", "pending")
     thread_id = Map.get(args, "thread_id", "")
+    app_id = Map.get(args, "app_id", "pending")
     create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
     start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
 
@@ -95,6 +104,7 @@ defmodule Esr.Admin.Commands.Session.New do
              submitter,
              chat_id,
              thread_id,
+             app_id,
              create_session_fn,
              start_session_fn
            ),
@@ -251,6 +261,7 @@ defmodule Esr.Admin.Commands.Session.New do
          submitter,
          chat_id,
          thread_id,
+         app_id,
          create_session_fn,
          _start_session_fn
        )
@@ -261,6 +272,9 @@ defmodule Esr.Admin.Commands.Session.New do
       principal_id: submitter,
       chat_id: chat_id,
       thread_id: thread_id,
+      # PR-21λ-fix: thread app_id so SessionRouter registers under the
+      # adapter instance id that inbound messages will look up with.
+      app_id: app_id,
       # agent_def is redundant — SessionRouter re-resolves — but keeping
       # the reference here means call-site readers don't need to jump
       # two files to see what agent this maps to.
@@ -287,6 +301,7 @@ defmodule Esr.Admin.Commands.Session.New do
          submitter,
          chat_id,
          _thread_id,
+         _app_id,
          _create_session_fn,
          start_session_fn
        ) do
