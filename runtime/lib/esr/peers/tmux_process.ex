@@ -314,13 +314,19 @@ defmodule Esr.Peers.TmuxProcess do
           state
       end
 
-    # PR-21ψ ROLLBACK 2026-05-01: synchronous rewire-on-init caused a
-    # supervisor deadlock — `DynamicSupervisor.which_children` is a
-    # `GenServer.call` to peers_sup, but peers_sup is BUSY waiting for
-    # this very init to return (it processes start_child synchronously).
-    # The first chat-bound /new-session or auto-create after BEAM boot
-    # froze. Disabled until re-implemented as `Process.send_after`-
-    # delivered post-init dispatch. Issue #02 to track.
+    # PR-21ω' 2026-05-01: rewire is delayed via Process.send_after so
+    # peers_sup (busy waiting for this init/1 to return) is freed first.
+    # `OSProcessWorker.handle_info` routes the unknown `:rewire_siblings`
+    # message through `parent.handle_downstream/2`, which is where the
+    # sibling-patch loop runs. See PR-21ψ rollback (PR-21ω) for why we
+    # can't call DynamicSupervisor.which_children synchronously inside init.
+    # Gate via `tmux_force_claude_launch` so unit tests (which start
+    # TmuxProcess in isolation, no peers_sup) don't see stray rewire
+    # messages in their mailbox — same flag T12a uses for send_keys.
+    if is_binary(state.session_id) and state.session_id != "" and
+         Application.get_env(:esr, :tmux_force_claude_launch, Mix.env() != :test) do
+      Process.send_after(self(), :rewire_siblings, 50)
+    end
 
     # PR-9 T12a: auto-confirm the claude trust-folder dialog that fires
     # on first use of a new `--add-dir` path. Schedule a delayed
@@ -408,6 +414,16 @@ defmodule Esr.Peers.TmuxProcess do
   def handle_downstream({:send_keys_tokens, keys}, state) when is_list(keys) do
     line = tmux_send_keys_line(state.session_name, keys)
     __MODULE__.OSProcessWorker.write_stdin(self(), line)
+    {:forward, [], state}
+  end
+
+  # PR-21ω' 2026-05-01: rewire siblings (re-attach our pid into FCP /
+  # cc_process `state.neighbors[:tmux_process]`). Triggered by
+  # `Process.send_after(self(), :rewire_siblings, 50)` in init/1 — the
+  # delay frees peers_sup so `which_children` can complete without
+  # deadlocking. See PR-21ω commit message for the deadlock walkthrough.
+  def handle_downstream(:rewire_siblings, state) do
+    rewire_session_siblings(state)
     {:forward, [], state}
   end
 
@@ -753,7 +769,11 @@ defmodule Esr.Peers.TmuxProcess do
   # initial spawn). At first spawn here, peers Supervisor only has
   # this child — the loop is a no-op. At restart, FCP + cc_process
   # exist and get patched in-place.
-  defp rewire_session_siblings(%{session_id: sid}) when is_binary(sid) and sid != "" do
+  # Public for test — exposed by handle_downstream(:rewire_siblings)
+  # in production, but the deadlock-prevention rule still applies:
+  # NEVER call this synchronously from your own GenServer's init/1.
+  @doc false
+  def rewire_session_siblings(%{session_id: sid}) when is_binary(sid) and sid != "" do
     peers_sup_via = {:via, Registry, {Esr.Session.Registry, {:peers_sup, sid}}}
 
     case GenServer.whereis(peers_sup_via) do
@@ -779,7 +799,7 @@ defmodule Esr.Peers.TmuxProcess do
     :exit, _ -> :ok
   end
 
-  defp rewire_session_siblings(_state), do: :ok
+  def rewire_session_siblings(_state), do: :ok
 
   # Idiom borrowed from `Esr.SessionRouter.backwire_neighbors/3` —
   # peer state may be raw (FCP, cc_process) or OSProcessWorker-wrapped
