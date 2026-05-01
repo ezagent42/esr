@@ -73,10 +73,10 @@ defmodule Esr.Peers.TmuxRewireTest do
     assert :sys.get_state(stub_fcp).neighbors[:tmux_process] == dead_old
     assert :sys.get_state(stub_cc).neighbors[:tmux_process] == dead_old
 
-    # Run TmuxProcess.init in a synthetic GenServer so `self()` in the
-    # init body is a real pid we can capture. We don't go through
-    # OSProcessWorker.start_link (which would actually spawn tmux);
-    # we just invoke TmuxProcess.init/1 to exercise rewire_session_siblings.
+    # Run a synthetic process that calls TmuxProcess.rewire_session_siblings
+    # directly (skipping the Process.send_after delay) — this is the same
+    # logic that handle_downstream(:rewire_siblings) runs in production.
+    # We bypass OSProcessWorker.start_link (which would actually spawn tmux).
     test_pid = self()
 
     {:ok, tmux_pid} =
@@ -88,14 +88,10 @@ defmodule Esr.Peers.TmuxRewireTest do
             {Task, :start_link,
              [
                fn ->
-                 _ =
-                   TmuxProcess.init(%{
-                     session_name: "esr_cc_test_#{System.unique_integer([:positive])}",
-                     dir: "/tmp",
-                     session_id: sid,
-                     start_cmd: "sh -c 'sleep 60'"
-                   })
-
+                 # Call the rewire directly with a state stub. self() here
+                 # is the Task pid — exactly what FCP / cc_process should
+                 # receive as the new :tmux_process neighbor.
+                 TmuxProcess.rewire_session_siblings(%{session_id: sid})
                  send(test_pid, {:tmux_init_done, self()})
                  # Stay alive so we have a stable pid for the assertions.
                  :timer.sleep(:infinity)
