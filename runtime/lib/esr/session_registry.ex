@@ -45,7 +45,7 @@ defmodule Esr.SessionRegistry do
   # within a single esrd environment ($ESR_INSTANCE), each tuple must
   # be unique. Collisions reject at register-time so two `/new-session`
   # calls competing for the same name (or worktree branch) fail fast
-  # rather than silently overwriting tmux sessions / worktree paths.
+  # rather than silently overwriting sessions / worktree paths.
   @ets_name_index :esr_session_name_index
   @ets_worktree_index :esr_session_worktree_index
 
@@ -74,7 +74,7 @@ defmodule Esr.SessionRegistry do
   `{:error, {:worktree_taken, _}}` when a collision is detected.
 
   Call this BEFORE materialising the worktree on disk and BEFORE
-  spawning tmux — the registry is the source of truth for
+  spawning peers — the registry is the source of truth for
   "this session already exists" outside the disk-state quorum.
   """
   @spec claim_uri(

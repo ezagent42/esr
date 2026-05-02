@@ -9,8 +9,6 @@ defmodule Esr.TestSupport.SessionsCleanup do
   Usage:
 
       setup :wipe_sessions_on_exit
-
-  See `Esr.TestSupport.TmuxIsolation` for the surrounding pattern.
   """
 
   import ExUnit.Callbacks, only: [on_exit: 1]

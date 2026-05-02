@@ -3,11 +3,11 @@ defmodule Esr.Integration.OsCleanupTest do
   P3-12 — "nightly gate" OS cleanup regression per spec §10.5.
 
   Asserts that after `kill -9 <beam_pid>` on the ESRD runtime
-  process, no tmux sessions owned by that esrd instance remain
-  alive after a 10 s grace window. Application-level `on_terminate`
-  callbacks DO NOT run under SIGKILL, so this gate exercises
-  tmux's own EOF-detection-and-self-die mechanism (tmux clients
-  that lose their stdin/stdout close the session).
+  process, no child OS processes owned by that esrd instance
+  remain alive after a 10 s grace window. Application-level
+  `on_terminate` callbacks DO NOT run under SIGKILL, so this gate
+  exercises the child's own EOF-detection-and-self-die mechanism
+  (children that lose their stdin/stdout close out).
 
   ## Test infrastructure status (drift from expansion doc P3-12.2)
 
@@ -22,14 +22,13 @@ defmodule Esr.Integration.OsCleanupTest do
       - subscribe to `adapter:feishu/<app_id>` on the subprocess esrd,
       - push an `{:inbound_event, envelope}` whose `(chat_id,
         thread_id)` triggers `SessionRouter` auto-spawn,
-      - wait for the resulting `tmux_process` to be live.
+      - wait for the resulting `pty_process` to be live.
 
-    * A reliable way to enumerate the tmux sessions OWNED BY the
-      target esrd instance (vs sessions owned by the outer test
-      runner, vs sibling CI jobs, vs the dev's own shell). The
-      current `esr_cc_<erl_unique>` names are globally unique but
-      not instance-scoped; a namespacing convention is needed for
-      this test to refuse false positives.
+    * A reliable way to enumerate the child OS processes OWNED BY
+      the target esrd instance (vs ones owned by the outer test
+      runner, vs sibling CI jobs, vs the dev's own shell). A
+      namespacing convention is needed for this test to refuse
+      false positives.
 
   Both are tractable follow-ups, but the combined surface is
   wider than P3-12's charter ("OS cleanup regression task"). The
@@ -57,7 +56,7 @@ defmodule Esr.Integration.OsCleanupTest do
   Follow-up work to flesh out the helpers is tracked in the PR
   body. When the subprocess-esrd WS helpers land, remove the
   `@tag :skip` and fill in the `start_esrd_subprocess/1` +
-  `create_session_via_ws/2` + `count_esr_tmux_sessions/1` +
+  `create_session_via_ws/2` + `count_esr_pty_sessions/1` +
   `read_beam_os_pid/1` + `kill_9/1` helpers.
 
   See spec §10.5 (per-PR OS cleanup gate); expansion P3-12.
@@ -67,7 +66,7 @@ defmodule Esr.Integration.OsCleanupTest do
 
   @tag timeout: 30_000
   @tag :skip
-  test "kill -9 of esrd → all tmux sessions die within 10s" do
+  test "kill -9 of esrd → all child OS processes die within 10s" do
     # This test must NOT run under the standard mix test (it kills
     # a subprocess BEAM, but we want to avoid any accidental signal
     # hitting the test runner's own BEAM). Invoked via
@@ -78,23 +77,22 @@ defmodule Esr.Integration.OsCleanupTest do
     unique = "oscleanup_#{System.unique_integer([:positive])}"
     port = start_esrd_subprocess(unique)
 
-    # Create one session via WS/CLI → one tmux
+    # Create one session via WS/CLI → one child OS process
     create_session_via_ws(port, unique)
     Process.sleep(500)
 
-    pre = count_esr_tmux_sessions(unique)
+    pre = count_esr_pty_sessions(unique)
     assert pre >= 1
 
     beam_pid = read_beam_os_pid(unique)
     :ok = kill_9(beam_pid)
 
-    # Wait up to 10s for tmux to die. App-level on_terminate won't
-    # run on SIGKILL; must rely on tmux's own EOF detection (the
-    # control-mode client loses its pipe endpoints when the BEAM
-    # dies, which propagates `exited` to the tmux server).
+    # Wait up to 10s for the child to die. App-level on_terminate
+    # won't run on SIGKILL; must rely on the child's own EOF detection
+    # (it loses its pipe endpoints when the BEAM dies).
     Process.sleep(10_000)
-    post = count_esr_tmux_sessions(unique)
-    assert post == 0, "found #{post} orphan tmux sessions after kill -9"
+    post = count_esr_pty_sessions(unique)
+    assert post == 0, "found #{post} orphan child processes after kill -9"
   end
 
   # ------------------------------------------------------------------
@@ -112,11 +110,10 @@ defmodule Esr.Integration.OsCleanupTest do
   #     fresh (chat_id, thread_id). SessionRouter auto-spawns the
   #     session.
   #
-  #   * count_esr_tmux_sessions/1 — `tmux list-sessions -F '#S'`,
-  #     filter for a convention that tags tmux sessions with the
-  #     esrd instance (needs a tmux-naming convention change in
-  #     SessionRouter.spawn_args for TmuxProcess — today the name
-  #     is `esr_cc_<erl_unique>`, instance-unaware).
+  #   * count_esr_pty_sessions/1 — enumerate child OS processes
+  #     owned by this esrd instance and return a count. Needs an
+  #     instance-scoped naming convention so the count refuses
+  #     false positives across CI jobs / dev shells.
   #
   #   * read_beam_os_pid/1 — `File.read!($ESRD_HOME/<unique>/esrd.pid)`
   #     |> String.trim |> String.to_integer.
@@ -128,7 +125,7 @@ defmodule Esr.Integration.OsCleanupTest do
 
   defp start_esrd_subprocess(_), do: 9999
   defp create_session_via_ws(_port, _unique), do: :ok
-  defp count_esr_tmux_sessions(_unique), do: 0
+  defp count_esr_pty_sessions(_unique), do: 0
   defp read_beam_os_pid(_unique), do: 0
   defp kill_9(_), do: :ok
 end

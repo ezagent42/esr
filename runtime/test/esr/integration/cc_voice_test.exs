@@ -25,7 +25,7 @@ defmodule Esr.Integration.CCVoiceTest do
 
   `SessionRouter.spawn_pipeline/3` spawns peers in inbound order
   (feishu_chat_proxy → voice_asr → cc_proxy → cc_process →
-  tmux_process) and `build_neighbors/1` is forward-only — each peer
+  pty_process) and `build_neighbors/1` is forward-only — each peer
   only sees peers spawned BEFORE it. Because VoiceASRProxy /
   VoiceTTSProxy / CCProxy are all **stateless** `Peer.Proxy` modules
   (no `start_link/1`), they never get spawned; the router records them
@@ -48,8 +48,6 @@ defmodule Esr.Integration.CCVoiceTest do
 
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
-  import Esr.TestSupport.TmuxIsolation
-  setup :isolated_tmux_socket
   setup :assert_with_grants
   setup :wipe_sessions_on_exit
   @moduletag :integration
@@ -87,8 +85,7 @@ defmodule Esr.Integration.CCVoiceTest do
   end
 
   @tag timeout: 30_000
-  test "cc-voice three-leg chain: VoiceASRProxy → CCProcess → VoiceTTSProxy",
-       %{tmux_socket: tmux_sock} do
+  test "cc-voice three-leg chain: VoiceASRProxy → CCProcess → VoiceTTSProxy" do
     test_pid = self()
     app_id = "ccv_#{System.unique_integer([:positive])}"
     chat_id = "oc_ccv_#{System.unique_integer([:positive])}"
@@ -131,7 +128,7 @@ defmodule Esr.Integration.CCVoiceTest do
     )
 
     # 3. Spawn the cc-voice session — SessionRouter brings up
-    # feishu_chat_proxy + cc_process + tmux_process as Stateful;
+    # feishu_chat_proxy + cc_process + pty_process as Stateful;
     # voice_asr, cc_proxy, voice_tts are Proxy-module markers in refs.
     {:ok, sid} =
       Esr.SessionRouter.create_session(%{
@@ -141,7 +138,6 @@ defmodule Esr.Integration.CCVoiceTest do
         chat_id: chat_id,
         thread_id: thread_id,
         app_id: app_id,
-        tmux_socket: tmux_sock
       })
 
     assert {:ok, ^sid, refs} =

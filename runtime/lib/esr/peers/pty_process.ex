@@ -6,9 +6,6 @@ defmodule Esr.Peers.PtyProcess do
   subscribers; accepts stdin via the public `write/2` and SIGWINCH via
   `resize/3`.
 
-  Replaces `Esr.Peers.TmuxProcess`. The tmux control-mode protocol layer
-  is gone; claude's TUI runs directly under erlexec's PTY.
-
   cc_process is **not** a PubSub subscriber here — the conversation path
   is cc_mcp → `cli:channel/<sid>`. PtyProcess only serves the operator-
   facing browser attach.
@@ -138,29 +135,24 @@ defmodule Esr.Peers.PtyProcess do
         end
     end
 
-    # PR-21ω' deferred rewire: must NOT call back into peers_sup
-    # synchronously from init (deadlock). 50ms gives DynamicSupervisor
-    # time to ack this child's start_child. Gated like TmuxProcess via
-    # tmux_force_claude_launch (the same env flag controls whether
-    # we're in a real session or a unit-test isolation).
+    # Deferred rewire: must NOT call back into peers_sup synchronously
+    # from init (deadlock). 50ms gives DynamicSupervisor time to ack
+    # this child's start_child. Gated by `:force_claude_launch` so unit
+    # tests that don't run a full pipeline can disable it.
     if is_binary(sid) and sid != "" and
-         Application.get_env(:esr, :tmux_force_claude_launch, Mix.env() != :test) do
+         Application.get_env(:esr, :force_claude_launch, Mix.env() != :test) do
       Process.send_after(self(), :rewire_siblings, 50)
     end
 
     {:ok, state}
   end
 
-  # T12a auto-confirm dropped in PR-22 live test: pre-PR-22 TmuxProcess
-  # used `tmux send-keys ["1", :enter]` whose key events were absorbed
-  # by claude's trust dialogs (no-op when no dialog showing). In PR-22's
-  # raw-PTY world, `1\r` lands as plain stdin and shows up as user
-  # input post-dialog — leaked "1"s into the conversation. Solution:
-  # drop the auto-confirm entirely; CLAUDE_FLAGS in esr-cc.sh already
-  # includes `--permission-mode auto` +
-  # `--dangerously-load-development-channels`, plus pre-trusts the
-  # workspace path in `~/.claude.json`, so the trust dialog doesn't
-  # appear in the first place.
+  # No auto-confirm of trust / dev-channels dialogs: CLAUDE_FLAGS in
+  # esr-cc.sh sets `--permission-mode auto` +
+  # `--dangerously-load-development-channels`, and esr-cc.sh pre-trusts
+  # the workspace path in `~/.claude.json`, so the trust dialog doesn't
+  # render. The dev-channels dialog is answered by the operator in the
+  # browser /attach page, or by the e2e helper for unattended scenarios.
 
   # ------------------------------------------------------------------
   # OSProcess lifecycle hooks (signatures match os_process.ex callbacks)
@@ -296,9 +288,7 @@ defmodule Esr.Peers.PtyProcess do
   def handle_downstream(_msg, state), do: {:forward, [], state}
 
   # ------------------------------------------------------------------
-  # Sibling rewire — verbatim port from tmux_process.ex (PR-21ω') with
-  # the neighbor key flipped to :pty_process. Public for the rewire
-  # test in Phase 4.
+  # Sibling rewire (PR-21ω'). Public for the rewire test in Phase 4.
   # ------------------------------------------------------------------
 
   @doc false

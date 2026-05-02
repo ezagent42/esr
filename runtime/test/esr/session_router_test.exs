@@ -10,8 +10,8 @@ defmodule Esr.SessionRouterTest do
   forwarder modules** — they have no `start_link/1` and cannot be
   spawned as pids. After P3-6 the `simple.yaml` pipeline inbound is
   the full CC chain (`feishu_chat_proxy → cc_proxy → cc_process →
-  tmux_process`); tests here assert pids for the three Stateful entries
-  (`feishu_chat_proxy`, `cc_process`, `tmux_process`) and NOT for the
+  pty_process`); tests here assert pids for the three Stateful entries
+  (`feishu_chat_proxy`, `cc_process`, `pty_process`) and NOT for the
   stateless `cc_proxy` entry (recorded symbolically in refs as
   `{:proxy_module, Module}` when reachable).
 
@@ -22,13 +22,11 @@ defmodule Esr.SessionRouterTest do
   """
   use ExUnit.Case, async: false
 
-  import Esr.TestSupport.TmuxIsolation
 
   alias Esr.SessionRouter
 
   @fixture_path Path.expand("fixtures/agents/simple.yaml", __DIR__)
 
-  setup :isolated_tmux_socket
 
   setup do
     # App-level deps exist: SessionRegistry, Session.Registry,
@@ -65,8 +63,7 @@ defmodule Esr.SessionRouterTest do
     :ok
   end
 
-  test "create_session_sync spawns Session supervisor + inbound Stateful peers",
-       %{tmux_socket: tmux_sock} do
+  test "create_session_sync spawns Session supervisor + inbound Stateful peers" do
     assert {:ok, session_id} =
              SessionRouter.create_session(%{
                agent: "cc",
@@ -75,7 +72,6 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_xx",
                thread_id: "om_yy",
                app_id: "cli_test",
-               tmux_socket: tmux_sock
              })
 
     assert is_binary(session_id)
@@ -90,7 +86,7 @@ defmodule Esr.SessionRouterTest do
              Esr.SessionRegistry.lookup_by_chat("oc_xx", "cli_test")
 
     # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
-    # cc_process → tmux_process. The three Stateful peers are spawned
+    # cc_process → pty_process. The three Stateful peers are spawned
     # as pids; cc_proxy is a stateless module and not recorded in refs
     # via spawn (see drift note in moduledoc).
     assert is_pid(refs.feishu_chat_proxy)
@@ -101,8 +97,7 @@ defmodule Esr.SessionRouterTest do
     assert Process.alive?(refs.pty_process)
   end
 
-  test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)",
-       %{tmux_socket: tmux_sock} do
+  test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)" do
     # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
     # resolves to it; peers' init callbacks receive the enriched params.
     :ok =
@@ -124,11 +119,10 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_T11b2",
                thread_id: "om_T11b2",
                app_id: "cli_test",
-               tmux_socket: tmux_sock
              })
 
     # FeishuChatProxy's state already carries session_id; workspace_name
-    # should be reachable once TmuxProcess reads it in T11b.3.
+    # should be reachable to peers via enriched params.
     {:ok, ^session_id, refs} =
       Esr.SessionRegistry.lookup_by_chat("oc_T11b2", "cli_test")
 
@@ -136,8 +130,7 @@ defmodule Esr.SessionRouterTest do
     assert fcp_state.session_id == session_id
   end
 
-  test "create_session defaults workspace_name to 'default' when no chat binding exists",
-       %{tmux_socket: tmux_sock} do
+  test "create_session defaults workspace_name to 'default' when no chat binding exists" do
     # No workspace seeded for (oc_unbound, cli_test) — fallback kicks in.
     assert {:ok, _session_id} =
              SessionRouter.create_session(%{
@@ -147,7 +140,6 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_unbound_#{System.unique_integer([:positive])}",
                thread_id: "om_unbound",
                app_id: "cli_test",
-               tmux_socket: tmux_sock
              })
   end
 
@@ -160,8 +152,7 @@ defmodule Esr.SessionRouterTest do
              })
   end
 
-  test "end_session terminates Session supervisor + unregisters",
-       %{tmux_socket: tmux_sock} do
+  test "end_session terminates Session supervisor + unregisters" do
     {:ok, sid} =
       SessionRouter.create_session(%{
         agent: "cc",
@@ -170,7 +161,6 @@ defmodule Esr.SessionRouterTest do
         chat_id: "oc_aa",
         thread_id: "om_bb",
         app_id: "cli_test",
-        tmux_socket: tmux_sock
       })
 
     # Precondition: lookup succeeds.
@@ -231,14 +221,13 @@ defmodule Esr.SessionRouterTest do
 
     test "another data-plane shape — :outbound envelope — is also dropped" do
       router = Process.whereis(Esr.SessionRouter)
-      # The outbound envelope shape emitted by CCProcess/TmuxProcess.
+      # The outbound envelope shape emitted by CCProcess/PtyProcess.
       send(router, {:outbound, %{"payload" => %{"text" => "bye"}}})
       _ = :sys.get_state(router)
       assert Process.alive?(router)
     end
 
-    test "P4a-9: cc-voice agent spawns the CC chain + records VoiceASR/TTS as proxy_module",
-         %{tmux_socket: tmux_sock} do
+    test "P4a-9: cc-voice agent spawns the CC chain + records VoiceASR/TTS as proxy_module" do
       # Load the voice fixture on top of the existing agents so both
       # `cc` (simple.yaml) and `cc-voice` (voice.yaml) resolve.
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
@@ -254,7 +243,6 @@ defmodule Esr.SessionRouterTest do
                  chat_id: "oc_voice",
                  thread_id: "om_voice",
                  app_id: "cli_test",
-                 tmux_socket: tmux_sock
                })
 
       assert is_binary(session_id)
@@ -263,7 +251,7 @@ defmodule Esr.SessionRouterTest do
         Esr.SessionRegistry.lookup_by_chat("oc_voice", "cli_test")
 
       # Stateful peers in cc-voice inbound: feishu_chat_proxy, cc_process,
-      # tmux_process. VoiceASRProxy, CCProxy are stateless modules;
+      # pty_process. VoiceASRProxy, CCProxy are stateless modules;
       # VoiceTTSProxy is only referenced as a proxies-block entry.
       assert is_pid(refs.feishu_chat_proxy)
       assert is_pid(refs.cc_process)
@@ -279,8 +267,7 @@ defmodule Esr.SessionRouterTest do
       assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
     end
 
-    test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer",
-         %{tmux_socket: tmux_sock} do
+    test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer" do
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
       :ok = Esr.SessionRegistry.load_agents(voice_fixture)
 
@@ -294,7 +281,6 @@ defmodule Esr.SessionRouterTest do
                  chat_id: "oc_e2e",
                  thread_id: "om_e2e",
                  app_id: "cli_test",
-                 tmux_socket: tmux_sock
                })
 
       {:ok, ^session_id, refs} =
@@ -306,8 +292,7 @@ defmodule Esr.SessionRouterTest do
       assert refs.feishu_app_proxy == {:proxy_module, Esr.Peers.FeishuAppProxy}
     end
 
-    test "telemetry fires on peer_crashed DOWN without crashing the router",
-         %{tmux_socket: tmux_sock} do
+    test "telemetry fires on peer_crashed DOWN without crashing the router" do
       ref =
         :telemetry_test.attach_event_handlers(self(), [
           [:esr, :session_router, :peer_crashed]
@@ -330,7 +315,6 @@ defmodule Esr.SessionRouterTest do
           chat_id: "oc_crash",
           thread_id: "om_crash",
           app_id: "cli_test",
-          tmux_socket: tmux_sock
         })
 
       # Find one spawned peer and kill it; the router's monitor will
@@ -361,8 +345,7 @@ defmodule Esr.SessionRouterTest do
   # the pipeline sees the full adjacency — both directions of the
   # inbound chain AND the proxy-target admin pid (when the proxy's
   # `target: "admin::..."` resolves).
-  test "pipeline-spawned peers have bidirectional neighbors (PR-9 T6)",
-       %{tmux_socket: tmux_sock} do
+  test "pipeline-spawned peers have bidirectional neighbors (PR-9 T6)" do
     # Spin up a FeishuAppAdapter for the app_id so the
     # `admin::feishu_app_adapter_${app_id}` target in simple.yaml
     # resolves to a real pid (not a proxy_module fallback marker).
@@ -390,18 +373,17 @@ defmodule Esr.SessionRouterTest do
         chat_id: "oc_T6",
         thread_id: "om_T6",
         app_id: app_id,
-        tmux_socket: tmux_sock
       })
 
     {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat("oc_T6", app_id)
 
     fcp = refs.feishu_chat_proxy
     cc = refs.cc_process
-    tmux = refs.pty_process
+    pty = refs.pty_process
 
     assert is_pid(fcp)
     assert is_pid(cc)
-    assert is_pid(tmux)
+    assert is_pid(pty)
 
     fcp_state = :sys.get_state(fcp)
 
@@ -418,17 +400,17 @@ defmodule Esr.SessionRouterTest do
     cc_state = :sys.get_state(cc)
 
     assert is_pid(Keyword.get(cc_state.neighbors, :pty_process)),
-           "cc → tmux_process neighbor missing"
+           "cc → pty_process neighbor missing"
 
     assert is_pid(Keyword.get(cc_state.neighbors, :feishu_chat_proxy)),
            "cc → feishu_chat_proxy neighbor missing (PR-9 T6)"
 
-    # TmuxProcess is wrapped by OSProcessWorker; its inner
+    # PtyProcess is wrapped by OSProcessWorker; its inner
     # `state.neighbors` lives under `worker_state.state`.
-    tmux_worker_state = :sys.get_state(tmux)
-    tmux_inner = tmux_worker_state.state
+    pty_worker_state = :sys.get_state(pty)
+    pty_inner = pty_worker_state.state
 
-    assert is_pid(Keyword.get(tmux_inner.neighbors, :cc_process)),
-           "tmux → cc_process neighbor missing"
+    assert is_pid(Keyword.get(pty_inner.neighbors, :cc_process)),
+           "pty → cc_process neighbor missing"
   end
 end

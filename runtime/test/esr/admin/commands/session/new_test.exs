@@ -18,7 +18,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
     * PR-8 T3: SessionRegistry binding for chat-bound sessions
     * PR-8 T4: chat-bound path dispatches to
       `Esr.SessionRouter.create_session/1` so the full pipeline spawns
-      (FeishuChatProxy, CCProcess, TmuxProcess); the admin-CLI
+      (FeishuChatProxy, CCProcess, PtyProcess); the admin-CLI
       "pending" branch retains the legacy `SessionsSupervisor` route
   """
   use ExUnit.Case, async: false
@@ -45,19 +45,6 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       start_supervised!(Esr.SessionRouter)
     end
 
-    # PR-8 T4: TmuxProcess in the pipeline would otherwise leak into the
-    # user's default tmux socket. Pin a throwaway socket path for the
-    # duration of this test, restore the prior env on exit.
-    prior_tmux_override = Application.get_env(:esr, :tmux_socket_override)
-
-    sock =
-      Path.join(
-        System.tmp_dir!(),
-        "esr-t4-new-#{:erlang.unique_integer([:positive])}.sock"
-      )
-
-    Application.put_env(:esr, :tmux_socket_override, sock)
-
     # Snapshot + restore grants so tests don't bleed into siblings.
     prior =
       try do
@@ -68,16 +55,6 @@ defmodule Esr.Admin.Commands.Session.NewTest do
 
     on_exit(fn ->
       Grants.load_snapshot(prior)
-
-      case prior_tmux_override do
-        nil -> Application.delete_env(:esr, :tmux_socket_override)
-        v -> Application.put_env(:esr, :tmux_socket_override, v)
-      end
-
-      # Defensive tmux cleanup — if any TmuxProcess spawned under this
-      # socket during a test, kill the server + remove the file.
-      System.cmd("tmux", ["-S", sock, "kill-server"], stderr_to_stdout: true)
-      File.rm(sock)
 
       # Clean up any sessions we spawned.
       case Process.whereis(Esr.SessionsSupervisor) do
@@ -91,7 +68,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       end
     end)
 
-    {:ok, tmux_socket: sock}
+    :ok
   end
 
   describe "execute/1 arg validation" do

@@ -62,14 +62,14 @@ defmodule Esr.TopologyIntegrationTest do
     # 3. Boot a CC peer carrying that proxy_ctx so init/1 picks up the
     #    same seed via build_initial_reachable_set/1.
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
       CCProcess.start_link(%{
         session_id: "topo_int_session",
         handler_module: "cc_adapter_runner",
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{
           "channel_adapter" => "feishu",
           workspace_name: "ws_dev",

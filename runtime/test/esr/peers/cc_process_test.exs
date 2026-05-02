@@ -3,7 +3,7 @@ defmodule Esr.Peers.CCProcessTest do
   P3-2.1 — `Esr.Peers.CCProcess` is a per-Session `Peer.Stateful` that holds
   CC business state and invokes the Python handler via `Esr.HandlerRouter.call/3`
   on upstream messages. Handler actions are translated into downstream messages:
-  `:send_input` to the TmuxProcess neighbor, `:reply` upward to the CCProxy
+  `:send_input` to the PTY peer neighbor, `:reply` upward to the CCProxy
   neighbor (which forwards to FeishuChatProxy in PR-3).
 
   Tests stub `HandlerRouter.call/3` via a process-dict override
@@ -20,14 +20,14 @@ defmodule Esr.Peers.CCProcessTest do
 
   test "on {:text, bytes}, buffers send_input until cc_mcp_ready flushes it" do
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
       CCProcess.start_link(%{
         session_id: "sid1",
         handler_module: @handler_module,
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -61,21 +61,21 @@ defmodule Esr.Peers.CCProcessTest do
                    500
   end
 
-  test "on {:tmux_output, bytes}, drops silently (T11b.8 diagnostic-only)" do
+  test "on {:legacy_output, bytes}, drops silently (legacy diagnostic — production never sends this)" do
     # Post-T11b the conversation path runs through cli:channel MCP
-    # notifications, not tmux stdout capture. tmux_output carries CC's
-    # TUI chrome (ANSI, box-drawing, partial-UTF8 bursts when tmux
-    # reads split a multibyte char mid-stream) and must NOT invoke the
-    # handler — Jason.encode!/1 crashed CCProcess on truncated UTF-8.
+    # notifications, not raw stdout capture. Stale stdout messages
+    # carrying CC's TUI chrome (ANSI, box-drawing, partial-UTF8 bursts
+    # from reads splitting a multibyte char mid-stream) must NOT invoke
+    # the handler — Jason.encode!/1 crashed CCProcess on truncated UTF-8.
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
       CCProcess.start_link(%{
         session_id: "sid2",
         handler_module: @handler_module,
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -87,10 +87,10 @@ defmodule Esr.Peers.CCProcessTest do
         {:ok, %{}, []}
       end)
 
-    # Fire tmux_output with a truncated-UTF8 burst similar to what tmux
-    # actually emits (partial box-drawing char) — regression pin for
-    # the 2026-04-24 Jason.EncodeError.
-    send(pid, {:tmux_output, <<59, 50, 50, 48, 109, 226, 148, 128, 226>>})
+    # Fire a truncated-UTF8 burst similar to what a stdout-capture peer
+    # would emit (partial box-drawing char) — regression pin for the
+    # 2026-04-24 Jason.EncodeError.
+    send(pid, {:legacy_output, <<59, 50, 50, 48, 109, 226, 148, 128, 226>>})
 
     Process.sleep(100)
     assert Process.alive?(pid)
@@ -100,14 +100,14 @@ defmodule Esr.Peers.CCProcessTest do
 
   test "HandlerRouter timeout drops the message and logs" do
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
       CCProcess.start_link(%{
         session_id: "sid3",
         handler_module: @handler_module,
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -122,7 +122,7 @@ defmodule Esr.Peers.CCProcessTest do
 
   test "handler state is carried across successive upstream messages" do
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
@@ -130,7 +130,7 @@ defmodule Esr.Peers.CCProcessTest do
         session_id: "sid4",
         handler_module: @handler_module,
         initial_state: %{"turn" => 0},
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -152,14 +152,14 @@ defmodule Esr.Peers.CCProcessTest do
 
   test "unknown action types are dropped without crashing the peer" do
     me = self()
-    tmux = spawn_link(fn -> relay(me) end)
+    pty = spawn_link(fn -> relay(me) end)
     cc_proxy = spawn_link(fn -> relay(me) end)
 
     {:ok, pid} =
       CCProcess.start_link(%{
         session_id: "sid5",
         handler_module: @handler_module,
-        neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
         proxy_ctx: %{}
       })
 
@@ -272,14 +272,14 @@ defmodule Esr.Peers.CCProcessTest do
   describe "BGP-style learn_uris (PR-C C4)" do
     test "learns source URI from meta when not already in reachable_set" do
       me = self()
-      tmux = spawn_link(fn -> relay(me) end)
+      pty = spawn_link(fn -> relay(me) end)
       cc_proxy = spawn_link(fn -> relay(me) end)
 
       {:ok, pid} =
         CCProcess.start_link(%{
           session_id: "sC4_a",
           handler_module: @handler_module,
-          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: pty, cc_proxy: cc_proxy],
           proxy_ctx: %{}
         })
 
@@ -309,14 +309,14 @@ defmodule Esr.Peers.CCProcessTest do
 
     test "topology hot-reload broadcast adds URI to reachable_set" do
       me = self()
-      tmux = spawn_link(fn -> relay(me) end)
+      pty = spawn_link(fn -> relay(me) end)
       cc_proxy = spawn_link(fn -> relay(me) end)
 
       {:ok, pid} =
         CCProcess.start_link(%{
           session_id: "sC4_b",
           handler_module: @handler_module,
-          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: pty, cc_proxy: cc_proxy],
           proxy_ctx: %{workspace_name: "ws_x"}
         })
 
@@ -329,14 +329,14 @@ defmodule Esr.Peers.CCProcessTest do
 
     test "topology_neighbour_added is idempotent" do
       me = self()
-      tmux = spawn_link(fn -> relay(me) end)
+      pty = spawn_link(fn -> relay(me) end)
       cc_proxy = spawn_link(fn -> relay(me) end)
 
       {:ok, pid} =
         CCProcess.start_link(%{
           session_id: "sC4_c",
           handler_module: @handler_module,
-          neighbors: [pty_process: tmux, cc_proxy: cc_proxy],
+          neighbors: [pty_process: pty, cc_proxy: cc_proxy],
           proxy_ctx: %{}
         })
 

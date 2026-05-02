@@ -19,12 +19,10 @@ defmodule Esr.Admin.Commands.Session.EndTest do
   """
   use ExUnit.Case, async: false
 
-  import Esr.TestSupport.TmuxIsolation
 
   alias Esr.Admin.Commands.Session.End, as: SessionEnd
   alias Esr.Capabilities.Grants
 
-  setup :isolated_tmux_socket
 
   setup do
     # App-level singletons must already be up for SessionRouter to
@@ -71,7 +69,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
   end
 
   describe "execute/1 happy path" do
-    test "ends an existing agent-session via SessionRouter", %{tmux_socket: tmux_sock} do
+    test "ends an existing agent-session via SessionRouter" do
       Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
       {:ok, sid} =
@@ -81,7 +79,6 @@ defmodule Esr.Admin.Commands.Session.EndTest do
           principal_id: "ou_alice",
           chat_id: "oc_end_happy_#{System.unique_integer([:positive])}",
           thread_id: "om_end_happy_#{System.unique_integer([:positive])}",
-          tmux_socket: tmux_sock
         })
 
       # Supervisor exists pre-teardown.
@@ -127,8 +124,7 @@ defmodule Esr.Admin.Commands.Session.EndTest do
   end
 
   describe "execute/1 PR-21g name= resolution" do
-    test "args.name resolves via SessionRegistry.lookup_by_name + ends",
-         %{tmux_socket: tmux_sock} do
+    test "args.name resolves via SessionRegistry.lookup_by_name + ends" do
       Grants.load_snapshot(%{"ou_pr21g_a" => ["*"]})
 
       env = "test-env-#{System.unique_integer([:positive])}"
@@ -141,7 +137,6 @@ defmodule Esr.Admin.Commands.Session.EndTest do
           principal_id: "ou_pr21g_a",
           chat_id: "oc_pr21g_#{sid_suffix}",
           thread_id: "om_pr21g_#{sid_suffix}",
-          tmux_socket: tmux_sock
         })
 
       # Stage URI claim so lookup_by_name resolves to sid.

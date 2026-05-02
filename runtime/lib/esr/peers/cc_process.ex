@@ -2,9 +2,9 @@ defmodule Esr.Peers.CCProcess do
   @moduledoc """
   Per-Session `Peer.Stateful` holding CC business state. Invokes Python
   handler code via `Esr.HandlerRouter.call/3` on upstream messages and
-  translates handler actions into downstream messages for the
-  `TmuxProcess` neighbor (`:send_input`) or upward replies to the
-  upstream chat proxy via `CCProxy` (`:reply`).
+  translates handler actions into downstream messages for the PTY peer
+  neighbor (`:send_input`) or upward replies to the upstream chat proxy
+  via `CCProxy` (`:reply`).
 
   State:
 
@@ -14,7 +14,7 @@ defmodule Esr.Peers.CCProcess do
       `HandlerRouter.call/3`
     * `:cc_state` — the handler's opaque state blob, threaded through
       each invocation (`payload["state"]` in, `new_state` out)
-    * `:neighbors` — keyword: `:pty_process`, `:cc_proxy` (PR-22; was `:tmux_process` pre-PR-22)
+    * `:neighbors` — keyword: `:pty_process`, `:cc_proxy`
     * `:proxy_ctx` — shared context snapshot (principal_id, etc.) used
       by downstream Peer.Proxy ctx hooks
     * `:handler_override` — optional 3-arity fun for tests to stub the
@@ -315,10 +315,10 @@ defmodule Esr.Peers.CCProcess do
 
   # PR-9 T11b.6: SendInput now broadcasts a `notifications/claude/channel`-shaped
   # envelope on Phoenix topic `cli:channel/<session_id>` instead of sending
-  # `{:send_input, text}` to the tmux pane's stdin. User principle
-  # (2026-04-24): CC reply path goes through esr-channel, not tmux stdout
+  # `{:send_input, text}` to the PTY peer's stdin. User principle
+  # (2026-04-24): CC reply path goes through esr-channel, not stdout
   # capture — symmetrically, CC inbound arrives via the MCP channel
-  # notification stream, not tmux stdin. cc_mcp's `_handle_inbound` receives
+  # notification stream, not stdin. cc_mcp's `_handle_inbound` receives
   # this envelope and injects the `<channel>` tag into CC's context.
   #
   # Envelope shape matches cc_mcp channel.py's consumer: `kind: "notification"`
@@ -430,8 +430,7 @@ defmodule Esr.Peers.CCProcess do
 
   @doc false
   # Public only so cc_process_test.exs can assert envelope shape directly.
-  # Pattern matches `Esr.Peers.TmuxProcess.build_capture_pane_argv/3` —
-  # pure helper exposed to tests as `@doc false def` rather than pulled
+  # Pure helper exposed to tests as `@doc false def` rather than pulled
   # apart into a behaviour. Not part of the stable API; the only
   # in-module caller is `dispatch_action(send_input)` above.
   def build_channel_notification(state, text) do

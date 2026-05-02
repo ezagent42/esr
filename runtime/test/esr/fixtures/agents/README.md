@@ -1,7 +1,7 @@
 # agents.yaml test fixtures
 
 - `simple.yaml` — single-agent `cc` fixture with the **full CC chain**
-  (`feishu_chat_proxy → cc_proxy → cc_process → tmux_process`) as of P3-6.
+  (`feishu_chat_proxy → cc_proxy → cc_process → pty_process`) as of P3-6.
 - `multi_app.yaml` — two agents (`cc`, `cc-echo`) both referencing `${app_id}` for N=2 tests (P2-12).
   The `cc-echo` agent is intentionally a minimal feishu-only echo pipeline
   (no CC peers) to keep N=2 routing tests focused on per-session isolation.
@@ -30,9 +30,9 @@ agents:
         - { name: feishu_chat_proxy, impl: Esr.Peers.FeishuChatProxy }
         - { name: cc_proxy,          impl: Esr.Peers.CCProxy }
         - { name: cc_process,        impl: Esr.Peers.CCProcess }
-        - { name: tmux_process,      impl: Esr.Peers.TmuxProcess }
+        - { name: pty_process,       impl: Esr.Peers.PtyProcess }
       outbound:
-        - tmux_process
+        - pty_process
         - cc_process
         - cc_proxy
         - feishu_chat_proxy

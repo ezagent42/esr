@@ -22,8 +22,6 @@ defmodule Esr.Integration.VoiceE2ETest do
 
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
-  import Esr.TestSupport.TmuxIsolation
-  setup :isolated_tmux_socket
   setup :assert_with_grants
   setup :wipe_sessions_on_exit
   @moduletag :integration
@@ -47,8 +45,7 @@ defmodule Esr.Integration.VoiceE2ETest do
   end
 
   @tag timeout: 15_000
-  test "voice-e2e session receives 3 stream_chunk messages + :voice_end",
-       %{tmux_socket: tmux_sock} do
+  test "voice-e2e session receives 3 stream_chunk messages + :voice_end" do
     chat_id = "oc_voice_e2e_#{System.unique_integer([:positive])}"
     thread_id = "om_voice_e2e_#{System.unique_integer([:positive])}"
 
@@ -58,7 +55,6 @@ defmodule Esr.Integration.VoiceE2ETest do
         principal_id: "ou_voice_e2e",
         chat_id: chat_id,
         thread_id: thread_id,
-        tmux_socket: tmux_sock
       })
 
     # Resolve VoiceE2E pid from SessionRegistry refs. PR-A T1: no app_id

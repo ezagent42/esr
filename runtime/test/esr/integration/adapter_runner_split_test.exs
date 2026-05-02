@@ -12,24 +12,17 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
   suite already covers runner_core mechanics). The discriminating
   observable is the spawned process's command line: we see
   `python -m feishu_adapter_runner` for feishu and
-  `python -m cc_adapter_runner` for cc_tmux.
+  `python -m cc_adapter_runner` for the cc adapter.
 
   Tagged `:integration` because it genuinely fork/execs a Python
   subprocess. Defensive `on_exit` kills the child and clears pidfiles.
   """
   use ExUnit.Case, async: false
 
-  import Esr.TestSupport.TmuxIsolation
 
   alias Esr.WorkerSupervisor
 
   @bad_url "ws://127.0.0.1:65535/adapter_hub/socket/websocket?vsn=2.0.0"
-
-  # Defensive tmux-socket isolation setup, even though this test does
-  # not spawn tmux — the PR-4a hygiene pattern keeps us honest and
-  # prevents future additions to this test from leaking into the
-  # user's default socket.
-  setup :isolated_tmux_socket
 
   setup do
     # Kill any leftover workers from prior test runs.
@@ -145,7 +138,7 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
 
   @tag :integration
   test "cc_tmux adapter_name dispatches to cc_adapter_runner module" do
-    instance = "p4b9-cctmux-#{System.unique_integer([:positive])}"
+    instance = "p4b9-ccpty-#{System.unique_integer([:positive])}"
 
     try do
       result =

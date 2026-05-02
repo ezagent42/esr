@@ -690,7 +690,7 @@ defmodule Esr.PeerServer do
 
   # P3-16: `route` action deleted. Spec §2.9 removes cross-esrd
   # routing — directive-returning handlers now flow through
-  # CCProcess/TmuxProcess peer chains, not a PeerRegistry lookup.
+  # peer chains, not a PeerRegistry lookup.
 
   defp dispatch_action(unknown, %__MODULE__{} = state) do
     :telemetry.execute([:esr, :action, :unknown], %{}, %{
@@ -969,11 +969,11 @@ defmodule Esr.PeerServer do
   # P3-3a: this helper still reads the global `Esr.Capabilities.has?/2`
   # rather than `Esr.SessionProcess.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
-  # to `Esr.Peers.CCProcess` + `Esr.Peers.TmuxProcess` which are
-  # spawned through `PeerFactory.spawn_peer/5` and receive a
-  # `session_process_pid` in their `proxy_ctx`). Leaving the global
-  # read in place here keeps the legacy data plane working during the
-  # cutover; migration happens by deletion, not refactor.
+  # to per-session peer modules which are spawned through
+  # `PeerFactory.spawn_peer/5` and receive a `session_process_pid` in
+  # their `proxy_ctx`). Leaving the global read in place here keeps the
+  # legacy data plane working during the cutover; migration happens by
+  # deletion, not refactor.
   defp capability_granted?(principal_id, required)
        when is_binary(principal_id) and is_binary(required) do
     Esr.Capabilities.has?(principal_id, required)

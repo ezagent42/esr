@@ -59,7 +59,6 @@ defmodule Esr.SessionRouter do
   @stateful_impls MapSet.new([
                     Esr.Peers.FeishuChatProxy,
                     Esr.Peers.CCProcess,
-                    # PR-22: PtyProcess replaces TmuxProcess.
                     Esr.Peers.PtyProcess,
                     Esr.Peers.FeishuAppAdapter,
                     # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
@@ -348,11 +347,11 @@ defmodule Esr.SessionRouter do
   end
 
   # PR-9 T11b.2: thread `session_id` and `workspace_name` into the params
-  # map so downstream peers' `spawn_args/1` callbacks (specifically
-  # TmuxProcess in T11b.3) can read them without having to re-derive.
-  # `workspace_name` is resolved via `Esr.Workspaces.Registry.workspace_for_chat/2`
-  # when the caller didn't supply one explicitly. Falls back to
-  # `"default"` — not nil — so peers downstream always see a string.
+  # map so downstream peers' `spawn_args/1` callbacks can read them
+  # without having to re-derive. `workspace_name` is resolved via
+  # `Esr.Workspaces.Registry.workspace_for_chat/2` when the caller
+  # didn't supply one explicitly. Falls back to `"default"` — not nil —
+  # so peers downstream always see a string.
   defp enrich_params(params, session_id) do
     chat_id = get_param(params, :chat_id) || ""
     app_id = get_param(params, :app_id) || "default"
@@ -365,14 +364,12 @@ defmodule Esr.SessionRouter do
         end
 
     # PR-21ξ 2026-05-01: read the workspace's `start_cmd` (when set in
-    # workspaces.yaml) and inject as a peer param so TmuxProcess uses
-    # the operator-configured launcher instead of the hardcoded
+    # workspaces.yaml) and inject as a peer param so the launching peer
+    # uses the operator-configured launcher instead of the hardcoded
     # `claude …` argv. Without this, `start_cmd: scripts/esr-cc.sh`
-    # was dead config — TmuxProcess always fell through to the default
-    # `["claude", …]`, which the tmux pane's zsh couldn't find on
-    # PATH (claude lives at ~/.local/bin/claude). esr-cc.sh sources
-    # ~/.zshrc + adds ~/.local/bin to PATH, so routing through it is
-    # the right fix.
+    # was dead config — peers always fell through to the default
+    # `["claude", …]`. esr-cc.sh sources ~/.zshrc + adds ~/.local/bin
+    # to PATH, so routing through it is the right fix.
     start_cmd = resolve_workspace_start_cmd(workspace_name, params)
 
     params
@@ -406,7 +403,7 @@ defmodule Esr.SessionRouter do
   defp resolve_workspace_start_cmd(_, _), do: nil
 
   # PR-21ρ 2026-05-01: workspaces.yaml's `start_cmd` is conventionally a
-  # repo-relative path (`scripts/esr-cc.sh`). The tmux pane's cwd is the
+  # repo-relative path (`scripts/esr-cc.sh`). The peer's cwd is the
   # session's worktree (or `/tmp` for auto-created sessions), so a
   # relative path won't resolve. Prepend `$ESR_REPO_DIR` (set by the
   # launchd plist) when the start_cmd doesn't already look absolute.
@@ -532,10 +529,10 @@ defmodule Esr.SessionRouter do
   end
 
   # PR-9 T6: patch `state.neighbors` on every spawned pid after all
-  # peers have been spawned. For OSProcess-backed peers (e.g.
-  # TmuxProcess) the inner peer state lives under `worker_state.state`;
-  # we detect that wrapper and recurse into it. All other peers carry
-  # `state.neighbors` directly at the top level.
+  # peers have been spawned. For OSProcess-backed peers the inner peer
+  # state lives under `worker_state.state`; we detect that wrapper and
+  # recurse into it. All other peers carry `state.neighbors` directly
+  # at the top level.
   defp backwire_neighbors(refs, proxy_specs, params) do
     # Inbound stateful peers contribute their pid directly.
     inbound_entries =
