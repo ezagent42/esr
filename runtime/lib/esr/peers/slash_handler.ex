@@ -442,6 +442,17 @@ defmodule Esr.Peers.SlashHandler do
     |> maybe_put("username", username)
   end
 
+  # PR-24 step 2 follow-up: `/key` takes the entire remainder text after
+  # the slash as a single positional arg. The standard `parse_route_args`
+  # only peels ONE positional token, dropping the rest, so multi-key
+  # input like `/key down down enter` would lose all but the first
+  # token. Capture the raw remainder ourselves.
+  defp merge_chat_context(args, "key", envelope) do
+    text = (get_in(envelope, ["payload", "text"]) || "") |> to_string()
+    remainder = strip_slash_prefix(text, "/key") |> String.trim()
+    maybe_put(args, "keys", remainder)
+  end
+
   defp merge_chat_context(args, _kind, _envelope), do: args
 
   # PR-21ε 2026-04-30: real adapter inbound carries chat_id /

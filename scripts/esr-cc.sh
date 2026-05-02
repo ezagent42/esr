@@ -119,6 +119,32 @@ CLAUDE_FLAGS=(
 settings_file="$REPO_ROOT/roles/$role/settings.json"
 [ -f "$settings_file" ] && CLAUDE_FLAGS+=(--settings "$settings_file")
 
+# Pre-trust the workspace dir so claude doesn't render its workspace-trust
+# dialog at boot. The dialog is interactive — it waits for "1" or Enter
+# from the terminal. Under launchd-spawned PTY there's no operator at the
+# terminal, so without pre-trust claude hangs after rendering ~250 bytes
+# of escape sequences (the dialog skeleton) and never spawns its
+# .mcp.json subprocesses (cc_mcp included). PR #142 dropped the timer-
+# based "type 1" auto-confirm under the (incorrect) assumption that
+# `--permission-mode bypassPermissions` skipped the trust dialog —
+# `bypassPermissions` is per-tool permission, not per-workspace trust.
+# The correct fix is to write the trust acceptance into ~/.claude.json
+# directly (claude's own state file).
+claude_state="$HOME/.claude.json"
+if [ -f "$claude_state" ] && command -v jq >/dev/null 2>&1; then
+  # Add minimal entry; if cwd already tracked (with hasTrustDialogAccepted
+  # false), force it true. Atomic via temp file + rename.
+  tmp_state="$(mktemp)"
+  if jq --arg p "$cwd" \
+       '.projects[$p] = ((.projects[$p] // {}) + {"hasTrustDialogAccepted": true})' \
+       "$claude_state" > "$tmp_state"; then
+    mv "$tmp_state" "$claude_state"
+  else
+    rm -f "$tmp_state"
+    echo "esr-cc.sh: warning — failed to pre-trust $cwd in $claude_state" >&2
+  fi
+fi
+
 # Exec claude (replacing the shell process; erlexec PTY remains parent
 # via PtyProcess in the BEAM)
 exec claude $resume_arg "${CLAUDE_FLAGS[@]}"
