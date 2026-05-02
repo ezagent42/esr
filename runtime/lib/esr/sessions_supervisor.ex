@@ -1,7 +1,7 @@
 defmodule Esr.SessionsSupervisor do
   @moduledoc """
   DynamicSupervisor hosting all user Sessions. Spec §3.4 D17:
-  max_children = 128 (bounds concurrent tmux sessions at 128).
+  max_children = 128 (bounds concurrent sessions at 128).
 
   Overflow behaviour: start_session/1 returns `{:error, :max_children}`;
   surfaced to the user by the SlashHandler as `session limit reached`.

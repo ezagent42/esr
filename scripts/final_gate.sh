@@ -391,30 +391,19 @@ uv run --project py esr cmd stop feishu-thread-session \
   cat /tmp/fg.live.l5.log; exit 1; }
 
 deadline=$(( $(date +%s) + 10 ))
-l5_log_line="" l5_tmux_gone=""
+l5_log_line=""
 while (( $(date +%s) < deadline )); do
   [[ -z "$l5_log_line" ]] && \
     l5_log_line=$(grep -F "session_killed published session_id=$tag" $log_glob \
                   2>/dev/null | tail -1 || true)
-  if [[ -z "$l5_tmux_gone" ]]; then
-    if ! tmux list-windows -a 2>/dev/null | grep -qF ":$tag "; then
-      l5_tmux_gone="yes"
-    fi
-  fi
-  [[ -n "$l5_log_line" && -n "$l5_tmux_gone" ]] && break
+  [[ -n "$l5_log_line" ]] && break
   sleep 1
 done
 if [[ -z "$l5_log_line" ]]; then
   echo "FAIL — L5: esrd log missing 'session_killed published session_id=$tag'"
   exit 1
 fi
-if [[ -z "$l5_tmux_gone" ]]; then
-  echo "FAIL — L5: tmux window '$tag' still present after stop"
-  tmux list-windows -a 2>/dev/null | grep -F "$tag" || true
-  exit 1
-fi
 echo "  L5 esrd log line : $(echo "$l5_log_line" | head -c 140)"
-echo "  L5 tmux window   : removed"
 
 # -------------------- L6: parallel isolation via @-addressing --------------------
 section "12/13 live L6 — parallel @${tag}-a vs @${tag}-b isolation"
@@ -511,7 +500,6 @@ echo "  L1 actor log line   : cc:$tag present"
 echo "  L2 ack reply        : $l2_ack_id"
 echo "  L2 tool_invoke log  : _echo args.nonce=\"$nonce\""
 echo "  L5 session_killed   : session_id=$tag"
-echo "  L5 tmux window      : $tag removed"
 echo "  L6a ack reply       : $l6a_ack_id (only-a-$nonce)"
 echo "  L6b isolation       : mock_cc.${tag}-b.log free of only-a-$nonce"
 

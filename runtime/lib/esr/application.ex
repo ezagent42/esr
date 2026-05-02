@@ -15,10 +15,6 @@ defmodule Esr.Application do
 
   @impl Application
   def start(_type, _args) do
-    # PR-22: tmux socket override removed alongside TmuxProcess.
-    # PtyProcess runs claude directly under erlexec PTY (no tmux server).
-    :ok
-
     # PR-21β 2026-04-30: per-boot random token injected into every
     # worker subprocess via Esr.Workers.{AdapterProcess,HandlerProcess}.
     # Python-side guards refuse to start when the env var is missing,

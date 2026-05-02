@@ -6,10 +6,9 @@ defmodule Esr.TestSupport.AppSingletons do
   on the app-level `SessionRegistry` / `AdminSessionProcess` /
   `SessionsSupervisor` / `Session.Registry`.
 
-  Mirror of the `Esr.TestSupport.TmuxIsolation` pattern. When a test
-  needs to load the capabilities Grants registry specifically, pass
-  `setup {Esr.TestSupport.AppSingletons, :assert_with_grants}` to
-  also verify the Grants process.
+  When a test needs to load the capabilities Grants registry
+  specifically, pass `setup {Esr.TestSupport.AppSingletons,
+  :assert_with_grants}` to also verify the Grants process.
   """
 
   import ExUnit.Assertions, only: [assert: 2]

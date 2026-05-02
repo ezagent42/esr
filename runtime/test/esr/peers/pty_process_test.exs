@@ -7,7 +7,7 @@ defmodule Esr.Peers.PtyProcessTest do
   - on_terminate/1 broadcasts a bare :pty_closed sentinel so attached
     LiveViews can render an "ended" overlay.
   - rewire_session_siblings/1 patches sibling peers' state.neighbors
-    under the :pty_process key (mirrors PR-21ω' for tmux).
+    under the :pty_process key (PR-21ω' rewire pattern).
 
   Live spawn of the OS process (erlexec :pty + claude) is exercised by
   the e2e scenario `tests/e2e/scenarios/06_pty_attach.sh`, not here.

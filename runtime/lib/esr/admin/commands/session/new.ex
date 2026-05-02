@@ -19,7 +19,7 @@ defmodule Esr.Admin.Commands.Session.New do
          * **chat_id + thread_id present** — delegate to
            `Esr.SessionRouter.create_session/1`, which runs the full
            `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess,
-           TmuxProcess, …), monitors each peer, and registers the
+           PtyProcess, …), monitors each peer, and registers the
            session under the real `{chat_id, thread_id}` key with refs
            carrying every spawned peer pid. This is the path Feishu
            slash commands take.

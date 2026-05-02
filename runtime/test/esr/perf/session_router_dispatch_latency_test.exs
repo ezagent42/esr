@@ -20,15 +20,14 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       here, mirroring the wiring in
       `runtime/test/esr/integration/n2_sessions_test.exs`.
 
-    * The stub tmux peer is registered as `tmux_process` for parity with
-      the plan text, but the observed message shape is
-      `{:feishu_inbound, _}` (FCP relay), not `{:tmux_output, _}`. The
-      plan's "POSSIBLE ISSUES" note anticipates this.
+    * The stub PTY peer is registered as `pty_process`, but the
+      observed message shape is `{:feishu_inbound, _}` (FCP relay), not
+      a stdout event.
 
-  Stubs tmux by registering a plain-pid subscriber in place of a real
-  tmux-owning peer, so the measurement excludes erlexec / port-dial
-  cost; the number we capture is the pure-Elixir dispatch cost through
-  the control-plane.
+  Stubs the PTY peer by registering a plain-pid subscriber in place of
+  a real OS-process-owning peer, so the measurement excludes erlexec /
+  port-dial cost; the number we capture is the pure-Elixir dispatch
+  cost through the control-plane.
 
   Tagged `:perf` — excluded from the default `mix test` profile.
   Invoke with `mix test --only perf` to gather numbers.
@@ -57,9 +56,9 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
 
     test_pid = self()
 
-    # Stub "tmux" / relay: a plain pid that forwards every message back
-    # to the test process tagged `:relay`, so we can distinguish the
-    # dispatch observation from unrelated noise.
+    # Stub PTY peer / relay: a plain pid that forwards every message
+    # back to the test process tagged `:relay`, so we can distinguish
+    # the dispatch observation from unrelated noise.
     stub_relay = spawn_link(fn -> relay_loop(test_pid) end)
 
     {:ok, session_sup} =

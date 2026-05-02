@@ -120,8 +120,7 @@ defmodule Esr.PeerServerActionDispatchTest do
 
   # P3-16: the "Route action" + "Route to unknown target" tests were
   # removed with the `dispatch_action "route"` clause. Cross-esrd
-  # routing is replaced by the CCProcess/TmuxProcess peer chain per
-  # spec §2.9.
+  # routing is replaced by the per-session peer chain per spec §2.9.
 
   test "unknown action type emits [:esr, :action, :unknown]" do
     actor_id = "unknown-act-#{System.unique_integer([:positive])}"
