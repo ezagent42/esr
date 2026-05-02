@@ -46,7 +46,7 @@ This will:
 2. Copy the materialised plists to `~/Library/LaunchAgents/com.ezagent.esrd.plist` and `~/Library/LaunchAgents/com.ezagent.esrd-dev.plist`.
 3. `launchctl bootstrap gui/$UID <plist>` each.
 4. Wait up to ~10s for each esrd to write its `esrd.port` file (readiness signal).
-5. For the dev esrd, install the `.git/hooks/post-merge` template into the dev worktree (if the dev worktree exists at `${HOME}/Workspace/esr/.claude/worktrees/dev`; otherwise skipped with a warning).
+5. For the dev esrd, install the `.git/hooks/post-merge` template into the dev worktree (if the dev worktree exists at `${HOME}/Workspace/esr/.worktrees/dev`; otherwise skipped with a warning).
 
 If you only want one env, use `--env=prod` or `--env=dev`.
 
@@ -178,7 +178,7 @@ This will `launchctl bootout` each label and remove the two plists from `~/Libra
 
 The dev worktree's `.git/hooks/post-merge` is not touched by `uninstall.sh`; remove it by hand if you want to stop the breaking-change DM flow::
 
-    rm ~/Workspace/esr/.claude/worktrees/dev/.git/hooks/post-merge
+    rm ~/Workspace/esr/.worktrees/dev/.git/hooks/post-merge
 
 ---
 
@@ -250,7 +250,7 @@ If a SPECIFIC command is wedging the Dispatcher, delete its `processing/<id>.yam
     acknowledged_breaking: []
     EOF
 
-The hook uses `HEAD@{1}` (reflog), not `last_reload.yaml`, so this fix only helps `esr reload`; the hook itself will re-fire after every merge. If that's noisy, `rm ~/Workspace/esr/.claude/worktrees/dev/.git/hooks/post-merge`.
+The hook uses `HEAD@{1}` (reflog), not `last_reload.yaml`, so this fix only helps `esr reload`; the hook itself will re-fire after every merge. If that's noisy, `rm ~/Workspace/esr/.worktrees/dev/.git/hooks/post-merge`.
 
 ### 7.6 Queue file stuck in `pending/` (not processing)
 

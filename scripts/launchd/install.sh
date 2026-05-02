@@ -18,7 +18,7 @@ env_target="${1:---env=both}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_TEMPLATE="${SCRIPT_DIR}/../hooks/post-merge"
-DEV_WORKTREE="${HOME}/Workspace/esr/.claude/worktrees/dev"
+DEV_WORKTREE="${HOME}/Workspace/esr/.worktrees/dev"
 
 install_one() {
   local name="$1"                 # esrd | esrd-dev
