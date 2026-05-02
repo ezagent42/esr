@@ -173,6 +173,21 @@ defmodule Esr.Peers.PtyProcess do
   end
 
   @impl Esr.OSProcess
+  # Hand the configured `dir` (the per-session worktree path threaded
+  # through from /new-session's slash → Session.New → SessionRouter)
+  # to erlexec as the `:cd` option. Without this callback, OSProcess
+  # falls back to BEAM's pwd, so the spawned esr-cc.sh + claude end
+  # up in `~/Workspace/esr/.../runtime` instead of
+  # `<root>/.worktrees/<branch>` — confusing operators and breaking
+  # the per-session git isolation PR-21θ promises.
+  def os_cwd(state) do
+    case state.dir do
+      d when is_binary(d) and d != "" -> d
+      _ -> nil
+    end
+  end
+
+  @impl Esr.OSProcess
   def os_env(state) do
     case Map.get(state, :session_id) do
       sid when is_binary(sid) and sid != "" ->

@@ -31,9 +31,13 @@ defmodule Esr.AnsiStrip do
     bin |> do_strip([]) |> IO.iodata_to_binary()
   end
 
-  # CSI: ESC [ … <final 0x40-0x7E>
+  # CSI: ESC [ … <final 0x40-0x7E>. Replace with a single space so
+  # cursor-positioning escapes (which claude uses to lay out words on
+  # a row) don't squish adjacent words together when stripped — the
+  # operator reads "Loading development channels" rather than
+  # "Loadingdevelopmentchannels".
   defp do_strip(<<0x1B, ?[, rest::binary>>, acc) do
-    rest |> drop_until_csi_final() |> do_strip(acc)
+    rest |> drop_until_csi_final() |> do_strip([acc | " "])
   end
 
   # OSC: ESC ] … (BEL | ESC \)

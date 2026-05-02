@@ -102,6 +102,18 @@ defmodule Esr.Peers.FeishuChatProxy do
       Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cc_mcp_ready/" <> session_id)
     end
 
+    # PR-24 step 2: claude's TUI needs a real winsize before it'll
+    # render anything past the initial control sequences (DA query +
+    # cursor mode setup). It queries via TIOCGWINSZ — the
+    # `COLUMNS`/`LINES` env vars in PtyProcess.os_env are NOT
+    # sufficient. /attach in xterm.js sends a resize as soon as the
+    # WebSocket connects; without a client attached, claude waits
+    # forever and the boot bridge has nothing to mirror. Schedule a
+    # default 120×40 resize ~1s after init so it lands after PtyProcess
+    # is fully registered. xterm.js attach will overwrite this with the
+    # browser's real viewport.
+    Process.send_after(self(), :send_default_winsize, 1_000)
+
     {:ok, state}
   end
 
@@ -275,6 +287,16 @@ defmodule Esr.Peers.FeishuChatProxy do
   end
 
   def handle_info({:cc_mcp_ready, _other}, state), do: {:noreply, state}
+
+  def handle_info(:send_default_winsize, state) do
+    # No-op once cc_mcp_ready has flipped (xterm.js / cc_mcp owns the
+    # terminal sizing from there).
+    if state.boot_mode do
+      _ = Esr.Peers.PtyProcess.resize(state.session_id, 120, 40)
+    end
+
+    {:noreply, state}
+  end
 
   # Collapse runs of 3+ blank lines down to a single blank line so a
   # screen-clear + repaint doesn't fire 40 newlines into the chat.

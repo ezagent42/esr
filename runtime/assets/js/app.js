@@ -61,10 +61,54 @@ const term = new Terminal({
 
 const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
-term.open(document.getElementById("term"));
+const termContainer = document.getElementById("term");
+term.open(termContainer);
 
-// Defer first fit until the browser computes the fixed/inset layout.
-requestAnimationFrame(() => fitAddon.fit());
+// xterm.js does not auto-resize when its container size changes
+// (CSS layout, font load, viewport rotation, panel toggle, …). One
+// `requestAnimationFrame` fit fires too early on slow font loads and
+// leaves the terminal stuck at 80x24 — operator sees a "phone-width"
+// terminal even when the browser viewport is desktop-sized.
+//
+// Fit on every container size change via ResizeObserver, plus an
+// initial pass after fonts settle. Each fit is followed by sending
+// the new winsize to the server so claude's TUI re-flows.
+function fitNow() {
+  try {
+    fitAddon.fit();
+    sendResize();
+  } catch (_) {
+    /* dimensions not yet measurable; next observer tick will retry */
+  }
+}
+
+requestAnimationFrame(() => fitNow());
+
+if (typeof ResizeObserver !== "undefined") {
+  const ro = new ResizeObserver(() => fitNow());
+  ro.observe(termContainer);
+}
+
+// Custom keys that the browser would otherwise eat (tab focus moves,
+// page scroll on space, etc.). We keep them inside the terminal so
+// claude TUI behaves normally — including Shift+Tab for mode switch
+// (claude binds it as the bypass-permissions / accept-edits cycle).
+//
+// Returning false tells xterm.js "I handled it; don't propagate" —
+// so xterm.js still emits the right escape sequence to the PTY but
+// the browser's default keydown action is blocked.
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type !== "keydown") return true;
+
+  // Tab + Shift+Tab: claude's mode toggle. preventDefault on browser
+  // focus traversal; xterm.js will translate to "\t" / "\e[Z".
+  if (e.key === "Tab") {
+    e.preventDefault();
+    return true;
+  }
+
+  return true;
+});
 
 // Raw WebSocket to /attach_socket/websocket?sid=<sid>.
 const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
