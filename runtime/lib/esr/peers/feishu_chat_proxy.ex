@@ -100,6 +100,7 @@ defmodule Esr.Peers.FeishuChatProxy do
     if Process.whereis(EsrWeb.PubSub) do
       Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> session_id)
       Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cc_mcp_ready/" <> session_id)
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty_attach/" <> session_id)
     end
 
     # PR-24 step 2: claude's TUI needs a real winsize before it'll
@@ -108,11 +109,15 @@ defmodule Esr.Peers.FeishuChatProxy do
     # `COLUMNS`/`LINES` env vars in PtyProcess.os_env are NOT
     # sufficient. /attach in xterm.js sends a resize as soon as the
     # WebSocket connects; without a client attached, claude waits
-    # forever and the boot bridge has nothing to mirror. Schedule a
-    # default 120×40 resize ~1s after init so it lands after PtyProcess
-    # is fully registered. xterm.js attach will overwrite this with the
-    # browser's real viewport.
-    Process.send_after(self(), :send_default_winsize, 1_000)
+    # forever and the boot bridge has nothing to mirror.
+    #
+    # Schedule a default 120×40 resize ~1s after init **only if no
+    # browser has attached**. PtySocket broadcasts `{:pty_attach, sid}`
+    # on connect so FCP can cancel this — otherwise the default fires
+    # AFTER the browser sent its real viewport and clobbers it (e.g.
+    # operator at 164×39 ends up stuck at 120×40).
+    state = Map.put(state, :winsize_pending_ref,
+      Process.send_after(self(), :send_default_winsize, 1_000))
 
     {:ok, state}
   end
@@ -290,13 +295,34 @@ defmodule Esr.Peers.FeishuChatProxy do
 
   def handle_info(:send_default_winsize, state) do
     # No-op once cc_mcp_ready has flipped (xterm.js / cc_mcp owns the
-    # terminal sizing from there).
+    # terminal sizing from there) OR a browser already attached and
+    # set its real viewport (the `:pty_attach` handler below cancels
+    # this timer, but we double-check via the cleared ref).
+    state = %{state | winsize_pending_ref: nil}
+
     if state.boot_mode do
       _ = Esr.Peers.PtyProcess.resize(state.session_id, 120, 40)
     end
 
     {:noreply, state}
   end
+
+  def handle_info({:pty_attach, sid}, %{session_id: sid} = state) do
+    # Browser/websocat attached and is about to send its own resize.
+    # Cancel the boot-bridge default-winsize timer so the operator's
+    # actual viewport isn't clobbered.
+    case Map.get(state, :winsize_pending_ref) do
+      nil ->
+        {:noreply, state}
+
+      ref ->
+        _ = Process.cancel_timer(ref)
+        Logger.info("feishu_chat_proxy: cancelling default-winsize for sid=#{sid} (client attached)")
+        {:noreply, %{state | winsize_pending_ref: nil}}
+    end
+  end
+
+  def handle_info({:pty_attach, _other}, state), do: {:noreply, state}
 
   # Collapse runs of 3+ blank lines down to a single blank line so a
   # screen-clear + repaint doesn't fire 40 newlines into the chat.
