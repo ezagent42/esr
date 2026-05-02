@@ -17,5 +17,19 @@
     "allow": [
       "Edit(/Users/h2oslabs/Workspace/esr/.claude/*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/scripts/hooks/pre-merge-dev-gate.sh",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
   }
 }
