@@ -47,6 +47,17 @@ slashes:
     description: "显示你的身份 + chat / workspace 绑定状态"
     args: []
 
+  "/key":
+    kind: key
+    permission: null
+    command_module: "Esr.Admin.Commands.Key"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "PTY"
+    description: "把特殊键盘输入（up/down/enter/esc/tab/c-X 等）发到 chat-current session 的 PTY"
+    args:
+      - { name: keys, required: true }
+
   "/doctor":
     kind: doctor
     permission: null

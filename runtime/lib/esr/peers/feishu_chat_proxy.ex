@@ -82,6 +82,38 @@ defmodule Esr.Peers.FeishuChatProxy do
     # `Registry.lookup(Esr.PeerRegistry, "thread:" <> session_id)`.
     _ = Registry.register(Esr.PeerRegistry, "thread:" <> session_id, nil)
 
+    # PR-24 step 2: PTY ↔ Feishu boot bridge. Before cc_mcp joins
+    # `cli:channel/<sid>`, claude's TUI is the only window into what
+    # the agent is doing — and at boot time it's typically waiting for
+    # the operator to answer the `--dangerously-load-development-channels`
+    # warning dialog. We subscribe to the session's PTY topic so we
+    # can mirror claude's stdout into the bound Feishu chat (debounced,
+    # ANSI-stripped) and let the operator answer dialogs by typing
+    # text in the chat. `cc_mcp_ready` flips the bridge off; from
+    # there cc_mcp's `notifications/claude/channel` path takes over.
+    state = Map.merge(state, %{
+      boot_mode: true,
+      pty_buffer: "",
+      pty_flush_timer: nil
+    })
+
+    if Process.whereis(EsrWeb.PubSub) do
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> session_id)
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cc_mcp_ready/" <> session_id)
+    end
+
+    # PR-24 step 2: claude's TUI needs a real winsize before it'll
+    # render anything past the initial control sequences (DA query +
+    # cursor mode setup). It queries via TIOCGWINSZ — the
+    # `COLUMNS`/`LINES` env vars in PtyProcess.os_env are NOT
+    # sufficient. /attach in xterm.js sends a resize as soon as the
+    # WebSocket connects; without a client attached, claude waits
+    # forever and the boot bridge has nothing to mirror. Schedule a
+    # default 120×40 resize ~1s after init so it lands after PtyProcess
+    # is fully registered. xterm.js attach will overwrite this with the
+    # browser's real viewport.
+    Process.send_after(self(), :send_default_winsize, 1_000)
+
     {:ok, state}
   end
 
@@ -186,6 +218,97 @@ defmodule Esr.Peers.FeishuChatProxy do
   def handle_info({:tool_invoke, req_id, tool, args, channel_pid, _principal_id}, state) do
     state = dispatch_tool_invoke(tool, args, req_id, channel_pid, state)
     {:noreply, state}
+  end
+
+  # PR-24 step 2 — PTY ↔ Feishu boot bridge handlers.
+  #
+  # `:pty_stdout` arrives any time the wrapped claude process emits
+  # bytes. While `boot_mode` is on we accumulate them and schedule a
+  # debounced flush so a single TUI redraw turns into one Feishu
+  # message instead of dozens. Once `cc_mcp_ready` arrives we stop
+  # mirroring — cc_mcp's `notifications/claude/channel` path takes
+  # over and the bridge is silent.
+  @bridge_flush_ms 500
+
+  def handle_info({:pty_stdout, _data}, %{boot_mode: false} = state),
+    do: {:noreply, state}
+
+  def handle_info({:pty_stdout, data}, state) when is_binary(data) do
+    new_buffer = state.pty_buffer <> data
+
+    timer =
+      case state.pty_flush_timer do
+        nil -> Process.send_after(self(), :flush_pty_buffer, @bridge_flush_ms)
+        existing -> existing
+      end
+
+    {:noreply, %{state | pty_buffer: new_buffer, pty_flush_timer: timer}}
+  end
+
+  def handle_info(:flush_pty_buffer, state) do
+    case Esr.AnsiStrip.strip(state.pty_buffer) do
+      "" ->
+        :ok
+
+      stripped ->
+        # Trim leading/trailing whitespace runs so chat doesn't show
+        # 30-line blank gaps for cursor-only redraws.
+        text = stripped |> String.trim() |> trim_redundant_blanks()
+
+        if text != "" do
+          forward_reply(text, nil, state)
+        end
+    end
+
+    {:noreply, %{state | pty_buffer: "", pty_flush_timer: nil}}
+  end
+
+  def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
+    # Final flush (in case there's anything still in the buffer) then
+    # tear down the bridge. cc_mcp owns the channel from this point.
+    state =
+      case state.pty_flush_timer do
+        nil ->
+          state
+
+        ref ->
+          Process.cancel_timer(ref)
+          send(self(), :flush_pty_buffer)
+          %{state | pty_flush_timer: nil}
+      end
+
+    if Process.whereis(EsrWeb.PubSub) do
+      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "pty:" <> sid)
+    end
+
+    Logger.info("feishu_chat_proxy: boot bridge handing off to cc_mcp session_id=#{sid}")
+
+    {:noreply, %{state | boot_mode: false}}
+  end
+
+  def handle_info({:cc_mcp_ready, _other}, state), do: {:noreply, state}
+
+  def handle_info(:send_default_winsize, state) do
+    # No-op once cc_mcp_ready has flipped (xterm.js / cc_mcp owns the
+    # terminal sizing from there).
+    if state.boot_mode do
+      _ = Esr.Peers.PtyProcess.resize(state.session_id, 120, 40)
+    end
+
+    {:noreply, state}
+  end
+
+  # Collapse runs of 3+ blank lines down to a single blank line so a
+  # screen-clear + repaint doesn't fire 40 newlines into the chat.
+  defp trim_redundant_blanks(text) do
+    text
+    |> String.split("\n", trim: false)
+    |> Enum.chunk_by(&(String.trim(&1) == ""))
+    |> Enum.flat_map(fn
+      [maybe_blank | _] = chunk ->
+        if String.trim(maybe_blank) == "", do: [""], else: chunk
+    end)
+    |> Enum.join("\n")
   end
 
   # ------------------------------------------------------------------

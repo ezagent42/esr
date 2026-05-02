@@ -11,11 +11,15 @@ defmodule EsrWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # PR-23: AttachSocket for browser xterm.js terminal attach. Replaces
-  # the PR-22 LiveView path; raw Phoenix.Channel avoids the DOM-diffing
-  # render jitter LiveView introduced.
-  socket "/attach_socket", EsrWeb.AttachSocket,
-    websocket: true,
+  # PR-24: raw binary WebSocket for browser xterm.js terminal attach.
+  # PR-23's Phoenix.Channel transport JSON-encoded every PTY chunk, which
+  # mangled ANSI ESC bytes and any 0x80-0xff payload — caused garbled
+  # xterm.js render AND blocked claude (its boot-time DA1 / XTVERSION
+  # queries never received valid replies through the JSON round-trip).
+  # `EsrWeb.PtySocket` skips Phoenix.Channel and pushes raw binary
+  # frames; matches ttyd's wire protocol shape.
+  socket "/attach_socket", EsrWeb.PtySocket,
+    websocket: [path: "/websocket", serializer: [], check_origin: false],
     longpoll: false
 
   # Adapter WebSocket — Python adapter processes join
