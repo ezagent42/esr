@@ -79,11 +79,19 @@ defmodule Esr.Peers.PtyProcess do
   @doc "Forward keystrokes from xterm.js to the wrapped process's stdin."
   @spec write(String.t(), iodata()) :: :ok | {:error, term()}
   def write(sid, data) when is_binary(sid) do
+    # DIAGNOSTIC (temporary 2026-05-02): log every stdin write to confirm
+    # the send_input path actually reaches the PTY worker.
+    require Logger
+    bytes = IO.iodata_to_binary(data)
+    digest = bytes |> :binary.bin_to_list() |> Enum.filter(&(&1 in 32..126 or &1 == 10)) |> List.to_string() |> String.slice(0, 200)
+    Logger.info("pty.write sid=#{sid} bytes=#{byte_size(bytes)} digest=#{inspect(digest)}")
+
     case Esr.PeerRegistry.lookup("pty:" <> sid) do
       {:ok, worker_pid} ->
         __MODULE__.OSProcessWorker.write_stdin(worker_pid, data)
 
       :error ->
+        Logger.warning("pty.write sid=#{sid} no PTY worker registered")
         {:error, :no_pty_for_session}
     end
   end
@@ -175,11 +183,26 @@ defmodule Esr.Peers.PtyProcess do
         chat_ids_json =
           Jason.encode!([%{chat_id: chat_id, app_id: app_id, kind: "feishu"}])
 
+        # Terminal capability hints. claude's TUI emits a Device
+        # Attributes query (`ESC[c`) at boot and **blocks** waiting for
+        # the terminal to respond with its capabilities. Under iTerm
+        # the shell answers immediately; under erlexec PTY launched
+        # from launchd, no `TERM` is inherited (PR-21σ deliberately
+        # does not source ~/.zshrc), so claude defaults to dumb mode
+        # and stalls before printing its banner — observed live
+        # 2026-05-01 with diagnostic raw-stdout logging. Pinning a
+        # real terminal type plus reasonable size + UTF-8 locale
+        # unblocks the boot path; xterm.js attaches later and
+        # re-syncs the dimensions via the `resize` channel event.
         [
           {"ESR_SESSION_ID", sid},
           {"ESR_WORKSPACE", ws},
           {"ESR_CHAT_IDS", chat_ids_json},
-          {"ESR_ESRD_URL", channel_ws_url()}
+          {"ESR_ESRD_URL", channel_ws_url()},
+          {"TERM", "xterm-256color"},
+          {"COLUMNS", "120"},
+          {"LINES", "40"},
+          {"LANG", "en_US.UTF-8"}
         ]
 
       _ ->
@@ -191,6 +214,21 @@ defmodule Esr.Peers.PtyProcess do
   # PR-22 raw-stdout hook — fires BEFORE line-splitting, so xterm.js
   # gets ANSI escape sequences intact across chunk boundaries.
   def on_raw_stdout(data, %{session_id: sid}) when is_binary(sid) and sid != "" do
+    # DIAGNOSTIC (re-enabled 2026-05-02): TERM=xterm-256color didn't
+    # unblock claude — observe the full PTY output stream + stdin
+    # writes to find the real bottleneck. Remove once verified.
+    digest =
+      data
+      |> :binary.bin_to_list()
+      |> Enum.filter(&(&1 in 32..126 or &1 == 10))
+      |> List.to_string()
+      |> String.slice(0, 300)
+
+    if digest != "" do
+      require Logger
+      Logger.info("pty_stdout sid=#{sid} bytes=#{byte_size(data)} digest=#{inspect(digest)}")
+    end
+
     PubSub.broadcast(EsrWeb.PubSub, "pty:" <> sid, {:pty_stdout, data})
     :ok
   end

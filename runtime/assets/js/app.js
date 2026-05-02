@@ -1,10 +1,20 @@
-// PR-23: ESR attach page — direct Phoenix.Channel + xterm.js, no LiveView.
+// PR-24: ESR attach page — raw binary WebSocket + xterm.js, no
+// Phoenix.Channel.
 //
-// Page is served by EsrWeb.AttachController.show/2 with sid embedded as
-// window.ESR_SID. We open a WebSocket to /attach_socket, join channel
-// `attach:<sid>`, and forward stdout/stdin/resize/ended between
-// xterm.js and EsrWeb.AttachChannel.
-import { Socket } from "phoenix";
+// PR-23 routed PTY bytes through Phoenix.Channel with JSON serialisation,
+// which mangled ANSI ESC sequences and any byte 0x80-0xff. Result was
+// garbled xterm.js render plus claude blocking on unanswered terminal-
+// capability queries (DA1 / XTVERSION) because xterm.js's auto-replies
+// could never make it back as valid bytes.
+//
+// PR-24 mirrors ttyd's approach:
+//   - WebSocket with binaryType='arraybuffer'
+//   - server → client: binary frames carry raw PTY stdout, fed straight
+//     into terminal.write(uint8) — xterm.js handles UTF-8 decode
+//     internally and auto-answers terminal-cap queries via stdin
+//   - client → server, binary: stdin keystrokes (and xterm.js's
+//     terminal-cap replies) as raw bytes
+//   - client → server, text: JSON `{"cols": N, "rows": N}` for resize
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -43,7 +53,9 @@ const term = new Terminal({
   fontSize: 14,
   lineHeight: 1.2,
   scrollback: 5000,
+  // Don't translate \n → \r\n; PTY emits \r\n natively.
   convertEol: false,
+  allowProposedApi: true,
   theme,
 });
 
@@ -54,44 +66,55 @@ term.open(document.getElementById("term"));
 // Defer first fit until the browser computes the fixed/inset layout.
 requestAnimationFrame(() => fitAddon.fit());
 
-// Open Phoenix Socket + join attach:<sid> channel.
-const socket = new Socket("/attach_socket");
-socket.connect();
+// Raw WebSocket to /attach_socket/websocket?sid=<sid>.
+const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+const wsUrl = `${wsScheme}//${window.location.host}/attach_socket/websocket?sid=${encodeURIComponent(sid)}`;
+const ws = new WebSocket(wsUrl);
+ws.binaryType = "arraybuffer";
 
-const channel = socket.channel("attach:" + sid, {});
+const textEncoder = new TextEncoder();
 
-channel
-  .join()
-  .receive("ok", () => {
-    sendResize();
-    // Nudge claude to repaint into the known viewport.
-    channel.push("stdin", { data: "\x0c" });
-  })
-  .receive("error", (resp) => {
-    term.writeln(
-      "\r\n\x1b[31m[attach failed: " + JSON.stringify(resp) + "]\x1b[0m"
-    );
-  });
-
-// server → client
-channel.on("stdout", ({ data }) => term.write(data));
-channel.on("ended", ({ reason }) => {
-  const banner = document.getElementById("ended-banner");
-  if (banner) banner.style.display = "block";
-  term.writeln(
-    "\r\n\x1b[33m[session ended" + (reason ? ": " + reason : "") + "]\x1b[0m"
-  );
+ws.addEventListener("open", () => {
+  sendResize();
+  // Nudge claude to repaint into the known viewport.
+  ws.send(textEncoder.encode("\x0c"));
 });
 
-// client → server
-term.onData((data) => channel.push("stdin", { data }));
+ws.addEventListener("message", (event) => {
+  if (event.data instanceof ArrayBuffer) {
+    // Server pushed raw PTY bytes — feed straight into xterm.js.
+    term.write(new Uint8Array(event.data));
+  } else if (typeof event.data === "string") {
+    // Text frames are reserved for future server-side control messages.
+    // Not used today; ignore quietly.
+  }
+});
+
+ws.addEventListener("close", () => {
+  const banner = document.getElementById("ended-banner");
+  if (banner) banner.style.display = "block";
+  term.writeln("\r\n\x1b[33m[session ended]\x1b[0m");
+});
+
+ws.addEventListener("error", (e) => {
+  term.writeln(`\r\n\x1b[31m[ws error: ${e.message || "unknown"}]\x1b[0m`);
+});
+
+// client → server: raw binary stdin (keystrokes + xterm.js's
+// terminal-capability replies).
+term.onData((data) => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(textEncoder.encode(data));
+  }
+});
 
 // Debounced resize so window-drag doesn't spam SIGWINCH.
 let resizeTimer;
 function sendResize() {
+  if (ws.readyState !== WebSocket.OPEN) return;
   const { cols, rows } = term;
   if (cols > 0 && rows > 0) {
-    channel.push("resize", { cols, rows });
+    ws.send(JSON.stringify({ cols, rows }));
   }
 }
 window.addEventListener("resize", () => {
