@@ -4,7 +4,7 @@ Translates a `text` event (user's inbound message forwarded by
 FeishuChatProxy → CCProcess) into a `SendInput` action that
 `CCProcess.dispatch_action/2` broadcasts on Phoenix pubsub topic
 `cli:channel/<session_id>`. `cc_mcp` — the MCP stdio bridge running
-as a child of the claude CLI in the session's tmux pane — consumes
+as a child of the claude CLI under the session's PTY — consumes
 the envelope from the WS, emits a `notifications/claude/channel`
 JSON-RPC notification into CC's conversation context as a
 `<channel>` tag, and CC decides whether/how to respond using its
@@ -12,8 +12,8 @@ own `reply` / `react` / `send_file` MCP tools.
 
 Pre-T11b this function returned `[Reply(text=f"ack: {text}")]` as a
 placeholder so the routing chain could be exercised without a real
-Claude CLI in tmux. Now that T11b.3 / T11b.4 / T11b.6 wire the full
-round-trip (claude in tmux + cc_mcp channel + FCP tool_invoke
+Claude CLI attached. Now that T11b.3 / T11b.4 / T11b.6 wire the full
+round-trip (claude under a PTY + cc_mcp channel + FCP tool_invoke
 dispatch), the handler's job simplifies to "push the user's text
 into CC's context" — CC itself composes the response.
 """
@@ -35,8 +35,7 @@ def on_msg(
         new_state = CcAdapterRunnerState(message_count=state.message_count + 1)
         return new_state, [SendInput(text=text)]
 
-    # tmux_output events — tmux captures CC's TUI chrome (prompts,
-    # formatting). Post-T11b the reply path runs through cc_mcp's
-    # `reply` MCP tool, not tmux stdout, so this handler has nothing
-    # to do here. Drop silently.
+    # Non-`text` events have no production producer in the post-T11b
+    # pipeline (the reply path runs through cc_mcp's MCP tools, not via
+    # the adapter's event channel). Drop silently.
     return state, []

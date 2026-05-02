@@ -16,7 +16,7 @@ def _inbound(msg_id: str, *, content: str = "hi", chat_id: str = "oc_abc") -> Ev
 
 def _cc_output(text: str) -> Event:
     return Event(
-        source="esr://localhost/adapter/cc_tmux",
+        source="esr://localhost/adapter/cc_mcp",
         event_type="cc_output",
         args={"text": text, "session": "threadA"},
     )

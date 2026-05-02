@@ -44,28 +44,24 @@ warn_unused_configs = true
 asyncio_mode = "auto"
 # importlib import mode supports duplicate test-file basenames across
 # different test directories (e.g. adapters/feishu/tests/test_registration.py
-# and adapters/cc_tmux/tests/test_registration.py).
+# and adapters/cc_mcp/tests/test_registration.py).
 addopts = "--import-mode=importlib"
 testpaths = [
     "tests",
     "tests/voice",
     "tests/adapter_runners",
     "../adapters/feishu/tests",
-    "../adapters/cc_tmux/tests",
     "../adapters/cc_mcp/tests",
     "../handlers/feishu_app/tests",
     "../handlers/feishu_thread/tests",
-    "../handlers/tmux_proxy/tests",
     "../handlers/cc_session/tests",
     "../handlers/cc_adapter_runner/tests",
 ]
 
 [tool.uv.sources]
 esr-adapter-feishu = { path = "../adapters/feishu", editable = true }
-esr-adapter-cc-tmux = { path = "../adapters/cc_tmux", editable = true }
 esr-handler-feishu-app = { path = "../handlers/feishu_app", editable = true }
 esr-handler-feishu-thread = { path = "../handlers/feishu_thread", editable = true }
-esr-handler-tmux-proxy = { path = "../handlers/tmux_proxy", editable = true }
 esr-handler-cc-session = { path = "../handlers/cc_session", editable = true }
 esr-handler-cc-adapter-runner = { path = "../handlers/cc_adapter_runner", editable = true }
 esr-cc-mcp = { path = "../adapters/cc_mcp", editable = true }
@@ -79,10 +75,8 @@ dev = [
     "mypy>=1.7",
     "types-pyyaml>=6.0.12.20260408",
     "esr-adapter-feishu",
-    "esr-adapter-cc-tmux",
     "esr-handler-feishu-app",
     "esr-handler-feishu-thread",
-    "esr-handler-tmux-proxy",
     "esr-handler-cc-session",
     "esr-handler-cc-adapter-runner",
     "esr-cc-mcp",

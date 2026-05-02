@@ -24,7 +24,7 @@ defmodule Esr.ApplicationRestoreHandlersTest do
         cc:
           capabilities_required:
             - handler:cc_adapter_runner/invoke
-            - tmux:default/spawn
+            - pty:default/spawn
             - handler:cc_adapter_runner/read
         voice:
           capabilities_required:

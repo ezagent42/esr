@@ -9,7 +9,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-ADAPTERS = ("feishu", "cc_tmux")
+ADAPTERS = ("feishu",)
 
 
 @pytest.mark.parametrize("name", ADAPTERS)

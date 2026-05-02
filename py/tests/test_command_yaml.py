@@ -40,7 +40,7 @@ def test_yaml_round_trip(tmp_path: Path) -> None:
             id="cc",
             actor_type="cc_session",
             handler="on_msg",
-            adapter="cc_tmux",
+            adapter="cc_mcp",
             init_directive={"action": "new_session", "args": {"name": "{{thread_id}}"}},
         )
         a >> b

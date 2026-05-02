@@ -525,14 +525,12 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "esr-adapter-cc-tmux" },
     { name = "esr-adapter-feishu" },
     { name = "esr-cc-mcp" },
     { name = "esr-handler-cc-adapter-runner" },
     { name = "esr-handler-cc-session" },
     { name = "esr-handler-feishu-app" },
     { name = "esr-handler-feishu-thread" },
-    { name = "esr-handler-tmux-proxy" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -554,14 +552,12 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "esr-adapter-cc-tmux", editable = "../adapters/cc_tmux" },
     { name = "esr-adapter-feishu", editable = "../adapters/feishu" },
     { name = "esr-cc-mcp", editable = "../adapters/cc_mcp" },
     { name = "esr-handler-cc-adapter-runner", editable = "../handlers/cc_adapter_runner" },
     { name = "esr-handler-cc-session", editable = "../handlers/cc_session" },
     { name = "esr-handler-feishu-app", editable = "../handlers/feishu_app" },
     { name = "esr-handler-feishu-thread", editable = "../handlers/feishu_thread" },
-    { name = "esr-handler-tmux-proxy", editable = "../handlers/tmux_proxy" },
     { name = "mypy", specifier = ">=1.7" },
     { name = "pytest", specifier = ">=7.4" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
@@ -569,17 +565,6 @@ dev = [
     { name = "ruff", specifier = ">=0.1" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260408" },
 ]
-
-[[package]]
-name = "esr-adapter-cc-tmux"
-version = "0.1.0"
-source = { editable = "../adapters/cc_tmux" }
-dependencies = [
-    { name = "esr" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "esr", editable = "." }]
 
 [[package]]
 name = "esr-adapter-feishu"
@@ -654,17 +639,6 @@ requires-dist = [{ name = "esr", editable = "." }]
 name = "esr-handler-feishu-thread"
 version = "0.1.0"
 source = { editable = "../handlers/feishu_thread" }
-dependencies = [
-    { name = "esr" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "esr", editable = "." }]
-
-[[package]]
-name = "esr-handler-tmux-proxy"
-version = "0.1.0"
-source = { editable = "../handlers/tmux_proxy" }
 dependencies = [
     { name = "esr" },
 ]

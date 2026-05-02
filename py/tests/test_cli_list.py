@@ -25,14 +25,14 @@ def test_adapter_list_shows_installed_types(chdir_repo: None) -> None:
     result = runner.invoke(cli, ["adapter", "list"])
     assert result.exit_code == 0, result.output
     assert "feishu" in result.output
-    assert "cc_tmux" in result.output
+    assert "cc_mcp" in result.output
 
 
 def test_handler_list_shows_installed_handlers(chdir_repo: None) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["handler", "list"])
     assert result.exit_code == 0, result.output
-    for name in ("feishu_app", "feishu_thread", "tmux_proxy", "cc_session"):
+    for name in ("feishu_app", "feishu_thread", "cc_session"):
         assert name in result.output
 
 

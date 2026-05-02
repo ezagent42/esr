@@ -28,7 +28,6 @@ defmodule Esr.WorkerSupervisorTest do
   describe "sidecar_module/1" do
     test "known adapters dispatch to dedicated sidecars" do
       assert WorkerSupervisor.sidecar_module("feishu") == "feishu_adapter_runner"
-      assert WorkerSupervisor.sidecar_module("cc_tmux") == "cc_adapter_runner"
       assert WorkerSupervisor.sidecar_module("cc_mcp") == "cc_adapter_runner"
     end
 

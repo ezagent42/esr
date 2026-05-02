@@ -38,7 +38,7 @@ def test_send_input_serialises_to_cc_process_wire_shape() -> None:
 
 def test_non_text_event_is_noop() -> None:
     state = CcAdapterRunnerState(message_count=5)
-    event = Event(source="esr://localhost/x", event_type="tmux_output", args={"bytes": "x"})
+    event = Event(source="esr://localhost/x", event_type="other_event", args={"bytes": "x"})
 
     new_state, actions = on_msg(state, event)
 

@@ -8,8 +8,8 @@ Every adapter ships as a standalone Python distribution at
 - ``esr.toml`` (installable manifest — PRD 04 F04)
 - ``tests/``
 
-This test asserts the layout structurally for the two v0.1 adapters
-``feishu`` and ``cc_tmux``. The actual adapter implementations are
+This test asserts the layout structurally for the in-tree adapters
+``feishu`` and ``cc_mcp``. The actual adapter implementations are
 checked by their own per-FR tests (F05+).
 """
 
@@ -21,7 +21,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]  # py/tests/..  →  repo root
 
-ADAPTERS = ("feishu", "cc_tmux")
+ADAPTERS = ("feishu", "cc_mcp")
 
 
 @pytest.mark.parametrize("name", ADAPTERS)
