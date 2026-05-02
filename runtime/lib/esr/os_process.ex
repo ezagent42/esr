@@ -153,10 +153,18 @@ defmodule Esr.OSProcess do
         end
 
         # PR-22: SIGWINCH propagation for PTY-wrapped processes.
-        # xterm.js → AttachLive → PtyProcess.resize/3 → here.
+        # xterm.js → PtySocket → PtyProcess.resize/3 → here.
+        #
+        # erlexec spec is `:exec.winsz(OsPid, Rows, Cols)` (rows first;
+        # see deps/erlexec/src/exec.erl:603-608). Earlier this called
+        # `:exec.winsz(os_pid, cols, rows)` — silent ROWS↔COLS swap.
+        # Browser at 190×49 became Rows=190 / Cols=49 inside the kernel,
+        # so claude (Ink reads stdout.columns via TIOCGWINSZ) rendered
+        # at 49 cols. ~1/3 of the actual viewport, exactly matching
+        # the symptom that started this debug.
         def handle_cast({:winsz, cols, rows}, %{os_pid: os_pid} = s)
             when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 do
-          if os_pid, do: :exec.winsz(os_pid, cols, rows)
+          if os_pid, do: :exec.winsz(os_pid, rows, cols)
           {:noreply, s}
         end
 
