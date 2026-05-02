@@ -157,9 +157,10 @@ defmodule Esr.Peers.PtyProcess do
   # raw-PTY world, `1\r` lands as plain stdin and shows up as user
   # input post-dialog — leaked "1"s into the conversation. Solution:
   # drop the auto-confirm entirely; CLAUDE_FLAGS in esr-cc.sh already
-  # includes `--permission-mode bypassPermissions` +
-  # `--dangerously-load-development-channels`, so the trust dialog
-  # doesn't appear in the first place.
+  # includes `--permission-mode auto` +
+  # `--dangerously-load-development-channels`, plus pre-trusts the
+  # workspace path in `~/.claude.json`, so the trust dialog doesn't
+  # appear in the first place.
 
   # ------------------------------------------------------------------
   # OSProcess lifecycle hooks (signatures match os_process.ex callbacks)

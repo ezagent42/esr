@@ -108,9 +108,17 @@ if [ -f "$session_ids_yaml" ]; then
   fi
 fi
 
-# Build claude command
+# Build claude command.
+#
+# `--permission-mode auto` (changed from `bypassPermissions` 2026-05-02 by
+# operator request): claude boots into auto-accept mode rather than
+# bypass-everything. Auto-mode still routes operations through the
+# permission system but auto-approves the common safe path; bypass
+# disables permissions entirely and reads as a security smell to anyone
+# auditing operator-spawned claude instances. Operator can still cycle
+# to bypass via Shift+Tab in /attach if a session needs it.
 CLAUDE_FLAGS=(
-  --permission-mode bypassPermissions
+  --permission-mode auto
   --dangerously-load-development-channels server:esr-channel
   --mcp-config .mcp.json
   --add-dir "$cwd"
@@ -127,7 +135,7 @@ settings_file="$REPO_ROOT/roles/$role/settings.json"
 # .mcp.json subprocesses (cc_mcp included). PR #142 dropped the timer-
 # based "type 1" auto-confirm under the (incorrect) assumption that
 # `--permission-mode bypassPermissions` skipped the trust dialog —
-# `bypassPermissions` is per-tool permission, not per-workspace trust.
+# permission modes are per-tool permission, not per-workspace trust.
 # The correct fix is to write the trust acceptance into ~/.claude.json
 # directly (claude's own state file).
 claude_state="$HOME/.claude.json"
