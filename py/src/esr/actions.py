@@ -78,13 +78,13 @@ class Reply:
 
 @dataclass(frozen=True)
 class SendInput:
-    """Write `text` into the tmux pane of the owning session (§4.4, PR-9 T11a).
+    """Write `text` into the PTY of the owning CC session (§4.4, PR-9 T11a).
 
     `Esr.Peers.CCProcess.dispatch_action/2` already dispatches this
-    shape (`%{"type" => "send_input", "text" => _}`) to the
-    `:tmux_process` neighbor. Used by the T11b wire-up where the CC
-    adapter-runner on_msg handler routes an inbound user text into the
-    CC CLI process via tmux stdin.
+    shape (`%{"type" => "send_input", "text" => _}`) to the CC peer
+    process. Used by the T11b wire-up where the CC adapter-runner
+    on_msg handler routes an inbound user text into the CC CLI
+    process via its stdin.
     """
 
     text: str

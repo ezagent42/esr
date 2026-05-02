@@ -63,7 +63,7 @@ defmodule Esr.Integration.CCVoiceTest do
 
     # "*" grants everything — covers session:default/create,
     # handler:cc_adapter_runner/invoke, peer_pool:voice_asr/acquire,
-    # peer_pool:voice_tts/acquire, tmux:default/spawn.
+    # peer_pool:voice_tts/acquire, pty:default/spawn.
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_cc_voice")
 
     :ok = Esr.SessionRegistry.load_agents(@fixture)

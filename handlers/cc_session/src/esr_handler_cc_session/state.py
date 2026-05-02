@@ -9,7 +9,7 @@ from esr import handler_state
 
 @handler_state(actor_type="cc_proxy", schema_version=1)
 class CcSessionState(BaseModel):
-    """State for a cc_proxy actor — knows its tmux session + parent thread."""
+    """State for a cc_proxy actor — knows its CC session + parent thread."""
 
     model_config = {"frozen": True}
 

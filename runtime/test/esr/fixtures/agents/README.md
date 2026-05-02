@@ -23,7 +23,7 @@ agents:
     description: "Claude Code"
     capabilities_required:
       - session:default/create
-      - tmux:default/spawn
+      - pty:default/spawn
       - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:

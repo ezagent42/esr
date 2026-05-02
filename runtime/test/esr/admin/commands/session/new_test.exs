@@ -108,7 +108,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       Grants.load_snapshot(%{
         "ou_alice" => [
           "session:default/create",
-          "tmux:default/spawn",
+          "pty:default/spawn",
           "handler:cc_adapter_runner/invoke"
         ]
       })
@@ -144,7 +144,7 @@ defmodule Esr.Admin.Commands.Session.NewTest do
       assert Enum.sort(missing) == [
                "handler:cc_adapter_runner/invoke",
                "session:default/create",
-               "tmux:default/spawn"
+               "pty:default/spawn"
              ]
 
       after_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active
@@ -152,9 +152,9 @@ defmodule Esr.Admin.Commands.Session.NewTest do
     end
 
     test "principal with PARTIAL caps → missing_capabilities lists only the gap" do
-      # Has session:default/create + tmux:default/spawn but NOT handler/invoke.
+      # Has session:default/create + pty:default/spawn but NOT handler/invoke.
       Grants.load_snapshot(%{
-        "ou_carol" => ["session:default/create", "tmux:default/spawn"]
+        "ou_carol" => ["session:default/create", "pty:default/spawn"]
       })
 
       before_count = DynamicSupervisor.count_children(Esr.SessionsSupervisor).active

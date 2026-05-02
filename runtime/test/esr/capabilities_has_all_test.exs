@@ -17,7 +17,7 @@ defmodule Esr.CapabilitiesHasAllTest do
       end
 
     Esr.Capabilities.Grants.load_snapshot(%{
-      "ou_alice" => ["session:default/create", "tmux:default/spawn"]
+      "ou_alice" => ["session:default/create", "pty:default/spawn"]
     })
 
     on_exit(fn -> Esr.Capabilities.Grants.load_snapshot(prior) end)
@@ -28,7 +28,7 @@ defmodule Esr.CapabilitiesHasAllTest do
     assert :ok =
              Esr.Capabilities.has_all?(
                "ou_alice",
-               ["session:default/create", "tmux:default/spawn"]
+               ["session:default/create", "pty:default/spawn"]
              )
   end
 
@@ -50,7 +50,7 @@ defmodule Esr.CapabilitiesHasAllTest do
     assert :ok =
              Esr.Capabilities.has_all?(
                "ou_wild",
-               ["session:default/create", "tmux:default/spawn", "handler:x/invoke"]
+               ["session:default/create", "pty:default/spawn", "handler:x/invoke"]
              )
   end
 
@@ -58,9 +58,9 @@ defmodule Esr.CapabilitiesHasAllTest do
     assert {:missing, missing} =
              Esr.Capabilities.has_all?(
                "ou_unknown",
-               ["session:default/create", "tmux:default/spawn"]
+               ["session:default/create", "pty:default/spawn"]
              )
 
-    assert Enum.sort(missing) == ["session:default/create", "tmux:default/spawn"]
+    assert Enum.sort(missing) == ["session:default/create", "pty:default/spawn"]
   end
 end

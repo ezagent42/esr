@@ -65,7 +65,7 @@ def test_install_fails_with_actionable_message_on_missing_handler(
 def test_install_feishu_thread_session_resolves_all_deps(
     chdir_repo: None, tmp_path: Path
 ) -> None:
-    """The 3-node thread session references cc_tmux adapter + 3 handlers."""
+    """The thread session references cc_mcp adapter + the feishu_thread/cc_session handlers."""
     runner = CliRunner()
     result = runner.invoke(
         cli,

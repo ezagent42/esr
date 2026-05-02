@@ -108,7 +108,7 @@ def test_node_init_directive_stored_verbatim() -> None:
             id="cc",
             actor_type="cc_session",
             handler="on_msg",
-            adapter="cc_tmux",
+            adapter="cc_mcp",
             init_directive=init_dir,
         )
 
@@ -242,7 +242,7 @@ def test_compile_topology_extracts_params() -> None:
             id="y",
             actor_type="t",
             handler="on_msg",
-            adapter="cc_tmux",
+            adapter="cc_mcp",
             init_directive={"action": "new_session", "args": {"name": "{{thread_id}}"}},
         )
 

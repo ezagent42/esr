@@ -7,7 +7,6 @@ use :class:`Esr.PyProcess`; :mod:`Esr.WorkerSupervisor` launches it via
 
 The dispatch table in :mod:`Esr.WorkerSupervisor` routes adapter name
 ``"feishu"`` to this module; ``_allowlist.ALLOWED_ADAPTERS`` mirrors the
-table on the Python side so an accidental wrong-adapter argv (e.g. a
-stale script hard-coded to ``cc_tmux``) fails fast rather than booting
-the wrong adapter in the wrong sidecar.
+table on the Python side so an accidental wrong-adapter argv fails fast
+rather than booting the wrong adapter in the wrong sidecar.
 """

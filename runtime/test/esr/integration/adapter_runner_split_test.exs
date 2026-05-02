@@ -137,13 +137,13 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
   end
 
   @tag :integration
-  test "cc_tmux adapter_name dispatches to cc_adapter_runner module" do
+  test "cc_mcp adapter_name dispatches to cc_adapter_runner module" do
     instance = "p4b9-ccpty-#{System.unique_integer([:positive])}"
 
     try do
       result =
         WorkerSupervisor.ensure_adapter(
-          "cc_tmux",
+          "cc_mcp",
           instance,
           %{"start_cmd" => "/bin/true"},
           @bad_url
@@ -152,10 +152,10 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
       assert result == :ok or match?({:error, _}, result)
 
       case Enum.find(WorkerSupervisor.list(), fn
-             {:adapter, "cc_tmux", ^instance, _pid} -> true
+             {:adapter, "cc_mcp", ^instance, _pid} -> true
              _ -> false
            end) do
-        {:adapter, "cc_tmux", ^instance, pid} ->
+        {:adapter, "cc_mcp", ^instance, pid} ->
           assert await_alive(pid, 5_000) == :alive
 
           deadline = System.monotonic_time(:millisecond) + 5_000
@@ -187,11 +187,11 @@ defmodule Esr.Integration.AdapterRunnerSplitTest do
                  "ensure_adapter returned :ok but no pid appeared in list/0"
       end
     after
-      for {:adapter, "cc_tmux", ^instance, pid} <- WorkerSupervisor.list() do
+      for {:adapter, "cc_mcp", ^instance, pid} <- WorkerSupervisor.list() do
         _ = System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
       end
 
-      _ = File.rm("/tmp/esr-worker-adapter-cc_tmux-#{instance}.pid")
+      _ = File.rm("/tmp/esr-worker-adapter-cc_mcp-#{instance}.pid")
     end
   end
 end

@@ -38,13 +38,12 @@ defmodule Esr.WorkerSupervisor do
   use GenServer
   require Logger
 
-  # PR-4b: per-adapter-type sidecar dispatch. Adapters we ship own code
-  # for get a dedicated Python module so their dependency footprint stays
-  # scoped; anything not in the map falls through to generic_adapter_runner
+  # Per-adapter-type sidecar dispatch. Adapters we ship own code for get
+  # a dedicated Python module so their dependency footprint stays scoped;
+  # anything not in the map falls through to generic_adapter_runner
   # (which emits a DeprecationWarning on stderr at startup).
   @sidecar_dispatch %{
     "feishu" => "feishu_adapter_runner",
-    "cc_tmux" => "cc_adapter_runner",
     "cc_mcp" => "cc_adapter_runner"
   }
 

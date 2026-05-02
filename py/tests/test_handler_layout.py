@@ -9,7 +9,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-HANDLERS = ("feishu_app", "feishu_thread", "tmux_proxy", "cc_session")
+HANDLERS = ("feishu_app", "feishu_thread", "cc_session")
 
 
 @pytest.mark.parametrize("name", HANDLERS)

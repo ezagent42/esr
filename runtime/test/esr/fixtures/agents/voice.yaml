@@ -3,7 +3,7 @@ agents:
     description: "CC + voice I/O (voice in → ASR → CC → TTS → voice out)"
     capabilities_required:
       - session:default/create
-      - tmux:default/spawn
+      - pty:default/spawn
       - handler:cc_adapter_runner/invoke
       - peer_pool:voice_asr/acquire
       - peer_pool:voice_tts/acquire

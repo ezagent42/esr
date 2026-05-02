@@ -14,7 +14,7 @@ def _isolate_registry() -> Iterator[None]:
     """Save, clear, and restore ADAPTER_REGISTRY around every test.
 
     Restoring is important: real adapter packages (esr_feishu,
-    esr_cc_tmux) register themselves at import time, and other
+    esr_cc_mcp) register themselves at import time, and other
     test files depend on those entries existing. Clearing without
     restoring would break cross-file test order.
     """

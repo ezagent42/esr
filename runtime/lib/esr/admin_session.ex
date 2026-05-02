@@ -136,9 +136,9 @@ defmodule Esr.AdminSession do
   REST calls and `workspaces.yaml` `chats[].app_id` matching).
 
   Idempotent: re-registering an already-running instance is a no-op.
-  Unknown adapter types (`cc_tmux`, `cc_mcp`, …) are skipped.
-
-  PR-9 T10.
+  Non-feishu adapter types are skipped (this function only bootstraps
+  the feishu transport; other adapter types have their own bootstrap
+  paths).
   """
   @spec bootstrap_feishu_app_adapters(Path.t() | nil) :: :ok
   def bootstrap_feishu_app_adapters(adapters_yaml_path \\ nil) do

@@ -2,8 +2,8 @@
 
 The dispatch table in :mod:`Esr.WorkerSupervisor` routes *known* adapter
 names to dedicated sidecars (``feishu`` → ``feishu_adapter_runner``,
-``cc_tmux``/``cc_mcp`` → ``cc_adapter_runner``) and falls through to
-**this** sidecar for anything else. It exists purely as a migration
+``cc_mcp`` → ``cc_adapter_runner``) and falls through to **this**
+sidecar for anything else. It exists purely as a migration
 fallback: any new adapter added to the codebase works immediately, with
 a :class:`DeprecationWarning` on stderr prompting the author to add a
 proper allowlist entry to one of the dedicated sidecars (or create a

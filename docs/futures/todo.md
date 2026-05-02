@@ -37,7 +37,7 @@
 |---|---|---|
 | Auto-bind feishu Option B/C (full automation with confirmation DM) | PR-21i shipped Option D (instructional DM only) | Original brainstorm in conversation 2026-04-29 ~02:00. User chose Option D for now. Revisit if instructional-DM friction is still too high after live use. |
 | OAuth-based esr user registration | Spec §"Out of scope" | Manual `esr user add` for now. Real OAuth needs Feishu Open Platform integration. |
-| Deprecate `cc_tmux` Python adapter | PR-21e mentioned as "out of scope" | `cc_mcp + TmuxProcess` is the new path. cc_tmux still referenced by `worker_supervisor.ex:46` + tests. Cleanup PR if it's truly dead. |
+| Deprecate `cc_tmux` Python adapter | done | PR-25b 2026-05-02. Deleted `adapters/cc_tmux/` + `handlers/tmux_proxy/` + `scripts/{e2e-cc.sh,mock_cc.py}`. Stripped from py/pyproject.toml, cc_adapter_runner allowlist, sidecar dispatch in worker_supervisor.ex, and all test fixtures. Capability token `tmux:default/spawn` renamed → `pty:default/spawn` to reflect PtyProcess as the spawn-owning peer. |
 | `tag=` alias removal in slash parser (D14) | done | PR-21α #104. Removed in slash parser; `final_gate.sh` `--param tag=` is `cmd run` template layer, untouched. |
 | **Yaml-ify adapter sidecar dispatch** (`@sidecar_dispatch`) | Workshop 2 | After Workshop 1 (slash routing) ships. `worker_supervisor.ex:45` map. Adding new adapter type today touches Elixir. |
 | **Yaml-ify permissions registry** | Workshop 2 | Centralize the `permissions/0` callbacks scattered across `Esr.Admin`, `Esr.PeerServer`, future handlers. Single `permissions.yaml` listing perms + scope prefixes (would have prevented PR-21γ's `validate_scope` bug). |

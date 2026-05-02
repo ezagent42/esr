@@ -112,7 +112,7 @@ def test_adapter_add_duplicate_instance_errors(isolated_home: Path) -> None:
 def test_adapter_add_preserves_existing_instances(isolated_home: Path) -> None:
     runner = CliRunner()
     runner.invoke(cli, ["adapter", "add", "a", "--type", "feishu", "--app-id", "a1"])
-    runner.invoke(cli, ["adapter", "add", "b", "--type", "cc_tmux", "--start-cmd", "/x"])
+    runner.invoke(cli, ["adapter", "add", "b", "--type", "cc_mcp", "--start-cmd", "/x"])
 
     cfg = isolated_home / ".esrd" / "default" / "adapters.yaml"
     data = yaml.safe_load(cfg.read_text())

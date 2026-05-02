@@ -73,7 +73,7 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 |---|---|
 | `runtime/` | Elixir/OTP runtime — peers, supervisors, session router, capability gates |
 | `adapters/cc_mcp/` | Python MCP bridge for Claude Code; renders inbound as `<channel>` tags |
-| `adapters/feishu/`, `adapters/cc_tmux/` | Per-channel sidecars |
+| `adapters/feishu/` | Per-channel sidecar |
 | `handlers/` | Pure-function `(state, event) → (state, actions)` handlers |
 | `patterns/` | Declarative command patterns (DSL → yaml) |
 | `py/` | `esr` CLI + shared Python helpers |
@@ -216,7 +216,7 @@ bash scripts/esrd.sh start --instance=default
 |---|---|
 | `runtime/` | Elixir/OTP runtime —— peers / supervisors / session router / 能力门 |
 | `adapters/cc_mcp/` | Claude Code 的 Python MCP 桥；inbound 渲染成 `<channel>` 标签 |
-| `adapters/feishu/`、`adapters/cc_tmux/` | 各 channel sidecar |
+| `adapters/feishu/` | channel sidecar |
 | `handlers/` | 纯函数 `(state, event) → (state, actions)` |
 | `patterns/` | 声明式命令模板（DSL → yaml） |
 | `py/` | `esr` CLI + Python 共享 helper |

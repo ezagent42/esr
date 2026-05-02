@@ -4,7 +4,7 @@ Three-case shape mirrors what the other two per-type sidecars
 (``cc_adapter_runner``, ``generic_adapter_runner``) assert:
 
 1. ``--help`` exits cleanly as a module runnable via ``python -m``.
-2. Non-allowlisted adapter (e.g. ``cc_tmux``) is rejected with exit
+2. Non-allowlisted adapter (e.g. ``cc_mcp``) is rejected with exit
    code 2 and an explanatory stderr message — *before* any adapter
    factory is loaded.
 3. Allowlisted adapter (``feishu``) with ``--dry-run`` returns 0,
@@ -39,11 +39,11 @@ def test_feishu_adapter_runner_help_exits_clean() -> None:
 
 
 def test_feishu_adapter_runner_rejects_wrong_adapter() -> None:
-    """--adapter cc_tmux must be rejected with a non-zero exit code."""
+    """--adapter cc_mcp must be rejected with a non-zero exit code."""
     from feishu_adapter_runner.__main__ import main
 
     exit_code = main([
-        "--adapter", "cc_tmux",
+        "--adapter", "cc_mcp",
         "--instance-id", "i1",
         "--url", "ws://127.0.0.1:4001/adapter_hub/socket/websocket",
         "--config-json", "{}",

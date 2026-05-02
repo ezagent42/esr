@@ -19,8 +19,8 @@ def test_event_fields() -> None:
 
 
 def test_directive_fields() -> None:
-    d = Directive(adapter="cc_tmux", action="send_keys", args={"session": "a", "content": "h"})
-    assert d.adapter == "cc_tmux"
+    d = Directive(adapter="cc_mcp", action="send_keys", args={"session": "a", "content": "h"})
+    assert d.adapter == "cc_mcp"
     assert d.action == "send_keys"
     assert d.args["session"] == "a"
 

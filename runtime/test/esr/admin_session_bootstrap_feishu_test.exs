@@ -56,8 +56,8 @@ defmodule Esr.AdminSessionBootstrapFeishuTest do
         config:
           app_id: cli_secondary_bot
           app_secret: sec2
-      cc_tmux_one:
-        type: cc_tmux
+      cc_mcp_one:
+        type: cc_mcp
         config: {}
     """)
 
@@ -73,8 +73,8 @@ defmodule Esr.AdminSessionBootstrapFeishuTest do
     assert %{instance_id: "main_bot", app_id: "cli_a9563cc03d399cc9"} =
              :sys.get_state(main_pid)
 
-    # cc_tmux instances are skipped — they're a different adapter type.
-    assert :error = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_cc_tmux_one)
+    # Non-feishu instances are skipped by this bootstrap path.
+    assert :error = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_cc_mcp_one)
   end
 
   test "is idempotent — re-running with the same adapters.yaml is :ok",
