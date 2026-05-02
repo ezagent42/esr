@@ -79,7 +79,11 @@ defmodule Esr.MixProject do
       # with SIGKILL and asserts no tmux orphans within 10 s. Excluded from
       # default `mix test` via `:os_cleanup` tag in test_helper.exs; runs
       # only when this alias (or `mix test --only os_cleanup`) is invoked.
-      "test.e2e.os_cleanup": ["test --only os_cleanup"]
+      "test.e2e.os_cleanup": ["test --only os_cleanup"],
+      # PR-24 follow-up: standard Phoenix alias so prod releases /
+      # operators bundling without dev-mode watchers get a fresh,
+      # minified app.js / app.css. Run via `MIX_ENV=prod mix assets.deploy`.
+      "assets.deploy": ["esbuild default --minify", "phx.digest"]
     ]
   end
 end
