@@ -8,9 +8,11 @@
 #
 # Flow:
 #   1. Submit a session_new via the admin queue (bypasses Feishu).
-#   2. Run scripts/cc-bootstrap.sh to answer the
+#   2. Run tests/e2e/_helpers/dev_channels_unblock.sh to answer the
 #      `--dangerously-load-development-channels` warning dialog so
-#      cc_mcp boots and joins `cli:channel/<sid>`.
+#      cc_mcp boots and joins `cli:channel/<sid>`. (Operators normally
+#      open /attach in a browser and answer it themselves; this helper
+#      is e2e-only because the test runs unattended.)
 #   3. Verify cc_mcp's session_register envelope arrived in the BEAM log.
 #   4. Inject a `notification` envelope via the dev-only HTTP debug
 #      endpoint (Direction 2: BEAM → claude). The injected text asks
@@ -36,7 +38,7 @@ LOG_FILE="${ESRD_HOME}/${ESRD_INSTANCE}/logs/launchd-stdout.log"
 # in-flight changes on a feature branch before they're merged back to
 # the main repo's `scripts/` directory.
 REPO_ROOT="${ESR_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-BOOTSTRAP="${REPO_ROOT}/scripts/cc-bootstrap.sh"
+BOOTSTRAP="${REPO_ROOT}/tests/e2e/_helpers/dev_channels_unblock.sh"
 
 for tool in websocat jq curl uv; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -46,7 +48,7 @@ for tool in websocat jq curl uv; do
 done
 
 if [[ ! -x "$BOOTSTRAP" ]]; then
-  echo "FAIL: scripts/cc-bootstrap.sh not found or not executable at $BOOTSTRAP" >&2
+  echo "FAIL: dev-channels-unblock helper not found or not executable at $BOOTSTRAP" >&2
   exit 2
 fi
 
@@ -57,6 +59,8 @@ admin_id=$(uv run python3 -c "import uuid; print(uuid.uuid4().hex[:26].upper())"
 submitted_at=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
 
 mkdir -p "$QUEUE_DIR/pending" "$QUEUE_DIR/completed" "$QUEUE_DIR/failed"
+# session dir must exist before esr-cc.sh tries to chdir into it
+mkdir -p /tmp/scenario-07-pty-bidir
 yaml_path="$QUEUE_DIR/pending/${admin_id}.yaml"
 
 cat > "$yaml_path" <<EOF

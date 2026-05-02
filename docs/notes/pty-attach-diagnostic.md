@@ -105,15 +105,19 @@ print(text[:4000])
 ```
 
 If you see `WARNING: Loading development channels …` text, that's the
-dev-channels dialog. Apply the unblock:
+dev-channels dialog. **The normal answer is to open the URL
+`http://${ESR_PUBLIC_HOST}:${PORT}/sessions/${sid}/attach` in a browser
+and press `1` then Enter** — claude's TUI is now reachable from xterm.js
+(PR-24) so this is the operator-facing path.
 
-```bash
-scripts/cc-bootstrap.sh "${sid}"
-```
+For unattended e2e tests there's a one-shot websocat helper at
+`tests/e2e/_helpers/dev_channels_unblock.sh <sid>` that sends `1\r`
+as a binary frame; see scenario 07 for usage. Operators shouldn't need
+this — it's only for tests that spawn sessions without a human at
+the browser.
 
-The script connects to the same attach socket and sends `1\r` as a
-binary frame. After this, repeat step 3 — `pgrep -P` should now show
-the cc_mcp child.
+After the dialog is answered (browser or helper), repeat step 3 —
+`pgrep -P` should now show the cc_mcp child.
 
 ### 5. Did cc_mcp join the BEAM Phoenix Channel?
 
@@ -164,8 +168,12 @@ the response status (200 = delivered).
 
 ## Solidified tools
 
-- `scripts/cc-bootstrap.sh <sid>` — websocat-based one-shot dialog
-  unblock. Uses the same WS endpoint xterm.js attaches to.
+- Browser /attach (`http://${ESR_PUBLIC_HOST}:${PORT}/sessions/${sid}/attach`)
+  — operator-facing path for the dev-channels dialog AND ongoing TUI
+  interaction. Restored to working state across PRs #154-#156.
+- `tests/e2e/_helpers/dev_channels_unblock.sh <sid>` — websocat helper
+  for unattended scenario_07. Not for operator use (browser is faster
+  + already in their hand).
 - `scripts/esr-cc.sh` — already pre-trusts the cwd in `~/.claude.json`
   before exec'ing claude (PR-21µ-fix). Independent fix; doesn't replace
   the dev-channels confirmation step.
@@ -177,7 +185,7 @@ the response status (200 = delivered).
 
 | Symptom | Likely stage | Fix |
 |---|---|---|
-| "Hi" gets no reply, claude pid alive, no children | 4 | `cc-bootstrap.sh <sid>` |
+| "Hi" gets no reply, claude pid alive, no children | 4 | Open `/sessions/${sid}/attach` and answer `1` + Enter |
 | Slash works, reply goes nowhere | 1 | `app_id` not threaded — verify register key |
 | Multiple claude processes per chat | 1 | Pre-PR-21λ thread_id-misroute regression |
 | xterm.js render is garbled gibberish | n/a | Phoenix.Channel JSON serialization (fixed by PR-24) |
@@ -195,7 +203,8 @@ The dialog is interactive by design (security gate against drive-by
 malicious channels). Skipping it requires either pre-answering it or
 using `--print` mode (no TUI, breaks /attach).
 
-`scripts/cc-bootstrap.sh` is the manual workaround. A code-level fix
-(one-shot Logger.send_after in PtyProcess.init) is tracked separately
-— rejected option (b) "smart text detection" is fragile across claude
-versions.
+The intended path is the operator clicks /attach, sees the dialog,
+and types `1` + Enter. ESR doesn't try to auto-answer — the unblock
+script (now `tests/e2e/_helpers/dev_channels_unblock.sh`) only exists
+for unattended scenario tests; rejected option (b) "smart text
+detection" was deemed fragile across claude versions.
