@@ -41,11 +41,15 @@ echo "$0: connecting ws=${ws_url}" >&2
 # Send:
 #   1. JSON resize (text frame) — sets terminal cols/rows so claude
 #      renders into a known viewport
-#   2. "1\r" (binary frame) — answers the dev-channels warning dialog
-#   3. Wait briefly so the bytes reach the PTY before the WS closes
+#   2. wait for claude to actually render the dialog before answering
+#      it. claude takes ~2-3s after spawn to open its TUI; sending "1"
+#      too early is consumed by bracketed-paste mode and the dialog
+#      then waits forever for an input it never sees.
+#   3. "1\r" (binary frame) — answers the dev-channels warning dialog
+#   4. Wait briefly so the bytes reach the PTY before the WS closes
 {
   printf '{"cols":120,"rows":40}\n'
-  sleep 0.5
+  sleep 4
   printf '1\r'
   sleep 2
 } | websocat --binary -E "$ws_url" >/dev/null 2>&1

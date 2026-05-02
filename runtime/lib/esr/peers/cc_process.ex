@@ -326,19 +326,28 @@ defmodule Esr.Peers.CCProcess do
   # cc_mcp's inbound handler re-maps these into the `notifications/claude/channel`
   # params/meta shape CC's channels listener expects.
   defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
-    envelope = build_channel_notification(state, text)
-
-    # PR-9 T12-comms-3c: if cc_mcp hasn't joined cli:channel/<sid> yet,
-    # buffer the envelope and let handle_info({:cc_mcp_ready, sid}, …)
-    # flush it on join. Phoenix.PubSub drops broadcasts with zero
-    # subscribers — and cc_mcp takes ~10s to boot under claude for
-    # a first-inbound auto-create. See docs/notes/cc-mcp-pubsub-race.md.
     if state.cc_mcp_ready do
+      envelope = build_channel_notification(state, text)
       broadcast_notification(state.session_id, envelope)
       state
     else
-      # Prepend (O(1)); flush reverses on join.
-      update_in(state.pending_notifications, &[envelope | &1])
+      # PR-24 step 2: route Feishu inbound directly to claude's PTY
+      # stdin during the boot bridge window. Operator becomes their
+      # own channel: their text in chat → keystrokes in claude TUI →
+      # FCP's `:pty_stdout` mirror sends claude's response back into
+      # the same chat. Once cc_mcp_ready fires, all future inbounds
+      # take the normal `notifications/claude/channel` path above.
+      #
+      # Pre-PR-24, this branch buffered into `pending_notifications`
+      # for cc_mcp to flush on ready (T12-comms-3c). The buffer was
+      # the right model when cc_mcp was guaranteed to come up — but
+      # claude can hang at boot dialogs (live-debugged 2026-05-02:
+      # `--dangerously-load-development-channels` warning). Routing
+      # to PTY directly lets the operator unblock claude themselves
+      # via Feishu, no `/attach` required for the simple cases.
+      keystrokes = text <> "\r"
+      _ = Esr.Peers.PtyProcess.write(state.session_id, keystrokes)
+      state
     end
   end
 

@@ -82,6 +82,26 @@ defmodule Esr.Peers.FeishuChatProxy do
     # `Registry.lookup(Esr.PeerRegistry, "thread:" <> session_id)`.
     _ = Registry.register(Esr.PeerRegistry, "thread:" <> session_id, nil)
 
+    # PR-24 step 2: PTY ↔ Feishu boot bridge. Before cc_mcp joins
+    # `cli:channel/<sid>`, claude's TUI is the only window into what
+    # the agent is doing — and at boot time it's typically waiting for
+    # the operator to answer the `--dangerously-load-development-channels`
+    # warning dialog. We subscribe to the session's PTY topic so we
+    # can mirror claude's stdout into the bound Feishu chat (debounced,
+    # ANSI-stripped) and let the operator answer dialogs by typing
+    # text in the chat. `cc_mcp_ready` flips the bridge off; from
+    # there cc_mcp's `notifications/claude/channel` path takes over.
+    state = Map.merge(state, %{
+      boot_mode: true,
+      pty_buffer: "",
+      pty_flush_timer: nil
+    })
+
+    if Process.whereis(EsrWeb.PubSub) do
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> session_id)
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cc_mcp_ready/" <> session_id)
+    end
+
     {:ok, state}
   end
 
@@ -186,6 +206,87 @@ defmodule Esr.Peers.FeishuChatProxy do
   def handle_info({:tool_invoke, req_id, tool, args, channel_pid, _principal_id}, state) do
     state = dispatch_tool_invoke(tool, args, req_id, channel_pid, state)
     {:noreply, state}
+  end
+
+  # PR-24 step 2 — PTY ↔ Feishu boot bridge handlers.
+  #
+  # `:pty_stdout` arrives any time the wrapped claude process emits
+  # bytes. While `boot_mode` is on we accumulate them and schedule a
+  # debounced flush so a single TUI redraw turns into one Feishu
+  # message instead of dozens. Once `cc_mcp_ready` arrives we stop
+  # mirroring — cc_mcp's `notifications/claude/channel` path takes
+  # over and the bridge is silent.
+  @bridge_flush_ms 500
+
+  def handle_info({:pty_stdout, _data}, %{boot_mode: false} = state),
+    do: {:noreply, state}
+
+  def handle_info({:pty_stdout, data}, state) when is_binary(data) do
+    new_buffer = state.pty_buffer <> data
+
+    timer =
+      case state.pty_flush_timer do
+        nil -> Process.send_after(self(), :flush_pty_buffer, @bridge_flush_ms)
+        existing -> existing
+      end
+
+    {:noreply, %{state | pty_buffer: new_buffer, pty_flush_timer: timer}}
+  end
+
+  def handle_info(:flush_pty_buffer, state) do
+    case Esr.AnsiStrip.strip(state.pty_buffer) do
+      "" ->
+        :ok
+
+      stripped ->
+        # Trim leading/trailing whitespace runs so chat doesn't show
+        # 30-line blank gaps for cursor-only redraws.
+        text = stripped |> String.trim() |> trim_redundant_blanks()
+
+        if text != "" do
+          forward_reply(text, nil, state)
+        end
+    end
+
+    {:noreply, %{state | pty_buffer: "", pty_flush_timer: nil}}
+  end
+
+  def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
+    # Final flush (in case there's anything still in the buffer) then
+    # tear down the bridge. cc_mcp owns the channel from this point.
+    state =
+      case state.pty_flush_timer do
+        nil ->
+          state
+
+        ref ->
+          Process.cancel_timer(ref)
+          send(self(), :flush_pty_buffer)
+          %{state | pty_flush_timer: nil}
+      end
+
+    if Process.whereis(EsrWeb.PubSub) do
+      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "pty:" <> sid)
+    end
+
+    Logger.info("feishu_chat_proxy: boot bridge handing off to cc_mcp session_id=#{sid}")
+
+    {:noreply, %{state | boot_mode: false}}
+  end
+
+  def handle_info({:cc_mcp_ready, _other}, state), do: {:noreply, state}
+
+  # Collapse runs of 3+ blank lines down to a single blank line so a
+  # screen-clear + repaint doesn't fire 40 newlines into the chat.
+  defp trim_redundant_blanks(text) do
+    text
+    |> String.split("\n", trim: false)
+    |> Enum.chunk_by(&(String.trim(&1) == ""))
+    |> Enum.flat_map(fn
+      [maybe_blank | _] = chunk ->
+        if String.trim(maybe_blank) == "", do: [""], else: chunk
+    end)
+    |> Enum.join("\n")
   end
 
   # ------------------------------------------------------------------
