@@ -98,11 +98,23 @@ if (typeof ResizeObserver !== "undefined") {
 }
 window.addEventListener("resize", () => safeFit());
 
-term.onResize(({ cols, rows }) => {
-  if (ws.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
-    ws.send(JSON.stringify({ cols, rows }));
-  }
-});
+// Coalesce the "send current size to server" path. Two callsites need
+// it: (a) term.onResize (cols/rows changed locally), (b) ws.open (we
+// just connected and the server has no idea what viewport we're at —
+// it's still on the boot bridge's 120×40 default).
+let lastSentCols = 0;
+let lastSentRows = 0;
+function sendCurrentSize() {
+  const cols = term.cols, rows = term.rows;
+  if (cols <= 0 || rows <= 0) return;
+  if (ws.readyState !== WebSocket.OPEN) return;
+  if (cols === lastSentCols && rows === lastSentRows) return;
+  ws.send(JSON.stringify({ cols, rows }));
+  lastSentCols = cols;
+  lastSentRows = rows;
+}
+
+term.onResize(() => sendCurrentSize());
 
 // Custom keys that the browser would otherwise eat (tab focus moves,
 // page scroll on space, etc.). We keep them inside the terminal so
@@ -134,10 +146,20 @@ ws.binaryType = "arraybuffer";
 const textEncoder = new TextEncoder();
 
 ws.addEventListener("open", () => {
-  // The first fit() (from rAF / ResizeObserver) fires `term.onResize`
-  // which sends the JSON resize text frame — no manual call needed
-  // here. We just nudge claude to repaint into whatever size xterm
-  // ends up with.
+  // Race we have to defend against:
+  //   (a) ws may open BEFORE term.open (double-rAF) so term.cols=0
+  //       at this moment — we can't send size now, but
+  //   (b) term.onResize fires during fitAddon.fit() inside openTerminal,
+  //       and at that point ws.readyState IS open, so sendCurrentSize
+  //       there will succeed.
+  //
+  // Conversely if term.open ran first (slow WS handshake), term.onResize
+  // already fired with ws CONNECTING and was a no-op — sendCurrentSize
+  // here picks it up using the now-current term.cols/rows.
+  //
+  // Either way the dedupe in sendCurrentSize keeps us idempotent.
+  sendCurrentSize();
+  // Ctrl+L: nudge claude to repaint into the new (or unchanged) size.
   ws.send(textEncoder.encode("\x0c"));
 });
 

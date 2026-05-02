@@ -51,6 +51,7 @@ defmodule EsrWeb.PtySocket do
 
   @impl true
   def init(state) do
+    Logger.info("pty_socket.init: client attached sid=#{state.sid}")
     Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> state.sid)
 
     # PR-24 follow-up: announce the browser attach so FCP's boot bridge
