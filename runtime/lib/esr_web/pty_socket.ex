@@ -52,6 +52,19 @@ defmodule EsrWeb.PtySocket do
   @impl true
   def init(state) do
     Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> state.sid)
+
+    # PR-24 follow-up: announce the browser attach so FCP's boot bridge
+    # can stop trying to default-resize the PTY. Without this, FCP's
+    # `:send_default_winsize` (120×40 at 1s post-init) fires AFTER the
+    # browser sent its real viewport (e.g. 164×39) and clobbers it.
+    # The browser-resize is silently overridden and operators see their
+    # viewport stuck at the bridge default.
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "pty_attach/" <> state.sid,
+      {:pty_attach, state.sid}
+    )
+
     {:ok, state}
   end
 
@@ -67,11 +80,12 @@ defmodule EsrWeb.PtySocket do
     case Jason.decode(text) do
       {:ok, %{"cols" => cols, "rows" => rows}}
       when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 ->
+        Logger.info("pty_socket.resize sid=#{state.sid} cols=#{cols} rows=#{rows}")
         Esr.Peers.PtyProcess.resize(state.sid, cols, rows)
         {:ok, state}
 
-      _ ->
-        Logger.debug("pty_socket: ignoring unrecognised text frame on sid=#{state.sid}")
+      other ->
+        Logger.info("pty_socket: ignoring unrecognised text frame on sid=#{state.sid} payload=#{inspect(other)}")
         {:ok, state}
     end
   end

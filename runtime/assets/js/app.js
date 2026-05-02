@@ -49,8 +49,10 @@ const theme = {
 const term = new Terminal({
   cursorBlink: true,
   cursorStyle: "block",
-  fontFamily: '"SF Mono", Menlo, Monaco, "Courier New", monospace',
-  fontSize: 14,
+  // Match ttyd's stack — guarantees a system mono on every OS without a
+  // web-font load race that can throw off fitAddon's first measurement.
+  fontFamily: 'Consolas, "Liberation Mono", Menlo, Courier, monospace',
+  fontSize: 13,
   lineHeight: 1.2,
   scrollback: 5000,
   // Don't translate \n → \r\n; PTY emits \r\n natively.
@@ -62,32 +64,45 @@ const term = new Terminal({
 const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
 const termContainer = document.getElementById("term");
-term.open(termContainer);
 
-// xterm.js does not auto-resize when its container size changes
-// (CSS layout, font load, viewport rotation, panel toggle, …). One
-// `requestAnimationFrame` fit fires too early on slow font loads and
-// leaves the terminal stuck at 80x24 — operator sees a "phone-width"
-// terminal even when the browser viewport is desktop-sized.
-//
-// Fit on every container size change via ResizeObserver, plus an
-// initial pass after fonts settle. Each fit is followed by sending
-// the new winsize to the server so claude's TUI re-flows.
-function fitNow() {
-  try {
-    fitAddon.fit();
-    sendResize();
-  } catch (_) {
-    /* dimensions not yet measurable; next observer tick will retry */
-  }
+// Defer term.open until the layout has actually been computed. With
+// `defer` script + inline CSS the layout is supposed to be done before
+// our script runs, but xterm.js in some Chrome versions still measures
+// the parent at intrinsic content width (=0 for an empty div), pinning
+// the renderer to default 80×24. A double-rAF gives layout one frame
+// to settle and is what other xterm.js consumers do (microsoft/vscode-
+// remote-tunnel uses the same trick).
+function openTerminal() {
+  term.open(termContainer);
+  fitAddon.fit();
+  // Diagnostic: surface measured dims into the DOM so headless
+  // dump-dom can verify the container actually got viewport size.
+  termContainer.dataset.openedCols = term.cols;
+  termContainer.dataset.openedRows = term.rows;
+  termContainer.dataset.openedWidth = termContainer.clientWidth;
+  termContainer.dataset.openedHeight = termContainer.clientHeight;
 }
 
-requestAnimationFrame(() => fitNow());
+requestAnimationFrame(() => requestAnimationFrame(openTerminal));
+
+// Two distinct concerns, kept distinct:
+//   1. PAGE RESIZE (cols/rows recalc) → fitAddon.fit()
+//   2. TUI RESIZE (SIGWINCH to server) → term.onResize (below)
+function safeFit() {
+  try { fitAddon.fit(); } catch (_) { /* container not measurable yet */ }
+}
 
 if (typeof ResizeObserver !== "undefined") {
-  const ro = new ResizeObserver(() => fitNow());
+  const ro = new ResizeObserver(() => safeFit());
   ro.observe(termContainer);
 }
+window.addEventListener("resize", () => safeFit());
+
+term.onResize(({ cols, rows }) => {
+  if (ws.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
+    ws.send(JSON.stringify({ cols, rows }));
+  }
+});
 
 // Custom keys that the browser would otherwise eat (tab focus moves,
 // page scroll on space, etc.). We keep them inside the terminal so
@@ -119,8 +134,10 @@ ws.binaryType = "arraybuffer";
 const textEncoder = new TextEncoder();
 
 ws.addEventListener("open", () => {
-  sendResize();
-  // Nudge claude to repaint into the known viewport.
+  // The first fit() (from rAF / ResizeObserver) fires `term.onResize`
+  // which sends the JSON resize text frame — no manual call needed
+  // here. We just nudge claude to repaint into whatever size xterm
+  // ends up with.
   ws.send(textEncoder.encode("\x0c"));
 });
 
@@ -152,19 +169,6 @@ term.onData((data) => {
   }
 });
 
-// Debounced resize so window-drag doesn't spam SIGWINCH.
-let resizeTimer;
-function sendResize() {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  const { cols, rows } = term;
-  if (cols > 0 && rows > 0) {
-    ws.send(JSON.stringify({ cols, rows }));
-  }
-}
-window.addEventListener("resize", () => {
-  if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    fitAddon.fit();
-    sendResize();
-  }, 80);
-});
+// (Window-resize → safeFit() is registered above. xterm.js's onResize
+// callback sends the JSON resize text frame on every cols/rows change,
+// so there's nothing to wire here.)
