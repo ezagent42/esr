@@ -59,7 +59,7 @@ defmodule Esr.Capabilities do
   listing every permission the principal is missing. An empty list is
   trivially `:ok`.
 
-  Used by `Esr.Admin.Commands.Session.New` (D18) to batch-verify the
+  Used by `Esr.Admin.Commands.Scope.New` (D18) to batch-verify the
   `capabilities_required` list from `agents.yaml` in one call, so the
   error payload can enumerate every missing cap at once (not just the
   first one).

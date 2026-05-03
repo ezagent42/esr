@@ -4,7 +4,7 @@ defmodule Esr.PeerServerActionDispatchTest do
   HandlerRouter.call.
 
   P3-13: InvokeCommand deleted (Topology module gone); session
-  creation is now a SessionRouter control-plane operation.
+  creation is now a Scope.Router control-plane operation.
 
   P3-16: Route action deleted (cross-esrd routing removed per spec
   §2.9); directive-returning handlers flow through the peer chain.

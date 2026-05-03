@@ -35,14 +35,14 @@ defmodule Esr.Integration.CCE2ETest do
       test actually _can_ observe.
 
     * `Esr.Peers.CCProxy` / `Esr.Peers.FeishuAppProxy` are stateless
-      forwarder modules (no `start_link/1`); `SessionRouter` records
+      forwarder modules (no `start_link/1`); `Scope.Router` records
       them as `{:proxy_module, Module}` markers in the session refs
       map — no pid is ever spawned. So the reply chain
       `CCProcess → cc_proxy → FCP → feishu_app_proxy` is a future-PR
       wiring. The outbound leg here is therefore tested by simulating
       the final step (FAA `{:outbound, envelope}`) directly.
 
-    * `SessionRouter.build_neighbors/1` is forward-only: each peer
+    * `Scope.Router.build_neighbors/1` is forward-only: each peer
       only sees peers spawned BEFORE it in the `inbound` list, so
       `CCProcess.neighbors` never contains `pty_process`. We patch
       this in from the test via `:sys.replace_state/2`. A follow-up
@@ -74,11 +74,11 @@ defmodule Esr.Integration.CCE2ETest do
 
     :ok = Esr.SessionRegistry.load_agents(@fixture_path)
 
-    # SessionRouter is not booted by the Application in PR-3 (drift
+    # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
     # supervisor so each test gets a clean instance.
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
 
     on_exit(fn ->
@@ -98,17 +98,17 @@ defmodule Esr.Integration.CCE2ETest do
     thread_id = "om_e2e_#{System.unique_integer([:positive])}"
     user_input = "echo hello_pr3"
 
-    # 1. FeishuAppAdapter for app_id must exist in AdminSession before
-    # SessionRouter spawns the Session (build_ctx looks up the FAA pid
+    # 1. FeishuAppAdapter for app_id must exist in Scope.Admin before
+    # Scope.Router spawns the Session (build_ctx looks up the FAA pid
     # when resolving FeishuAppProxy's target_pid).
     #
     # NOTE: earlier tests (admin_session_test.exs, session_test.exs)
     # mutate the `:admin_children_sup_name` Application env as part of
     # their own setup, and the env leaks across tests. Use the
-    # canonical app-booted supervisor (Esr.AdminSession.ChildrenSupervisor)
+    # canonical app-booted supervisor (Esr.Scope.Admin.ChildrenSupervisor)
     # directly rather than re-reading the env — that's the one
     # Esr.Application actually started and the one live here.
-    admin_children_sup = Esr.AdminSession.ChildrenSupervisor
+    admin_children_sup = Esr.Scope.Admin.ChildrenSupervisor
 
     {:ok, faa} =
       DynamicSupervisor.start_child(
@@ -159,11 +159,11 @@ defmodule Esr.Integration.CCE2ETest do
        end}
     )
 
-    # 3. Create a session via SessionRouter — spawns the full inbound
+    # 3. Create a session via Scope.Router — spawns the full inbound
     # peer chain (FCP → CCProxy[marker] → CCProcess → PtyProcess) and
     # registers (chat_id, thread_id) in SessionRegistry.
     {:ok, sid} =
-      Esr.SessionRouter.create_session(%{
+      Esr.Scope.Router.create_session(%{
         agent: "cc",
         dir: "/tmp",
         principal_id: "ou_alice",
@@ -195,7 +195,7 @@ defmodule Esr.Integration.CCE2ETest do
     # test-only instrumentation, no production code touched.
     :ok = add_legacy_subscriber(pty_pid, test_pid)
 
-    # 5b. Backwire CCProcess → PTY peer. SessionRouter's
+    # 5b. Backwire CCProcess → PTY peer. Scope.Router's
     # `build_neighbors/1` is forward-only: at spawn time each peer only
     # sees peers SPAWNED BEFORE it. The CC chain orders inbound as
     # [fcp, cc_proxy, cc_process, pty_process] — so CCProcess's
@@ -300,11 +300,11 @@ defmodule Esr.Integration.CCE2ETest do
                    },
                    2_000
 
-    # 9. Cleanup — SessionRouter.end_session tears down the Session
+    # 9. Cleanup — Scope.Router.end_session tears down the Session
     # supervisor (kills CCProcess + PtyProcess + FCP + peers_sup) and
     # unregisters (chat_id, thread_id) from SessionRegistry.
     :ok = EsrWeb.Endpoint.unsubscribe(topic)
-    :ok = Esr.SessionRouter.end_session(sid)
+    :ok = Esr.Scope.Router.end_session(sid)
 
     # Registry reflects the teardown.
     assert :not_found =
@@ -336,7 +336,7 @@ defmodule Esr.Integration.CCE2ETest do
   end
 
   # Patch an additional neighbor into CCProcess's state. Used to
-  # backwire `pty_process` after SessionRouter's forward-only
+  # backwire `pty_process` after Scope.Router's forward-only
   # spawn pass (see drift note in test body).
   defp patch_cc_neighbor(cc_pid, key, pid) do
     :sys.replace_state(cc_pid, fn state ->

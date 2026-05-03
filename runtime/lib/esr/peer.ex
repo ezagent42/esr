@@ -3,7 +3,7 @@ defmodule Esr.Peer do
   Base behaviour for all Peers.
 
   Peers are actors that implement one of `Esr.Peer.Proxy` or `Esr.Peer.Stateful`.
-  Every Peer belongs to exactly one Session (user Session or `AdminSession`).
+  Every Peer belongs to exactly one Session (user Session or `Scope.Admin`).
 
   See `docs/superpowers/specs/2026-04-22-peer-session-refactor-design.md` §3.1.
   """
@@ -14,9 +14,9 @@ defmodule Esr.Peer do
 
   @doc """
   Optional: build the `init_args` map a peer needs at spawn time from
-  the session-create `params`. `SessionRouter.spawn_pipeline/3` looks
+  the session-create `params`. `Scope.Router.spawn_pipeline/3` looks
   this up generically (via `function_exported?/3`) so adding a new
-  Stateful peer never requires a SessionRouter edit.
+  Stateful peer never requires a Scope.Router edit.
 
   Peers that don't override return `%{}` via `default_spawn_args/1`.
   """

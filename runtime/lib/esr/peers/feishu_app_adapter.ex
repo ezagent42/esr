@@ -1,12 +1,12 @@
 defmodule Esr.Peers.FeishuAppAdapter do
   @moduledoc """
-  Peer.Stateful for one Feishu adapter instance. AdminSession-scope
+  Peer.Stateful for one Feishu adapter instance. Scope.Admin-scope
   (one per `type: feishu` entry in `adapters.yaml`).
 
   Role: sole Elixir consumer of `adapter:feishu/<instance_id>`
   Phoenix-channel inbound frames. Routes each frame to the owning
   Session's FeishuChatProxy via `SessionRegistry.lookup_by_chat_thread/3`,
-  or broadcasts `:new_chat_thread` on PubSub for SessionRouter (PR-3)
+  or broadcasts `:new_chat_thread` on PubSub for Scope.Router (PR-3)
   to create a new session.
 
   **Identifier split (PR-9 T10)**:
@@ -14,7 +14,7 @@ defmodule Esr.Peers.FeishuAppAdapter do
     e.g. `"main_bot"`, `"feishu_app_e2e-mock"`). Doubles as the Phoenix
     topic suffix (`adapter:feishu/<instance_id>`) that the Python
     `adapter_runner` joins with `--instance-id`. The peer is registered
-    in AdminSessionProcess under `:feishu_app_adapter_<instance_id>` so
+    in Scope.Admin.Process under `:feishu_app_adapter_<instance_id>` so
     `EsrWeb.AdapterChannel.forward_to_new_chain/2` can find it.
   - `app_id` — the Feishu-platform application id issued by the Open
     Platform (e.g. `"cli_a9563cc03d399cc9"`). Kept in peer state for
@@ -61,14 +61,14 @@ defmodule Esr.Peers.FeishuAppAdapter do
   @impl GenServer
   def init(%{instance_id: instance_id} = args) do
     :ok =
-      Esr.AdminSessionProcess.register_admin_peer(
+      Esr.Scope.Admin.Process.register_admin_peer(
         String.to_atom("feishu_app_adapter_#{instance_id}"),
         self()
       )
 
     # PR-A T4: FCP's cross-app dispatch path looks up the target FAA
     # via Esr.PeerRegistry under "feishu_app_adapter_<instance_id>"
-    # (string key — distinct from the AdminSessionProcess atom
+    # (string key — distinct from the Scope.Admin.Process atom
     # registration above). The two registrations coexist: admin peers
     # use atoms (legacy via_tuple style); cross-app peer-to-peer
     # routing uses the binary-keyed PeerRegistry. Ignore re-register

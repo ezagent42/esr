@@ -25,7 +25,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.CommandQueue.Watcher
-  alias Esr.AdminSessionProcess
+  alias Esr.Scope
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_watcher_test"
@@ -34,7 +34,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   # HubRegistry.bind dance for Notify routing.
   defp register_fake_feishu_adapter(app_id) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
-    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    :ok = Scope.Admin.Process.register_admin_peer(sym, self())
     topic = "adapter:feishu/#{app_id}"
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
     topic

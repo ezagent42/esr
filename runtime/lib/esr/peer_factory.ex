@@ -7,7 +7,7 @@ defmodule Esr.PeerFactory do
   `terminate_peer/2`, `restart_peer/2`. Review rejects additions.
 
   The factory resolves `session_id` to the correct Session supervisor by
-  delegating to `Esr.Session.supervisor_name/1` (registry-backed in PR-2).
+  delegating to `Esr.Scope.supervisor_name/1` (registry-backed in PR-2).
   An opt-in app-env override (`:esr, :peer_factory_sup_override`) is
   retained for unit tests that don't stand up a real Session; PR-3 removes
   this last scaffold once all tests use real Sessions.
@@ -24,14 +24,14 @@ defmodule Esr.PeerFactory do
     if Code.ensure_loaded?(mod) do
       # P3-3a: thread `session_process_pid` into every proxy_ctx so
       # Peer.Proxy's capability-check wrapper can route to
-      # SessionProcess.has?/2 (per-session local map) instead of the
+      # Scope.Process.has?/2 (per-session local map) instead of the
       # global Grants GenServer. Resolving the pid here — once, at
       # spawn time — avoids a Registry lookup on every forward/2 call.
       #
       # P6-A2: `session_id` is also threaded into ctx so Peer.Proxy's
-      # cap-check can call `Esr.SessionProcess.has?(session_id, perm)`
+      # cap-check can call `Esr.Scope.Process.has?(session_id, perm)`
       # directly (zero-hop persistent_term read). The pid is retained
-      # purely as a liveness guard — if the SessionProcess has died,
+      # purely as a liveness guard — if the Scope.Process has died,
       # we fall back to the global `Esr.Capabilities.has?/2`.
       ctx_with_sp =
         case resolve_session_process_pid(session_id) do
@@ -59,12 +59,12 @@ defmodule Esr.PeerFactory do
   end
 
   @doc """
-  Bootstrap-time peer spawn that bypasses `Esr.Session.supervisor_name/1`.
+  Bootstrap-time peer spawn that bypasses `Esr.Scope.supervisor_name/1`.
 
-  Only AdminSession's init-time children use this — it is the documented
+  Only Scope.Admin's init-time children use this — it is the documented
   exception to the "all peers spawn via the normal control plane" rule
   (spec §6 Risk F). The first arg is the literal DynamicSupervisor name
-  (not a session_id) because at boot AdminSession's children supervisor
+  (not a session_id) because at boot Scope.Admin's children supervisor
   is the only supervisor that can host the peer.
   """
   @spec spawn_peer_bootstrap(sup_name :: atom(), mod :: module(), args :: map(), neighbors :: list()) ::
@@ -82,27 +82,27 @@ defmodule Esr.PeerFactory do
 
   # Session supervisor resolution.
   #
-  # Production: Esr.Session.supervisor_name/1 (registry-backed in PR-2).
+  # Production: Esr.Scope.supervisor_name/1 (registry-backed in PR-2).
   # Test-only opt-in override: Application.put_env(:esr, :peer_factory_sup_override, name)
   #   — used in unit tests that don't spin up a real Session. Removed entirely
   #   in PR-3 once all tests use real Sessions.
   defp resolve_sup(session_id) do
     case Application.get_env(:esr, :peer_factory_sup_override) do
-      nil -> Esr.Session.supervisor_name(session_id)
+      nil -> Esr.Scope.supervisor_name(session_id)
       override -> override
     end
   end
 
-  # Resolve the SessionProcess pid for this session at spawn time so
+  # Resolve the Scope.Process pid for this session at spawn time so
   # downstream peer's capability checks can target it directly.
-  # Returns `nil` for the admin session (no per-session SessionProcess)
-  # and when no SessionProcess is registered yet (test setups that
+  # Returns `nil` for the admin session (no per-session Scope.Process)
+  # and when no Scope.Process is registered yet (test setups that
   # spawn peers without a real Session around them — common in early
   # refactor phases).
   defp resolve_session_process_pid("admin"), do: nil
 
   defp resolve_session_process_pid(session_id) when is_binary(session_id) do
-    case Registry.lookup(Esr.Session.Registry, {:session_process, session_id}) do
+    case Registry.lookup(Esr.Scope.Registry, {:session_process, session_id}) do
       [{pid, _}] -> pid
       _ -> nil
     end

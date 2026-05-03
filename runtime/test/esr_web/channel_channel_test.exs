@@ -1,7 +1,7 @@
 defmodule EsrWeb.ChannelChannelTest do
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.AdapterSocketRegistry
 
   @topic "cli:channel/test-sid"
 
@@ -11,7 +11,7 @@ defmodule EsrWeb.ChannelChannelTest do
       |> socket("ch-conn", %{})
       |> subscribe_and_join(EsrWeb.ChannelChannel, @topic)
 
-    {:ok, row} = SessionSocketRegistry.lookup("test-sid")
+    {:ok, row} = AdapterSocketRegistry.lookup("test-sid")
     assert row.status == :online
   end
 
@@ -30,7 +30,7 @@ defmodule EsrWeb.ChannelChannelTest do
     # give the channel process a tick to apply
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup("regtest")
+    {:ok, row} = AdapterSocketRegistry.lookup("regtest")
     assert row.workspace == "esr-dev"
     assert row.chat_ids == ["oc_x"]
     assert row.app_ids == ["cli_x"]
@@ -82,7 +82,7 @@ defmodule EsrWeb.ChannelChannelTest do
     close(socket)
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup("termtest")
+    {:ok, row} = AdapterSocketRegistry.lookup("termtest")
     assert row.status == :offline
   end
 end

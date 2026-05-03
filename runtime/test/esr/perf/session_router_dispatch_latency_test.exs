@@ -7,7 +7,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
   Bootstrap adjustments from the plan's Step-3 skeleton:
 
     * The plan's skeleton sends `{:inbound_event, env}` to
-      `Esr.SessionRouter`, but `SessionRouter` is the **control-plane**
+      `Esr.Scope.Router`, but `Scope.Router` is the **control-plane**
       GenServer (create/end session, peer-crash monitor) and does NOT
       handle `:inbound_event` — those messages would hit the Risk-E
       "dropped unexpected info" clause and no relay would ever fire.
@@ -37,7 +37,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
   alias Esr.Peers.FeishuAppAdapter
 
   @tag :perf
-  test "SessionRouter dispatch latency: 1000 iterations, record p50 / p99" do
+  test "Scope.Router dispatch latency: 1000 iterations, record p50 / p99" do
     # App-level singletons (booted by Esr.Application).
     :ok = Esr.TestSupport.AppSingletons.assert_app_singletons(%{})
 
@@ -62,7 +62,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     stub_relay = spawn_link(fn -> relay_loop(test_pid) end)
 
     {:ok, session_sup} =
-      Esr.SessionsSupervisor.start_session(%{
+      Esr.Scope.Supervisor.start_session(%{
         session_id: session_id,
         agent_name: "cc",
         dir: "/tmp",
@@ -86,7 +86,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     # Per-test FeishuAppAdapter under a scoped DynamicSupervisor so we
-    # don't leak into app-level AdminSession children.
+    # don't leak into app-level Scope.Admin children.
     {:ok, fab_sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     {:ok, _fab} =
@@ -96,7 +96,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     {:ok, fab_pid} =
-      Esr.AdminSessionProcess.admin_peer(
+      Esr.Scope.Admin.Process.admin_peer(
         String.to_atom("feishu_app_adapter_#{app_id}")
       )
 
@@ -104,7 +104,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       Esr.SessionRegistry.unregister_session(session_id)
 
       if Process.alive?(session_sup) do
-        Esr.SessionsSupervisor.stop_session(session_sup)
+        Esr.Scope.Supervisor.stop_session(session_sup)
       end
 
       if Process.alive?(fab_sup), do: Process.exit(fab_sup, :shutdown)
@@ -138,7 +138,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     p99 = Enum.at(sorted, div(n * 99, 100))
 
     IO.puts(
-      "perf: SessionRouter dispatch latency (n=#{n}) p50=#{p50}µs p99=#{p99}µs"
+      "perf: Scope.Router dispatch latency (n=#{n}) p50=#{p50}µs p99=#{p99}µs"
     )
 
     # Only regression-guard the p99; p50 is purely informational.

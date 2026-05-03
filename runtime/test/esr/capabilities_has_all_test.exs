@@ -2,7 +2,7 @@ defmodule Esr.CapabilitiesHasAllTest do
   @moduledoc """
   P3-8.2 — `Esr.Capabilities.has_all?/2` batch-verifies every permission
   in a list, returning `:ok` on full coverage or `{:missing, [...]}` with
-  the exact gap. Used by `Esr.Admin.Commands.Session.New` (D18) to cap-check
+  the exact gap. Used by `Esr.Admin.Commands.Scope.New` (D18) to cap-check
   the invoking principal against the agent's `capabilities_required` list
   before a Session is created.
   """

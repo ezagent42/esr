@@ -1,15 +1,15 @@
 defmodule Esr.Peers.FeishuAppProxy do
   @moduledoc """
-  Per-Session Peer.Proxy: outbound door from the Session to the AdminSession's
+  Per-Session Peer.Proxy: outbound door from the Session to the Scope.Admin's
   FeishuAppAdapter_<app_id>. Carries a capability check on forward — declared
   via @required_cap so the PR-1 Peer.Proxy macro extension (P2-4) wraps
   forward/2 with Esr.Capabilities.has?/2.
 
-  ctx shape (computed once at session-spawn time in PR-3's SessionRouter;
+  ctx shape (computed once at session-spawn time in PR-3's Scope.Router;
   in PR-2 injected manually by callers/tests):
     %{
       principal_id:  binary,   # who owns the session
-      target_pid:    pid,      # AdminSession.FeishuAppAdapter_<app_id>
+      target_pid:    pid,      # Scope.Admin.FeishuAppAdapter_<app_id>
       app_id:        binary
     }
 

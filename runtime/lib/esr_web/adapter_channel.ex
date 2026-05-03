@@ -8,7 +8,7 @@ defmodule EsrWeb.AdapterChannel do
      adapter workers connect before the peer chain is up.
    - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
      are forwarded unconditionally into the new peer chain via
-     `forward_to_new_chain/2` → `Esr.AdminSessionProcess.admin_peer/1`
+     `forward_to_new_chain/2` → `Esr.Scope.Admin.Process.admin_peer/1`
      → `Esr.Peers.FeishuAppAdapter`.
    - Non-Feishu topics receiving `:inbound_event` get an explicit error
      reply; the legacy `AdapterHub.Registry → PeerRegistry` path was
@@ -161,7 +161,7 @@ defmodule EsrWeb.AdapterChannel do
 
   Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
   to the adapter's mailbox), `:error` when no adapter is registered under
-  `:feishu_app_adapter_<app_id>` in `Esr.AdminSessionProcess`.
+  `:feishu_app_adapter_<app_id>` in `Esr.Scope.Admin.Process`.
 
   Exposed for direct unit testing of the routing path without spinning
   up a Phoenix.Channel socket.
@@ -170,7 +170,7 @@ defmodule EsrWeb.AdapterChannel do
   def forward_to_new_chain("adapter:feishu/" <> app_id, envelope) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
 
-    case Esr.AdminSessionProcess.admin_peer(sym) do
+    case Esr.Scope.Admin.Process.admin_peer(sym) do
       {:ok, pid} ->
         send(pid, {:inbound_event, envelope})
         :ok

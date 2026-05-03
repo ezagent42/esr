@@ -109,10 +109,10 @@ defmodule EsrWeb.CliChannel do
           "state" => stringify_keys(snap.state)
         }
 
-        # Augment with chat_ids from SessionSocketRegistry if this actor is a
+        # Augment with chat_ids from AdapterSocketRegistry if this actor is a
         # cc_proxy / feishu_thread_proxy etc tracked there.
         session_ctx =
-          case Esr.SessionSocketRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
+          case Esr.AdapterSocketRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
             {:ok, row} ->
               %{
                 "chat_ids" => row.chat_ids,
@@ -137,7 +137,7 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:run/" <> name, payload) when is_binary(name) do
     # P3-13: Topology module deleted — no more artifact instantiation
-    # via Elixir. Session creation now flows through SessionRouter via
+    # via Elixir. Session creation now flows through Scope.Router via
     # the /new-session slash command.
     params = Map.get(payload, "params") || %{}
 
@@ -153,7 +153,7 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
     # P3-13: Topology module deleted — session teardown now flows
-    # through SessionRouter via the /end-session slash command.
+    # through Scope.Router via the /end-session slash command.
     params = Map.get(payload, "params") || %{}
 
     %{
@@ -168,7 +168,7 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:drain", _payload) do
     # P3-13: Topology module deleted — drain semantics folded into
-    # SessionRouter (`/list-sessions` + `/end-session` per row).
+    # Scope.Router (`/list-sessions` + `/end-session` per row).
     %{
       "data" => %{
         "error" => @topology_removed_error,
@@ -308,7 +308,7 @@ defmodule EsrWeb.CliChannel do
   # bootstrap without an esrd restart so `esr adapter add` can spawn
   # both halves of a feishu instance — the Python adapter sidecar
   # (via WorkerSupervisor.ensure_adapter) AND the FAA peer (via
-  # AdminSession.bootstrap_feishu_app_adapters). PR-K shipped only
+  # Scope.Admin.bootstrap_feishu_app_adapters). PR-K shipped only
   # the FAA half; the missing Python subprocess made
   # ESR开发助手's first add appear partial. Both calls are idempotent.
   def dispatch("cli:adapters/refresh", _payload) do
@@ -316,14 +316,14 @@ defmodule EsrWeb.CliChannel do
     # returns the list of for-loop results when adapters.yaml has
     # entries, not the atom `:ok`. Drop the return value entirely.
     _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-    _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+    _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
     %{"data" => %{"ok" => true}}
   end
 
   # PR-L 2026-04-28: counterpart to cli:adapters/refresh — operator
   # wants to remove an adapter. Three steps in this order:
   #   1. Terminate the Python sidecar (WorkerSupervisor.terminate_adapter)
-  #   2. Terminate the Elixir FAA peer (AdminSession.terminate_feishu_app_adapter)
+  #   2. Terminate the Elixir FAA peer (Scope.Admin.terminate_feishu_app_adapter)
   #   3. Remove the entry from adapters.yaml (so a future esrd boot
   #      doesn't respawn it from disk)
   # Fails clearly if the entry is missing — caller can decide how to
@@ -340,7 +340,7 @@ defmodule EsrWeb.CliChannel do
         _ = Esr.WorkerSupervisor.terminate_adapter(type, instance_id)
 
         if type == "feishu" do
-          _ = Esr.AdminSession.terminate_feishu_app_adapter(instance_id)
+          _ = Esr.Scope.Admin.terminate_feishu_app_adapter(instance_id)
         end
 
         new_doc = update_in(doc, ["instances"], &Map.delete(&1 || %{}, instance_id))
@@ -391,7 +391,7 @@ defmodule EsrWeb.CliChannel do
               _ = Esr.WorkerSupervisor.terminate_adapter(type, old)
 
               if type == "feishu" do
-                _ = Esr.AdminSession.terminate_feishu_app_adapter(old)
+                _ = Esr.Scope.Admin.terminate_feishu_app_adapter(old)
               end
 
               # 2. Rewrite adapters.yaml with the new key.
@@ -405,7 +405,7 @@ defmodule EsrWeb.CliChannel do
 
               # 3. Refresh to spawn under the new name.
               _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-              _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+              _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
 
               %{"data" => %{
                 "ok" => true,

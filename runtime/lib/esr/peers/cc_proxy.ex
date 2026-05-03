@@ -5,7 +5,7 @@ defmodule Esr.Peers.CCProxy do
   the `@required_cap` hook is the first enforcement point for any
   rate-limit / throttle policy between channels and CC agents.
 
-  ctx shape (computed at session-spawn time by P3-4 SessionRouter; in
+  ctx shape (computed at session-spawn time by P3-4 Scope.Router; in
   tests/PR-3-interim injected manually by callers):
     %{
       principal_id:    binary,   # who owns the session

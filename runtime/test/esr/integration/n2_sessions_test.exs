@@ -10,8 +10,8 @@ defmodule Esr.Integration.N2SessionsTest do
               |                          |
         FeishuChatProxy(A)         FeishuChatProxy(B)
 
-  Two real `Esr.Session` subtrees are started under the app-level
-  `Esr.SessionsSupervisor`. Each registers a distinct
+  Two real `Esr.Scope` subtrees are started under the app-level
+  `Esr.Scope.Supervisor`. Each registers a distinct
   `(chat_id, thread_id)` key against its own `feishu_chat_proxy` pid
   (a test-owned receiver). Concurrent `{:inbound_event, envelope}`
   messages are dispatched to each FeishuAppAdapter; the test asserts:
@@ -71,9 +71,9 @@ defmodule Esr.Integration.N2SessionsTest do
     proxy_b =
       spawn_link(fn -> relay_loop(:b, test_pid) end)
 
-    # Start two real Sessions under Esr.SessionsSupervisor.
+    # Start two real Sessions under Esr.Scope.Supervisor.
     {:ok, session_sup_a} =
-      Esr.SessionsSupervisor.start_session(%{
+      Esr.Scope.Supervisor.start_session(%{
         session_id: "n2-session-A",
         agent_name: "cc",
         dir: "/tmp/n2/A",
@@ -82,7 +82,7 @@ defmodule Esr.Integration.N2SessionsTest do
       })
 
     {:ok, session_sup_b} =
-      Esr.SessionsSupervisor.start_session(%{
+      Esr.Scope.Supervisor.start_session(%{
         session_id: "n2-session-B",
         agent_name: "cc",
         dir: "/tmp/n2/B",
@@ -127,10 +127,10 @@ defmodule Esr.Integration.N2SessionsTest do
         {FeishuAppAdapter, %{instance_id: "app_B", neighbors: [], proxy_ctx: %{}}}
       )
 
-    # Resolve the adapters via AdminSessionProcess (same path
+    # Resolve the adapters via Scope.Admin.Process (same path
     # FeishuAppProxy uses in production).
-    {:ok, fab_a} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_app_A)
-    {:ok, fab_b} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_app_B)
+    {:ok, fab_a} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_app_A)
+    {:ok, fab_b} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_app_B)
 
     env_a = %{
       "payload" => %{
@@ -164,7 +164,7 @@ defmodule Esr.Integration.N2SessionsTest do
     #   a) B's Session supervisor stays alive
     #   b) B's FeishuChatProxy relay still routes inbound frames
     ref_b = Process.monitor(session_sup_b)
-    :ok = Esr.SessionsSupervisor.stop_session(session_sup_a)
+    :ok = Esr.Scope.Supervisor.stop_session(session_sup_a)
     refute Process.alive?(session_sup_a)
 
     # Ensure B is still alive and we did NOT receive a DOWN for it.

@@ -22,7 +22,7 @@ defmodule Esr.Integration.FeishuReactLifecycleTest do
       │ 7. state.pending_reacts no longer carries the msg_id         │
       └──────────────────────────────────────────────────────────────┘
 
-  The test drives the FCP directly (avoiding SessionRouter spawn-order
+  The test drives the FCP directly (avoiding Scope.Router spawn-order
   constraints and Python handler IPC) — but uses the real
   FeishuAppAdapter peer as the outbound sink so the adapter's own
   `{:outbound, envelope}` broadcast to `adapter:feishu/<app_id>`
@@ -38,7 +38,7 @@ defmodule Esr.Integration.FeishuReactLifecycleTest do
 
   setup do
     assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
+    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
 
     {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
     on_exit(fn -> if Process.alive?(sup), do: Process.exit(sup, :shutdown) end)

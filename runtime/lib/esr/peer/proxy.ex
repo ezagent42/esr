@@ -12,7 +12,7 @@ defmodule Esr.Peer.Proxy do
 
     1. Reads `ctx.principal_id` (must be a binary).
     2. Checks the capability. P3-3a: if `ctx.session_process_pid` is
-       present and alive, the check goes to `Esr.SessionProcess.has?/2`
+       present and alive, the check goes to `Esr.Scope.Process.has?/2`
        via that pid (local projection, no global GenServer contention);
        otherwise it falls back to `Esr.Capabilities.has?/2` on the
        global snapshot.
@@ -117,7 +117,7 @@ defmodule Esr.Peer.Proxy do
               case Map.get(ctx, :session_id) do
                 sid when is_binary(sid) ->
                   fn _principal_id, permission ->
-                    Esr.SessionProcess.has?(sid, permission)
+                    Esr.Scope.Process.has?(sid, permission)
                   end
 
                 _ ->

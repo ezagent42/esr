@@ -65,7 +65,7 @@ defmodule Esr.Workspaces.Registry do
 
   Symmetric to the Python adapter's `_workspace_of` (see
   `adapters/feishu/src/esr_feishu/adapter.py:_load_workspace_map`). The
-  Elixir side needs it for `SessionRouter` to thread `workspace_name`
+  Elixir side needs it for `Scope.Router` to thread `workspace_name`
   into pipeline params at session auto-create time (T11b.2).
   """
   @spec workspace_for_chat(String.t(), String.t()) :: {:ok, String.t()} | :not_found

@@ -55,30 +55,30 @@ defmodule Esr.Application do
       Esr.WorkerSupervisor,
 
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
-      Esr.SessionSocketRegistry,
+      Esr.AdapterSocketRegistry,
       {Esr.SessionRegistry, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
-      # Must come BEFORE AdminSession (which calls Esr.Session.supervisor_name/1
+      # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
       # via PeerFactory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
-      # peers via Session.supervisor_name) and before SessionsSupervisor.
-      {Registry, keys: :unique, name: Esr.Session.Registry},
+      # peers via Session.supervisor_name) and before Scope.Supervisor.
+      {Registry, keys: :unique, name: Esr.Scope.Registry},
 
-      # 4e.2 AdminSession — permanent supervisor hosting admin-scope peers.
-      # Risk F: started BEFORE SessionRouter (not in PR-2 yet) and BEFORE
-      # SessionsSupervisor.
-      Esr.AdminSession,
+      # 4e.2 Scope.Admin — permanent supervisor hosting admin-scope peers.
+      # Risk F: started BEFORE Scope.Router (not in PR-2 yet) and BEFORE
+      # Scope.Supervisor.
+      Esr.Scope.Admin,
 
-      # 4e.3 SessionsSupervisor (DynamicSupervisor, max_children=128).
-      Esr.SessionsSupervisor,
+      # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
+      Esr.Scope.Supervisor,
 
-      # 4e.4 SessionRouter (PR-8 T4): control-plane GenServer that
+      # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
       # the agents.yaml pipeline. Depends on SessionRegistry,
-      # SessionsSupervisor, and Session.Registry (all earlier
+      # Scope.Supervisor, and Session.Registry (all earlier
       # children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
-      Esr.SessionRouter,
+      Esr.Scope.Router,
 
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Workspaces.Registry,
@@ -142,7 +142,7 @@ defmodule Esr.Application do
       # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
       # Esr.Routing.SlashHandler removed. The new slash-parsing path
       # is Esr.Peers.SlashHandler, spawned per-Session under
-      # AdminSessionProcess / SessionProcess (spec §3.5). The old
+      # Scope.Admin.Process / Scope.Process (spec §3.5). The old
       # top-level subsystem was PR-0 scaffolding that got stranded
       # once the peer/session refactor moved slash parsing into the
       # peer graph.
@@ -162,9 +162,9 @@ defmodule Esr.Application do
     opts = [strategy: :one_for_one, name: Esr.Supervisor]
     result = Supervisor.start_link(children, opts)
 
-    # P4a-7: bring up the voice pools under AdminSession's children
+    # P4a-7: bring up the voice pools under Scope.Admin's children
     # supervisor. Must happen after Supervisor.start_link/2 because the
-    # bootstrap resolves the `AdminSession.ChildrenSupervisor` via its
+    # bootstrap resolves the `Scope.Admin.ChildrenSupervisor` via its
     # registered name. Failures are logged but non-fatal — the rest of
     # the tree keeps running with voice paths degraded.
     #
@@ -174,7 +174,7 @@ defmodule Esr.Application do
     # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
-        case Esr.AdminSession.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
+        case Esr.Scope.Admin.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
           :ok ->
             :ok
 
@@ -187,7 +187,7 @@ defmodule Esr.Application do
             )
         end
 
-        case Esr.AdminSession.bootstrap_slash_handler() do
+        case Esr.Scope.Admin.bootstrap_slash_handler() do
           :ok ->
             :ok
 
@@ -224,7 +224,7 @@ defmodule Esr.Application do
       # consumer are both up by the time anything pushes inbound. Without
       # this, adapter_channel logs "no FeishuAppAdapter for app_id=..."
       # and every inbound frame is silently dropped.
-      _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+      _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
 
       # PR-9 T11a: spawn a Python handler_worker for every handler
       # module referenced by any agents.yaml `capabilities_required`

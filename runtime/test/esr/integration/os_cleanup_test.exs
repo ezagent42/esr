@@ -21,7 +21,7 @@ defmodule Esr.Integration.OsCleanupTest do
     * A test-side WS client that can:
       - subscribe to `adapter:feishu/<app_id>` on the subprocess esrd,
       - push an `{:inbound_event, envelope}` whose `(chat_id,
-        thread_id)` triggers `SessionRouter` auto-spawn,
+        thread_id)` triggers `Scope.Router` auto-spawn,
       - wait for the resulting `pty_process` to be live.
 
     * A reliable way to enumerate the child OS processes OWNED BY
@@ -107,7 +107,7 @@ defmodule Esr.Integration.OsCleanupTest do
   #   * create_session_via_ws/2 — connect to
   #     `ws://127.0.0.1:<port>/adapter/socket/websocket`, join the
   #     `adapter:feishu/<app_id>` topic, push an `envelope` with a
-  #     fresh (chat_id, thread_id). SessionRouter auto-spawns the
+  #     fresh (chat_id, thread_id). Scope.Router auto-spawns the
   #     session.
   #
   #   * count_esr_pty_sessions/1 — enumerate child OS processes

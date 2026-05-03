@@ -12,7 +12,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.AdapterSocketRegistry
 
   setup do
     # Guard against a stale env var leaking in from other tests in the
@@ -45,7 +45,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup(sid)
+    {:ok, row} = AdapterSocketRegistry.lookup(sid)
     assert row.principal_id == "ou_alice"
     assert row.workspace_name == "proj-a"
   end
@@ -129,7 +129,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup(sid)
+    {:ok, row} = AdapterSocketRegistry.lookup(sid)
     assert row.principal_id == "ou_bootstrap_admin"
     assert row.workspace_name == nil
   end

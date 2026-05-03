@@ -2,7 +2,7 @@ defmodule Esr.TestSupport.SessionsCleanup do
   @moduledoc """
   Shared ExUnit setup helper: register an `on_exit` that terminates
   every child still tracked under the app-level
-  `Esr.SessionsSupervisor`. Used by integration tests that spawn
+  `Esr.Scope.Supervisor`. Used by integration tests that spawn
   sessions under the shared supervisor and need a guaranteed wipe
   regardless of whether the test body crashed mid-flight.
 
@@ -19,10 +19,10 @@ defmodule Esr.TestSupport.SessionsCleanup do
     :ok
   end
 
-  @doc "Terminate every child currently under `Esr.SessionsSupervisor`."
+  @doc "Terminate every child currently under `Esr.Scope.Supervisor`."
   @spec wipe_all() :: :ok
   def wipe_all do
-    case Process.whereis(Esr.SessionsSupervisor) do
+    case Process.whereis(Esr.Scope.Supervisor) do
       nil ->
         :ok
 

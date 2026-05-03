@@ -71,7 +71,7 @@ defmodule Esr.Peers.PtyProcessTest do
 
     test "patches sibling peers' neighbors[:pty_process] with our pid" do
       sid = "test-rewire-#{System.unique_integer([:positive])}"
-      peers_sup_name = {:via, Registry, {Esr.Session.Registry, {:peers_sup, sid}}}
+      peers_sup_name = {:via, Registry, {Esr.Scope.Registry, {:peers_sup, sid}}}
       {:ok, sup_pid} = DynamicSupervisor.start_link(strategy: :one_for_one, name: peers_sup_name)
 
       on_exit(fn ->
