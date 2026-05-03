@@ -55,8 +55,8 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 | Suffix | Shape | Examples |
 |---|---|---|
 | `*Server` | Singleton with mutation-heavy state (often GenServer + ETS) | `Esr.PeerServer` |
-| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.PeerRegistry`, `Esr.SessionSocketRegistry`, `Esr.Workspaces.Registry`, `Esr.Users.Registry`, `Esr.Permissions.Registry`, `Esr.Capabilities.Grants` |
-| `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.SessionProcess`, `Esr.AdminSessionProcess`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Peers.CCProcess`, `Esr.Peers.TmuxProcess` |
+| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.PeerRegistry`, `Esr.AdapterSocketRegistry`, `Esr.Workspaces.Registry`, `Esr.Users.Registry`, `Esr.Permissions.Registry`, `Esr.Capabilities.Grants` |
+| `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.Scope.Process`, `Esr.Scope.Admin.Process`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Peers.CCProcess`, `Esr.Peers.TmuxProcess` |
 | `*Buffer` | Bounded ring buffer / FIFO | `Esr.Telemetry.Buffer` |
 
 ### Pipeline
@@ -68,7 +68,7 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 | `*Proxy` | Per-entity local representative; forwards on its behalf | `Esr.Peers.FeishuChatProxy`, `Esr.Peers.FeishuAppProxy`, `Esr.Peers.CCProxy`, `Esr.Peers.VoiceTTSProxy`, `Esr.Peers.VoiceASRProxy` |
 | `*Handler` | Parses or dispatches one class of inbound | `Esr.Peers.SlashHandler` |
 | `*Guard` | **Inbound gate** — checks condition, drops/passes, optional side effects, has its own rate-limit/TTL state | (TBD — see Migration plan) |
-| `*Router` | Picks destination from a config table | `Esr.SessionRouter`, `Esr.HandlerRouter` |
+| `*Router` | Picks destination from a config table | `Esr.Scope.Router`, `Esr.HandlerRouter` |
 | (no suffix) | Domain peer when no role suffix fits | `Esr.Peers.VoiceTTS`, `Esr.Peers.VoiceASR`, `Esr.Peers.VoiceE2E` |
 
 #### `*Guard` identification (4-point checklist)
@@ -97,7 +97,7 @@ A module is a `*Guard` (and should bear that suffix) when ALL of these hold:
 
 **Identifying property:** pure OTP supervisor — manages child process tree.
 
-**Examples:** `Esr.WorkerSupervisor`, `Esr.SessionsSupervisor`, `Esr.PeerSupervisor`, `Esr.Workspaces.Supervisor`, `Esr.Users.Supervisor`, `Esr.Capabilities.Supervisor`, `Esr.Admin.Supervisor`.
+**Examples:** `Esr.WorkerSupervisor`, `Esr.Scope.Supervisor`, `Esr.PeerSupervisor`, `Esr.Workspaces.Supervisor`, `Esr.Users.Supervisor`, `Esr.Capabilities.Supervisor`, `Esr.Admin.Supervisor`.
 
 Convention: only Supervisor modules get the OTP marker. If a GenServer also happens to start child processes, it picks the category that describes its primary role (usually State or Control).
 

@@ -23,7 +23,7 @@ defmodule Esr.Admin.DispatcherTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Dispatcher
-  alias Esr.AdminSessionProcess
+  alias Esr.Scope
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_dispatcher_test"
@@ -63,10 +63,10 @@ defmodule Esr.Admin.DispatcherTest do
 
   # Post-P2-16: register_fake_feishu_adapter/1 replaces the old
   # HubRegistry.bind dance — Notify now discovers feishu adapters via
-  # AdminSessionProcess.list_admin_peers/0.
+  # Scope.Admin.Process.list_admin_peers/0.
   defp register_fake_feishu_adapter(app_id) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
-    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    :ok = Scope.Admin.Process.register_admin_peer(sym, self())
     topic = "adapter:feishu/#{app_id}"
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
     topic

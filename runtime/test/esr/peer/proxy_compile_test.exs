@@ -82,14 +82,14 @@ defmodule Esr.Peer.ProxyCompileTest do
   describe "@required_cap with ctx.session_process_pid (P3-3a)" do
     # These tests exercise the per-Session local grants projection path
     # introduced in P3-3a. The Peer.Proxy cap-check wrapper prefers
-    # SessionProcess.has?/2 (via the process pid carried in ctx) over
+    # Scope.Process.has?/2 (via the process pid carried in ctx) over
     # the global Esr.Capabilities.has?/2. That means the outcome of a
     # forward/2 call depends on the session-local grants map, NOT on
     # the global ETS table — admin-plane writes can't contend with
     # data-plane reads, and each session's grants are independent.
 
     setup do
-      assert is_pid(Process.whereis(Esr.Session.Registry))
+      assert is_pid(Process.whereis(Esr.Scope.Registry))
 
       if Process.whereis(Esr.Capabilities.Grants) == nil do
         start_supervised!(Esr.Capabilities.Grants)
@@ -98,7 +98,7 @@ defmodule Esr.Peer.ProxyCompileTest do
       :ok
     end
 
-    test "cap check uses SessionProcess.has?/2 when ctx.session_process_pid is alive" do
+    test "cap check uses Scope.Process.has?/2 when ctx.session_process_pid is alive" do
       ast =
         quote do
           defmodule SessionLocalProxy do
@@ -116,7 +116,7 @@ defmodule Esr.Peer.ProxyCompileTest do
       :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_proxy_local" => []})
 
       {:ok, _sup} =
-        Esr.Session.start_link(%{
+        Esr.Scope.start_link(%{
           session_id: "proxy-sp-1",
           agent_name: "cc",
           dir: "/tmp/pp",
@@ -125,11 +125,11 @@ defmodule Esr.Peer.ProxyCompileTest do
         })
 
       [{sp_pid, _}] =
-        Registry.lookup(Esr.Session.Registry, {:session_process, "proxy-sp-1"})
+        Registry.lookup(Esr.Scope.Registry, {:session_process, "proxy-sp-1"})
 
       # With no grants for p_proxy_local, the local projection denies.
       # P6-A2: ctx now carries `session_id` so the cap-check wrapper
-      # can call `SessionProcess.has?/2` as a zero-hop persistent_term
+      # can call `Scope.Process.has?/2` as a zero-hop persistent_term
       # read. The `session_process_pid` is still present as a liveness
       # guard.
       assert {:drop, :cap_denied} =
@@ -148,7 +148,7 @@ defmodule Esr.Peer.ProxyCompileTest do
         })
 
       # Wait a tick for the PubSub broadcast → handle_info → persistent_term
-      # update inside the SessionProcess.
+      # update inside the Scope.Process.
       Process.sleep(50)
 
       assert {:ok, :ok} =

@@ -20,7 +20,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
 
   alias Esr.Admin.Commands.Notify
   alias Esr.Admin.Dispatcher
-  alias Esr.AdminSessionProcess
+  alias Esr.Scope
   alias Esr.Capabilities.Grants
 
   @test_principal "ou_notify_test"
@@ -60,12 +60,12 @@ defmodule Esr.Admin.Commands.NotifyTest do
   end
 
   # Post-P2-16: Notify.execute/1 discovers the feishu adapter topic by
-  # iterating `AdminSessionProcess.list_admin_peers/0` for a
+  # iterating `Scope.Admin.Process.list_admin_peers/0` for a
   # `:feishu_app_adapter_<app_id>` entry. Tests register the caller pid
   # as a stand-in so the iteration resolves to a predictable topic.
   defp register_fake_feishu_adapter(app_id) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
-    :ok = AdminSessionProcess.register_admin_peer(sym, self())
+    :ok = Scope.Admin.Process.register_admin_peer(sym, self())
     topic = "adapter:feishu/#{app_id}"
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
     topic
@@ -111,7 +111,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
     end
 
     test "returns no_feishu_adapter when no feishu app adapter is registered" do
-      # Don't register a fake — AdminSessionProcess has other peers
+      # Don't register a fake — Scope.Admin.Process has other peers
       # (e.g. :slash_handler) but no :feishu_app_adapter_* entry.
       assert {:error, %{"type" => "no_feishu_adapter"}} =
                Notify.execute(%{"args" => %{"to" => "ou_x", "text" => "y"}})

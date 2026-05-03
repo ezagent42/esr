@@ -604,7 +604,7 @@ defmodule Esr.PeerServer do
     Enum.reduce(actions, state, &dispatch_action/2)
   end
 
-  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via SessionSocketRegistry.
+  # v0.2 §3.3 — esr-channel is synthetic; short-circuit via AdapterSocketRegistry.
   defp dispatch_action(
          %{"type" => "emit", "adapter" => "esr-channel"} = action,
          %__MODULE__{} = state
@@ -629,7 +629,7 @@ defmodule Esr.PeerServer do
       session_id: session_id
     })
 
-    case Esr.SessionSocketRegistry.notify_session(session_id, envelope) do
+    case Esr.AdapterSocketRegistry.notify_session(session_id, envelope) do
       :ok ->
         :ok
 
@@ -651,7 +651,7 @@ defmodule Esr.PeerServer do
     # deterministic "adapter:<name>/<self.actor_id>" shape. Python
     # adapters subscribed to any adapter:<name>/* topic still receive
     # the broadcast because Phoenix PubSub is topic-matched. PR-3's
-    # SessionRouter + PeerFactory replace this legacy lane outright.
+    # Scope.Router + PeerFactory replace this legacy lane outright.
     prefix = "adapter:" <> adapter <> "/"
     topic = prefix <> state.actor_id
 
@@ -967,7 +967,7 @@ defmodule Esr.PeerServer do
   # path records the absent principal clearly.
   #
   # P3-3a: this helper still reads the global `Esr.Capabilities.has?/2`
-  # rather than `Esr.SessionProcess.has?/2`. The legacy peer_server
+  # rather than `Esr.Scope.Process.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
   # to per-session peer modules which are spawned through
   # `PeerFactory.spawn_peer/5` and receive a `session_process_pid` in

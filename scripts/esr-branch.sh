@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/esr-branch.sh — ephemeral esrd + git-worktree lifecycle.
 #
-# Called by Esr.Admin.Commands.Session.{New,End} via System.cmd/3 inside a
+# Called by Esr.Admin.Commands.Scope.{New,End} via System.cmd/3 inside a
 # Task so the Dispatcher isn't blocked. Prints a single JSON line to stdout.
 #
 # Usage:

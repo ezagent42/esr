@@ -283,7 +283,7 @@ defmodule Esr.Peers.CCProcess do
   defp call_handler(state, payload, timeout) do
     # P3-10: Application-env override reaches across process boundaries
     # for integration tests that spawn CCProcess indirectly (via
-    # SessionRouter/PeerFactory) and therefore don't have the pid handy
+    # Scope.Router/PeerFactory) and therefore don't have the pid handy
     # at start to call `put_handler_override/2`. The override, when set,
     # takes precedence over the real HandlerRouter round-trip. Scoped to
     # `Mix.env() == :test`-style usage; prod leaves the env unset.
@@ -400,7 +400,7 @@ defmodule Esr.Peers.CCProcess do
   end
 
   # `{:notification, envelope}` matches the existing admin-side
-  # precedent in `Esr.Admin.Commands.Session.BranchEnd` — ChannelChannel
+  # precedent in `Esr.Admin.Commands.Scope.BranchEnd` — ChannelChannel
   # handle_info/2 routes both `{:push_envelope, _}` and
   # `{:notification, _}` identically, and sticking with the admin
   # convention keeps the ops + logs consistent.

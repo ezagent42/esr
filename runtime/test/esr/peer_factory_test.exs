@@ -12,18 +12,18 @@ defmodule Esr.PeerFactoryTest do
   end
 
   setup do
-    # Drift from expansion doc: `Esr.Session.Registry` is already started
+    # Drift from expansion doc: `Esr.Scope.Registry` is already started
     # by `Esr.Application` (P2-9 added it). Previously the test booted its
     # own Registry under the same name; now we just assert the app-level
     # one is up and reuse it.
-    assert is_pid(Process.whereis(Esr.Session.Registry))
+    assert is_pid(Process.whereis(Esr.Scope.Registry))
     :ok
   end
 
-  test "spawn_peer resolves supervisor via Esr.Session.supervisor_name/1" do
+  test "spawn_peer resolves supervisor via Esr.Scope.supervisor_name/1" do
     # Start a real Session with a real peers DynamicSupervisor
     {:ok, _sup} =
-      Esr.Session.start_link(%{
+      Esr.Scope.start_link(%{
         session_id: "pf-s1",
         agent_name: "cc",
         dir: "/tmp/x",

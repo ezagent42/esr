@@ -5,11 +5,11 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
 
   setup do
     # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
-    # `Esr.AdminSessionProcess` (via P2-9's AdminSession) are now started
+    # `Esr.Scope.Admin.Process` (via P2-9's Scope.Admin) are now started
     # at app boot, so a redundant `start_supervised!` would crash with
     # :already_started. Reuse the app-level processes.
     assert is_pid(Process.whereis(Esr.SessionRegistry))
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
+    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
     # No `name:` on the supervisor — a hard-coded atom collided across
     # tests when a previous run's DynamicSupervisor hadn't fully torn
     # down yet (PR-5 os_cleanup flake). Thread the pid via ctx instead.
@@ -19,7 +19,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     {:ok, sup: sup}
   end
 
-  test "start_link registers the adapter as :feishu_app_adapter_<instance_id> in AdminSessionProcess",
+  test "start_link registers the adapter as :feishu_app_adapter_<instance_id> in Scope.Admin.Process",
        %{sup: sup} do
     {:ok, pid} =
       DynamicSupervisor.start_child(
@@ -28,7 +28,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
       )
 
     assert Process.alive?(pid)
-    {:ok, ^pid} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_inst_test123)
+    {:ok, ^pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_inst_test123)
   end
 
   test "inbound envelope with chat+thread routes to the matching FeishuChatProxy via SessionRegistry",
@@ -137,7 +137,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
     # (e.g. "main_bot", "feishu_app_e2e-mock") is distinct from the
     # Feishu-platform app_id (e.g. "cli_a9563cc03d399cc9"). The Python
     # adapter_runner joins `adapter:feishu/<instance_id>`, so the Elixir
-    # peer's AdminSession registration MUST be keyed on instance_id so
+    # peer's Scope.Admin registration MUST be keyed on instance_id so
     # adapter_channel.forward_to_new_chain/2 can find it.
     {:ok, pid} =
       DynamicSupervisor.start_child(
@@ -152,10 +152,10 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
       )
 
     # Registered under instance_id.
-    assert {:ok, ^pid} = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_main_bot)
+    assert {:ok, ^pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
 
     # NOT registered under the Feishu-platform app_id.
-    assert :error = Esr.AdminSessionProcess.admin_peer(:feishu_app_adapter_cli_a9563cc03d399cc9)
+    assert :error = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_cli_a9563cc03d399cc9)
 
     # Peer state retains the real app_id for Feishu API calls.
     assert %{app_id: "cli_a9563cc03d399cc9", instance_id: "main_bot"} = :sys.get_state(pid)
@@ -164,7 +164,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
   test "inbound envelope with no matching session emits :new_chat_thread event", %{sup: sup} do
     # With no SessionRegistry entry for (chat_id, thread_id),
     # FeishuAppAdapter broadcasts a :new_chat_thread event on the
-    # `session_router` PubSub topic for SessionRouter to consume.
+    # `session_router` PubSub topic for Scope.Router to consume.
     # P3-7: topic is `session_router` (was "new_chat_thread"); tuple
     # order is `{:new_chat_thread, app_id, chat_id, thread_id, envelope}`
     # (app_id first — FeishuAppAdapter owns the wiring).
@@ -535,13 +535,13 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
         end)
 
       # PR-21κ Phase 6: production `dispatch/3` resolves the slash
-      # handler via `Esr.AdminSessionProcess.slash_handler_ref/0`.
+      # handler via `Esr.Scope.Admin.Process.slash_handler_ref/0`.
       # Override the registration with our recording stub so the FAA's
       # cast lands in the test mailbox. on_exit tries to restart the
-      # production slash_handler via the AdminSession bootstrap helper
+      # production slash_handler via the Scope.Admin bootstrap helper
       # — re-registering the dead test pid would leave the registry
       # broken for subsequent tests.
-      :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, slash_pid)
+      :ok = Esr.Scope.Admin.Process.register_admin_peer(:slash_handler, slash_pid)
 
       on_exit(fn ->
         # Re-bootstrap the production handler so other tests find a
@@ -549,7 +549,7 @@ defmodule Esr.Peers.FeishuAppAdapterTest do
         # supervisor; safely no-op when supervisor_test has torn it down
         # (try/rescue covers the GenServer.call to a dead supervisor).
         try do
-          Esr.AdminSession.bootstrap_slash_handler()
+          Esr.Scope.Admin.bootstrap_slash_handler()
         catch
           :exit, _ -> :ok
         end

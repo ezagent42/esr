@@ -5,7 +5,7 @@ defmodule Esr.Peers.UnboundChatGuard do
   guide back to the chat instead. Rate-limited per chat (10 min).
 
   Without this gate, every inbound from an unregistered chat would
-  fall through to `Esr.SessionRouter`, which silently maps unknown
+  fall through to `Esr.Scope.Router`, which silently maps unknown
   chats to `workspace="default"` — operators get no signal that their
   chat isn't configured, and traffic mysteriously lands in someone
   else's workspace. The gate emits a self-describing DM with the two

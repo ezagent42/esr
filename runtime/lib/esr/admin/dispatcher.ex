@@ -65,7 +65,7 @@ defmodule Esr.Admin.Dispatcher do
   # kind → required permission (spec §6.2 table).
   #
   # PR-3 P3-8.7: `session_new` now means the **agent-session** command
-  # (`Esr.Admin.Commands.Session.New`, formerly Session.AgentNew); the
+  # (`Esr.Admin.Commands.Scope.New`, formerly Session.AgentNew); the
   # legacy branch-worktree path is `session_branch_new`. Both share the
   # PR-21κ Phase 6 (2026-04-30): `@required_permissions` and
   # `@command_modules` constants deleted. `Esr.SlashRoutes` is now the
@@ -85,7 +85,7 @@ defmodule Esr.Admin.Dispatcher do
 
   @doc """
   Register the current process as the Task awaiting a `:cleanup_signal`
-  for `session_id`. Called by `Esr.Admin.Commands.Session.BranchEnd`
+  for `session_id`. Called by `Esr.Admin.Commands.Scope.BranchEnd`
   (the legacy branch-worktree path, formerly `Session.End` before the
   PR-3 P3-9 rename) on its non-force branch (DI-11 Task 25) before it
   blocks on `receive`.

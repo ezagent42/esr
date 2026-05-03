@@ -16,7 +16,7 @@ defmodule Esr.ApplicationTest do
     Esr.PeerSupervisor,
     # (P2-16) Esr.AdapterHub.Supervisor removed — its Registry's role
     # is subsumed by Esr.SessionRegistry.
-    # (P3-13) Esr.Topology.Supervisor removed — SessionRouter is now
+    # (P3-13) Esr.Topology.Supervisor removed — Scope.Router is now
     # the sole control-plane module.
     Esr.HandlerRouter.Supervisor,
     Esr.Persistence.Supervisor,

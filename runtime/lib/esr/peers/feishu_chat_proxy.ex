@@ -2,7 +2,7 @@ defmodule Esr.Peers.FeishuChatProxy do
   @moduledoc """
   Per-Session Peer.Stateful: entry point for inbound Feishu messages
   into the Session. Detects slash commands (leading `/` in the first
-  token) and short-circuits to the AdminSession's SlashHandler; all
+  token) and short-circuits to the Scope.Admin's SlashHandler; all
   other messages are forwarded downstream to CCProcess (PR-9 T5a).
 
   PR-9 T5 architectural invariant: **react is proxy-emitted, not

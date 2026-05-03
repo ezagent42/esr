@@ -96,7 +96,7 @@ slashes:
   "/workspace sessions":
     kind: session_list
     permission: "session.list"
-    command_module: "Esr.Admin.Commands.Session.List"
+    command_module: "Esr.Admin.Commands.Scope.List"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -108,7 +108,7 @@ slashes:
     aliases: ["/list-sessions"]
     kind: session_list
     permission: "session.list"
-    command_module: "Esr.Admin.Commands.Session.List"
+    command_module: "Esr.Admin.Commands.Scope.List"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -120,7 +120,7 @@ slashes:
     aliases: ["/session new"]
     kind: session_new
     permission: "session:default/create"
-    command_module: "Esr.Admin.Commands.Session.New"
+    command_module: "Esr.Admin.Commands.Scope.New"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -135,7 +135,7 @@ slashes:
     aliases: ["/session end"]
     kind: session_end
     permission: "session:default/end"
-    command_module: "Esr.Admin.Commands.Session.End"
+    command_module: "Esr.Admin.Commands.Scope.End"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -184,15 +184,15 @@ internal_kinds:
 
   session_branch_new:
     permission: "session:default/create"
-    command_module: "Esr.Admin.Commands.Session.BranchNew"
+    command_module: "Esr.Admin.Commands.Scope.BranchNew"
 
   session_switch:
     permission: "session.switch"
-    command_module: "Esr.Admin.Commands.Session.Switch"
+    command_module: "Esr.Admin.Commands.Scope.Switch"
 
   session_branch_end:
     permission: "session:default/end"
-    command_module: "Esr.Admin.Commands.Session.BranchEnd"
+    command_module: "Esr.Admin.Commands.Scope.BranchEnd"
 
   grant:
     permission: "cap.manage"

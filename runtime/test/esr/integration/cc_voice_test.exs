@@ -23,7 +23,7 @@ defmodule Esr.Integration.CCVoiceTest do
 
   ## Drift — same forward-only build_neighbors/1 limitation as cc_e2e
 
-  `SessionRouter.spawn_pipeline/3` spawns peers in inbound order
+  `Scope.Router.spawn_pipeline/3` spawns peers in inbound order
   (feishu_chat_proxy → voice_asr → cc_proxy → cc_process →
   pty_process) and `build_neighbors/1` is forward-only — each peer
   only sees peers spawned BEFORE it. Because VoiceASRProxy /
@@ -40,7 +40,7 @@ defmodule Esr.Integration.CCVoiceTest do
       (StubTTS → base64 of the input text)
 
   The VoiceASR / VoiceTTS pools are live in test env because
-  `Esr.Application.start/2` calls `AdminSession.bootstrap_voice_pools/1`
+  `Esr.Application.start/2` calls `Scope.Admin.bootstrap_voice_pools/1`
   regardless of `restore_on_start` (spec P4a-7). Stub engines ship
   today (P4a-1..4); Volcengine deferred to PR-5.
   """
@@ -68,8 +68,8 @@ defmodule Esr.Integration.CCVoiceTest do
 
     :ok = Esr.SessionRegistry.load_agents(@fixture)
 
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
 
     # VoiceASRProxy / VoiceTTSProxy use the Peer.Proxy capability
@@ -93,7 +93,7 @@ defmodule Esr.Integration.CCVoiceTest do
 
     # 1. FeishuAppAdapter must exist for FeishuAppProxy target
     # resolution (cc-voice's proxies list).
-    admin_children_sup = Esr.AdminSession.ChildrenSupervisor
+    admin_children_sup = Esr.Scope.Admin.ChildrenSupervisor
 
     {:ok, faa} =
       DynamicSupervisor.start_child(
@@ -127,11 +127,11 @@ defmodule Esr.Integration.CCVoiceTest do
        end}
     )
 
-    # 3. Spawn the cc-voice session — SessionRouter brings up
+    # 3. Spawn the cc-voice session — Scope.Router brings up
     # feishu_chat_proxy + cc_process + pty_process as Stateful;
     # voice_asr, cc_proxy, voice_tts are Proxy-module markers in refs.
     {:ok, sid} =
-      Esr.SessionRouter.create_session(%{
+      Esr.Scope.Router.create_session(%{
         agent: "cc-voice",
         dir: "/tmp",
         principal_id: "ou_cc_voice",
@@ -189,7 +189,7 @@ defmodule Esr.Integration.CCVoiceTest do
              Esr.Peers.VoiceTTSProxy.forward({:voice_tts, "ack"}, tts_ctx)
 
     # 7. Cleanup.
-    :ok = Esr.SessionRouter.end_session(sid)
+    :ok = Esr.Scope.Router.end_session(sid)
 
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)

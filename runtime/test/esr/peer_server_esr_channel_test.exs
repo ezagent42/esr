@@ -1,7 +1,7 @@
 defmodule Esr.PeerServerEsrChannelTest do
   use ExUnit.Case, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.AdapterSocketRegistry
 
   setup do
     sid = "sess-ch-#{System.unique_integer([:positive])}"
@@ -14,7 +14,7 @@ defmodule Esr.PeerServerEsrChannelTest do
         end
       end)
 
-    SessionSocketRegistry.register(sid,
+    AdapterSocketRegistry.register(sid,
       ws_pid: ws_pid,
       chat_ids: ["oc_x"],
       app_ids: ["cli_x"],
@@ -24,7 +24,7 @@ defmodule Esr.PeerServerEsrChannelTest do
     %{sid: sid}
   end
 
-  test "Emit adapter=esr-channel routes via SessionSocketRegistry + fires emit.dispatched telemetry",
+  test "Emit adapter=esr-channel routes via AdapterSocketRegistry + fires emit.dispatched telemetry",
        %{sid: sid} do
     :telemetry.attach(
       "test-esr-ch",

@@ -11,7 +11,7 @@ defmodule EsrWeb.ChannelChannel do
   use Phoenix.Channel
   require Logger
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.AdapterSocketRegistry
 
   @impl Phoenix.Channel
   def join("cli:channel/" <> session_id, _payload, socket) do
@@ -25,8 +25,8 @@ defmodule EsrWeb.ChannelChannel do
     # another client is legitimately holding the slot. Reject the new
     # join — the remote can retry after the owner disconnects (which
     # flips status=:offline via `ChannelChannel.terminate/2` →
-    # `SessionSocketRegistry.mark_offline/1`).
-    case SessionSocketRegistry.lookup(session_id) do
+    # `AdapterSocketRegistry.mark_offline/1`).
+    case AdapterSocketRegistry.lookup(session_id) do
       {:ok, %{status: :online, ws_pid: existing_ws}} when is_pid(existing_ws) ->
         if existing_ws != self() and Process.alive?(existing_ws) do
           Logger.warning(
@@ -46,7 +46,7 @@ defmodule EsrWeb.ChannelChannel do
   end
 
   defp do_join(session_id, socket) do
-    SessionSocketRegistry.register(session_id,
+    AdapterSocketRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: [],
       app_ids: [],
@@ -79,7 +79,7 @@ defmodule EsrWeb.ChannelChannel do
   # Capabilities spec §6.2/§6.3 — CC session worker declares its
   # principal_id (the admin/user running CC) and workspace_name (which
   # workspace row this session operates in) on register. Both end up
-  # on the SessionSocketRegistry row AND on the socket's assigns so the
+  # on the AdapterSocketRegistry row AND on the socket's assigns so the
   # tool_invoke handler can inject principal_id into the arity-6
   # {:tool_invoke, ...} tuple that Lane B (CAP-4) enforces against.
   #
@@ -95,7 +95,7 @@ defmodule EsrWeb.ChannelChannel do
     principal_id = payload["principal_id"] || System.get_env("ESR_BOOTSTRAP_PRINCIPAL_ID")
     workspace_name = payload["workspace_name"]
 
-    SessionSocketRegistry.register(session_id,
+    AdapterSocketRegistry.register(session_id,
       ws_pid: self(),
       chat_ids: chat_ids,
       app_ids: app_ids,
@@ -155,7 +155,7 @@ defmodule EsrWeb.ChannelChannel do
   end
 
   # Admin-originated notifications (e.g. `cleanup_check_requested`
-  # from `Esr.Admin.Commands.Session.BranchEnd` on the non-force path;
+  # from `Esr.Admin.Commands.Scope.BranchEnd` on the non-force path;
   # was `Session.End` before the PR-3 P3-9 rename).
   # `Phoenix.PubSub.broadcast(EsrWeb.PubSub, "cli:channel/<sid>", {:notification, ...})`
   # reaches this channel because Phoenix.Channel auto-subscribes the
@@ -178,7 +178,7 @@ defmodule EsrWeb.ChannelChannel do
   @impl Phoenix.Channel
   def terminate(_reason, socket) do
     if sid = socket.assigns[:session_id] do
-      SessionSocketRegistry.mark_offline(sid)
+      AdapterSocketRegistry.mark_offline(sid)
       :telemetry.execute([:esr, :session, :offline], %{},
         %{session_id: sid, reason: :ws_closed})
     end

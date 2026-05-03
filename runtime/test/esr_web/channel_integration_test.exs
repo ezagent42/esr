@@ -1,7 +1,7 @@
 defmodule EsrWeb.ChannelIntegrationTest do
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.AdapterSocketRegistry
   alias Esr.TestSupport.AuthContext
 
   setup do
@@ -95,19 +95,19 @@ defmodule EsrWeb.ChannelIntegrationTest do
                    3_000
   end
 
-  test "notify_session pushes an inbound envelope via SessionSocketRegistry" do
+  test "notify_session pushes an inbound envelope via AdapterSocketRegistry" do
     sid = "notify-sid-#{System.unique_integer([:positive])}"
 
-    # Joining registers the session in SessionSocketRegistry with ws_pid = channel pid.
+    # Joining registers the session in AdapterSocketRegistry with ws_pid = channel pid.
     {:ok, _, _ch_socket} =
       EsrWeb.ChannelSocket
       |> socket("mcp-client-2", %{})
       |> subscribe_and_join(EsrWeb.ChannelChannel, "cli:channel/" <> sid)
 
-    # SessionSocketRegistry.notify_session sends {:push_envelope, envelope} to
+    # AdapterSocketRegistry.notify_session sends {:push_envelope, envelope} to
     # the ChannelChannel process, which pushes it back over the socket.
     :ok =
-      SessionSocketRegistry.notify_session(sid, %{
+      AdapterSocketRegistry.notify_session(sid, %{
         "kind" => "notification",
         "content" => "direct-notify-" <> sid
       })

@@ -38,7 +38,7 @@ defmodule Esr.PubSubAuditTest do
   # a new literal shape can't slip past the allow-list.
   @expected_dynamic_sites [
     "lib/esr/admin/commands/notify.ex",
-    "lib/esr/admin/commands/session/branch_end.ex",
+    "lib/esr/admin/commands/scope/branch_end.ex",
     "lib/esr/handler_router.ex",
     "lib/esr/peer_server.ex",
     "lib/esr_web/handler_channel.ex",

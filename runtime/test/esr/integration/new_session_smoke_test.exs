@@ -13,11 +13,11 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       Esr.Admin.Dispatcher    — cap-checks (D18) + Tasks the command
               |
               v
-      Esr.Admin.Commands.Session.New       — validates args (D11/D13),
+      Esr.Admin.Commands.Scope.New       — validates args (D11/D13),
               |                              re-checks agent_def caps,
-              |                              calls SessionsSupervisor
+              |                              calls Scope.Supervisor
               v
-      Esr.SessionsSupervisor  — starts Esr.Session (SessionProcess +
+      Esr.Scope.Supervisor  — starts Esr.Scope (Scope.Process +
                                  empty peers DynamicSupervisor)
               |
               v
@@ -26,7 +26,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
   Controlled failure mode (spec §P2-13): PR-2 does NOT yet spawn the
   pipeline peers (CCProcess, PtyProcess are PR-3 work). Session.init
-  only brings up SessionProcess + an empty peers DynamicSupervisor,
+  only brings up Scope.Process + an empty peers DynamicSupervisor,
   so the happy-path command succeeds and the peers sup is asserted
   childless. Future PR-3 work populates the pipeline from agent_def.
 
@@ -73,8 +73,8 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
 
     # Test principal gets `"*"` (only grant shape that passes the
@@ -90,13 +90,13 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       })
 
     # PR-8 T1: Esr.Peers.SlashHandler is now auto-started by
-    # `Esr.AdminSession.bootstrap_slash_handler/0` during
+    # `Esr.Scope.Admin.bootstrap_slash_handler/0` during
     # `Esr.Application.start/2`, so no manual `start_supervised/1` is
     # needed here — the production path is the test path. Fall back to
     # a test-supervised spawn only if a prior test torched the handler
     # and nothing respawned it.
     slash_pid =
-      case Esr.AdminSessionProcess.slash_handler_ref() do
+      case Esr.Scope.Admin.Process.slash_handler_ref() do
         {:ok, pid} ->
           pid
 
@@ -183,7 +183,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     # PR-21θ 2026-04-30: cwd= removed from slash grammar; derived as
     # `<root>/.worktrees/<branch>`. This smoke test exercises the full
     # slash → cap check → worktree creation → session spawn path.
-    {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
+    {:ok, slash} = Esr.Scope.Admin.Process.slash_handler_ref()
     branch = "smoke-#{System.unique_integer([:positive])}"
 
     envelope = %{
@@ -206,25 +206,25 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     # Extract the session_id from "session started: <sid>".
     [_, sid] = Regex.run(~r/session started: (\S+)/, text)
 
-    # SessionProcess came up with the expected args.
-    state = Esr.SessionProcess.state(sid)
+    # Scope.Process came up with the expected args.
+    state = Esr.Scope.Process.state(sid)
     assert state.agent_name == "cc"
     # PR-21θ: dir = derived cwd = <root>/.worktrees/<branch>
     assert state.dir == Path.join([smoke_repo, ".worktrees", branch])
     assert state.metadata.principal_id == @test_principal
 
     # PR-8 T4 update: the chat-bound /new-session path now routes through
-    # SessionRouter.create_session/1, which spawns the full pipeline.inbound
+    # Scope.Router.create_session/1, which spawns the full pipeline.inbound
     # (FeishuChatProxy, CCProcess, PtyProcess; CCProxy is a stateless
     # module). The Session's peers DynamicSupervisor therefore carries the
     # three Stateful peers.
-    peers_sup = Esr.Session.supervisor_name(sid)
+    peers_sup = Esr.Scope.supervisor_name(sid)
     assert DynamicSupervisor.count_children(peers_sup).active == 3
   end
 
   test "/new-session without --agent returns a readable error reply",
        %{app_id: app_id, chat_id: chat_id} do
-    {:ok, _slash} = Esr.AdminSessionProcess.slash_handler_ref()
+    {:ok, _slash} = Esr.Scope.Admin.Process.slash_handler_ref()
 
     envelope = %{
       "principal_id" => @test_principal,
@@ -248,7 +248,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
   test "/new-session without matching capability returns an error reply",
        %{app_id: app_id, chat_id: chat_id} do
-    {:ok, _slash} = Esr.AdminSessionProcess.slash_handler_ref()
+    {:ok, _slash} = Esr.Scope.Admin.Process.slash_handler_ref()
 
     envelope = %{
       "principal_id" => @test_principal_nocap,

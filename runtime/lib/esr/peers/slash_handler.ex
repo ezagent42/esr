@@ -1,7 +1,7 @@
 defmodule Esr.Peers.SlashHandler do
   @moduledoc """
-  Channel-agnostic slash-command peer. AdminSession-scope (exactly one,
-  registered under `:slash_handler` in `Esr.AdminSessionProcess`).
+  Channel-agnostic slash-command peer. Scope.Admin-scope (exactly one,
+  registered under `:slash_handler` in `Esr.Scope.Admin.Process`).
 
   ## API (PR-21κ Phase 6)
 
@@ -50,7 +50,7 @@ defmodule Esr.Peers.SlashHandler do
 
   @impl GenServer
   def init(args) do
-    :ok = Esr.AdminSessionProcess.register_admin_peer(:slash_handler, self())
+    :ok = Esr.Scope.Admin.Process.register_admin_peer(:slash_handler, self())
 
     state = %{
       dispatcher: Map.get(args, :dispatcher, @default_dispatcher),
@@ -93,12 +93,12 @@ defmodule Esr.Peers.SlashHandler do
   @spec dispatch(map(), pid(), reference()) :: reference()
   def dispatch(envelope, reply_to, ref)
       when is_pid(reply_to) and is_reference(ref) do
-    # PR-21κ Phase 6 fix: SlashHandler is supervised by AdminSession's
+    # PR-21κ Phase 6 fix: SlashHandler is supervised by Scope.Admin's
     # children DynamicSupervisor and registered as `:slash_handler` in
-    # `Esr.AdminSessionProcess` (not under its module name). Resolve
+    # `Esr.Scope.Admin.Process` (not under its module name). Resolve
     # the actual pid via `slash_handler_ref/0` rather than assuming a
     # `name: __MODULE__` registration that doesn't exist in production.
-    case Esr.AdminSessionProcess.slash_handler_ref() do
+    case Esr.Scope.Admin.Process.slash_handler_ref() do
       {:ok, pid} ->
         GenServer.cast(pid, {:dispatch, envelope, reply_to, ref})
 

@@ -22,7 +22,7 @@ defmodule Esr.Peers.SlashHandlerDispatchTest do
   @principal "ou_dispatch_test"
 
   setup do
-    assert is_pid(Process.whereis(Esr.AdminSessionProcess))
+    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
     Process.register(self(), :test_admin_dispatcher)
 
     if Process.whereis(SlashRoutes) == nil, do: start_supervised!(SlashRoutes)

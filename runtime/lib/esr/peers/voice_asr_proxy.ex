@@ -5,11 +5,11 @@ defmodule Esr.Peers.VoiceASRProxy do
   Spec §3.6 / §4.1: one of the two documented exceptions to the
   "static target" rule (VoiceTTSProxy is the other). `forward/2` does
   `Esr.PeerPool.acquire/2` against the pool named in ctx (in prod
-  `:voice_asr_pool`, registered under AdminSessionProcess), invokes
+  `:voice_asr_pool`, registered under Scope.Admin.Process), invokes
   `Esr.Peers.VoiceASR.transcribe/2`, then releases the worker back to
   the pool in an `after` clause.
 
-  ctx shape (computed at session-spawn time by SessionRouter;
+  ctx shape (computed at session-spawn time by Scope.Router;
   P4a-9 spawn_args wiring):
     %{
       principal_id:    binary,        # who owns the session

@@ -167,7 +167,7 @@ defmodule Esr.Peers.PtyProcess do
 
   @impl Esr.OSProcess
   # Hand the configured `dir` (the per-session worktree path threaded
-  # through from /new-session's slash → Session.New → SessionRouter)
+  # through from /new-session's slash → Session.New → Scope.Router)
   # to erlexec as the `:cd` option. Without this callback, OSProcess
   # falls back to BEAM's pwd, so the spawned esr-cc.sh + claude end
   # up in `~/Workspace/esr/.../runtime` instead of
@@ -293,7 +293,7 @@ defmodule Esr.Peers.PtyProcess do
 
   @doc false
   def rewire_session_siblings(%{session_id: sid}) when is_binary(sid) and sid != "" do
-    peers_sup_via = {:via, Registry, {Esr.Session.Registry, {:peers_sup, sid}}}
+    peers_sup_via = {:via, Registry, {Esr.Scope.Registry, {:peers_sup, sid}}}
 
     case GenServer.whereis(peers_sup_via) do
       nil ->

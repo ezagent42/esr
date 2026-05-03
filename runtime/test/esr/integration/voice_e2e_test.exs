@@ -34,11 +34,11 @@ defmodule Esr.Integration.VoiceE2ETest do
 
     :ok = Esr.SessionRegistry.load_agents(@fixture)
 
-    # SessionRouter is not booted by the Application in PR-3 (drift
+    # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
     # supervisor so each test gets a clean instance.
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
 
     :ok
@@ -50,7 +50,7 @@ defmodule Esr.Integration.VoiceE2ETest do
     thread_id = "om_voice_e2e_#{System.unique_integer([:positive])}"
 
     {:ok, sid} =
-      Esr.SessionRouter.create_session(%{
+      Esr.Scope.Router.create_session(%{
         agent: "voice-e2e",
         principal_id: "ou_voice_e2e",
         chat_id: chat_id,
@@ -89,8 +89,8 @@ defmodule Esr.Integration.VoiceE2ETest do
 
     assert_receive :voice_end, 3_000
 
-    # Cleanup via SessionRouter.
-    :ok = Esr.SessionRouter.end_session(sid)
+    # Cleanup via Scope.Router.
+    :ok = Esr.Scope.Router.end_session(sid)
 
     assert :not_found =
              Esr.SessionRegistry.lookup_by_chat(chat_id, "default")

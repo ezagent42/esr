@@ -82,7 +82,7 @@ defmodule Esr.Capabilities.Grants do
     # Diff against the prior snapshot BEFORE mutating the table so
     # per-session projections only refresh when their principal's
     # grants actually changed. Without the diff, every
-    # `load_snapshot/1` wakes every SessionProcess regardless of
+    # `load_snapshot/1` wakes every Scope.Process regardless of
     # whether its principal was touched — wasted work at scale, and a
     # test-isolation hazard (one test's load_snapshot spams every
     # other test's sessions).

@@ -7,7 +7,7 @@ defmodule Esr.Peers.VoiceTTSProxy do
   `Esr.Peers.VoiceTTS.synthesize/2`, releases. Message tag `:voice_tts`,
   `@required_cap "peer_pool:voice_tts/acquire"`.
 
-  ctx shape (computed at session-spawn time by SessionRouter):
+  ctx shape (computed at session-spawn time by Scope.Router):
     %{
       principal_id:    binary,
       pool_name:       atom,          # :voice_tts_pool in prod

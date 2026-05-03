@@ -2,7 +2,7 @@ defmodule Esr.Capabilities.GrantsBroadcastTest do
   @moduledoc """
   P3-3a.1: `Esr.Capabilities.Grants.load_snapshot/1` broadcasts a
   per-principal `:grants_changed` signal on PubSub so per-session
-  projections (`SessionProcess`) can refresh their local grants map.
+  projections (`Scope.Process`) can refresh their local grants map.
 
   The broadcast topic is `grants_changed:<principal_id>` on the
   app-level `EsrWeb.PubSub`.
