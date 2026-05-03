@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/esr-cc.sh — ESR v0.2 CC session launcher (spec §3.5 / §5.2).
 #
-# Spawned by Esr.Peers.PtyProcess via erlexec PTY. Reads the workspace
+# Spawned by Esr.Entities.PtyProcess via erlexec PTY. Reads the workspace
 # config from `ESR_WORKSPACE` + `~/.esrd/<instance>/workspaces.yaml`,
 # renders `.mcp.json` at the workspace cwd, and execs `claude` with
 # the right flags for stdio-parented esr-channel MCP.

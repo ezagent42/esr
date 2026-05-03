@@ -22,8 +22,8 @@
       {"idx": 1, "name": "DNSCluster", "args": "query: Application.get_env(:esr, :dns_cluster_query) || :ignore"},
       {"idx": 2, "name": "EsrWeb.Telemetry"},
       {"idx": 3, "name": "Phoenix.PubSub", "args": "name: EsrWeb.PubSub"},
-      {"idx": 4, "name": "Registry (Esr.PeerRegistry)", "args": "keys: :unique", "note": "must be up before any PeerServer registers"},
-      {"idx": 5, "name": "Esr.PeerSupervisor", "kind": "DynamicSupervisor", "note": "hosts live PeerServers"},
+      {"idx": 4, "name": "Registry (Esr.Entity.Registry)", "args": "keys: :unique", "note": "must be up before any PeerServer registers"},
+      {"idx": 5, "name": "Esr.Entity.Supervisor", "kind": "DynamicSupervisor", "note": "hosts live PeerServers"},
       {"idx": 6, "name": "Esr.DeadLetter", "args": "name: Esr.DeadLetter", "note": "default 10_000 entries"},
       {"idx": 7, "name": "Esr.WorkerSupervisor", "note": "Python adapter_runner/handler_worker subprocess launcher (Phase 8f)"},
       {"idx": 8, "name": "Esr.SessionRegistry", "note": "CC <-> WS bindings (PRD v0.2 §3.2)"},
@@ -38,7 +38,7 @@
   },
   "peer_server": {
     "process_type": "GenServer (trap_exit: true)",
-    "registration": "{:via, Registry, {Esr.PeerRegistry, actor_id}}",
+    "registration": "{:via, Registry, {Esr.Entity.Registry, actor_id}}",
     "state_struct_fields": [
       "actor_id :: String",
       "actor_type :: String",
@@ -98,7 +98,7 @@
     "tool_invoke_v02": "Built-in tool builders: reply (chat_id+text -> feishu send_message), react (message_id+emoji_type -> feishu react), send_file (chat_id+file_path -> feishu send_file), _echo (requires state.chat_id, synthesises reply). Unknown tool -> error."
   },
   "registries": {
-    "Esr.PeerRegistry": {
+    "Esr.Entity.Registry": {
       "type": "Elixir Registry (keys: :unique)",
       "maps": "actor_id :: String -> pid (one PeerServer per key). Wrapper API: register/2 (must be self-registration), lookup/1, list_all/0. Registry auto-cleans on monitor DOWN."
     },
@@ -106,7 +106,7 @@
       "type": "Named GenServer + public named ETS set (:esr_session_registry, read_concurrency: true)",
       "maps": "session_id :: String -> %{ws_pid, chat_ids, app_ids, workspace, status: :online|:offline, last_seen_ms}",
       "notify_session/2": "looks up session_id; if online, send(ws_pid, {:push_envelope, envelope}); else {:error, :offline|:not_registered}",
-      "design_note_S1": "peer_pid is deliberately NOT stored — authoritative lookup is Registry.lookup(Esr.PeerRegistry, \"thread:<sid>\"). Avoids drift between two stores."
+      "design_note_S1": "peer_pid is deliberately NOT stored — authoritative lookup is Registry.lookup(Esr.Entity.Registry, \"thread:<sid>\"). Avoids drift between two stores."
     }
   },
   "uri_parser": {
@@ -166,7 +166,7 @@
     "Emit directive flow: subscribe to directive_ack:<id> BEFORE broadcasting so a fast ack lands in mailbox; Process.send_after fires :directive_deadline after directive_timeout.",
     "Emit topic lookup prefers an actor already bound under adapter:<name>/* in Esr.AdapterHub.Registry; falls back to adapter:<name>/<self.actor_id>.",
     "Emit adapter='esr-channel' is synthetic — short-circuits through SessionRegistry.notify_session (v0.2 §3.3), does not hit AdapterHub.",
-    "SessionRegistry intentionally does NOT store peer_pid (reviewer S1) — authoritative lookup is Registry.lookup(Esr.PeerRegistry, \"thread:<sid>\").",
+    "SessionRegistry intentionally does NOT store peer_pid (reviewer S1) — authoritative lookup is Registry.lookup(Esr.Entity.Registry, \"thread:<sid>\").",
     "PeerRegistry.register/2 refuses to register a foreign pid ({:error, :cannot_register_other_pid}) — Elixir Registry only registers the calling process; PeerServer.init/1 calls register(actor_id, self()).",
     "DeadLetter eviction keeps size pinned at max_entries when full (drops oldest, inserts newest) — size never exceeds max.",
     "WorkerSupervisor.ensure_* is idempotent across in-process tracking and external pidfiles.",

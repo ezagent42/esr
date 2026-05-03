@@ -1,7 +1,7 @@
 defmodule Esr.Pools do
   @moduledoc """
   Reader for optional `${ESRD_HOME}/<instance>/pools.yaml`. Returns
-  per-pool max-worker overrides, clamped to `Esr.PeerPool.default_max_workers/0`
+  per-pool max-worker overrides, clamped to `Esr.Entity.Pool.default_max_workers/0`
   (128) and floored to 1.
 
   Voice pools default to 4. Pools not mentioned in the `@defaults` map
@@ -35,8 +35,8 @@ defmodule Esr.Pools do
   """
   @spec pool_max(atom(), Path.t() | nil) :: pos_integer()
   def pool_max(pool, path) do
-    default = Map.get(@defaults, pool, Esr.PeerPool.default_max_workers())
-    cap = Esr.PeerPool.default_max_workers()
+    default = Map.get(@defaults, pool, Esr.Entity.Pool.default_max_workers())
+    cap = Esr.Entity.Pool.default_max_workers()
 
     raw =
       case read_yaml(path) do

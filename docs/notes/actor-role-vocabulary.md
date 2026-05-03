@@ -4,7 +4,7 @@
 **Why this doc exists:** PR-21q-t introduced "chat-guide" / "user-guide" inline functions that drifted from the rest of the codebase's `*Handler` / `*Adapter` convention. PR-21v formalized the answer: every ESR-specific module belongs to **exactly one of 5 role categories**, marked at compile time via `@behaviour Esr.Role.<Category>`.
 
 **Read this before:**
-- Adding any new module under `Esr.*`, `Esr.Peers.*`, `Esr.Admin.*`, `Esr.Workspaces.*`, `Esr.Users.*`, `Esr.Capabilities.*`, or `EsrWeb.*` (except Phoenix framework imports).
+- Adding any new module under `Esr.*`, `Esr.Entities.*`, `Esr.Admin.*`, `Esr.Workspaces.*`, `Esr.Users.*`, `Esr.Capabilities.*`, or `EsrWeb.*` (except Phoenix framework imports).
 - Refactoring inline logic into a dedicated module — pick the right suffix based on the category your module sits in.
 - Discussing routing / pipeline architecture in spec docs (use canonical names).
 
@@ -34,7 +34,7 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 - **`*Socket`** — Phoenix Sockets (`EsrWeb.AdapterSocket`, `HandlerSocket`, `ChannelSocket`). Pure Phoenix.
 - **`Endpoint`, `Router`** under `EsrWeb` — Phoenix machinery.
 - **`Esr.Application`** — OTP Application module.
-- **`Esr.Peer.Stateful`** behavior itself — defines a callback contract for Pipeline peers, but is structural plumbing, not a role.
+- **`Esr.Entity.Stateful`** behavior itself — defines a callback contract for Pipeline peers, but is structural plumbing, not a role.
 
 ## Each category in depth
 
@@ -43,10 +43,10 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 **Identifying property:** speaks BOTH the ESR envelope shape (spec §7.5) on one side AND a foreign protocol (Feishu lark_oapi, MCP stdio, etc.) on the other. One per configured remote endpoint / `instance_id`.
 
 **Examples:**
-- `Esr.Peers.FeishuAppAdapter` — one per `adapters.yaml` `instances:` row of `type: feishu`.
+- `Esr.Entities.FeishuAppAdapter` — one per `adapters.yaml` `instances:` row of `type: feishu`.
 
 **Future Boundary modules likely:**
-- `Esr.Peers.SlackAdapter`, `Esr.Peers.MattermostAdapter`, `Esr.Peers.MCPAdapter` (any new chat platform).
+- `Esr.Entities.SlackAdapter`, `Esr.Entities.MattermostAdapter`, `Esr.Entities.MCPAdapter` (any new chat platform).
 
 ### State
 
@@ -54,9 +54,9 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 
 | Suffix | Shape | Examples |
 |---|---|---|
-| `*Server` | Singleton with mutation-heavy state (often GenServer + ETS) | `Esr.PeerServer` |
-| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.PeerRegistry`, `Esr.AdapterSocketRegistry`, `Esr.Workspaces.Registry`, `Esr.Users.Registry`, `Esr.Permissions.Registry`, `Esr.Capabilities.Grants` |
-| `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.Scope.Process`, `Esr.Scope.Admin.Process`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Peers.CCProcess`, `Esr.Peers.TmuxProcess` |
+| `*Server` | Singleton with mutation-heavy state (often GenServer + ETS) | `Esr.Entity.Server` |
+| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.Entity.Registry`, `Esr.AdapterSocketRegistry`, `Esr.Workspaces.Registry`, `Esr.Users.Registry`, `Esr.Permissions.Registry`, `Esr.Capabilities.Grants` |
+| `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.Scope.Process`, `Esr.Scope.Admin.Process`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Entities.CCProcess`, `Esr.Entities.TmuxProcess` |
 | `*Buffer` | Bounded ring buffer / FIFO | `Esr.Telemetry.Buffer` |
 
 ### Pipeline
@@ -65,11 +65,11 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 
 | Suffix | Shape | Examples |
 |---|---|---|
-| `*Proxy` | Per-entity local representative; forwards on its behalf | `Esr.Peers.FeishuChatProxy`, `Esr.Peers.FeishuAppProxy`, `Esr.Peers.CCProxy`, `Esr.Peers.VoiceTTSProxy`, `Esr.Peers.VoiceASRProxy` |
-| `*Handler` | Parses or dispatches one class of inbound | `Esr.Peers.SlashHandler` |
+| `*Proxy` | Per-entity local representative; forwards on its behalf | `Esr.Entities.FeishuChatProxy`, `Esr.Entities.FeishuAppProxy`, `Esr.Entities.CCProxy`, `Esr.Entities.VoiceTTSProxy`, `Esr.Entities.VoiceASRProxy` |
+| `*Handler` | Parses or dispatches one class of inbound | `Esr.Entities.SlashHandler` |
 | `*Guard` | **Inbound gate** — checks condition, drops/passes, optional side effects, has its own rate-limit/TTL state | (TBD — see Migration plan) |
 | `*Router` | Picks destination from a config table | `Esr.Scope.Router`, `Esr.HandlerRouter` |
-| (no suffix) | Domain peer when no role suffix fits | `Esr.Peers.VoiceTTS`, `Esr.Peers.VoiceASR`, `Esr.Peers.VoiceE2E` |
+| (no suffix) | Domain peer when no role suffix fits | `Esr.Entities.VoiceTTS`, `Esr.Entities.VoiceASR`, `Esr.Entities.VoiceE2E` |
 
 #### `*Guard` identification (4-point checklist)
 
@@ -97,7 +97,7 @@ A module is a `*Guard` (and should bear that suffix) when ALL of these hold:
 
 **Identifying property:** pure OTP supervisor — manages child process tree.
 
-**Examples:** `Esr.WorkerSupervisor`, `Esr.Scope.Supervisor`, `Esr.PeerSupervisor`, `Esr.Workspaces.Supervisor`, `Esr.Users.Supervisor`, `Esr.Capabilities.Supervisor`, `Esr.Admin.Supervisor`.
+**Examples:** `Esr.WorkerSupervisor`, `Esr.Scope.Supervisor`, `Esr.Entity.Supervisor`, `Esr.Workspaces.Supervisor`, `Esr.Users.Supervisor`, `Esr.Capabilities.Supervisor`, `Esr.Admin.Supervisor`.
 
 Convention: only Supervisor modules get the OTP marker. If a GenServer also happens to start child processes, it picks the category that describes its primary role (usually State or Control).
 
@@ -108,9 +108,9 @@ These are gate-shaped today but don't yet bear the `*Guard` suffix. PR-21v added
 | Current location | Proposed module | Tracking |
 |---|---|---|
 | `EsrWeb.PendingActions` | `EsrWeb.PendingActionsGuard` | Rename only; ~10 LOC |
-| `maybe_emit_unbound_chat_guide` (inline in `Esr.Peers.FeishuAppAdapter`) | `Esr.Peers.UnboundChatGuard` | Extract module; ~80 LOC |
-| `maybe_emit_unbound_user_guide` (inline in `FeishuAppAdapter`) | `Esr.Peers.UnboundUserGuard` | Extract module; ~80 LOC; could share base behavior with above |
-| Inline Lane B cap check (in `Esr.PeerServer`) | `Esr.Peers.CapGuard` | Larger refactor; touches PeerServer state shape |
+| `maybe_emit_unbound_chat_guide` (inline in `Esr.Entities.FeishuAppAdapter`) | `Esr.Entities.UnboundChatGuard` | Extract module; ~80 LOC |
+| `maybe_emit_unbound_user_guide` (inline in `FeishuAppAdapter`) | `Esr.Entities.UnboundUserGuard` | Extract module; ~80 LOC; could share base behavior with above |
+| Inline Lane B cap check (in `Esr.Entity.Server`) | `Esr.Entities.CapGuard` | Larger refactor; touches PeerServer state shape |
 | `deny_dm_last_emit` / `guide_dm_last_emit` state in FAA | Move into the relevant `*Guard` module | Part of the above two extractions |
 
 ## When introducing a new suffix
@@ -141,7 +141,7 @@ for cat in Boundary State Pipeline Control OTP; do
 done
 ```
 
-Phoenix `*Channel` / `*Socket` / `EsrWeb.{Endpoint, Router}` and `Esr.Application` / `Esr.Peer.Stateful` are intentional exemptions (framework imports / structural plumbing).
+Phoenix `*Channel` / `*Socket` / `EsrWeb.{Endpoint, Router}` and `Esr.Application` / `Esr.Entity.Stateful` are intentional exemptions (framework imports / structural plumbing).
 
 ## Related
 

@@ -27,17 +27,17 @@ agents:
       - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:
-        - { name: feishu_chat_proxy, impl: Esr.Peers.FeishuChatProxy }
-        - { name: cc_proxy,          impl: Esr.Peers.CCProxy }
-        - { name: cc_process,        impl: Esr.Peers.CCProcess }
-        - { name: pty_process,       impl: Esr.Peers.PtyProcess }
+        - { name: feishu_chat_proxy, impl: Esr.Entities.FeishuChatProxy }
+        - { name: cc_proxy,          impl: Esr.Entities.CCProxy }
+        - { name: cc_process,        impl: Esr.Entities.CCProcess }
+        - { name: pty_process,       impl: Esr.Entities.PtyProcess }
       outbound:
         - pty_process
         - cc_process
         - cc_proxy
         - feishu_chat_proxy
     proxies:
-      - { name: feishu_app_proxy, impl: Esr.Peers.FeishuAppProxy, target: "admin::feishu_app_adapter_${app_id}" }
+      - { name: feishu_app_proxy, impl: Esr.Entities.FeishuAppProxy, target: "admin::feishu_app_adapter_${app_id}" }
     params:
       - { name: dir,    required: true,  type: path }
       - { name: app_id, required: false, default: "default", type: string }

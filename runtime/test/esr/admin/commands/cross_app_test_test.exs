@@ -15,7 +15,7 @@ defmodule Esr.Admin.Commands.CrossAppTestTest do
 
   defp register_fake_fcp(session_id, parent, mode \\ :echo) do
     spawn_link(fn ->
-      Esr.PeerRegistry.register("thread:" <> session_id, self())
+      Esr.Entity.Registry.register("thread:" <> session_id, self())
       send(parent, {:fcp_ready, self()})
       fake_fcp_loop(parent, mode)
     end)

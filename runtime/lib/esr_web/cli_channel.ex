@@ -44,7 +44,7 @@ defmodule EsrWeb.CliChannel do
   @spec dispatch(String.t(), map()) :: map()
   def dispatch("cli:actors/list", _payload) do
     data =
-      Esr.PeerRegistry.list_all()
+      Esr.Entity.Registry.list_all()
       |> Enum.map(fn {actor_id, pid} ->
         %{"actor_id" => actor_id, "pid" => inspect(pid)}
       end)
@@ -54,7 +54,7 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:actors/tree", _payload) do
     # P3-13: Topology module deleted. The "tree" view used to group
-    # PeerRegistry entries by their Topology handle; without that
+    # Entity.Registry entries by their Topology handle; without that
     # registry we can still surface the raw actor list so the CLI
     # remains useful, and return an empty topologies list.
     %{"data" => %{"topologies" => [], "error" => @topology_removed_error}}
@@ -65,9 +65,9 @@ defmodule EsrWeb.CliChannel do
         %{"arg" => actor_id, "field" => field}
       )
       when is_binary(actor_id) and is_binary(field) do
-    case Esr.PeerRegistry.lookup(actor_id) do
+    case Esr.Entity.Registry.lookup(actor_id) do
       {:ok, _pid} ->
-        snap = Esr.PeerServer.describe(actor_id)
+        snap = Esr.Entity.Server.describe(actor_id)
         data = %{"actor_id" => snap.actor_id, "state" => stringify_keys(snap.state)}
         path = String.split(field, ".")
 
@@ -97,9 +97,9 @@ defmodule EsrWeb.CliChannel do
   end
 
   def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
-    case Esr.PeerRegistry.lookup(actor_id) do
+    case Esr.Entity.Registry.lookup(actor_id) do
       {:ok, _pid} ->
-        snap = Esr.PeerServer.describe(actor_id)
+        snap = Esr.Entity.Server.describe(actor_id)
 
         data = %{
           "actor_id" => snap.actor_id,
@@ -544,15 +544,15 @@ defmodule EsrWeb.CliChannel do
 
   @spec debug_toggle(String.t(), :pause | :resume) :: map()
   defp debug_toggle(actor_id, op) do
-    case Esr.PeerRegistry.lookup(actor_id) do
+    case Esr.Entity.Registry.lookup(actor_id) do
       {:ok, _pid} ->
         :ok =
           case op do
-            :pause -> Esr.PeerServer.pause(actor_id)
-            :resume -> Esr.PeerServer.resume(actor_id)
+            :pause -> Esr.Entity.Server.pause(actor_id)
+            :resume -> Esr.Entity.Server.resume(actor_id)
           end
 
-        snap = Esr.PeerServer.describe(actor_id)
+        snap = Esr.Entity.Server.describe(actor_id)
         %{"data" => %{"actor_id" => actor_id, "paused" => snap.paused}}
 
       :error ->

@@ -6,7 +6,7 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
   ``principal_id`` + ``workspace_name`` onto the envelope that flows
   into the peer chain.
 
-  Post-P2-17: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
+  Post-P2-17: the legacy `Esr.AdapterHub.Registry` → Entity.Server routing
   was removed (P2-16) and the `USE_NEW_PEER_CHAIN` feature flag was
   removed in P2-17 (migration complete; no current caller activates it).
   These tests exercise the sole path:

@@ -38,7 +38,7 @@ defmodule Esr.Admin.Commands.CrossAppTest do
     * `{:ok, %{"req_id" => …, "ok" => false, "error" => %{"type" => …}}}`
       on FCP-side deny (forbidden / unknown_chat_in_app / unknown_app)
     * `{:error, %{"type" => "no_session_peer"}}` if the FCP isn't
-      registered in `Esr.PeerRegistry`
+      registered in `Esr.Entity.Registry`
     * `{:error, %{"type" => "timeout"}}` if FCP doesn't reply in 5s
   """
 
@@ -83,7 +83,7 @@ defmodule Esr.Admin.Commands.CrossAppTest do
   defp send_tool_invoke(session_id, chat_id, app_id, text, principal_id, req_id) do
     peer_name = "thread:" <> session_id
 
-    case Registry.lookup(Esr.PeerRegistry, peer_name) do
+    case Registry.lookup(Esr.Entity.Registry, peer_name) do
       [{peer_pid, _}] when is_pid(peer_pid) ->
         tool_args = %{
           "chat_id" => chat_id,
@@ -113,7 +113,7 @@ defmodule Esr.Admin.Commands.CrossAppTest do
          %{
            "type" => "no_session_peer",
            "session_id" => session_id,
-           "message" => "no thread:" <> session_id <> " peer in PeerRegistry"
+           "message" => "no thread:" <> session_id <> " peer in Entity.Registry"
          }}
     end
   end

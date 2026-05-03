@@ -3,8 +3,8 @@ defmodule Esr.Application do
   OTP Application entry. Starts the supervision tree declared in
   `docs/superpowers/specs/2026-04-18-esr-extraction-design.md` §3.1.
 
-  Child order matters: PubSub and PeerRegistry must be up before any
-  PeerServer or adapter/handler subsystem can register itself.
+  Child order matters: PubSub and Entity.Registry must be up before any
+  Entity.Server or adapter/handler subsystem can register itself.
 
   PRD 01 F02. Strategy `:one_for_one` — one subsystem's failure must
   not cascade to siblings (this is how Track D session-isolation is
@@ -40,11 +40,11 @@ defmodule Esr.Application do
       # 2. Message bus — everything else may publish/subscribe.
       {Phoenix.PubSub, name: EsrWeb.PubSub},
 
-      # 3. Actor registry before any PeerServer can register itself.
-      {Registry, keys: :unique, name: Esr.PeerRegistry},
+      # 3. Actor registry before any Entity.Server can register itself.
+      {Registry, keys: :unique, name: Esr.Entity.Registry},
 
       # 4. Dynamic supervisor that hosts live PeerServers.
-      Esr.PeerSupervisor,
+      Esr.Entity.Supervisor,
 
       # 4b. Dead-letter queue — started before peers so enqueue never misses.
       {Esr.DeadLetter, name: Esr.DeadLetter},
@@ -60,7 +60,7 @@ defmodule Esr.Application do
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
-      # via PeerFactory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
+      # via Entity.Factory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
       # peers via Session.supervisor_name) and before Scope.Supervisor.
       {Registry, keys: :unique, name: Esr.Scope.Registry},
 
@@ -117,20 +117,20 @@ defmodule Esr.Application do
       EsrWeb.PendingActionsGuard,
 
       # 4f.3 Inbound onboarding guards (PR-21w). Both extracted from
-      # `Esr.Peers.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
+      # `Esr.Entities.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
       # migration plan. Each owns its own per-key rate-limit Map and
       # exposes a single `check/3` entry point the FAA `handle_upstream`
       # path consults before further routing.
-      Esr.Peers.UnboundChatGuard,
-      Esr.Peers.UnboundUserGuard,
+      Esr.Entities.UnboundChatGuard,
+      Esr.Entities.UnboundUserGuard,
 
       # 4f.4 Lane B inbound capability guard (PR-21x). Extracted from
-      # `Esr.PeerServer.handle_info({:inbound_event, _})` + FAA's
+      # `Esr.Entity.Server.handle_info({:inbound_event, _})` + FAA's
       # `{:dispatch_deny_dm}` rate-limit. Owns the per-principal deny-DM
-      # rate-limit Map; PeerServer calls `CapGuard.check_inbound/3`
+      # rate-limit Map; Entity.Server calls `CapGuard.check_inbound/3`
       # before invoking the handler. On deny, CapGuard emits telemetry
       # and dispatches an `{:outbound, ...}` to the source FAA peer.
-      Esr.Peers.CapGuard,
+      Esr.Entities.CapGuard,
 
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
@@ -141,7 +141,7 @@ defmodule Esr.Application do
 
       # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
       # Esr.Routing.SlashHandler removed. The new slash-parsing path
-      # is Esr.Peers.SlashHandler, spawned per-Session under
+      # is Esr.Entities.SlashHandler, spawned per-Session under
       # Scope.Admin.Process / Scope.Process (spec §3.5). The old
       # top-level subsystem was PR-0 scaffolding that got stranded
       # once the peer/session refactor moved slash parsing into the

@@ -1,7 +1,7 @@
 defmodule Esr.Handler do
   @moduledoc """
   Behaviour for Elixir-side modules that expose runtime-intrinsic
-  action handlers (e.g. the MCP tool handlers inside `Esr.PeerServer`,
+  action handlers (e.g. the MCP tool handlers inside `Esr.Entity.Server`,
   or future Elixir-native handler modules).
 
   Primary use today: permissions declaration. A module that

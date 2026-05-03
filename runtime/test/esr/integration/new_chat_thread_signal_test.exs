@@ -52,7 +52,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
     {:ok, faa} =
       DynamicSupervisor.start_child(
         :p3_7_sup,
-        {Esr.Peers.FeishuAppAdapter,
+        {Esr.Entities.FeishuAppAdapter,
          %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 

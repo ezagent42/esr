@@ -34,7 +34,7 @@ defmodule Esr.Integration.CCE2ETest do
       at the `CCProcess` pid — the boundary that the integration
       test actually _can_ observe.
 
-    * `Esr.Peers.CCProxy` / `Esr.Peers.FeishuAppProxy` are stateless
+    * `Esr.Entities.CCProxy` / `Esr.Entities.FeishuAppProxy` are stateless
       forwarder modules (no `start_link/1`); `Scope.Router` records
       them as `{:proxy_module, Module}` markers in the session refs
       map — no pid is ever spawned. So the reply chain
@@ -113,7 +113,7 @@ defmodule Esr.Integration.CCE2ETest do
     {:ok, faa} =
       DynamicSupervisor.start_child(
         admin_children_sup,
-        {Esr.Peers.FeishuAppAdapter,
+        {Esr.Entities.FeishuAppAdapter,
          %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -124,7 +124,7 @@ defmodule Esr.Integration.CCE2ETest do
     end)
 
     # 2. Install the cross-process handler override. The CCProcess is
-    # spawned by PeerFactory under Session's peers DynamicSupervisor —
+    # spawned by Entity.Factory under Session's peers DynamicSupervisor —
     # the test doesn't own its pid at start time, so the per-pid
     # `put_handler_override/2` can't be used here. The app-env lookup
     # added in CCProcess.call_handler/3 (P3-10 helper) is the bridge.
@@ -257,7 +257,7 @@ defmodule Esr.Integration.CCE2ETest do
     }
 
     {:forward, _, _} =
-      Esr.Peers.PtyProcess.handle_upstream(
+      Esr.Entities.PtyProcess.handle_upstream(
         {:os_stdout, "%output %0 synthetic_out\n"},
         synth_legacy_state
       )

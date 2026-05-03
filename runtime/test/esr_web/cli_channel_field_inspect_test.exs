@@ -7,15 +7,15 @@ defmodule EsrWeb.CliChannelFieldInspectTest do
 
   alias EsrWeb.CliChannel
 
-  # Spin up a real PeerServer via start_link so it registers itself
-  # under its actor_id in Esr.PeerRegistry and answers :describe via
+  # Spin up a real Entity.Server via start_link so it registers itself
+  # under its actor_id in Esr.Entity.Registry and answers :describe via
   # the usual via-tuple. Manual Registry.register would map the test
   # pid instead, causing describe/1 to call itself.
   setup do
     actor_id = "test_actor_#{System.unique_integer([:positive])}"
 
     {:ok, pid} =
-      Esr.PeerServer.start_link(
+      Esr.Entity.Server.start_link(
         actor_id: actor_id,
         actor_type: "test",
         handler_module: "x",

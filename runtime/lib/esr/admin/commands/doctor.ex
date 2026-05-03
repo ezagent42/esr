@@ -8,7 +8,7 @@ defmodule Esr.Admin.Commands.Doctor do
     * `chat_id`
     * `app_id`
 
-  Pre-PR-21κ this was `Esr.Peers.FeishuAppAdapter.doctor_text/3`.
+  Pre-PR-21κ this was `Esr.Entities.FeishuAppAdapter.doctor_text/3`.
   """
 
   @behaviour Esr.Role.Control

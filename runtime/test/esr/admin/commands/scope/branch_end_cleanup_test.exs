@@ -27,7 +27,7 @@ defmodule Esr.Admin.Commands.Scope.BranchEndCleanupTest do
   ## What is NOT tested here
 
   * The end-to-end pipe from CC's MCP tool_invoke to the Dispatcher —
-    that's covered by `Esr.PeerServerSessionCleanupTest` (Task 24).
+    that's covered by `Esr.EntityServerSessionCleanupTest` (Task 24).
   * The `--force` happy paths (branches.yaml prune, routing.yaml
     prune, active fallback) — covered by
     `Esr.Admin.Commands.Scope.BranchEndTest`.
