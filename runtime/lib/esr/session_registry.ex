@@ -36,7 +36,7 @@ defmodule Esr.SessionRegistry do
   # Owned by the GenServer; writes route through the owner (handle_call)
   # so consistency with the in-memory `sessions` map is preserved. Reads
   # run directly from the caller process, bypassing the GenServer mailbox.
-  # Mirrors the pattern in `Esr.Capabilities.Grants`.
+  # Mirrors the pattern in `Esr.Resource.Capability.Grants`.
   @ets_table :esr_session_chat_index
 
   # PR-21g: D8 uniqueness — additional ETS indexes on

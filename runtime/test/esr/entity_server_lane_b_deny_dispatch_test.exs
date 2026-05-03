@@ -24,7 +24,7 @@ defmodule Esr.EntityServerLaneBDenyDispatchTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Entity
   alias Esr.TestSupport.AuthContext
 

@@ -476,12 +476,12 @@ defmodule Esr.Entities.CCProcess do
   end
 
   # PR-C C5: workspace name attribute, looked up from
-  # Esr.Workspaces.Registry.workspace_for_chat. Omitted when the
+  # Esr.Resource.Workspace.Registry.workspace_for_chat. Omitted when the
   # registry has no entry — keeps the tag stable for tests that don't
   # boot the registry GenServer.
   defp maybe_put_workspace(envelope, chat_id, app_id)
        when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
-    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
       {:ok, ws} -> Map.put(envelope, "workspace", ws)
       _ -> envelope
     end
@@ -537,7 +537,7 @@ defmodule Esr.Entities.CCProcess do
   end
 
   defp lookup_chat_name(chat_id) do
-    Esr.Workspaces.Registry.list()
+    Esr.Resource.Workspace.Registry.list()
     |> Enum.find_value(fn ws ->
       Enum.find_value(ws.chats || [], fn
         %{"chat_id" => ^chat_id} = c -> c["name"]

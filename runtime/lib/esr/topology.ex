@@ -3,7 +3,7 @@ defmodule Esr.Topology do
   Actor topology lookups for the routing-table reachable_set
   (spec 2026-04-27 actor-topology-routing §4 + §6).
 
-  Given the workspaces.yaml-driven `Esr.Workspaces.Registry`, this
+  Given the workspaces.yaml-driven `Esr.Resource.Workspace.Registry`, this
   module exposes:
 
   - `initial_seed/3` — the URI set a CC peer's `reachable_set` should
@@ -27,7 +27,7 @@ defmodule Esr.Topology do
   All built via `Esr.Uri.build_path/2` for shape consistency.
   """
 
-  alias Esr.Workspaces.Registry, as: WS
+  alias Esr.Resource.Workspace.Registry, as: WS
 
   # Match the host string used by feishu_app_adapter / runner_core
   # source URI emit so the strings reachable_set learns at runtime
@@ -132,7 +132,7 @@ defmodule Esr.Topology do
   @doc """
   Builds the canonical user URI for a feishu open_id.
 
-  PR-21b rekey: looks up the open_id in `Esr.Users.Registry` and uses
+  PR-21b rekey: looks up the open_id in `Esr.Entity.User.Registry` and uses
   the bound esr-username when available. Falls back to the raw open_id
   with a warning when the id is not yet bound — this preserves
   backwards-compatible reachable_set construction during the rollout
@@ -146,8 +146,8 @@ defmodule Esr.Topology do
   end
 
   defp resolve_user_id(open_id) do
-    if Process.whereis(Esr.Users.Registry) do
-      case Esr.Users.Registry.lookup_by_feishu_id(open_id) do
+    if Process.whereis(Esr.Entity.User.Registry) do
+      case Esr.Entity.User.Registry.lookup_by_feishu_id(open_id) do
         {:ok, username} ->
           username
 

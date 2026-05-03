@@ -4,7 +4,7 @@ defmodule Esr.Entities.FeishuAppProxyTest do
   (canonical `prefix:name/perm` form; see
   `docs/notes/capability-name-format-mismatch.md`). The Peer.Proxy macro
   wraps `forward/2` with a capability check that consults
-  `Esr.Capabilities.has?/2` in production and the
+  `Esr.Resource.Capability.has?/2` in production and the
   `:esr_cap_test_override` process-dict key under test. This file covers
   both paths: the override-based unit cases (fast, local to the proxy
   macro behaviour) and one integration-style case using the real
@@ -13,7 +13,7 @@ defmodule Esr.Entities.FeishuAppProxyTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Entities.FeishuAppProxy
 
   test "forward/2 calls Capabilities.has? before dispatching to target" do

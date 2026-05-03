@@ -37,7 +37,7 @@ defmodule Esr.ScopeRouterTest do
     assert is_pid(Process.whereis(Esr.Scope.Supervisor))
 
     # "*" grants everything — avoids cap-denied drops in the pipeline.
-    Esr.Capabilities.Grants.load_snapshot(%{"ou_alice" => ["*"]})
+    Esr.Resource.Capability.Grants.load_snapshot(%{"ou_alice" => ["*"]})
     :ok = Esr.SessionRegistry.load_agents(@fixture_path)
 
     if Process.whereis(Esr.Scope.Router) == nil do
@@ -45,7 +45,7 @@ defmodule Esr.ScopeRouterTest do
     end
 
     on_exit(fn ->
-      Esr.Capabilities.Grants.load_snapshot(%{})
+      Esr.Resource.Capability.Grants.load_snapshot(%{})
 
       # Tear down any Sessions dynamically started by the router so
       # subsequent tests start from a clean DynamicSupervisor.
@@ -101,7 +101,7 @@ defmodule Esr.ScopeRouterTest do
     # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
     # resolves to it; peers' init callbacks receive the enriched params.
     :ok =
-      Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
         name: "T11b2_ws",
         start_cmd: "",
         role: "dev",

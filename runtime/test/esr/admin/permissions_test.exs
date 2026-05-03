@@ -1,8 +1,8 @@
 defmodule Esr.Admin.PermissionsTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Permissions.Bootstrap
-  alias Esr.Permissions.Registry
+  alias Esr.Resource.Permission.Bootstrap
+  alias Esr.Resource.Permission.Registry
 
   setup do
     # Registry is started by Esr.Application. Other async: false suites

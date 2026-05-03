@@ -85,7 +85,7 @@ defmodule EsrWeb.ChannelChannel do
   #
   # principal_id default: ``ESR_BOOTSTRAP_PRINCIPAL_ID`` — lets the
   # bootstrap admin run tools before any capabilities.yaml grant
-  # exists (matches Lane A bootstrap in Esr.Capabilities).
+  # exists (matches Lane A bootstrap in Esr.Resource.Capability).
   @impl Phoenix.Channel
   def handle_in("envelope", %{"kind" => "session_register"} = payload, socket) do
     session_id = socket.assigns.session_id

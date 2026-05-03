@@ -23,7 +23,7 @@ defmodule Esr.Admin.Commands.Workspace.Info do
         "metadata" => %{"purpose" => "...", ...}
       }}
 
-  Read-only — touches `Esr.Workspaces.Registry` only.
+  Read-only — touches `Esr.Resource.Workspace.Registry` only.
   """
 
   @behaviour Esr.Role.Control
@@ -32,7 +32,7 @@ defmodule Esr.Admin.Commands.Workspace.Info do
 
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"workspace" => ws}}) when is_binary(ws) and ws != "" do
-    case Esr.Workspaces.Registry.get(ws) do
+    case Esr.Resource.Workspace.Registry.get(ws) do
       {:ok, w} ->
         # PR-22: workspace.root removed — workspace is purely user
         # config (owner, role, chats, metadata, neighbors). Repo is

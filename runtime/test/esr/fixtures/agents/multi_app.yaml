@@ -2,7 +2,7 @@
 # via ${app_id} template. Spec §3.5.
 #
 # Capability names use the canonical prefix:name/perm form required by
-# Esr.Capabilities.Grants.matches?/2 (see docs/notes/capability-name-format-mismatch.md).
+# Esr.Resource.Capability.Grants.matches?/2 (see docs/notes/capability-name-format-mismatch.md).
 
 agents:
   cc:

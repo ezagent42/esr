@@ -4,7 +4,7 @@ defmodule Esr.Admin.Commands.Workspace.New do
   Feishu (PR-21k). Dispatcher kind `workspace_new`.
 
   Writes the new entry to `workspaces.yaml` (FSEvents will reload),
-  then proactively `put`s into `Esr.Workspaces.Registry` so the
+  then proactively `put`s into `Esr.Resource.Workspace.Registry` so the
   current chat doesn't have to wait for the watcher tick.
 
   ## Args (PR-22: `root` removed)
@@ -113,7 +113,7 @@ defmodule Esr.Admin.Commands.Workspace.New do
                 # request's chat finds the workspace bound — without
                 # waiting for the FSEvents watcher tick.
                 :ok =
-                  Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+                  Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
                     name: name,
                     owner: owner,
                     role: role,
@@ -188,7 +188,7 @@ defmodule Esr.Admin.Commands.Workspace.New do
         case Esr.Yaml.Writer.write(path, updated_doc) do
           :ok ->
             :ok =
-              Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+              Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
                 name: name,
                 owner: existing["owner"],
                 role: existing["role"],
@@ -225,8 +225,8 @@ defmodule Esr.Admin.Commands.Workspace.New do
   # ------------------------------------------------------------------
 
   defp owner_exists?(username) do
-    if Process.whereis(Esr.Users.Registry) do
-      case Esr.Users.Registry.get(username) do
+    if Process.whereis(Esr.Entity.User.Registry) do
+      case Esr.Entity.User.Registry.get(username) do
         {:ok, _} -> true
         :not_found -> false
       end

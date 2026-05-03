@@ -12,7 +12,7 @@ defmodule Esr.Scope.Process do
   PR-3 (P3-3a) adds the **session-scoped capability projection**
   (spec §3.3 / §3.5 + `docs/futures/peer-session-capability-projection.md`):
   at init, the Scope.Process pulls its principal's grants from the
-  global `Esr.Capabilities.Grants` ETS table and caches them locally in
+  global `Esr.Resource.Capability.Grants` ETS table and caches them locally in
   `state.grants`. It subscribes to `grants_changed:<principal_id>` on
   `EsrWeb.PubSub` and re-projects on every broadcast. `has?/2` is served
   from the local map — **no global GenServer call per check** — so the
@@ -57,7 +57,7 @@ defmodule Esr.Scope.Process do
 
   Reads from `:persistent_term` populated at init and refreshed via
   PubSub `:grants_changed` broadcasts — **zero-hop** (no global ETS
-  lookup, no GenServer round-trip to either `Esr.Capabilities.Grants`
+  lookup, no GenServer round-trip to either `Esr.Resource.Capability.Grants`
   _or_ the Scope.Process itself).
 
   Returns `false` when the session has no `principal_id` in its
@@ -137,7 +137,7 @@ defmodule Esr.Scope.Process do
     end
   rescue
     # The Grants table may not yet exist in pathological test setups
-    # where a Scope.Process boots before Esr.Capabilities.Grants.
+    # where a Scope.Process boots before Esr.Resource.Capability.Grants.
     ArgumentError -> []
   end
 
@@ -147,7 +147,7 @@ defmodule Esr.Scope.Process do
     Phoenix.PubSub.subscribe(EsrWeb.PubSub, "grants_changed:#{principal_id}")
   end
 
-  # Inline matcher mirroring `Esr.Capabilities.Grants.matches?/2`. Kept
+  # Inline matcher mirroring `Esr.Resource.Capability.Grants.matches?/2`. Kept
   # local so `has?/2` never has to leave the Scope.Process — a pure
   # in-memory evaluation against the cached list.
   defp local_has?(grants, required) when is_list(grants) and is_binary(required) do

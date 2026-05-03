@@ -175,7 +175,7 @@ defmodule Esr.Entities.FeishuAppAdapterTest do
     # exercises the broadcast path; the unbound-chat path has its own
     # test below.
     :ok =
-      Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
         name: "ws_for_new_chat_thread_test",
         owner: nil,
         chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
@@ -293,19 +293,19 @@ defmodule Esr.Entities.FeishuAppAdapterTest do
 
   describe "PR-21i: unbound-user guide DM" do
     setup do
-      # Ensure Esr.Users.Registry is up + empty for these tests.
-      if Process.whereis(Esr.Users.Registry) == nil do
-        start_supervised!(Esr.Users.Registry)
+      # Ensure Esr.Entity.User.Registry is up + empty for these tests.
+      if Process.whereis(Esr.Entity.User.Registry) == nil do
+        start_supervised!(Esr.Entity.User.Registry)
       end
 
-      Esr.Users.Registry.load_snapshot(%{})
+      Esr.Entity.User.Registry.load_snapshot(%{})
       :ok
     end
 
     test "chat-bound + user-unbound emits user-guide DM", %{sup: sup} do
       # Pre: register a workspace bound to (oc_user_test, inst_user_guide)
       :ok =
-        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
           name: "ws_for_user_guide_test",
           owner: "linyilun",
           chats: [
@@ -363,15 +363,15 @@ defmodule Esr.Entities.FeishuAppAdapterTest do
          %{sup: sup} do
       # Bind ou_known_xyz to linyilun
       :ok =
-        Esr.Users.Registry.load_snapshot(%{
-          "linyilun" => %Esr.Users.Registry.User{
+        Esr.Entity.User.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Entity.User.Registry.User{
             username: "linyilun",
             feishu_ids: ["ou_known_xyz"]
           }
         })
 
       :ok =
-        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
           name: "ws_for_user_bound_test",
           owner: "linyilun",
           chats: [
@@ -455,7 +455,7 @@ defmodule Esr.Entities.FeishuAppAdapterTest do
 
     test "second inbound from same unbound user is rate-limited", %{sup: sup} do
       :ok =
-        Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
           name: "ws_for_user_ratelimit",
           owner: "linyilun",
           chats: [

@@ -44,7 +44,7 @@ defmodule Esr.Entities.UnboundChatGuard do
       when is_binary(chat_id) and chat_id != "" and
              is_binary(app_id) and app_id != "" and
              is_binary(instance_id) do
-    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
       {:ok, _ws} ->
         :passthrough
 

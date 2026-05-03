@@ -13,7 +13,7 @@ defmodule Esr.Admin.Commands.Scope.New do
     1. Validate `args.agent` present (D11) and `args.dir` present (D13).
     2. Resolve the agent definition via `Esr.SessionRegistry.agent_def/1`.
     3. Batch-verify `capabilities_required` (D18) via
-       `Esr.Capabilities.has_all?/2` — returns every missing cap at once
+       `Esr.Resource.Capability.has_all?/2` — returns every missing cap at once
        so the operator can see the full gap in a single reply.
     4. Spawn the session. Two branches:
          * **chat_id + thread_id present** — delegate to
@@ -239,7 +239,7 @@ defmodule Esr.Admin.Commands.Scope.New do
   # format_result/1 clause for {:error, %{"type" => "missing_capabilities"}}
   # renders for the user.
   defp verify_caps(submitter, caps) when is_list(caps) do
-    case Esr.Capabilities.has_all?(submitter, caps) do
+    case Esr.Resource.Capability.has_all?(submitter, caps) do
       :ok ->
         :ok
 

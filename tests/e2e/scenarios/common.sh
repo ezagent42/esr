@@ -24,7 +24,7 @@ set -Eeuo pipefail
 : "${ESR_OPERATOR_PRINCIPAL_ID:=ou_admin}"
 
 # PR-9 T11b.0a — first-boot capabilities fallback + ChannelChannel default.
-# Esr.Capabilities.Supervisor seeds capabilities.yaml from this principal
+# Esr.Resource.Capability.Supervisor seeds capabilities.yaml from this principal
 # when the file is absent; EsrWeb.ChannelChannel uses it as the default
 # principal_id on tool_invoke arriving before session_register. Held
 # identical to ESR_OPERATOR_PRINCIPAL_ID so the same ou_admin row seeded by

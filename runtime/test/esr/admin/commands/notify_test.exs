@@ -21,7 +21,7 @@ defmodule Esr.Admin.Commands.NotifyTest do
   alias Esr.Admin.Commands.Notify
   alias Esr.Admin.Dispatcher
   alias Esr.Scope
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
   @test_principal "ou_notify_test"
 

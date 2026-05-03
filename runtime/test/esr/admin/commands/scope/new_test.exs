@@ -10,7 +10,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
     * arg validation (D11: agent required; D13: dir required)
     * agent resolution via `Esr.SessionRegistry.agent_def/1`
     * `capabilities_required` verification (D18) via the new
-      `Esr.Capabilities.has_all?/2` helper — full coverage, total miss,
+      `Esr.Resource.Capability.has_all?/2` helper — full coverage, total miss,
       partial miss
     * happy path: Session actually spawned under `Scope.Supervisor`
       with the submitter recorded in `metadata.principal_id`
@@ -24,7 +24,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Commands.Scope.New, as: SessionNew
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
   setup do
     # App-level singletons (booted by Esr.Application).

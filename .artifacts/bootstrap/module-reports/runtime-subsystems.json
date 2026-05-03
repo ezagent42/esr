@@ -124,7 +124,7 @@
       "path": "runtime/lib/esr/workspaces/registry.ex",
       "lines": 75,
       "key_symbols": [
-        {"name": "Esr.Workspaces.Registry", "type": "module (GenServer)", "line": 1, "description": "ETS (:esr_workspaces) cache of workspaces.yaml rows loaded on esrd boot."},
+        {"name": "Esr.Resource.Workspace.Registry", "type": "module (GenServer)", "line": 1, "description": "ETS (:esr_workspaces) cache of workspaces.yaml rows loaded on esrd boot."},
         {"name": "Workspace", "type": "struct", "line": 14, "description": "{name, cwd, start_cmd, role, chats, env} — one workspace row."},
         {"name": "get/1, list/0", "type": "functions", "line": 23, "description": "Direct ETS reads (no GenServer hop)."},
         {"name": "put/1", "type": "function", "line": 34, "description": "GenServer call used by CLI push (cli:workspace/register)."},
@@ -176,7 +176,7 @@
     {"name": "Esr.Telemetry.Attach.attach/1", "file": "runtime/lib/esr/telemetry/attach.ex", "line": 48, "description": "Attach bounded [:esr, _, _] handler (20 events) into a named Buffer at boot."},
     {"name": "Esr.Topology.Instantiator.instantiate/3", "file": "runtime/lib/esr/topology/instantiator.ex", "line": 40, "description": "Idempotent YAML→actors: validate → toposort → spawn+bind+init_directive → register+telemetry."},
     {"name": "Esr.Topology.Registry.{register,lookup,list_all,put_artifact,get_artifact,deactivate}", "file": "runtime/lib/esr/topology/registry.ex", "line": 42, "description": "Handle + artifact ETS registry; atomic insert_new; deactivate fires reverse-order stop cascade (F14)."},
-    {"name": "Esr.Workspaces.Registry.{get,list,put,load_from_file}", "file": "runtime/lib/esr/workspaces/registry.ex", "line": 23, "description": "In-memory workspaces.yaml cache keyed by workspace name."}
+    {"name": "Esr.Resource.Workspace.Registry.{get,list,put,load_from_file}", "file": "runtime/lib/esr/workspaces/registry.ex", "line": 23, "description": "In-memory workspaces.yaml cache keyed by workspace name."}
   ],
   "dependencies": [
     ":telemetry + :telemetry_registry (event bus for F15/F16)",

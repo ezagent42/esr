@@ -24,7 +24,7 @@ defmodule Esr.Admin.DispatcherTest do
 
   alias Esr.Admin.Dispatcher
   alias Esr.Scope
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
   @test_principal "ou_dispatcher_test"
 

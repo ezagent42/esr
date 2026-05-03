@@ -501,11 +501,11 @@ defmodule Esr.Entities.FeishuChatProxy do
   #   * unknown_app — no FeishuAppAdapter pid registered in
   #     Entity.Registry under "feishu_app_adapter_<app_id>".
   defp dispatch_cross_app_reply(chat_id, app_id, text, req_id, channel_pid, state) do
-    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
       {:ok, target_ws} ->
         perm = "workspace:#{target_ws}/msg.send"
 
-        if Esr.Capabilities.has?(state.principal_id, perm) do
+        if Esr.Resource.Capability.has?(state.principal_id, perm) do
           dispatch_to_target_app(chat_id, app_id, text, req_id, channel_pid)
         else
           # Logger.info on every deny path — gives ops a deterministic

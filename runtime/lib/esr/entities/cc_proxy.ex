@@ -15,7 +15,7 @@ defmodule Esr.Entities.CCProxy do
   The `@required_cap "peer_proxy:cc/forward"` attribute (canonical
   `prefix:name/perm` form, landed in P3-8) triggers the `Esr.Entity.Proxy`
   macro's capability-check wrapper around `forward/2`: principal_id is
-  looked up via `Esr.Capabilities.has?/2`, and on denial the call
+  looked up via `Esr.Resource.Capability.has?/2`, and on denial the call
   short-circuits with `{:drop, :cap_denied}` before the user body runs.
 
   Spec §3.6, §4.1 CCProxy card.

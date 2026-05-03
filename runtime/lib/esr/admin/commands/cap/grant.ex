@@ -18,7 +18,7 @@ defmodule Esr.Admin.Commands.Cap.Grant do
     3. Append the permission to that principal's `capabilities` list
        when it isn't already held (idempotent).
     4. Write back via `Esr.Yaml.Writer`. The file-level
-       `Esr.Capabilities.Watcher` (fs_event) will observe the change
+       `Esr.Resource.Capability.Watcher` (fs_event) will observe the change
        and call `FileLoader.load/1`, which atomically swaps the in-
        memory ETS snapshot — **no direct `Grants` mutation is done
        here** (spec §6.4 requirement: Admin writes the file, Watcher

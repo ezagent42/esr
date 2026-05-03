@@ -210,9 +210,9 @@ self.actor_id` 加到 envelope）一直传到 cc_mcp 的
     `forward_reply_pass_through` 维持 reply_to_message_id /
     un_react bookkeeping
   - `app_id != home app` → FCP 走跨 app 分发：
-    1. `Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id)`
+    1. `Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id)`
        拿目标 workspace
-    2. `Esr.Capabilities.has?(state.principal_id,
+    2. `Esr.Resource.Capability.has?(state.principal_id,
        "workspace:<target_ws>/msg.send")` 校验 cap
     3. `Registry.lookup(Esr.Entity.Registry,
        "feishu_app_adapter_<app_id>")` 找目标 FAA peer

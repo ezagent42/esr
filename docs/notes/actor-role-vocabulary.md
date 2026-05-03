@@ -4,7 +4,7 @@
 **Why this doc exists:** PR-21q-t introduced "chat-guide" / "user-guide" inline functions that drifted from the rest of the codebase's `*Handler` / `*Adapter` convention. PR-21v formalized the answer: every ESR-specific module belongs to **exactly one of 5 role categories**, marked at compile time via `@behaviour Esr.Role.<Category>`.
 
 **Read this before:**
-- Adding any new module under `Esr.*`, `Esr.Entities.*`, `Esr.Admin.*`, `Esr.Workspaces.*`, `Esr.Users.*`, `Esr.Capabilities.*`, or `EsrWeb.*` (except Phoenix framework imports).
+- Adding any new module under `Esr.*`, `Esr.Entities.*`, `Esr.Admin.*`, `Esr.Resource.Workspace.*`, `Esr.Entity.User.*`, `Esr.Resource.Capability.*`, or `EsrWeb.*` (except Phoenix framework imports).
 - Refactoring inline logic into a dedicated module — pick the right suffix based on the category your module sits in.
 - Discussing routing / pipeline architecture in spec docs (use canonical names).
 
@@ -55,7 +55,7 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 | Suffix | Shape | Examples |
 |---|---|---|
 | `*Server` | Singleton with mutation-heavy state (often GenServer + ETS) | `Esr.Entity.Server` |
-| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.Entity.Registry`, `Esr.AdapterSocketRegistry`, `Esr.Workspaces.Registry`, `Esr.Users.Registry`, `Esr.Permissions.Registry`, `Esr.Capabilities.Grants` |
+| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.Entity.Registry`, `Esr.AdapterSocketRegistry`, `Esr.Resource.Workspace.Registry`, `Esr.Entity.User.Registry`, `Esr.Resource.Permission.Registry`, `Esr.Resource.Capability.Grants` |
 | `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.Scope.Process`, `Esr.Scope.Admin.Process`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Entities.CCProcess`, `Esr.Entities.TmuxProcess` |
 | `*Buffer` | Bounded ring buffer / FIFO | `Esr.Telemetry.Buffer` |
 
@@ -87,17 +87,17 @@ A module is a `*Guard` (and should bear that suffix) when ALL of these hold:
 | Suffix | Shape | Examples |
 |---|---|---|
 | `*Dispatcher` | Async cmd-queue brain; per-kind required-permission table; spawns per-cmd Tasks | `Esr.Admin.Dispatcher` |
-| `*Watcher` | FSEvents file-change observer; calls a `*FileLoader` | `Esr.Capabilities.Watcher`, `Esr.Workspaces.Watcher`, `Esr.Users.Watcher` |
-| `*FileLoader` | YAML parse + atomic snapshot swap; non-destructive on parse failure | `Esr.Capabilities.FileLoader`, `Esr.Users.FileLoader` |
+| `*Watcher` | FSEvents file-change observer; calls a `*FileLoader` | `Esr.Resource.Capability.Watcher`, `Esr.Resource.Workspace.Watcher`, `Esr.Entity.User.Watcher` |
+| `*FileLoader` | YAML parse + atomic snapshot swap; non-destructive on parse failure | `Esr.Resource.Capability.FileLoader`, `Esr.Entity.User.FileLoader` |
 | `Commands.<Kind>` | Single admin-command implementation (pure module) | `Esr.Admin.Commands.{Cap.Grant, Cap.Revoke, Session.New, Session.End, Session.List, Workspace.New, Workspace.Info, Notify, Reload, …}` |
-| `*Bootstrap` | Boot-time initialization | `Esr.Permissions.Bootstrap` |
+| `*Bootstrap` | Boot-time initialization | `Esr.Resource.Permission.Bootstrap` |
 | `*Writer` | YAML / config file writers (round-trip safe) | `Esr.Yaml.Writer` |
 
 ### OTP
 
 **Identifying property:** pure OTP supervisor — manages child process tree.
 
-**Examples:** `Esr.WorkerSupervisor`, `Esr.Scope.Supervisor`, `Esr.Entity.Supervisor`, `Esr.Workspaces.Supervisor`, `Esr.Users.Supervisor`, `Esr.Capabilities.Supervisor`, `Esr.Admin.Supervisor`.
+**Examples:** `Esr.WorkerSupervisor`, `Esr.Scope.Supervisor`, `Esr.Entity.Supervisor`, `Esr.Resource.Workspace.Supervisor`, `Esr.Entity.User.Supervisor`, `Esr.Resource.Capability.Supervisor`, `Esr.Admin.Supervisor`.
 
 Convention: only Supervisor modules get the OTP marker. If a GenServer also happens to start child processes, it picks the category that describes its primary role (usually State or Control).
 

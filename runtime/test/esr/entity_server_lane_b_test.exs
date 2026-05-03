@@ -8,13 +8,13 @@ defmodule Esr.EntityServerLaneBTest do
   calls emit `[:esr, :capabilities, :denied]` telemetry with
   `lane: :B_inbound` or `lane: :B_tool_invoke`.
 
-  The `Esr.Capabilities.Grants` ETS singleton is started by
+  The `Esr.Resource.Capability.Grants` ETS singleton is started by
   `Esr.Application` — we just load per-test snapshots on top.
   """
 
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Entity
   alias Esr.TestSupport.AuthContext
 

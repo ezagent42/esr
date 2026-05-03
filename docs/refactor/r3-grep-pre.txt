@@ -1,0 +1,9 @@
+# R3 Resource-namespace consolidation v2 — pre-rename grep counts (2026-05-03T14:23:44Z)
+# v2: NO alias-collapse pass per refactor-lessons.md §三-1
+
+Esr\.Workspaces\.: 144 hits
+Esr\.Capabilities\.: 281 hits
+Esr\.Permissions\.: 68 hits
+Esr\.Users\.: 90 hits
+Esr\.SlashRoutes: 54 hits
+Esr\.DeadLetter: 25 hits

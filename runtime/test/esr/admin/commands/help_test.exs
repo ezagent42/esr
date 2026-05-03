@@ -2,26 +2,26 @@ defmodule Esr.Admin.Commands.HelpTest do
   @moduledoc """
   Tests for `Esr.Admin.Commands.Help` (PR-21κ).
 
-  The Help module renders from `Esr.SlashRoutes.list_slashes/0`. We
-  load a small synthetic snapshot via `SlashRoutes.load_snapshot/1` so
+  The Help module renders from `Esr.Resource.SlashRouteRegistry.list_slashes/0`. We
+  load a small synthetic snapshot via `SlashRouteRegistry.load_snapshot/1` so
   the test doesn't depend on the priv default yaml shape.
   """
 
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Commands.Help
-  alias Esr.SlashRoutes
+  alias Esr.Resource.SlashRouteRegistry
 
   setup do
-    if Process.whereis(SlashRoutes) == nil, do: start_supervised!(SlashRoutes)
-    SlashRoutes.load_snapshot(%{slashes: [], internal_kinds: []})
+    if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
+    SlashRouteRegistry.load_snapshot(%{slashes: [], internal_kinds: []})
 
     # Restore the priv default after the test so cross-file Dispatcher
-    # tests (which look up kind → permission via SlashRoutes ETS) keep
+    # tests (which look up kind → permission via SlashRouteRegistry ETS) keep
     # working post-PR-21κ Phase 6.
     on_exit(fn ->
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
-      if File.exists?(priv), do: Esr.SlashRoutes.FileLoader.load(priv)
+      if File.exists?(priv), do: Esr.Resource.SlashRouteRegistry.FileLoader.load(priv)
     end)
 
     :ok
@@ -97,6 +97,6 @@ defmodule Esr.Admin.Commands.HelpTest do
   end
 
   defp load_snapshot(routes) do
-    SlashRoutes.load_snapshot(%{slashes: routes, internal_kinds: []})
+    SlashRouteRegistry.load_snapshot(%{slashes: routes, internal_kinds: []})
   end
 end

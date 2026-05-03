@@ -341,7 +341,7 @@ defmodule EsrWeb.CliChannelTest do
 
   describe "cli:deadletter/list" do
     setup do
-      Esr.DeadLetter.clear(Esr.DeadLetter)
+      Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-test-dl", %{})
@@ -357,14 +357,14 @@ defmodule EsrWeb.CliChannelTest do
     end
 
     test "returns serialised entries after enqueue", %{dl_socket: socket} do
-      Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+      Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
         reason: :unknown_target,
         target: "ghost:42",
         msg: %{hello: "world"},
         source: "adapter:feishu/inst1",
         metadata: %{}
       })
-      # DeadLetter is a cast; let it settle.
+      # DeadLetterQueue is a cast; let it settle.
       Process.sleep(20)
 
       ref = push(socket, "cli_call", %{})
@@ -413,9 +413,9 @@ defmodule EsrWeb.CliChannelTest do
 
   describe "cli:deadletter/flush" do
     setup do
-      Esr.DeadLetter.clear(Esr.DeadLetter)
+      Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
       # prime the queue with one entry
-      Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+      Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
         reason: :test_prime,
         target: "ghost:flush"
       })
@@ -433,12 +433,12 @@ defmodule EsrWeb.CliChannelTest do
       ref = push(socket, "cli_call", %{})
       assert_reply ref, :ok, response
       assert response["data"]["flushed"] == 1
-      assert Esr.DeadLetter.list(Esr.DeadLetter) == []
+      assert Esr.Resource.DeadLetterQueue.list(Esr.Resource.DeadLetterQueue) == []
     end
   end
 
   describe "cli:workspaces/describe" do
-    alias Esr.Workspaces.Registry, as: WS
+    alias Esr.Resource.Workspace.Registry, as: WS
 
     setup do
       # Clean ETS between tests; the registry GenServer is app-level.

@@ -12,7 +12,7 @@ defmodule EsrWeb.CliChannel do
 
   use Phoenix.Channel
 
-  alias Esr.DeadLetter.Entry, as: DeadLetterEntry
+  alias Esr.Resource.DeadLetterQueue.Entry, as: DeadLetterEntry
   alias Esr.Telemetry.Buffer
   alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
 
@@ -189,11 +189,11 @@ defmodule EsrWeb.CliChannel do
   # at a glance what's healthy / what's degraded.
   def dispatch("cli:daemon/doctor", _payload) do
     workers = Esr.WorkerSupervisor.list()
-    user_count = length(Esr.Users.Registry.list())
+    user_count = length(Esr.Entity.User.Registry.list())
 
     workspace_count =
       try do
-        length(Esr.Workspaces.Registry.list())
+        length(Esr.Resource.Workspace.Registry.list())
       rescue
         _ -> 0
       end
@@ -226,16 +226,16 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:deadletter/list", _payload) do
     data =
-      Esr.DeadLetter
-      |> Esr.DeadLetter.list()
+      Esr.Resource.DeadLetterQueue
+      |> Esr.Resource.DeadLetterQueue.list()
       |> Enum.map(&serialise_dl_entry/1)
 
     %{"data" => data}
   end
 
   def dispatch("cli:deadletter/flush", _payload) do
-    flushed = length(Esr.DeadLetter.list(Esr.DeadLetter))
-    :ok = Esr.DeadLetter.clear(Esr.DeadLetter)
+    flushed = length(Esr.Resource.DeadLetterQueue.list(Esr.Resource.DeadLetterQueue))
+    :ok = Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
     %{"data" => %{"flushed" => flushed}}
   end
 
@@ -284,7 +284,7 @@ defmodule EsrWeb.CliChannel do
   # `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`.
   def dispatch("cli:workspaces/describe", %{"arg" => workspace_name})
       when is_binary(workspace_name) do
-    alias Esr.Workspaces.Registry, as: WorkspacesReg
+    alias Esr.Resource.Workspace.Registry, as: WorkspacesReg
 
     case WorkspacesReg.get(workspace_name) do
       {:ok, ws} ->
@@ -429,7 +429,7 @@ defmodule EsrWeb.CliChannel do
   end
 
   def dispatch("cli:workspace/register", payload) do
-    alias Esr.Workspaces.Registry, as: WorkspacesReg
+    alias Esr.Resource.Workspace.Registry, as: WorkspacesReg
 
     name = Map.get(payload, "name")
 
@@ -504,7 +504,7 @@ defmodule EsrWeb.CliChannel do
   @ws_allowed_fields ~w(name role chats neighbors_declared metadata)
   @chat_allowed_fields ~w(chat_id app_id kind name metadata)
 
-  defp filter_workspace_for_llm(%Esr.Workspaces.Registry.Workspace{} = ws) do
+  defp filter_workspace_for_llm(%Esr.Resource.Workspace.Registry.Workspace{} = ws) do
     %{
       "name" => ws.name,
       "role" => ws.role || "dev",
@@ -526,12 +526,12 @@ defmodule EsrWeb.CliChannel do
   # adapter:) stay as raw strings in `neighbors_declared` for the LLM
   # to interpret — only workspace-typed entries get expanded into
   # full `neighbor_workspaces` metadata. See spec §4.3.
-  defp resolve_neighbour_workspaces(%Esr.Workspaces.Registry.Workspace{neighbors: neighbours}) do
+  defp resolve_neighbour_workspaces(%Esr.Resource.Workspace.Registry.Workspace{neighbors: neighbours}) do
     neighbours
     |> Enum.flat_map(fn entry ->
       case String.split(entry || "", ":", parts: 2) do
         ["workspace", name] ->
-          case Esr.Workspaces.Registry.get(name) do
+          case Esr.Resource.Workspace.Registry.get(name) do
             {:ok, ws} -> [ws]
             :error -> []
           end

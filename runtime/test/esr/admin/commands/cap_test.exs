@@ -2,8 +2,8 @@ defmodule Esr.Admin.Commands.CapTest do
   @moduledoc """
   DI-10 Task 23 — `Esr.Admin.Commands.Cap.Grant` + `Cap.Revoke` write
   `capabilities.yaml` via `Esr.Yaml.Writer`. The existing
-  `Esr.Capabilities.Watcher` fs_event subscription observes the change
-  and atomically reloads the `Esr.Capabilities.Grants` ETS snapshot —
+  `Esr.Resource.Capability.Watcher` fs_event subscription observes the change
+  and atomically reloads the `Esr.Resource.Capability.Grants` ETS snapshot —
   the commands themselves DO NOT poke Grants directly.
 
   ## Why this test bypasses the fs_event → Grants reload edge
@@ -16,7 +16,7 @@ defmodule Esr.Admin.Commands.CapTest do
     * assert the on-disk YAML content after Grant / Revoke (the
       command's actual responsibility), and
     * drive one end-to-end "persistence survives reload" case by
-      invoking `Esr.Capabilities.FileLoader.load/1` directly against
+      invoking `Esr.Resource.Capability.FileLoader.load/1` directly against
       the written file — the same call the Watcher makes.
 
   This keeps the test deterministic while still proving the contract:
@@ -28,8 +28,8 @@ defmodule Esr.Admin.Commands.CapTest do
 
   alias Esr.Admin.Commands.Cap.Grant
   alias Esr.Admin.Commands.Cap.Revoke
-  alias Esr.Capabilities.FileLoader
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.FileLoader
+  alias Esr.Resource.Capability.Grants
 
   setup do
     unique = System.unique_integer([:positive])
@@ -157,7 +157,7 @@ defmodule Esr.Admin.Commands.CapTest do
                })
 
       # Simulate the fs_event → FileLoader.load pipeline. This is the
-      # exact call `Esr.Capabilities.Watcher` makes on file change; if
+      # exact call `Esr.Resource.Capability.Watcher` makes on file change; if
       # Yaml.Writer emitted something the parser can't validate, this
       # would return {:error, _} and keep the old snapshot.
       assert :ok = FileLoader.load(path)

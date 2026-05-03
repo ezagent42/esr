@@ -32,7 +32,7 @@ defmodule Esr.Entity.Factory do
       # cap-check can call `Esr.Scope.Process.has?(session_id, perm)`
       # directly (zero-hop persistent_term read). The pid is retained
       # purely as a liveness guard — if the Scope.Process has died,
-      # we fall back to the global `Esr.Capabilities.has?/2`.
+      # we fall back to the global `Esr.Resource.Capability.has?/2`.
       ctx_with_sp =
         case resolve_session_process_pid(session_id) do
           nil -> ctx

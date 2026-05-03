@@ -4,7 +4,7 @@ defmodule Esr.Entities.CCProxyTest do
   FeishuChatProxy (upstream) to the local CCProcess (downstream) within the
   same Session. The `@required_cap "peer_proxy:cc/forward"` attribute (canonical
   `prefix:name/perm` form per P3-8) wires the Peer.Proxy macro to run a
-  capability check via `Esr.Capabilities.has?/2` before dispatch. In PR-3
+  capability check via `Esr.Resource.Capability.has?/2` before dispatch. In PR-3
   this is a pure forwarder; the cap hook is the first rate-limit / throttle
   enforcement point between channels and CC agents.
 
@@ -17,7 +17,7 @@ defmodule Esr.Entities.CCProxyTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Entities.CCProxy
 
   setup do

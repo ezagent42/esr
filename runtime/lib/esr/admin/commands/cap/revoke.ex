@@ -17,7 +17,7 @@ defmodule Esr.Admin.Commands.Cap.Revoke do
     4. Remove the permission from the principal's `capabilities` list.
        Not held → same error.
     5. Write back via `Esr.Yaml.Writer`. The file-level
-       `Esr.Capabilities.Watcher` reloads ETS automatically.
+       `Esr.Resource.Capability.Watcher` reloads ETS automatically.
 
   ## Result
 

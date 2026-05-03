@@ -416,7 +416,7 @@ cd /home/yaosh/projects/esr/runtime && MIX_ENV=test mix test test/esr/adapter_hu
 | `Esr.Telemetry.Attach.attach/1` | runtime/lib/esr/telemetry/attach.ex:48 | Attach bounded [:esr, _, _] handler (20 events) into a named Buffer at boot. |
 | `Esr.Topology.Instantiator.instantiate/3` | runtime/lib/esr/topology/instantiator.ex:40 | Idempotent YAML→actors: validate → toposort → spawn+bind+init_directive → register+telemetry. |
 | `Esr.Topology.Registry.{register,lookup,list_all,put_artifact,get_artifact,deactivate}` | runtime/lib/esr/topology/registry.ex:42 | Handle + artifact ETS registry; atomic insert_new; deactivate fires reverse-order stop cascade (F14). |
-| `Esr.Workspaces.Registry.{get,list,put,load_from_file}` | runtime/lib/esr/workspaces/registry.ex:23 | In-memory workspaces.yaml cache keyed by workspace name. |
+| `Esr.Resource.Workspace.Registry.{get,list,put,load_from_file}` | runtime/lib/esr/workspaces/registry.ex:23 | In-memory workspaces.yaml cache keyed by workspace name. |
 
 **Dependencies:** `:telemetry + :telemetry_registry (event bus for F15/F16)`, `Phoenix.PubSub + Phoenix.Channel via EsrWeb.Endpoint (Handler/Adapter channels + reply pubsub)`, `YamlElixir (parsing workspaces.yaml, adapters.yaml, compiled command YAML)`, `stdlib: :ets, :erlang.term_to_binary/1, Process.monitor/1, GenServer, Supervisor, Task`, `Cross-module: Esr.Entity.Registry (bind→pid), Esr.Entity.Supervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)`
 

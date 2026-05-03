@@ -10,7 +10,7 @@ defmodule Esr.Admin do
   `Esr.Routing.SlashHandler` was removed in PR-3 P3-14).
 
   This module also declares the subsystem-intrinsic permissions. They
-  are registered at boot by `Esr.Permissions.Bootstrap` alongside
+  are registered at boot by `Esr.Resource.Permission.Bootstrap` alongside
   handler-declared permissions (see spec §6.2). The `permissions/0`
   callback shape mirrors the `Esr.Handler` behaviour's optional
   `permissions/0` callback so the bootstrap iteration is uniform.
