@@ -47,7 +47,7 @@ defmodule Esr.Application do
       Esr.Entity.Supervisor,
 
       # 4b. Dead-letter queue — started before peers so enqueue never misses.
-      {Esr.Resource.DeadLetterQueue, name: Esr.Resource.DeadLetterQueue},
+      {Esr.Resource.DeadLetter.Queue, name: Esr.Resource.DeadLetter.Queue},
 
       # 4c. Python worker launcher — on-demand adapter_runner /
       # handler_worker subprocesses for live topology instantiation
@@ -55,7 +55,7 @@ defmodule Esr.Application do
       Esr.WorkerSupervisor,
 
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
-      Esr.AdapterSocketRegistry,
+      Esr.Resource.AdapterSocket.Registry,
       {Esr.SessionRegistry, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
@@ -96,8 +96,8 @@ defmodule Esr.Application do
       # lookup. Independent of Workspaces and Capabilities (stores
       # references to caps as strings; doesn't validate against Permissions
       # Registry). Loaded BEFORE Admin.Supervisor since Dispatcher consumes it.
-      Esr.Resource.SlashRouteRegistry,
-      {Esr.Resource.SlashRouteRegistry.Watcher, path: Esr.Paths.slash_routes_yaml()},
+      Esr.Resource.SlashRoute.Registry,
+      {Esr.Resource.SlashRoute.Registry.Watcher, path: Esr.Paths.slash_routes_yaml()},
 
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
@@ -117,12 +117,12 @@ defmodule Esr.Application do
       EsrWeb.PendingActionsGuard,
 
       # 4f.3 Inbound onboarding guards (PR-21w). Both extracted from
-      # `Esr.Entities.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
+      # `Esr.Entity.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
       # migration plan. Each owns its own per-key rate-limit Map and
       # exposes a single `check/3` entry point the FAA `handle_upstream`
       # path consults before further routing.
-      Esr.Entities.UnboundChatGuard,
-      Esr.Entities.UnboundUserGuard,
+      Esr.Entity.UnboundChatGuard,
+      Esr.Entity.UnboundUserGuard,
 
       # 4f.4 Lane B inbound capability guard (PR-21x). Extracted from
       # `Esr.Entity.Server.handle_info({:inbound_event, _})` + FAA's
@@ -130,7 +130,7 @@ defmodule Esr.Application do
       # rate-limit Map; Entity.Server calls `CapGuard.check_inbound/3`
       # before invoking the handler. On deny, CapGuard emits telemetry
       # and dispatches an `{:outbound, ...}` to the source FAA peer.
-      Esr.Entities.CapGuard,
+      Esr.Entity.CapGuard,
 
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
@@ -141,7 +141,7 @@ defmodule Esr.Application do
 
       # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
       # Esr.Routing.SlashHandler removed. The new slash-parsing path
-      # is Esr.Entities.SlashHandler, spawned per-Session under
+      # is Esr.Entity.SlashHandler, spawned per-Session under
       # Scope.Admin.Process / Scope.Process (spec §3.5). The old
       # top-level subsystem was PR-0 scaffolding that got stranded
       # once the peer/session refactor moved slash parsing into the

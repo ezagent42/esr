@@ -46,7 +46,7 @@ defmodule Esr.ScopeRouterChannelAdapterTest do
       # We exercise it directly (it's a private helper but tested
       # via a narrow public hook: see `Scope.Router.build_ctx_for_test/2`).
       spec = %{
-        "impl" => "Esr.Entities.FeishuAppProxy",
+        "impl" => "Esr.Entity.FeishuAppProxy",
         "target" => "admin::feishu_app_adapter_e2e-mock"
       }
 
@@ -56,7 +56,7 @@ defmodule Esr.ScopeRouterChannelAdapterTest do
     end
 
     test "non-FeishuAppProxy spec returns ctx without :channel_adapter" do
-      spec = %{"impl" => "Esr.Entities.CCProxy"}
+      spec = %{"impl" => "Esr.Entity.CCProxy"}
       ctx = Scope.Router.build_ctx_for_test(spec, %{})
       refute Map.has_key?(ctx, :channel_adapter)
     end
@@ -71,7 +71,7 @@ defmodule Esr.ScopeRouterChannelAdapterTest do
         pipeline: %{inbound: []},
         proxies: [
           %{"name" => "feishu_app_proxy",
-            "impl" => "Esr.Entities.FeishuAppProxy",
+            "impl" => "Esr.Entity.FeishuAppProxy",
             "target" => "admin::feishu_app_adapter_default"}
         ]
       }

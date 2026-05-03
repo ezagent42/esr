@@ -262,9 +262,9 @@ defmodule Esr.ScopeRouterTest do
       refute Map.has_key?(refs, :voice_tts_worker)
 
       # Proxies block records the pool-binding markers symbolically.
-      assert refs.voice_asr == {:proxy_module, Esr.Entities.VoiceASRProxy}
-      assert refs.voice_tts == {:proxy_module, Esr.Entities.VoiceTTSProxy}
-      assert refs.feishu_app_proxy == {:proxy_module, Esr.Entities.FeishuAppProxy}
+      assert refs.voice_asr == {:proxy_module, Esr.Entity.VoiceASRProxy}
+      assert refs.voice_tts == {:proxy_module, Esr.Entity.VoiceTTSProxy}
+      assert refs.feishu_app_proxy == {:proxy_module, Esr.Entity.FeishuAppProxy}
     end
 
     test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer" do
@@ -289,7 +289,7 @@ defmodule Esr.ScopeRouterTest do
       assert is_pid(refs.feishu_chat_proxy)
       assert is_pid(refs.voice_e2e)
       assert Process.alive?(refs.voice_e2e)
-      assert refs.feishu_app_proxy == {:proxy_module, Esr.Entities.FeishuAppProxy}
+      assert refs.feishu_app_proxy == {:proxy_module, Esr.Entity.FeishuAppProxy}
     end
 
     test "telemetry fires on peer_crashed DOWN without crashing the router" do
@@ -355,7 +355,7 @@ defmodule Esr.ScopeRouterTest do
     {:ok, faa} =
       DynamicSupervisor.start_child(
         admin_children_sup,
-        {Esr.Entities.FeishuAppAdapter,
+        {Esr.Entity.FeishuAppAdapter,
          %{instance_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 

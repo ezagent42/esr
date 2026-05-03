@@ -12,7 +12,7 @@ defmodule EsrWeb.CliChannel do
 
   use Phoenix.Channel
 
-  alias Esr.Resource.DeadLetterQueue.Entry, as: DeadLetterEntry
+  alias Esr.Resource.DeadLetter.Queue.Entry, as: DeadLetterEntry
   alias Esr.Telemetry.Buffer
   alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
 
@@ -112,7 +112,7 @@ defmodule EsrWeb.CliChannel do
         # Augment with chat_ids from AdapterSocketRegistry if this actor is a
         # cc_proxy / feishu_thread_proxy etc tracked there.
         session_ctx =
-          case Esr.AdapterSocketRegistry.lookup(actor_id_strip_prefix(snap.actor_id)) do
+          case Esr.Resource.AdapterSocket.Registry.lookup(actor_id_strip_prefix(snap.actor_id)) do
             {:ok, row} ->
               %{
                 "chat_ids" => row.chat_ids,
@@ -226,16 +226,16 @@ defmodule EsrWeb.CliChannel do
 
   def dispatch("cli:deadletter/list", _payload) do
     data =
-      Esr.Resource.DeadLetterQueue
-      |> Esr.Resource.DeadLetterQueue.list()
+      Esr.Resource.DeadLetter.Queue
+      |> Esr.Resource.DeadLetter.Queue.list()
       |> Enum.map(&serialise_dl_entry/1)
 
     %{"data" => data}
   end
 
   def dispatch("cli:deadletter/flush", _payload) do
-    flushed = length(Esr.Resource.DeadLetterQueue.list(Esr.Resource.DeadLetterQueue))
-    :ok = Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
+    flushed = length(Esr.Resource.DeadLetter.Queue.list(Esr.Resource.DeadLetter.Queue))
+    :ok = Esr.Resource.DeadLetter.Queue.clear(Esr.Resource.DeadLetter.Queue)
     %{"data" => %{"flushed" => flushed}}
   end
 

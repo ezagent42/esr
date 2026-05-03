@@ -8,7 +8,7 @@ defmodule Esr.Admin.Commands.Whoami do
     * `chat_id`
     * `app_id`
 
-  Pre-PR-21κ this was `Esr.Entities.FeishuAppAdapter.whoami_text/3`.
+  Pre-PR-21κ this was `Esr.Entity.FeishuAppAdapter.whoami_text/3`.
   Same logic, lifted into a Command module so the SlashHandler can
   invoke it via the yaml-driven dispatch table.
   """

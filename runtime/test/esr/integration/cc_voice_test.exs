@@ -98,7 +98,7 @@ defmodule Esr.Integration.CCVoiceTest do
     {:ok, faa} =
       DynamicSupervisor.start_child(
         admin_children_sup,
-        {Esr.Entities.FeishuAppAdapter,
+        {Esr.Entity.FeishuAppAdapter,
          %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -152,8 +152,8 @@ defmodule Esr.Integration.CCVoiceTest do
     # markers in refs. `cc_proxy` is in `inbound:` but CCProxy has no
     # start_link (stateless forwarder) and isn't in `proxies:` either,
     # so session_router silently skips it — expected per PR-3 drift.
-    assert {:proxy_module, Esr.Entities.VoiceASRProxy} = refs.voice_asr
-    assert {:proxy_module, Esr.Entities.VoiceTTSProxy} = refs.voice_tts
+    assert {:proxy_module, Esr.Entity.VoiceASRProxy} = refs.voice_asr
+    assert {:proxy_module, Esr.Entity.VoiceTTSProxy} = refs.voice_tts
     refute Map.has_key?(refs, :cc_proxy)
 
     cc_pid = refs.cc_process
@@ -168,7 +168,7 @@ defmodule Esr.Integration.CCVoiceTest do
     }
 
     assert {:ok, "audio:8"} =
-             Esr.Entities.VoiceASRProxy.forward({:voice_asr, audio_in}, asr_ctx)
+             Esr.Entity.VoiceASRProxy.forward({:voice_asr, audio_in}, asr_ctx)
 
     # 5. LEG 2 — CCProcess middle leg: inject the transcribed text
     #    into CCProcess; stubbed handler emits a :reply with "ack".
@@ -186,7 +186,7 @@ defmodule Esr.Integration.CCVoiceTest do
     }
 
     assert {:ok, "YWNr"} =
-             Esr.Entities.VoiceTTSProxy.forward({:voice_tts, "ack"}, tts_ctx)
+             Esr.Entity.VoiceTTSProxy.forward({:voice_tts, "ack"}, tts_ctx)
 
     # 7. Cleanup.
     :ok = Esr.Scope.Router.end_session(sid)

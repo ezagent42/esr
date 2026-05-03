@@ -180,7 +180,7 @@ defmodule Esr.Entity.Server do
     })
 
     # REMOVED (P2-15): feishu_thread_proxy-specific log moved to
-    # Esr.Entities.FeishuChatProxy's terminate/2 in PR-3 when the actor_type
+    # Esr.Entity.FeishuChatProxy's terminate/2 in PR-3 when the actor_type
     # lane retires.
 
     :ok
@@ -238,13 +238,13 @@ defmodule Esr.Entity.Server do
   def handle_info({:inbound_event, envelope}, %__MODULE__{} = state) do
     # Capabilities spec §7.2 (CAP-4) — Lane B inbound enforcement.
     # PR-21x: cap check + telemetry + deny-DM dispatch are owned by
-    # `Esr.Entities.CapGuard.check_inbound/3`. Entity.Server keeps the
+    # `Esr.Entity.CapGuard.check_inbound/3`. Entity.Server keeps the
     # handler-invocation hot path; the gate is one call away.
     workspace = envelope["workspace_name"]
     event_type = get_in(envelope, ["payload", "event_type"])
     required = "workspace:#{workspace || "*"}/#{permission_for_event(event_type)}"
 
-    case Esr.Entities.CapGuard.check_inbound(envelope, required, state.actor_id) do
+    case Esr.Entity.CapGuard.check_inbound(envelope, required, state.actor_id) do
       :granted ->
         idempotency_key = extract_idempotency_key(envelope)
 
@@ -506,7 +506,7 @@ defmodule Esr.Entity.Server do
           reason: reason
         })
 
-        Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
+        Esr.Resource.DeadLetter.Queue.enqueue(Esr.Resource.DeadLetter.Queue, %{
           reason: :handler_retry_exhausted,
           source: state.actor_id,
           msg: envelope,
@@ -629,7 +629,7 @@ defmodule Esr.Entity.Server do
       session_id: session_id
     })
 
-    case Esr.AdapterSocketRegistry.notify_session(session_id, envelope) do
+    case Esr.Resource.AdapterSocket.Registry.notify_session(session_id, envelope) do
       :ok ->
         :ok
 
@@ -956,7 +956,7 @@ defmodule Esr.Entity.Server do
   # --------------------------------------------------------------
 
   # PR-21x: Lane B deny-DM dispatch + `@feishu_source_re` extracted into
-  # `Esr.Entities.CapGuard.check_inbound/3`. The cap check, telemetry, and
+  # `Esr.Entity.CapGuard.check_inbound/3`. The cap check, telemetry, and
   # rate-limited DM all live there now — this module just decides
   # `:granted` vs `:denied` via that one call.
 

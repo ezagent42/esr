@@ -2,7 +2,7 @@ defmodule Esr.Admin.Commands.HelpTest do
   @moduledoc """
   Tests for `Esr.Admin.Commands.Help` (PR-21κ).
 
-  The Help module renders from `Esr.Resource.SlashRouteRegistry.list_slashes/0`. We
+  The Help module renders from `Esr.Resource.SlashRoute.Registry.list_slashes/0`. We
   load a small synthetic snapshot via `SlashRouteRegistry.load_snapshot/1` so
   the test doesn't depend on the priv default yaml shape.
   """
@@ -10,7 +10,7 @@ defmodule Esr.Admin.Commands.HelpTest do
   use ExUnit.Case, async: false
 
   alias Esr.Admin.Commands.Help
-  alias Esr.Resource.SlashRouteRegistry
+  alias Esr.Resource.SlashRoute.Registry, as: SlashRouteRegistry
 
   setup do
     if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
@@ -21,7 +21,7 @@ defmodule Esr.Admin.Commands.HelpTest do
     # working post-PR-21κ Phase 6.
     on_exit(fn ->
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
-      if File.exists?(priv), do: Esr.Resource.SlashRouteRegistry.FileLoader.load(priv)
+      if File.exists?(priv), do: Esr.Resource.SlashRoute.Registry.FileLoader.load(priv)
     end)
 
     :ok

@@ -13,12 +13,12 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entities.FeishuChatProxy
+          impl: Esr.Entity.FeishuChatProxy
       outbound:
         - feishu_chat_proxy
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Entities.FeishuAppProxy
+        impl: Esr.Entity.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"
     params:
       - name: dir
@@ -36,12 +36,12 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entities.FeishuChatProxy
+          impl: Esr.Entity.FeishuChatProxy
       outbound:
         - feishu_chat_proxy
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Entities.FeishuAppProxy
+        impl: Esr.Entity.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"
     params:
       - name: dir

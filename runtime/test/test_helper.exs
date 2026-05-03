@@ -5,10 +5,10 @@ ExUnit.start(exclude: [:integration, :os_cleanup, :perf])
 # ETS) see the production kind table. Tests that reset to an empty
 # snapshot for isolation should restore from this default in their
 # on_exit hook.
-case Process.whereis(Esr.Resource.SlashRouteRegistry) do
+case Process.whereis(Esr.Resource.SlashRoute.Registry) do
   pid when is_pid(pid) ->
     priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
-    if File.exists?(priv), do: Esr.Resource.SlashRouteRegistry.FileLoader.load(priv)
+    if File.exists?(priv), do: Esr.Resource.SlashRoute.Registry.FileLoader.load(priv)
 
   _ ->
     :ok

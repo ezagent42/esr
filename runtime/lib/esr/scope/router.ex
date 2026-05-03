@@ -32,8 +32,8 @@ defmodule Esr.Scope.Router do
 
   * The expansion's `spawn_pipeline` iterates `inbound ++ proxies` and
     calls `Entity.Factory.spawn_peer/5` for every element. In the current
-    codebase, `Peer.Proxy` modules (e.g. `Esr.Entities.CCProxy`,
-    `Esr.Entities.FeishuAppProxy`) are **stateless forwarder modules** —
+    codebase, `Peer.Proxy` modules (e.g. `Esr.Entity.CCProxy`,
+    `Esr.Entity.FeishuAppProxy`) are **stateless forwarder modules** —
     they have no `start_link/1` / `init/1` and cannot be hosted by a
     `DynamicSupervisor`. The router here only spawns peers whose
     `peer_kind/0` is `:stateful`; proxy entries are recorded in the
@@ -57,16 +57,16 @@ defmodule Esr.Scope.Router do
   require Logger
 
   @stateful_impls MapSet.new([
-                    Esr.Entities.FeishuChatProxy,
-                    Esr.Entities.CCProcess,
-                    Esr.Entities.PtyProcess,
-                    Esr.Entities.FeishuAppAdapter,
+                    Esr.Entity.FeishuChatProxy,
+                    Esr.Entity.CCProcess,
+                    Esr.Entity.PtyProcess,
+                    Esr.Entity.FeishuAppAdapter,
                     # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
                     # Scope.Admin and NOT spawned per-session (the
                     # `cc-voice` pipeline references them only via the
                     # VoiceASRProxy/VoiceTTSProxy). VoiceE2E is
                     # per-session and needs to be spawned.
-                    Esr.Entities.VoiceE2E
+                    Esr.Entity.VoiceE2E
                   ])
 
   # ------------------------------------------------------------------
@@ -657,7 +657,7 @@ defmodule Esr.Scope.Router do
     end)
   end
 
-  defp build_ctx(%{"impl" => "Esr.Entities.FeishuAppProxy", "target" => tgt}, params) do
+  defp build_ctx(%{"impl" => "Esr.Entity.FeishuAppProxy", "target" => tgt}, params) do
     app_id = get_param(params, :app_id) || "default"
     expanded = String.replace(tgt, "${app_id}", app_id)
 
@@ -683,7 +683,7 @@ defmodule Esr.Scope.Router do
     }
   end
 
-  defp build_ctx(%{"impl" => "Esr.Entities.CCProxy"}, params) do
+  defp build_ctx(%{"impl" => "Esr.Entity.CCProxy"}, params) do
     %{principal_id: get_param(params, :principal_id)}
   end
 
@@ -696,7 +696,7 @@ defmodule Esr.Scope.Router do
   # workspace_name made `build_initial_reachable_set/1` fall back to
   # an empty MapSet, so the `<channel reachable=...>` attribute never
   # carried neighbour URIs.
-  defp build_ctx(%{"impl" => "Esr.Entities.CCProcess"}, params) do
+  defp build_ctx(%{"impl" => "Esr.Entity.CCProcess"}, params) do
     %{
       workspace_name: get_param(params, :workspace_name),
       chat_id: get_param(params, :chat_id),
@@ -709,7 +709,7 @@ defmodule Esr.Scope.Router do
   # pool_name the proxy uses to acquire/release workers from
   # Scope.Admin's pool. acquire_timeout is a conservative default
   # (5s); can be overridden per-agent in a future PR.
-  defp build_ctx(%{"impl" => "Esr.Entities.VoiceASRProxy"}, params) do
+  defp build_ctx(%{"impl" => "Esr.Entity.VoiceASRProxy"}, params) do
     %{
       principal_id: get_param(params, :principal_id),
       pool_name: :voice_asr_pool,
@@ -717,7 +717,7 @@ defmodule Esr.Scope.Router do
     }
   end
 
-  defp build_ctx(%{"impl" => "Esr.Entities.VoiceTTSProxy"}, params) do
+  defp build_ctx(%{"impl" => "Esr.Entity.VoiceTTSProxy"}, params) do
     %{
       principal_id: get_param(params, :principal_id),
       pool_name: :voice_tts_pool,

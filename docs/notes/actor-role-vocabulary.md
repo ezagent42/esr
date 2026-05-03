@@ -55,7 +55,7 @@ These are framework imports or generic OTP, not ESR-invented roles. They keep th
 | Suffix | Shape | Examples |
 |---|---|---|
 | `*Server` | Singleton with mutation-heavy state (often GenServer + ETS) | `Esr.Entity.Server` |
-| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.Entity.Registry`, `Esr.AdapterSocketRegistry`, `Esr.Resource.Workspace.Registry`, `Esr.Entity.User.Registry`, `Esr.Resource.Permission.Registry`, `Esr.Resource.Capability.Grants` |
+| `*Registry` | Read-mostly ETS snapshot; reads bypass GenServer | `Esr.SessionRegistry`, `Esr.Entity.Registry`, `Esr.Resource.AdapterSocket.Registry`, `Esr.Resource.Workspace.Registry`, `Esr.Entity.User.Registry`, `Esr.Resource.Permission.Registry`, `Esr.Resource.Capability.Grants` |
 | `*Process` | Wraps an OS process or external-resource lifecycle | `Esr.Scope.Process`, `Esr.Scope.Admin.Process`, `Esr.OSProcess`, `Esr.PyProcess`, `Esr.Entities.CCProcess`, `Esr.Entities.TmuxProcess` |
 | `*Buffer` | Bounded ring buffer / FIFO | `Esr.Telemetry.Buffer` |
 

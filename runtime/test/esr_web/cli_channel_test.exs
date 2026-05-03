@@ -341,7 +341,7 @@ defmodule EsrWeb.CliChannelTest do
 
   describe "cli:deadletter/list" do
     setup do
-      Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
+      Esr.Resource.DeadLetter.Queue.clear(Esr.Resource.DeadLetter.Queue)
       {:ok, _, socket} =
         EsrWeb.HandlerSocket
         |> socket("cli-test-dl", %{})
@@ -357,7 +357,7 @@ defmodule EsrWeb.CliChannelTest do
     end
 
     test "returns serialised entries after enqueue", %{dl_socket: socket} do
-      Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
+      Esr.Resource.DeadLetter.Queue.enqueue(Esr.Resource.DeadLetter.Queue, %{
         reason: :unknown_target,
         target: "ghost:42",
         msg: %{hello: "world"},
@@ -413,9 +413,9 @@ defmodule EsrWeb.CliChannelTest do
 
   describe "cli:deadletter/flush" do
     setup do
-      Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
+      Esr.Resource.DeadLetter.Queue.clear(Esr.Resource.DeadLetter.Queue)
       # prime the queue with one entry
-      Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
+      Esr.Resource.DeadLetter.Queue.enqueue(Esr.Resource.DeadLetter.Queue, %{
         reason: :test_prime,
         target: "ghost:flush"
       })
@@ -433,7 +433,7 @@ defmodule EsrWeb.CliChannelTest do
       ref = push(socket, "cli_call", %{})
       assert_reply ref, :ok, response
       assert response["data"]["flushed"] == 1
-      assert Esr.Resource.DeadLetterQueue.list(Esr.Resource.DeadLetterQueue) == []
+      assert Esr.Resource.DeadLetter.Queue.list(Esr.Resource.DeadLetter.Queue) == []
     end
   end
 

@@ -12,7 +12,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.AdapterSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
 
   setup do
     # Guard against a stale env var leaking in from other tests in the

@@ -28,7 +28,7 @@ end
 defmodule Esr.Role.Boundary do
   @moduledoc """
   Marker for boundary-crossing modules: foreign-protocol bridges and
-  network entry points. Examples: `Esr.Entities.FeishuAppAdapter`.
+  network entry points. Examples: `Esr.Entity.FeishuAppAdapter`.
 
   Identifying property: speaks BOTH the ESR envelope shape on one side
   AND a foreign protocol (Feishu lark_oapi, MCP stdio, Phoenix WS,

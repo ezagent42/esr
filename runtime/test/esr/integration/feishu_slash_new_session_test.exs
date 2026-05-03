@@ -42,7 +42,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
 
-  alias Esr.Entities.SlashHandler
+  alias Esr.Entity.SlashHandler
 
   @test_principal "ou_t3_flow"
   @chat_id "oc_slashsession"
@@ -154,7 +154,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # (PR-21κ Phase 6: legacy `:slash_cmd` send replaced by yaml-driven
     # dispatch/3.)
     _ = slash
-    ref = Esr.Entities.SlashHandler.dispatch(envelope, self(), make_ref())
+    ref = Esr.Entity.SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 2_000
 

@@ -1,0 +1,8 @@
+# R4 Interface big-bang + naming cleanup — pre-rename grep counts (2026-05-03T16:41:51Z)
+# Generated from 4079f5aba952389e46b1092d8743ff9696cd83f2 on branch refactor/r4-interface-bigbang
+
+Esr\.Entities\.: 222 hits
+Esr\.AdapterSocketRegistry: 19 hits
+Esr\.SessionRegistry: 279 hits
+Esr\.Resource\.SlashRouteRegistry: 31 hits
+Esr\.Resource\.DeadLetterQueue: 25 hits

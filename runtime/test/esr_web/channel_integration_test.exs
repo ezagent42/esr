@@ -1,7 +1,7 @@
 defmodule EsrWeb.ChannelIntegrationTest do
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.AdapterSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
   alias Esr.TestSupport.AuthContext
 
   setup do

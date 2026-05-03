@@ -34,7 +34,7 @@ defmodule Esr.Integration.CCE2ETest do
       at the `CCProcess` pid — the boundary that the integration
       test actually _can_ observe.
 
-    * `Esr.Entities.CCProxy` / `Esr.Entities.FeishuAppProxy` are stateless
+    * `Esr.Entity.CCProxy` / `Esr.Entity.FeishuAppProxy` are stateless
       forwarder modules (no `start_link/1`); `Scope.Router` records
       them as `{:proxy_module, Module}` markers in the session refs
       map — no pid is ever spawned. So the reply chain
@@ -113,7 +113,7 @@ defmodule Esr.Integration.CCE2ETest do
     {:ok, faa} =
       DynamicSupervisor.start_child(
         admin_children_sup,
-        {Esr.Entities.FeishuAppAdapter,
+        {Esr.Entity.FeishuAppAdapter,
          %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -257,7 +257,7 @@ defmodule Esr.Integration.CCE2ETest do
     }
 
     {:forward, _, _} =
-      Esr.Entities.PtyProcess.handle_upstream(
+      Esr.Entity.PtyProcess.handle_upstream(
         {:os_stdout, "%output %0 synthetic_out\n"},
         synth_legacy_state
       )

@@ -6,7 +6,7 @@ defmodule EsrWeb.AdapterSocket do
   Each Python adapter opens one WebSocket against ``/adapter_hub/socket``
   and joins one topic per adapter instance — the channel module
   (`EsrWeb.AdapterChannel`) routes inbound Feishu envelopes into the
-  new peer chain via `Esr.Entities.FeishuAppAdapter` (post-P2-16; the
+  new peer chain via `Esr.Entity.FeishuAppAdapter` (post-P2-16; the
   previous `Esr.AdapterHub.Registry` lookup was removed).
   """
 
