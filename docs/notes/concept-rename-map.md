@@ -1,6 +1,6 @@
 # ESR Concept Rename Map — current code → metamodel vocabulary
 
-**Date:** 2026-05-03 (rev 2 — applied subagent review fixes)
+**Date:** 2026-05-03 (rev 3 — second-level nesting + workspace clarified per user 2026-05-03 11:34)
 **Audience:** anyone executing the post-metamodel refactor
 **Status:** prescriptive plan; lists which modules rename when, in which batch, with what blast radius. Not the metamodel itself — see `concepts.md` / `session.md` / `mechanics.md` for that.
 
@@ -37,17 +37,18 @@ This doc covers **steps 1 + 3** — what gets renamed mechanically, what needs a
 
 ## 三、Phase 1 — Mechanical renames (✅)
 
-Token swap `Session*` → `Scope*` on the **runtime-instance** layer. The new declarative `Esr.Sessions.*` namespace is added later (Phase 4 / new-feature work) without colliding with these.
+Token swap `Session*` → `Scope.*` on the **runtime-instance** layer, **plus** collapse into a second-level namespace. Today's flat `Esr.Session*` family becomes a nested `Esr.Scope.*` namespace, matching the existing pattern (`Esr.Capabilities.*`, `Esr.Permissions.*`, `Esr.Telemetry.*`, `Esr.Persistence.*`, `Esr.Admin.*`). The new declarative `Esr.Sessions.*` namespace is added later (Phase 4 / new-feature work) for `DaemonSession` / `AdminSession` / `GroupChatSession` declarations — different namespace, no collision.
 
 | Current | New | Role | Notes |
 |---|---|---|---|
 | `Esr.Session` | `Esr.Scope` | Per-Scope subtree supervisor (`:one_for_all :transient`) | Touches every `Session.start_link` / `Session.supervisor_name/1` call |
-| `Esr.SessionProcess` | `Esr.ScopeProcess` | The Scope's state GenServer (`session_id`, agent_name, grants cache, chat_thread_key) | Touches every `GenServer.call(SessionProcess, …)` |
-| `Esr.SessionRouter` | `Esr.ScopeRouter` | Control-plane coordinator for Scope lifecycle (`create_session_sync`, `end_session_sync`, `new_chat_thread`) | The 3 sync messages & the PubSub topic `"session_router"` rename in lockstep |
-| `Esr.SessionsSupervisor` | `Esr.ScopesSupervisor` | DynamicSupervisor that owns all live Scope subtrees | Touches application supervision tree |
-| `Esr.AdminSession` | `Esr.AdminScope` | Always-on Scope hosting session-less Entities (FeishuAppAdapter, SlashHandler, pools) | Atom config `:esr, :admin_children_sup_name` callers stay correct (atom unchanged) |
-| `Esr.AdminSessionProcess` | `Esr.AdminScopeProcess` | Admin-Scope state GenServer (parallel to ScopeProcess) | |
+| `Esr.SessionProcess` | `Esr.Scope.Process` | The Scope's state GenServer (`session_id`, agent_name, grants cache, chat_thread_key) | File move: `runtime/lib/esr/session_process.ex` → `runtime/lib/esr/scope/process.ex` |
+| `Esr.SessionRouter` | `Esr.Scope.Router` | Control-plane coordinator for Scope lifecycle (`create_session_sync`, `end_session_sync`, `new_chat_thread`) | The 3 sync messages & the PubSub topic `"session_router"` rename in lockstep |
+| `Esr.SessionsSupervisor` | `Esr.Scope.Supervisor` | DynamicSupervisor that owns all live Scope subtrees | Touches application supervision tree |
+| `Esr.AdminSession` | `Esr.AdminScope` | Always-on Scope hosting session-less Entities (FeishuAppAdapter, SlashHandler, pools) | Stays parallel to `Esr.Scope` (its own supervisor tree, not a child of `Esr.Scope`). Atom config `:esr, :admin_children_sup_name` unchanged |
+| `Esr.AdminSessionProcess` | `Esr.AdminScope.Process` | Admin-Scope state GenServer (parallel to `Esr.Scope.Process`) | File move: `admin_session_process.ex` → `admin_scope/process.ex` |
 | `Esr.Admin.Commands.Session.*` (6 modules: `New`, `End`, `BranchNew`, `BranchEnd`, `List`, `Switch`) | `Esr.Admin.Commands.Scope.*` | Slash-command Handler-composing Entities operating on Scopes | Directory-level rename; same R1 PR. The commands operate on Scope instances, not Session declarations |
+| `Esr.SessionSocketRegistry` | `Esr.AdapterSocketRegistry` | Tracks live CLI-adapter WS bindings (today: cc; future: Cursor/Aider/…) | Promoted from Phase 3 to Phase 1 since the chosen name is pure module-rename, no structural split needed |
 
 **Renamed identifiers (non-module, swept in same batch):**
 
@@ -56,21 +57,21 @@ Token swap `Session*` → `Scope*` on the **runtime-instance** layer. The new de
 
 ---
 
-## 四、Phase 2 — Mostly mechanical (⚠️) — `Peer*` → `Entity*`
+## 四、Phase 2 — Mostly mechanical (⚠️) — `Peer*` → `Entity.*` (nested)
 
-Wide blast radius: every concrete actor module declares `@behaviour Esr.Peer.Proxy` or `@behaviour Esr.Peer.Stateful`, and PeerServer is referenced from many call sites. But no structural change — just token swap.
+Wide blast radius: every concrete actor module declares `@behaviour Esr.Peer.Proxy` or `@behaviour Esr.Peer.Stateful`, and PeerServer is referenced from many call sites. But no structural change — just token swap **plus** second-level nesting (today's flat `Esr.Peer*` siblings collapse under `Esr.Entity.*`, matching the existing pattern that already half-applies — `Esr.Peer.Proxy` / `Esr.Peer.Stateful` are already nested).
 
 | Current | New | Role |
 |---|---|---|
-| `Esr.Peer` | `Esr.Entity` | Base behaviour (`peer_kind/0` callback, two flavors `:proxy` and `:stateful`) |
+| `Esr.Peer` | `Esr.Entity` | Base behaviour (`entity_kind/0` callback, two flavors `:proxy` and `:stateful`) |
 | `Esr.Peer.Proxy` | `Esr.Entity.Proxy` | Behaviour for proxy-type entities |
 | `Esr.Peer.Stateful` | `Esr.Entity.Stateful` | Behaviour for stateful entities |
-| `Esr.PeerServer` | `Esr.EntityServer` | GenServer host for a single live entity (inbound dedup, handler-router call, persistence) |
-| `Esr.PeerRegistry` | `Esr.EntityRegistry` | actor_id → pid registry |
-| `Esr.PeerFactory` | `Esr.EntityFactory` | spawn / terminate / restart for entities |
-| `Esr.PeerPool` | `Esr.EntityPool` | Bounded pool of `Entity.Stateful` workers (max 128) |
-| `Esr.PeerSupervisor` | `Esr.EntitySupervisor` | DynamicSupervisor under each Scope, owns EntityServer pids |
-| `Esr.Peers.*` (namespace) | `Esr.Entities.*` | Namespace for concrete entity modules (`cc_process`, `pty_process`, `feishu_app_adapter`, …) |
+| `Esr.PeerServer` | `Esr.Entity.Server` | GenServer host for a single live entity (inbound dedup, handler-router call, persistence) |
+| `Esr.PeerRegistry` | `Esr.Entity.Registry` | actor_id → pid registry |
+| `Esr.PeerFactory` | `Esr.Entity.Factory` | spawn / terminate / restart for entities |
+| `Esr.PeerPool` | `Esr.Entity.Pool` | Bounded pool of `Entity.Stateful` workers (max 128) |
+| `Esr.PeerSupervisor` | `Esr.Entity.Supervisor` | DynamicSupervisor under each Scope, owns Entity.Server pids |
+| `Esr.Peers.*` (namespace) | `Esr.Entities.*` | Plural namespace for concrete entity modules (`cc_process`, `pty_process`, `feishu_app_adapter`, …). Stays plural to mirror `Esr.Workspaces.*` / `Esr.Users.*` (collection of instances vs. base behaviour) |
 
 **Why ⚠️ not ✅:** every concrete Entity module's `@behaviour` line moves; the `:peer_kind` field shows up in many places (logs, telemetry events, registry keys). LSP rename catches the module refs but not raw atom uses — must follow with `grep -rn ':peer'` sweep.
 
@@ -98,13 +99,11 @@ The metamodel says these are **three different Resources**:
 
 **Spec needed:** which split, naming, migration path. Out of scope for mechanical PRs.
 
-### 🔧-2. `Esr.SessionSocketRegistry` naming reuse
+### 🔧-2. `Esr.SessionSocketRegistry` — RESOLVED (rev 3)
 
-The `SessionRegistry` name was historically taken by today's CC WS socket bindings, then renamed to `SessionSocketRegistry` to free `SessionRegistry` for yaml-topology (current state). After the Phase 1 rename `Session* → Scope*`, this becomes `Esr.ScopeSocketRegistry` — but the role is "CC WebSocket bindings for a CLI adapter," which has nothing to do with Scope identity. ❓ Needs user choice between:
-- `Esr.ScopeSocketRegistry` (mechanical token swap)
-- `Esr.CliSocketRegistry` (renames to actual role; the CC adapter's CLI socket binding)
-- `Esr.AttachSocketRegistry` (renames to PR-22's attach-socket concern)
-- `Esr.AdapterSocketRegistry` (most adapter-agnostic — accommodates future Cursor / Aider / etc. CLI adapters that would also bind a socket here)
+Decision: rename to `Esr.AdapterSocketRegistry` (per user 2026-05-03). Promoted from Phase 3 to Phase 1 since the new name is a pure module-rename — no structural split — and can land alongside the rest of R1.
+
+See §三 Phase 1 table.
 
 ### 🔧-3. `Esr.Capabilities` + `Esr.Permissions` — Resource vs. Interface split
 
@@ -117,12 +116,11 @@ Today `Esr.Capabilities` and `Esr.Permissions` are both monolithic façades with
 
 **Spec needed:** whether to physically split modules, or stay as façade. Likely lighter touch (façades stay; doc cross-reference to interface contracts). Bundle both subsystems into one spec.
 
-### 🔧-4. Workspace's metamodel role
+### 🔧-4. Workspace's metamodel role — RESOLVED (rev 3)
 
-`Esr.Workspaces.Registry` holds workspaces.yaml cache. **Is "workspace" a Scope, a Resource, or an Entity-attribute?** In the metamodel:
-- A workspace bounds permissions + dirs — feels Scope-like (has members)
-- But workspaces are referenced by Entities (a User belongs to a workspace) — feels like a Scope reference
-- Spec needed before any rename here. Until then, ⏹ stays as-is.
+Per user 2026-05-03: **Workspace is a Resource**, similar in shape to `Dir` (named filesystem-like namespace bounding permissions + dirs). Not a Scope.
+
+Implication: `Esr.Workspaces.Registry` is a Registry of Workspace Resources — name stays. Open question deferred to a future spec: does Workspace need its own Resource type, or compose existing `Dir` + `Capability` Interface? Out of scope for R1/R2.
 
 ---
 
@@ -177,8 +175,8 @@ Smallest blast radius first; each PR ends green (e2e 06+07 + DOM dataset check).
 
 | PR | Contents | Blast radius | Validation |
 |---|---|---|---|
-| **R1** | Phase 1 batch — `Esr.Session*` → `Esr.Scope*` (6 modules) | ~80 files, mostly Elixir + a few yaml/doc refs | mix test + uv run pytest + e2e 06/07 |
-| **R2** | Phase 2 batch — `Esr.Peer*` → `Esr.Entity*` (8 modules + namespace + behaviour names) | ~150 files (every concrete entity module's `@behaviour`) | mix test + uv run pytest + e2e 06/07; telemetry events untouched |
+| **R1** | Phase 1 batch — `Esr.Session*` → `Esr.Scope.*` (nested, 6 modules + 6 admin command subtree) | ~80 files, mostly Elixir + a few yaml/doc refs | mix test + uv run pytest + e2e 06/07 |
+| **R2** | Phase 2 batch — `Esr.Peer*` → `Esr.Entity.*` (nested, 8 modules + namespace + behaviour names) | ~150 files (every concrete entity module's `@behaviour`) | mix test + uv run pytest + e2e 06/07; telemetry events untouched |
 | **R3 spec** | Phase 3-1 design — split `Esr.SessionRegistry` → 3 Registries | spec only, no code | subagent review |
 | **R3 impl** | Phase 3-1 implementation | ~30 files | mix test + e2e 06/07 |
 | **R4 spec + impl** | Phase 3-2 — `Esr.SessionSocketRegistry` final name | small | mix test + e2e 06/07 |
@@ -244,14 +242,16 @@ If a Python rename is mechanical-but-large (e.g. an SDK function rename), give i
 
 ---
 
-## 十、Open questions (❓) — flag for user
+## 十、Open questions (resolved per user 2026-05-03)
 
-Before scheduling R1/R2, decide:
+| # | Question | Decision | Effective in |
+|---|---|---|---|
+| 1 | Telemetry event-name backwards-compat (`:peer` / `:session`) | **Keep old event-name atoms** until grep of repo + external dashboards confirms no out-of-tree consumer; then sunset. Add `:entity`/`:scope` parallel events only if needed. | Phase 2 PR honors |
+| 2 | `session_id` field name everywhere | **Keep grandfathered** (`session_id` still identifies "an instance of a Session description" = a Scope id). New code/new yaml fields prefer `scope_id`. | All phases |
+| 3 | `Esr.SessionSocketRegistry` final name | `Esr.AdapterSocketRegistry` — adapter-agnostic, survives future Cursor / Aider CLI additions without re-rename. **Promoted to Phase 1** since the chosen name doesn't depend on the structural-split spec. | R1 |
+| 4 | Workspace metamodel role | **Workspace is a Resource** (Dir-flavor, named namespace bounding permissions + dirs). `Esr.Workspaces.Registry` name stays. Future spec discusses Resource subtype vs. Dir+Capability composition. | Future spec; not R1/R2 |
 
-1. **Telemetry event names** — keep `:peer` / `:session` event keys for backwards-compat, or rename in lockstep? (Recommendation: keep until grep of repo + external dashboards confirms no out-of-tree consumer; then sunset. Add `:entity`/`:scope` event keys in parallel if needed.)
-2. **`session_id` field name** — universally rename to `scope_id`, or keep `session_id` since it identifies "an instance of a Session description"? (Recommendation: keep as grandfathered. New code/fields prefer `scope_id` to avoid future yaml-side `session_name` collision when declarative Sessions land.)
-3. **`Esr.SessionSocketRegistry`** — pick: `ScopeSocketRegistry` (mechanical) / `CliSocketRegistry` (role-named, CC-only today) / `AttachSocketRegistry` (PR-22 concern-named) / `AdapterSocketRegistry` (most adapter-agnostic for future Cursor/Aider/etc.). (Recommendation: `AdapterSocketRegistry` — survives addition of new CLI adapters without renaming again.)
-4. **Workspace** — Scope or Resource? Spec needed before any rename. (Recommendation: leave for R6 standalone spec; do not touch in R1/R2.)
+**Second-level nesting** (rev 3, per user): R1 collapses today's flat `Esr.Session*` family into nested `Esr.Scope.*` namespace; R2 likewise for `Esr.Peer*` → `Esr.Entity.*`. This matches the existing nested-namespace pattern (`Esr.Capabilities.*` / `Esr.Permissions.*` / `Esr.Telemetry.*` / `Esr.Persistence.*` / `Esr.Admin.*`) instead of adding more flat top-level entries.
 
 ---
 
