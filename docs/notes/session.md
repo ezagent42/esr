@@ -1,6 +1,6 @@
 # ESR Sessions — 目标态设计
 
-**Date:** 2026-05-03 (rev 7, was templates.md → views.md → session.md)
+**Date:** 2026-05-03 (rev 8, was templates.md → views.md → session.md)
 **Audience:** 同 `concepts.md`
 **Status:** prescriptive 设计文档；**不**描述当前实现，**不**讨论迁移路径
 
@@ -35,27 +35,24 @@
 | **AdminSession** | Admin Scope（操作员 scope） | 1（daemon 内嵌 1 份） |
 | **GroupChatSession** | Group-Chat Scope（多成员群聊） | N（每个群 1 份） |
 
-### Entity types
+### Entity types（base）
 
-| Entity type | 角色 | 实例数 |
-|---|---|---|
-| **User** | 人类参与者 | N（每个人 1 份，跨多 Scope reference） |
-| **Agent** | AI 参与者 | N（每个 AI 实例 1 份） |
-| **Adapter** | 外部接入桥 | N（每个外部 instance 1 份） |
-| **Handler** | 纯函数事件处理器（base） | N |
-| **SlashCommandHandler** | Handler + SlashParseInterface | 1 (admin scope 内) |
-| **Dispatcher** | Handler + OperationInterface | 1 (admin scope 内) |
+| Entity type | 角色 |
+|---|---|
+| **User** | 人类参与者 |
+| **Agent** | AI 参与者 |
+| **Adapter** | 外部接入桥 |
+| **Handler** | 纯函数事件处理器（其他特定 Handler 通过 `use Handler` + 加 Interface composition 得到） |
 
-### Resource types
+### Resource types（base）
 
-| Resource type | 角色 | 实例数 |
-|---|---|---|
-| **Channel** | 双向消息流 | N |
-| **Dir** | fs namespace | N |
-| **Capability** | perm token | N |
-| **AdminQueue** | fs-based job queue | 1（admin scope 内 1 份） |
-| **SlashRouteRegistry** | kind → command_module 注册表 | 1 |
-| **CapabilityRegistry** | cap 声明 + grant 关系 | 1 |
+| Resource type | 角色 |
+|---|---|
+| **Channel** | 双向消息流 |
+| **Dir** | fs namespace |
+| **Capability** | perm token |
+| **JobQueue** | FIFO job queue（具体 instance 如 admin scope 的 AdminQueue） |
+| **Registry** | key-value lookup（具体 instance 如 SlashRouteRegistry / CapabilityRegistry） |
 
 ---
 
@@ -95,9 +92,9 @@
 
 - 1 个 Dispatcher Entity
 - 1 个 SlashCommandHandler Entity
-- 1 个 AdminQueue Resource
-- 1 个 SlashRouteRegistry Resource
-- 1 个 CapabilityRegistry Resource
+- 1 个 AdminQueue Resource（JobQueue base 的 instance；fs-based）
+- 1 个 SlashRouteRegistry Resource（Registry base 的 instance）
+- 1 个 CapabilityRegistry Resource（Registry base 的 instance）
 - 默认订阅关系：Dispatcher 订阅 AdminQueue，SlashCommandHandler 订阅一个 admin slash channel
 
 ---
@@ -191,27 +188,12 @@
 
 **Purity 约束**：handler 只能 import `esr` SDK + 自己的 package；不持有跨 invocation 状态。
 
----
+**Composition 例子**——通过 `use Handler` + 加 specific Interface 得到特定 Handler：
 
-### SlashCommandHandler — composes Handler
+- **SlashCommandHandler**: `use Handler` + 加 `SlashParseInterface`。处理 user-facing slash 文本，输出 (kind, args)。
+- **Dispatcher**: `use Handler` + 加 `OperationInterface`。从 JobQueue 拉 operation → 解析 → 调用对应 command 模块。
 
-**`use Handler` + 加 SlashParseInterface**。处理 user-facing slash 文本，输出 (kind, args)。admin scope 内 1 份。
-
-**实现的 Interface**（继承自 Handler 的 + 自己加的）：
-- `EventHandlerInterface` (from Handler)
-- `PurityInterface` (from Handler)
-- `SlashParseInterface` (added)
-
----
-
-### Dispatcher — composes Handler
-
-**`use Handler` + 加 OperationInterface**。从 AdminQueue 拉 operation → 解析 → 调用对应 command 模块。admin scope 内 1 份。
-
-**实现的 Interface**（继承自 Handler 的 + 自己加的）：
-- `EventHandlerInterface` (from Handler)
-- `PurityInterface` (from Handler)
-- `OperationInterface` (added)
+这些不是独立的 base Entity type——是 Handler 的 specific application。
 
 ---
 
@@ -258,13 +240,34 @@
 
 ---
 
-### AdminQueue / SlashRouteRegistry / CapabilityRegistry
+### JobQueue（base）
 
-admin scope 内部的 Resource：
+**职责**：FIFO 异步 job 队列。投递 job → consumer 拉取处理。
 
-- **AdminQueue**: fs-based job queue。`{id, kind, submitted_by, args, [result]}` schema。实现 `JobQueueInterface`。
-- **SlashRouteRegistry**: kind → command_module 映射的运行时 registry。实现 `RegistryInterface`。
-- **CapabilityRegistry**: cap 声明 + grant 关系的运行时 registry。实现 `RegistryInterface` + `GrantInterface`。
+**实现的 Interface**：
+- `JobQueueInterface` — enqueue / dequeue / report
+
+**Lifecycle 选项**：
+- **Persistent**：fs-based 跨重启可见
+- **Ephemeral**：进程内队列
+
+**Instance 例子**：
+- **AdminQueue**: 持久化的 admin scope JobQueue。schema `{id, kind, submitted_by, args, [result]}`，作为 AdminSession 的成员（具体实例配置在 AdminSession.Topology 里）。
+
+---
+
+### Registry（base）
+
+**职责**：运行时 key-value lookup 表。
+
+**实现的 Interface**：
+- `RegistryInterface` — lookup / register / unregister
+
+**Instance 例子**（admin scope 内的具体 Registry）：
+- **SlashRouteRegistry**: kind → command_module 映射
+- **CapabilityRegistry**: cap 声明 + grant 关系（在 RegistryInterface 之外另加 `GrantInterface`）
+
+具体内容在 AdminSession.Topology 里声明。
 
 ---
 

@@ -1,6 +1,6 @@
 # ESR 运行 Mechanics — 怎么 implement 一个功能
 
-**Date:** 2026-05-03 (rev 7)
+**Date:** 2026-05-03 (rev 8)
 **Audience:** 同 `concepts.md`
 **Status:** prescriptive 设计文档；**不**描述当前实现，**不**讨论迁移路径
 
@@ -66,47 +66,66 @@ Entity 之间互相协调通过 **Channel Resource**，对应 Phoenix.PubSub 的
 
 ## 二、加新功能的落点表
 
-任何 ESR 新功能都落在下面 6 个 bucket 之一：
+任何 ESR 新功能都落在下面 5 个 metamodel-level bucket 之一（或几个的组合）：
 
-| 想加的东西 | 落点 |
+| 落点 | 怎么改 |
 |---|---|
-| **新 Entity type** — 新参与者（人 / AI / coordinator） | 写 Entity declaration（如 `MyAgent`），实现需要的 Interface（至少 MemberInterface）。Compose 现有 Entity 类型如有需要（`use Handler` 等）|
-| **新 Resource type** — 新共享物（channel 子类 / dir 子类 / cap 子类 / 新 fs job queue 等） | 写 Resource declaration（如 `MyQueue`），实现适当 Interface |
-| **新 Scope kind** — 新 scope 类别（如 voice-chat scope、code-review scope） | 写 Session declaration（如 `VoiceChatSession`），声明 Context（kind）+ Topology（默认 members + subscriptions） |
-| **新 Interface** — 新事件类型 / 新 callback shape | 在 `session.md §七` 加 Interface declaration，让相关 Entity / Resource 实现 |
-| **新 admin operation** | slash-route yaml 加一行（kind → command_module）+ 写 command module（用 `use Dispatcher` 等） |
-| **新 wiring 关系** | 修 Session 的 Topology facet，加 subscription / membership 边 |
+| **新 Scope kind** | 写新 Session declaration（含 Context + Topology） |
+| **新 Entity type** | 写 Entity declaration；可 compose 现有 Entity（`use Handler` 等） |
+| **新 Resource type** | 写 Resource declaration |
+| **新 Interface** | 加 Interface declaration（在 `session.md §七`） |
+| **修 wiring** | 修现有 Session 的 Topology facet（加 member、加订阅边） |
 
-每个 bucket 都对应**改一个 declaration 或一个 Session + 写一个新模块**——不需要改老代码（或最小改动）。
+具体 feature 落到这 5 个 bucket 的**组合**——见 §三 例子。
 
 ---
 
-## 三、最常 ask 的几个问题
+## 三、常见 feature → bucket 组合（FAQ）
 
 ### Q：怎么加一个新的 AI agent 类型？
 
-写 Entity declaration（如 `MyAgent`）：
+落 **Entity type** + 可能 **修 wiring**：
 
-1. `@behaviour MemberInterface`（让它能加入 Group-Chat Scope）
-2. `@behaviour AgentInterface`（如果有 agent-specific 行为）
-3. 在 `session.md` 的 Entity declarations 段登记
-4. 如果需要它默认在某个 Scope 里，修对应 Session 的 Topology 加成员
+1. 写 Entity declaration（如 `MyAgent`）：`@behaviour MemberInterface` + `@behaviour AgentInterface`
+2. 在 `session.md` 的 Entity declarations 段登记
+3. 如果需要它默认在某个 Scope 里，修对应 Session 的 Topology 加成员（修 wiring）
 
 ### Q：怎么接入一个新的外部 platform（消息平台）？
 
-写 Adapter Entity declaration：
+落 **Entity type** + **修 wiring**：
 
-1. `@behaviour BoundaryInterface`（inbound 翻译 / outbound 翻译）
+1. 写 Adapter Entity declaration：`@behaviour BoundaryInterface`
 2. 它持有的 ExternalConnection Resource 实现 `BoundaryConnectionInterface`
-3. 在某个 Session 的 Topology 里声明：adapter 收到 inbound 后 publish 到哪个 Channel
+3. 修 DaemonSession.Topology：声明 adapter 收到 inbound 后 publish 到哪个 Channel（修 wiring）
+
+### Q：怎么加一个新的 admin slash command？
+
+落 **Entity type** + **修 wiring**：
+
+1. 写一个 Handler-composing Entity（`use Handler` + `@behaviour SlashParseInterface`），实现 slash text → (kind, args) 解析
+2. 修 AdminSession.Topology：声明这个新 Entity 默认是 admin Scope 的 member，订阅 SlashRouteRegistry（修 wiring）
+
+注意：**没有"slash-route yaml 加一行"这个独立 bucket**——slash-route yaml 是 AdminSession.Topology 在 yaml 里的具体表达，修 yaml 等于"修 wiring"落点。
 
 ### Q：怎么让现有 Scope 发送一种新事件？
 
-1. 在 `session.md` 加新 Interface declaration（如 `MentionInterface`）
+落 **新 Interface**：
+
+1. 加新 Interface declaration（如 `MentionInterface`）
 2. 给已有 Entity 加 `@behaviour MentionInterface` + 实现 callback
 3. 完成
 
 不需要改 Scope 自己的代码——Scope 是 dumb container，行为在 members 上。
+
+### Q：怎么加一个新的 Scope 类别（如 voice-chat scope）？
+
+落 **新 Scope kind**：
+
+1. 写新 Session declaration（如 `VoiceChatSession`）
+2. Context: 声明实现的 Interface（如 VoiceLifecycleInterface）
+3. Topology: 默认 members + 订阅关系（如 1 个 voice-channel + 默认成员 = 实现 VoiceMemberInterface 的 Entity）
+
+如果 voice-chat 需要新的 Resource type（如 AudioStream），那是额外的 **新 Resource type** 落点。
 
 ### Q：怎么调试一个 inbound message 没到位？
 
