@@ -115,9 +115,10 @@ discovering live flows.
 |---|---|---|
 | [`01_single_user_create_and_end.sh`](tests/e2e/scenarios/01_single_user_create_and_end.sh) | Single user — create / use / end session | [`docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md`](docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md) |
 | [`02_two_users_concurrent.sh`](tests/e2e/scenarios/02_two_users_concurrent.sh) | Two users in parallel — isolation + capability gating | same |
-| [`03_tmux_attach_edit.sh`](tests/e2e/scenarios/03_tmux_attach_edit.sh) | Operator attaches to tmux pane mid-session | same |
 | [`04_multi_app_routing.sh`](tests/e2e/scenarios/04_multi_app_routing.sh) | Cross-app forward — `app_id` propagation, capability denial | [`docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md`](docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md) |
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set learn | [`docs/superpowers/specs/2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
+| [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach — browser xterm renders cc TUI via WS | [`docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
+| [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor bidirectional — keystroke → process → frame round-trip | same |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).
@@ -257,9 +258,10 @@ E2E 覆盖在 [`tests/e2e/scenarios/`](tests/e2e/scenarios/)。**新增 scenario
 |---|---|---|
 | [`01_single_user_create_and_end.sh`](tests/e2e/scenarios/01_single_user_create_and_end.sh) | 单用户 create / use / end | [`2026-04-23-pr7-e2e-feishu-to-cc-design.md`](docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md) |
 | [`02_two_users_concurrent.sh`](tests/e2e/scenarios/02_two_users_concurrent.sh) | 两用户并发 —— 隔离 + cap 门 | 同上 |
-| [`03_tmux_attach_edit.sh`](tests/e2e/scenarios/03_tmux_attach_edit.sh) | 运维中途 attach tmux pane | 同上 |
 | [`04_multi_app_routing.sh`](tests/e2e/scenarios/04_multi_app_routing.sh) | 跨 app forward —— `app_id` 传递 / cap deny | [`2026-04-25-pr-a-multi-app-design.md`](docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md) |
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set 学习 | [`2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
+| [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach —— 浏览器 xterm 渲染 cc TUI（WS） | [`2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
+| [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor 双向 —— keystroke → process → frame 回环 | 同上 |
 
 > 添加新 scenario 时：在本表登记，**并**在
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md) 里记一笔。
