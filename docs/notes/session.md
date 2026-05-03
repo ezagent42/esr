@@ -226,6 +226,22 @@
 
 ---
 
+### Workspace（Dir-flavor Resource type）
+
+**职责**：命名的工作空间——绑定 owner、start_cmd、role、chats、env 元数据，承载 Scope 的运行时根目录。
+
+**实现的 Interface**：
+- `DirInterface`（继承 Dir 的 fs 语义）
+- 加 schema 字段：owner / start_cmd / role / chats / env
+
+**关系**：与 Dir 不同，Workspace **不是 Dir + Capability 组合**——它有自己专属的字段（per `Esr.Resource.Workspace.Registry` 的 schema），是独立 Resource subtype。被多 User Entity 共享；写冲突由 worktree 隔离协调。
+
+**lifecycle**：persistent；workspaces.yaml 是 source of truth，hot-reload via `Esr.Resource.Workspace.Watcher`.
+
+确认于 2026-05-04（user 2026-05-03 + R10 doc clarification）。
+
+---
+
 ### Capability
 
 **职责**：符号性权限 token + 授权关系。
