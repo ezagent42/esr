@@ -114,9 +114,10 @@ from that spec to code on disk. PRs are tracked under
 |---|---|
 | Single-user create / use / end | `tests/e2e/scenarios/01_single_user_create_and_end.sh` |
 | Concurrent users + cap gating | `tests/e2e/scenarios/02_two_users_concurrent.sh` |
-| Tmux pane operator attach | `tests/e2e/scenarios/03_tmux_attach_edit.sh` |
 | Multi-app `app_id` propagation + cross-app deny | `tests/e2e/scenarios/04_multi_app_routing.sh` |
 | Topology `<channel reachable=…>` + BGP learn | `tests/e2e/scenarios/05_topology_routing.sh` |
+| PTY actor attach (xterm WS frames) | `tests/e2e/scenarios/06_pty_attach.sh` |
+| PTY actor bidirectional roundtrip | `tests/e2e/scenarios/07_pty_bidir.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |
