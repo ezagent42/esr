@@ -19,7 +19,7 @@ defmodule Esr.Entities.CapGuardDenyDmTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Entities.{CapGuard, FeishuAppAdapter}
   alias Esr.TestSupport.AuthContext
 

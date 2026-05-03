@@ -47,7 +47,7 @@ defmodule Esr.Application do
       Esr.Entity.Supervisor,
 
       # 4b. Dead-letter queue — started before peers so enqueue never misses.
-      {Esr.DeadLetter, name: Esr.DeadLetter},
+      {Esr.Resource.DeadLetterQueue, name: Esr.Resource.DeadLetterQueue},
 
       # 4c. Python worker launcher — on-demand adapter_runner /
       # handler_worker subprocesses for live topology instantiation
@@ -81,7 +81,7 @@ defmodule Esr.Application do
       Esr.Scope.Router,
 
       # 4e. Workspaces registry (PRD v0.2 §3.6).
-      Esr.Workspaces.Registry,
+      Esr.Resource.Workspace.Registry,
 
       # 4e.1 Workspaces fs watcher (PR-C 2026-04-27 actor-topology-routing
       # §6.1 + §7). Loads workspaces.yaml on init + reloads on file_event,
@@ -89,27 +89,27 @@ defmodule Esr.Application do
       # `EsrWeb.PubSub` so active CC peers can grow their reachable_set
       # without restarting. Must sit AFTER Workspaces.Registry; the
       # watcher reuses Registry's ETS table.
-      {Esr.Workspaces.Watcher, path: Esr.Paths.workspaces_yaml()},
+      {Esr.Resource.Workspace.Watcher, path: Esr.Paths.workspaces_yaml()},
 
-      # 4e.2 SlashRoutes subsystem (PR-21κ 2026-04-30) — yaml-driven
+      # 4e.2 SlashRouteRegistry subsystem (PR-21κ 2026-04-30) — yaml-driven
       # slash command routing + dispatcher kind→{permission, command_module}
       # lookup. Independent of Workspaces and Capabilities (stores
       # references to caps as strings; doesn't validate against Permissions
       # Registry). Loaded BEFORE Admin.Supervisor since Dispatcher consumes it.
-      Esr.SlashRoutes,
-      {Esr.SlashRoutes.Watcher, path: Esr.Paths.slash_routes_yaml()},
+      Esr.Resource.SlashRouteRegistry,
+      {Esr.Resource.SlashRouteRegistry.Watcher, path: Esr.Paths.slash_routes_yaml()},
 
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
       # FileLoader can cross-check workspace names during validation.
-      Esr.Capabilities.Supervisor,
+      Esr.Resource.Capability.Supervisor,
 
       # 4f.1 Users subsystem (PR-21a) — Registry (ETS) + fs watcher on
       # users.yaml. feishu_id → esr-username binding consumed by inbound
       # envelope construction (PR-21b will wire callers). Independent of
       # Workspaces / Capabilities; ordering is informational only.
-      Esr.Users.Supervisor,
+      Esr.Entity.User.Supervisor,
 
       # 4f.2 PendingActionsGuard (PR-21e) — TTL state machine for two-step
       # destructive confirms (D12/D15). Inbound message interception
@@ -269,17 +269,17 @@ defmodule Esr.Application do
 
   @doc """
   Load `<home>/default/workspaces.yaml` into
-  `Esr.Workspaces.Registry`. v0.2 uses instance="default". Missing
+  `Esr.Resource.Workspace.Registry`. v0.2 uses instance="default". Missing
   file is not an error — returns :ok.
   """
   @spec load_workspaces_from_disk(Path.t()) :: :ok
   def load_workspaces_from_disk(_esrd_home) do
     path = Esr.Paths.workspaces_yaml()
 
-    case Esr.Workspaces.Registry.load_from_file(path) do
+    case Esr.Resource.Workspace.Registry.load_from_file(path) do
       {:ok, workspaces} ->
         for {_name, ws} <- workspaces do
-          :ok = Esr.Workspaces.Registry.put(ws)
+          :ok = Esr.Resource.Workspace.Registry.put(ws)
         end
 
         :ok
@@ -406,7 +406,7 @@ defmodule Esr.Application do
   # module names referenced by any `capabilities_required` entry shaped
   # `"handler:<module>/<action>"`. Malformed capabilities (unknown
   # prefix, missing slash) are silently skipped — the
-  # `Esr.Capabilities.Grants` validator catches schema errors at grant
+  # `Esr.Resource.Capability.Grants` validator catches schema errors at grant
   # time; this pass only cares about the well-formed handler refs.
   @spec extract_handler_modules(Path.t()) :: [String.t()]
   def extract_handler_modules(agents_yaml_path) do

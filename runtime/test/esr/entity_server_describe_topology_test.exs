@@ -25,7 +25,7 @@ defmodule Esr.EntityServerDescribeTopologyTest do
   use ExUnit.Case, async: false
 
   alias Esr.Entity
-  alias Esr.Workspaces.Registry, as: WsReg
+  alias Esr.Resource.Workspace.Registry, as: WsReg
 
   # WsReg has no `delete/1` API — cleanup is by uniqueness of test
   # workspace names (the `ws_audit_*` prefix). The boot tree's
@@ -157,13 +157,13 @@ defmodule Esr.EntityServerDescribeTopologyTest do
   end
 
   test "users.yaml data is never reachable via describe_topology" do
-    # Sanity check: even if Esr.Users.Registry has bindings, the
+    # Sanity check: even if Esr.Entity.User.Registry has bindings, the
     # describe_topology response builder doesn't read from it. This
     # test sets up users + workspaces + asserts no feishu_id appears
     # anywhere in the response payload.
-    if Process.whereis(Esr.Users.Registry) do
-      Esr.Users.Registry.load_snapshot(%{
-        "linyilun" => %Esr.Users.Registry.User{
+    if Process.whereis(Esr.Entity.User.Registry) do
+      Esr.Entity.User.Registry.load_snapshot(%{
+        "linyilun" => %Esr.Entity.User.Registry.User{
           username: "linyilun",
           feishu_ids: ["ou_secret_open_id_xyz"]
         }

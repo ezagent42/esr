@@ -43,8 +43,8 @@ defmodule Esr.PubSubAuditTest do
     "lib/esr/peer_server.ex",
     "lib/esr_web/handler_channel.ex",
     "lib/esr_web/adapter_channel.ex",
-    "lib/esr/peers/feishu_app_adapter.ex",
-    "lib/esr/capabilities/grants.ex"
+    "lib/esr/entities/feishu_app_adapter.ex",
+    "lib/esr/resource/capability/grants.ex"
   ]
 
   @broadcast_call_re ~r/(?:Phoenix\.PubSub\.broadcast|EsrWeb\.Endpoint\.broadcast)/

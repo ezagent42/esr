@@ -1,7 +1,7 @@
 defmodule Esr.Admin.Commands.Help do
   @moduledoc """
   `/help` slash command — renders the slash command reference from
-  `Esr.SlashRoutes.list_slashes/0` (PR-21κ, 2026-04-30).
+  `Esr.Resource.SlashRouteRegistry.list_slashes/0` (PR-21κ, 2026-04-30).
 
   Pre-PR-21κ this text was a hardcoded heredoc in
   `Esr.Entities.FeishuAppAdapter.help_text/0`. Now it's data-driven from
@@ -26,7 +26,7 @@ defmodule Esr.Admin.Commands.Help do
   # `<slash> <args>` lines with the description below. Categories
   # appear in deterministic order; "其他" sorts last.
   def render do
-    slashes = Esr.SlashRoutes.list_slashes()
+    slashes = Esr.Resource.SlashRouteRegistry.list_slashes()
 
     sections =
       slashes

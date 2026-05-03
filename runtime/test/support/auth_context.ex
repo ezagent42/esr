@@ -1,7 +1,7 @@
 defmodule Esr.TestSupport.AuthContext do
   @moduledoc """
   Shared helper for loading capability grants into the app-level
-  `Esr.Capabilities.Grants` ETS snapshot during tests.
+  `Esr.Resource.Capability.Grants` ETS snapshot during tests.
 
   CAP-4 flips Lane B enforcement ON: `{:inbound_event, ...}` and
   `{:tool_invoke, ..., principal_id}` both check grants before
@@ -25,7 +25,7 @@ defmodule Esr.TestSupport.AuthContext do
   fresh slate mid-test.
   """
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
   @doc """
   Load a single admin grant (`principal_id => ["*"]`) into the

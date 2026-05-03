@@ -83,7 +83,7 @@ defmodule Esr.Entity.ProxyCompileTest do
     # These tests exercise the per-Session local grants projection path
     # introduced in P3-3a. The Peer.Proxy cap-check wrapper prefers
     # Scope.Process.has?/2 (via the process pid carried in ctx) over
-    # the global Esr.Capabilities.has?/2. That means the outcome of a
+    # the global Esr.Resource.Capability.has?/2. That means the outcome of a
     # forward/2 call depends on the session-local grants map, NOT on
     # the global ETS table — admin-plane writes can't contend with
     # data-plane reads, and each session's grants are independent.
@@ -91,8 +91,8 @@ defmodule Esr.Entity.ProxyCompileTest do
     setup do
       assert is_pid(Process.whereis(Esr.Scope.Registry))
 
-      if Process.whereis(Esr.Capabilities.Grants) == nil do
-        start_supervised!(Esr.Capabilities.Grants)
+      if Process.whereis(Esr.Resource.Capability.Grants) == nil do
+        start_supervised!(Esr.Resource.Capability.Grants)
       end
 
       :ok
@@ -113,7 +113,7 @@ defmodule Esr.Entity.ProxyCompileTest do
       # Seed the global Grants with a DIFFERENT grant than what the
       # session-local projection will have. The session's local map
       # wins, proving the proxy went through the per-session path.
-      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_proxy_local" => []})
+      :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_proxy_local" => []})
 
       {:ok, _sup} =
         Esr.Scope.start_link(%{
@@ -143,7 +143,7 @@ defmodule Esr.Entity.ProxyCompileTest do
       # Now load a matching grant — the broadcast refreshes the
       # session's local projection, and the forward succeeds.
       :ok =
-        Esr.Capabilities.Grants.load_snapshot(%{
+        Esr.Resource.Capability.Grants.load_snapshot(%{
           "p_proxy_local" => ["workspace:proj-p/msg.send"]
         })
 
@@ -160,7 +160,7 @@ defmodule Esr.Entity.ProxyCompileTest do
                })
     end
 
-    test "cap check falls back to Esr.Capabilities.has?/2 when no session_process_pid" do
+    test "cap check falls back to Esr.Resource.Capability.has?/2 when no session_process_pid" do
       ast =
         quote do
           defmodule GlobalFallbackProxy do
@@ -174,14 +174,14 @@ defmodule Esr.Entity.ProxyCompileTest do
 
       # No session_process_pid in ctx → falls back to global has?/2.
       :ok =
-        Esr.Capabilities.Grants.load_snapshot(%{
+        Esr.Resource.Capability.Grants.load_snapshot(%{
           "p_proxy_global" => ["workspace:proj-g/msg.send"]
         })
 
       assert {:ok, :ok} =
                mod.forward(:hi, %{principal_id: "p_proxy_global", test_tag: :ok})
 
-      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_proxy_global" => []})
+      :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_proxy_global" => []})
 
       assert {:drop, :cap_denied} =
                mod.forward(:hi, %{principal_id: "p_proxy_global", test_tag: :ok})

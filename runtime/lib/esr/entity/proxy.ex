@@ -14,7 +14,7 @@ defmodule Esr.Entity.Proxy do
     2. Checks the capability. P3-3a: if `ctx.session_process_pid` is
        present and alive, the check goes to `Esr.Scope.Process.has?/2`
        via that pid (local projection, no global GenServer contention);
-       otherwise it falls back to `Esr.Capabilities.has?/2` on the
+       otherwise it falls back to `Esr.Resource.Capability.has?/2` on the
        global snapshot.
     3. On false → returns `{:drop, :cap_denied}`.
     4. On true → delegates to the user's `forward/2` body.
@@ -96,7 +96,7 @@ defmodule Esr.Entity.Proxy do
   #   1. Test override (`Process.put(:esr_cap_test_override, ...)`)
   #   2. Per-session local projection via `ctx.session_process_pid`
   #      when present and the process is alive (P3-3a).
-  #   3. Global `Esr.Capabilities.has?/2` fallback (admin-plane or
+  #   3. Global `Esr.Resource.Capability.has?/2` fallback (admin-plane or
   #      pre-PR-3 test ctx without session_process_pid).
   def __resolve_cap_check__(ctx) do
     case Process.get(:esr_cap_test_override) do
@@ -121,14 +121,14 @@ defmodule Esr.Entity.Proxy do
                   end
 
                 _ ->
-                  &Esr.Capabilities.has?/2
+                  &Esr.Resource.Capability.has?/2
               end
             else
-              &Esr.Capabilities.has?/2
+              &Esr.Resource.Capability.has?/2
             end
 
           _ ->
-            &Esr.Capabilities.has?/2
+            &Esr.Resource.Capability.has?/2
         end
     end
   end

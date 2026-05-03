@@ -3,11 +3,11 @@ defmodule EsrWeb.HandlerChannelHelloTest do
   Verifies the handler_hello IPC handshake (capabilities spec §3.1, §4.1)
   — the Python worker pushes the union of its declared permissions on
   join and the Elixir HandlerChannel registers each into
-  `Esr.Permissions.Registry`.
+  `Esr.Resource.Permission.Registry`.
   """
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.Permissions.Registry
+  alias Esr.Resource.Permission.Registry
 
   setup do
     if Process.whereis(Registry) == nil, do: start_supervised!(Registry)

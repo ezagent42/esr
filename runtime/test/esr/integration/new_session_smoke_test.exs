@@ -79,7 +79,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
     # Test principal gets `"*"` (only grant shape that passes the
     # current bare-string-keyed matcher in
-    # `Esr.Capabilities.Grants.matches?/2` for both the Dispatcher
+    # `Esr.Resource.Capability.Grants.matches?/2` for both the Dispatcher
     # check and the agent_def D18 check). A second principal gets
     # nothing so we can exercise the unauthorized branch. The prior
     # snapshot is restored on exit by `Esr.TestSupport.Grants`.
@@ -129,7 +129,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     test_app_id = "smoke_app_#{System.unique_integer([:positive])}"
     smoke_chat_id = "oc_smoke"
 
-    workspace = %Esr.Workspaces.Registry.Workspace{
+    workspace = %Esr.Resource.Workspace.Registry.Workspace{
       name: "esr-dev",
       owner: @test_principal,
       role: "dev",
@@ -138,24 +138,24 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     }
 
     prior_ws =
-      case Esr.Workspaces.Registry.get("esr-dev") do
+      case Esr.Resource.Workspace.Registry.get("esr-dev") do
         {:ok, ws} -> ws
         :not_found -> nil
       end
 
-    Esr.Workspaces.Registry.put(workspace)
+    Esr.Resource.Workspace.Registry.put(workspace)
 
     # PR-21κ Phase 6: dispatch/3 also enforces requires_user_binding
     # for /new-session. Bind both test principals to esr users via
     # an in-memory snapshot.
-    prior_users = Esr.Users.Registry.list()
+    prior_users = Esr.Entity.User.Registry.list()
 
-    Esr.Users.Registry.load_snapshot(%{
-      "smoke_user" => %Esr.Users.Registry.User{
+    Esr.Entity.User.Registry.load_snapshot(%{
+      "smoke_user" => %Esr.Entity.User.Registry.User{
         username: "smoke_user",
         feishu_ids: [@test_principal]
       },
-      "smoke_nocap_user" => %Esr.Users.Registry.User{
+      "smoke_nocap_user" => %Esr.Entity.User.Registry.User{
         username: "smoke_nocap_user",
         feishu_ids: [@test_principal_nocap]
       }
@@ -163,16 +163,16 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
     on_exit(fn ->
       File.rm_rf!(smoke_repo)
-      if prior_ws, do: Esr.Workspaces.Registry.put(prior_ws)
+      if prior_ws, do: Esr.Resource.Workspace.Registry.put(prior_ws)
 
       # Restore prior users snapshot (best-effort; cross-test pollution
       # bounded because this is async: false).
       restored =
         prior_users
-        |> Enum.map(fn %Esr.Users.Registry.User{username: u} = user -> {u, user} end)
+        |> Enum.map(fn %Esr.Entity.User.Registry.User{username: u} = user -> {u, user} end)
         |> Map.new()
 
-      Esr.Users.Registry.load_snapshot(restored)
+      Esr.Entity.User.Registry.load_snapshot(restored)
     end)
 
     {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id, chat_id: smoke_chat_id}

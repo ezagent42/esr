@@ -21,7 +21,7 @@ defmodule Esr.Admin.Commands.Scope.EndTest do
 
 
   alias Esr.Admin.Commands.Scope.End, as: SessionEnd
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
 
   setup do

@@ -7,9 +7,9 @@ defmodule Esr.Handler do
   Primary use today: permissions declaration. A module that
   `@behaviour Esr.Handler` may optionally export `permissions/0`
   returning the list of action-name strings it implements. At boot,
-  `Esr.Capabilities.Supervisor` iterates all loaded `:esr` modules,
+  `Esr.Resource.Capability.Supervisor` iterates all loaded `:esr` modules,
   collects their declared permissions, and registers them into
-  `Esr.Permissions.Registry` so `capabilities.yaml` entries can
+  `Esr.Resource.Permission.Registry` so `capabilities.yaml` entries can
   reference them by name.
 
   Python-side handlers declare permissions via the

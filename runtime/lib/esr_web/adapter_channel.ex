@@ -73,7 +73,7 @@ defmodule EsrWeb.AdapterChannel do
   # happens to have loaded declared. Adapters typically load no handler
   # modules, so the list is usually empty — but when non-empty (tests,
   # future colocated workers) the names get registered in the same
-  # Esr.Permissions.Registry the handler channel uses.
+  # Esr.Resource.Permission.Registry the handler channel uses.
   def handle_in("envelope", %{"kind" => "handler_hello"} = envelope, socket) do
     perms =
       envelope
@@ -112,7 +112,7 @@ defmodule EsrWeb.AdapterChannel do
 
   defp register_permissions(perms, declared_by) when is_list(perms) do
     for perm <- perms, is_binary(perm) do
-      Esr.Permissions.Registry.register(perm, declared_by: declared_by)
+      Esr.Resource.Permission.Registry.register(perm, declared_by: declared_by)
     end
 
     :ok

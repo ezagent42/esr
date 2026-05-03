@@ -29,7 +29,7 @@ defmodule Esr.Entity.Server do
   Built-in MCP tool names exposed by `build_emit_for_tool/3`
   (see `lib/esr/peer_server.ex` §"build_emit_for_tool" clauses).
   CAP-4 derives required permissions as `workspace:<ws>/<tool_name>`,
-  so these four names must be registered in `Esr.Permissions.Registry`
+  so these four names must be registered in `Esr.Resource.Permission.Registry`
   at boot or every tool_invoke would be denied.
   """
   @impl Esr.Handler
@@ -506,7 +506,7 @@ defmodule Esr.Entity.Server do
           reason: reason
         })
 
-        Esr.DeadLetter.enqueue(Esr.DeadLetter, %{
+        Esr.Resource.DeadLetterQueue.enqueue(Esr.Resource.DeadLetterQueue, %{
           reason: :handler_retry_exhausted,
           source: state.actor_id,
           msg: envelope,
@@ -808,7 +808,7 @@ defmodule Esr.Entity.Server do
   # the ack regardless. Task 25 adds matching `handle_info/2` on
   # `Esr.Admin.Dispatcher` — today its catch-all swallows the message.
   # PR-F 2026-04-28: business-topology MCP tool. Reads workspaces.yaml
-  # data from `Esr.Workspaces.Registry`, filters operational fields
+  # data from `Esr.Resource.Workspace.Registry`, filters operational fields
   # (cwd, env, start_cmd) out, expands `workspace:<name>` neighbour
   # entries into a `neighbor_workspaces` array. cc_mcp's tool handler
   # injects `workspace_name` from the `ESR_WORKSPACE` env var so the
@@ -819,7 +819,7 @@ defmodule Esr.Entity.Server do
   defp build_emit_for_tool("describe_topology", args, _state) do
     case Map.get(args, "workspace_name") do
       ws_name when is_binary(ws_name) and ws_name != "" ->
-        case Esr.Workspaces.Registry.get(ws_name) do
+        case Esr.Resource.Workspace.Registry.get(ws_name) do
           {:ok, ws} ->
             neighbours = resolve_neighbour_workspaces_for_describe(ws)
 
@@ -856,7 +856,7 @@ defmodule Esr.Entity.Server do
   # username pairings are out-of-band identity material that the LLM
   # has no business reading. Default-deny: if you need a new field,
   # add it AND a regression test in `peer_server_describe_topology_test.exs`.
-  defp filter_workspace_for_describe(%Esr.Workspaces.Registry.Workspace{} = ws) do
+  defp filter_workspace_for_describe(%Esr.Resource.Workspace.Registry.Workspace{} = ws) do
     %{
       "name" => ws.name,
       "role" => ws.role || "dev",
@@ -873,14 +873,14 @@ defmodule Esr.Entity.Server do
     }
   end
 
-  defp resolve_neighbour_workspaces_for_describe(%Esr.Workspaces.Registry.Workspace{
+  defp resolve_neighbour_workspaces_for_describe(%Esr.Resource.Workspace.Registry.Workspace{
          neighbors: neighbours
        }) do
     neighbours
     |> Enum.flat_map(fn entry ->
       case String.split(entry || "", ":", parts: 2) do
         ["workspace", name] ->
-          case Esr.Workspaces.Registry.get(name) do
+          case Esr.Resource.Workspace.Registry.get(name) do
             {:ok, ws} -> [ws]
             :error -> []
           end
@@ -960,13 +960,13 @@ defmodule Esr.Entity.Server do
   # rate-limited DM all live there now — this module just decides
   # `:granted` vs `:denied` via that one call.
 
-  # Esr.Capabilities.has?/2 guards on is_binary(principal_id). Tests
+  # Esr.Resource.Capability.has?/2 guards on is_binary(principal_id). Tests
   # and internal routes (`route` action at peer_server.ex line ~618)
   # can legitimately omit principal_id — treat anything non-binary as
   # "no grant" so the check always returns a boolean and the deny
   # path records the absent principal clearly.
   #
-  # P3-3a: this helper still reads the global `Esr.Capabilities.has?/2`
+  # P3-3a: this helper still reads the global `Esr.Resource.Capability.has?/2`
   # rather than `Esr.Scope.Process.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
   # to per-session peer modules which are spawned through
@@ -976,7 +976,7 @@ defmodule Esr.Entity.Server do
   # deletion, not refactor.
   defp capability_granted?(principal_id, required)
        when is_binary(principal_id) and is_binary(required) do
-    Esr.Capabilities.has?(principal_id, required)
+    Esr.Resource.Capability.has?(principal_id, required)
   end
 
   defp capability_granted?(_principal_id, _required), do: false

@@ -24,8 +24,8 @@ defmodule Esr.Admin.Commands.Whoami do
     app_id = Map.get(args, "app_id", "(unknown)")
 
     user_resolved =
-      if Process.whereis(Esr.Users.Registry) do
-        case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
+      if Process.whereis(Esr.Entity.User.Registry) do
+        case Esr.Entity.User.Registry.lookup_by_feishu_id(principal_id) do
           {:ok, username} -> "esr user: #{username}"
           :not_found -> "未绑定 (open_id: #{principal_id})"
         end
@@ -34,7 +34,7 @@ defmodule Esr.Admin.Commands.Whoami do
       end
 
     workspace =
-      case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+      case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
         {:ok, ws} -> ws
         :not_found -> "(无)"
       end

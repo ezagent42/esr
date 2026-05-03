@@ -19,7 +19,7 @@ defmodule Esr.Admin.Dispatcher do
   Execution flow (§6.2):
 
     1. Parse `kind` / `submitted_by` / `id` / `args` from the command.
-    2. Capability-check via `Esr.Capabilities.has?/2` using the
+    2. Capability-check via `Esr.Resource.Capability.has?/2` using the
        `required_permission(kind)` map below. On `false`: move the
        queue file `pending/<id>.yaml` → `failed/<id>.yaml` synchronously,
        emit telemetry, and deliver `{:error, %{type: "unauthorized"}}`
@@ -68,10 +68,10 @@ defmodule Esr.Admin.Dispatcher do
   # (`Esr.Admin.Commands.Scope.New`, formerly Session.AgentNew); the
   # legacy branch-worktree path is `session_branch_new`. Both share the
   # PR-21κ Phase 6 (2026-04-30): `@required_permissions` and
-  # `@command_modules` constants deleted. `Esr.SlashRoutes` is now the
+  # `@command_modules` constants deleted. `Esr.Resource.SlashRouteRegistry` is now the
   # single source of truth — kind → {permission, command_module} lives
   # in `slash-routes.yaml` (slashes:) + `internal_kinds:` blocks.
-  # `dispatch_kind/1` below resolves both via SlashRoutes ETS reads.
+  # `dispatch_kind/1` below resolves both via SlashRouteRegistry ETS reads.
 
   # ------------------------------------------------------------------
   # Public API
@@ -123,11 +123,11 @@ defmodule Esr.Admin.Dispatcher do
     kind = command["kind"]
     submitted_by = command["submitted_by"] || "ou_unknown"
 
-    # PR-21κ Phase 6: kind → required permission via SlashRoutes ETS.
+    # PR-21κ Phase 6: kind → required permission via SlashRouteRegistry ETS.
     # `:not_found` ⇒ unknown kind. `nil` ⇒ no permission required
     # (e.g. /help, /whoami). Anything else is the cap string.
     required =
-      case is_binary(kind) && Esr.SlashRoutes.permission_for(kind) do
+      case is_binary(kind) && Esr.Resource.SlashRouteRegistry.permission_for(kind) do
         :not_found -> :unknown_kind
         other -> other
       end
@@ -145,7 +145,7 @@ defmodule Esr.Admin.Dispatcher do
           state
         )
 
-      not is_nil(required) and not Esr.Capabilities.has?(submitted_by, required) ->
+      not is_nil(required) and not Esr.Resource.Capability.has?(submitted_by, required) ->
         unauthorized_or_error(
           id,
           command,
@@ -286,7 +286,7 @@ defmodule Esr.Admin.Dispatcher do
   end
 
   defp run_command(kind, command) do
-    case Esr.SlashRoutes.command_module_for(kind) do
+    case Esr.Resource.SlashRouteRegistry.command_module_for(kind) do
       :not_found ->
         {:error, %{"type" => "unknown_kind", "kind" => kind}}
 

@@ -4,14 +4,14 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
   alias Esr.Admin.Commands.Workspace.New, as: WorkspaceNew
 
   setup do
-    assert is_pid(Process.whereis(Esr.Workspaces.Registry))
+    assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
-    if Process.whereis(Esr.Users.Registry) == nil do
-      start_supervised!(Esr.Users.Registry)
+    if Process.whereis(Esr.Entity.User.Registry) == nil do
+      start_supervised!(Esr.Entity.User.Registry)
     end
 
-    Esr.Users.Registry.load_snapshot(%{
-      "linyilun" => %Esr.Users.Registry.User{
+    Esr.Entity.User.Registry.load_snapshot(%{
+      "linyilun" => %Esr.Entity.User.Registry.User{
         username: "linyilun",
         feishu_ids: ["ou_known"]
       }
@@ -30,7 +30,7 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      Esr.Users.Registry.load_snapshot(%{})
+      Esr.Entity.User.Registry.load_snapshot(%{})
       :ets.delete_all_objects(:esr_workspaces)
     end)
 
@@ -68,7 +68,7 @@ defmodule Esr.Admin.Commands.Workspace.NewTest do
     refute Map.has_key?(parsed["workspaces"]["test-ws-1"], "root")
 
     # Registry populated proactively
-    assert {:ok, ws} = Esr.Workspaces.Registry.get("test-ws-1")
+    assert {:ok, ws} = Esr.Resource.Workspace.Registry.get("test-ws-1")
     assert ws.owner == "linyilun"
   end
 

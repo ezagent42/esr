@@ -17,7 +17,7 @@ defmodule Esr.TopologyTest do
   use ExUnit.Case, async: false
 
   alias Esr.Topology
-  alias Esr.Workspaces.Registry, as: WS
+  alias Esr.Resource.Workspace.Registry, as: WS
 
   setup do
     # Clean any existing workspaces; ETS table is shared across tests.
@@ -37,7 +37,7 @@ defmodule Esr.TopologyTest do
     end
 
     test "user_uri/1 builds path-style user URI (raw ou_* fallback when unbound)" do
-      # PR-21b: with no Esr.Users.Registry binding, falls back to raw open_id
+      # PR-21b: with no Esr.Entity.User.Registry binding, falls back to raw open_id
       # (and logs a warning). When Registry is up but has no binding, same
       # fallback applies.
       assert Topology.user_uri("ou_abc") == "esr://localhost/users/ou_abc"
@@ -45,13 +45,13 @@ defmodule Esr.TopologyTest do
 
     test "user_uri/1 rekeys to esr-username when binding exists (PR-21b)" do
       # Stage a Users.Registry binding then check user_uri/1 picks it up.
-      if Process.whereis(Esr.Users.Registry) == nil do
-        start_supervised!(Esr.Users.Registry)
+      if Process.whereis(Esr.Entity.User.Registry) == nil do
+        start_supervised!(Esr.Entity.User.Registry)
       end
 
       :ok =
-        Esr.Users.Registry.load_snapshot(%{
-          "linyilun" => %Esr.Users.Registry.User{
+        Esr.Entity.User.Registry.load_snapshot(%{
+          "linyilun" => %Esr.Entity.User.Registry.User{
             username: "linyilun",
             feishu_ids: ["ou_known"]
           }
@@ -63,7 +63,7 @@ defmodule Esr.TopologyTest do
       assert Topology.user_uri("ou_unknown") == "esr://localhost/users/ou_unknown"
 
       # Cleanup so we don't leak into other tests
-      Esr.Users.Registry.load_snapshot(%{})
+      Esr.Entity.User.Registry.load_snapshot(%{})
     end
 
     test "adapter_uri/2 builds path-style adapter URI" do

@@ -56,7 +56,7 @@ defmodule Esr.ScopeTest do
     setup do
       # Start with a clean slate so prior-test snapshots don't leak in
       # via the local projection at init time.
-      :ok = Esr.Capabilities.Grants.load_snapshot(%{})
+      :ok = Esr.Resource.Capability.Grants.load_snapshot(%{})
 
       {:ok, _sup} =
         Esr.Scope.start_link(%{
@@ -81,15 +81,15 @@ defmodule Esr.ScopeTest do
       # holds. Note this is an equality check, not a proof that has?/2
       # reads the global table — the performance test in
       # session_process_grants_test.exs covers that.
-      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_test" => ["*"]})
+      :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_test" => ["*"]})
       Process.sleep(50)
 
       assert Esr.Scope.Process.has?("g-s1", "*") ==
-               Esr.Capabilities.Grants.has?("p_test", "*")
+               Esr.Resource.Capability.Grants.has?("p_test", "*")
     end
 
     test "has? returns true after a matching grant is loaded (broadcast-refreshed)" do
-      :ok = Esr.Capabilities.Grants.load_snapshot(%{"p_test" => ["*"]})
+      :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_test" => ["*"]})
 
       try do
         # Give the PubSub broadcast a moment to reach the session. The
@@ -99,7 +99,7 @@ defmodule Esr.ScopeTest do
         Process.sleep(50)
         assert Esr.Scope.Process.has?("g-s1", "workspace:proj/msg.send")
       after
-        :ok = Esr.Capabilities.Grants.load_snapshot(%{})
+        :ok = Esr.Resource.Capability.Grants.load_snapshot(%{})
       end
     end
   end

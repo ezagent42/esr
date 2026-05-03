@@ -8,12 +8,12 @@ defmodule Esr.Entities.SlashHandler do
   Public entry point: `dispatch/2,3`. Adapters (FAA, future Telegram,
   etc.) call `dispatch(envelope, reply_to)` and receive the reply as
   `{:reply, text, ref}` to `reply_to`. Routing is yaml-driven via
-  `Esr.SlashRoutes` — adapters know nothing about specific slash text
+  `Esr.Resource.SlashRouteRegistry` — adapters know nothing about specific slash text
   or kind names.
 
   ## What this module owns
 
-  * Text → route lookup (delegated to `Esr.SlashRoutes`)
+  * Text → route lookup (delegated to `Esr.Resource.SlashRouteRegistry`)
   * Generic positional + kv arg parser
   * Workspace-binding / user-binding precondition gates
   * Envelope-derived arg injection (chat_id, app_id, principal_id, etc.)
@@ -72,7 +72,7 @@ defmodule Esr.Entities.SlashHandler do
   @doc """
   Adapter-agnostic slash dispatch (PR-21κ).
 
-  Looks `text` up in `Esr.SlashRoutes`, applies binding/permission
+  Looks `text` up in `Esr.Resource.SlashRouteRegistry`, applies binding/permission
   preconditions, and casts the command to `Esr.Admin.Dispatcher`. The
   reply (or error) is delivered to `reply_to` as
   `{:reply, text, ref}` — the caller correlates by `ref`.
@@ -118,7 +118,7 @@ defmodule Esr.Entities.SlashHandler do
     text = extract_text(envelope)
     principal_id = envelope["principal_id"] || "ou_unknown"
 
-    case Esr.SlashRoutes.lookup(text) do
+    case Esr.Resource.SlashRouteRegistry.lookup(text) do
       :not_found ->
         send(reply_to, {:reply, "unknown command: #{slash_head(text)}", ref})
         {:noreply, state}
@@ -369,7 +369,7 @@ defmodule Esr.Entities.SlashHandler do
   defp maybe_derive_session_new_cwd(args, _kind), do: args
 
   # session_new needs chat_thread_key threading + (PR-21g) username
-  # resolution from envelope.user_id via Esr.Users.Registry. session_end
+  # resolution from envelope.user_id via Esr.Entity.User.Registry. session_end
   # also needs username when args carries `name=` (PR-21g resolver).
   defp merge_chat_context(args, "session_new", envelope) do
     chat_id = envelope_chat_id(envelope)
@@ -474,7 +474,7 @@ defmodule Esr.Entities.SlashHandler do
   # binding (caller decides whether that's an error).
   defp resolve_workspace(chat_id, app_id)
        when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
-    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
       {:ok, ws} -> ws
       :not_found -> nil
     end
@@ -501,11 +501,11 @@ defmodule Esr.Entities.SlashHandler do
       not is_binary(open_id) or open_id == "" ->
         nil
 
-      Process.whereis(Esr.Users.Registry) == nil ->
+      Process.whereis(Esr.Entity.User.Registry) == nil ->
         nil
 
       true ->
-        case Esr.Users.Registry.lookup_by_feishu_id(open_id) do
+        case Esr.Entity.User.Registry.lookup_by_feishu_id(open_id) do
           {:ok, username} -> username
           :not_found -> nil
         end

@@ -17,7 +17,7 @@ defmodule Esr.Entities.SlashHandlerDispatchTest do
   use ExUnit.Case, async: false
 
   alias Esr.Entities.SlashHandler
-  alias Esr.SlashRoutes
+  alias Esr.Resource.SlashRouteRegistry
 
   @principal "ou_dispatch_test"
 
@@ -25,8 +25,8 @@ defmodule Esr.Entities.SlashHandlerDispatchTest do
     assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
     Process.register(self(), :test_admin_dispatcher)
 
-    if Process.whereis(SlashRoutes) == nil, do: start_supervised!(SlashRoutes)
-    SlashRoutes.load_snapshot(test_routes())
+    if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
+    SlashRouteRegistry.load_snapshot(test_routes())
 
     on_exit(fn ->
       if Process.whereis(:test_admin_dispatcher),
@@ -34,9 +34,9 @@ defmodule Esr.Entities.SlashHandlerDispatchTest do
 
       # Restore the priv default so cross-file tests (Dispatcher,
       # Notify) keep working — they look up kind → permission via
-      # SlashRoutes ETS post-PR-21κ Phase 6.
+      # SlashRouteRegistry ETS post-PR-21κ Phase 6.
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
-      if File.exists?(priv), do: Esr.SlashRoutes.FileLoader.load(priv)
+      if File.exists?(priv), do: Esr.Resource.SlashRouteRegistry.FileLoader.load(priv)
     end)
 
     :ok

@@ -276,10 +276,10 @@
           "cli:stop/<name>": "Topology.Registry.lookup + deactivate",
           "cli:drain": "deactivate all handles",
           "cli:debug/pause|resume": "PeerServer.pause/resume",
-          "cli:deadletter/list|flush": "Esr.DeadLetter.list/clear",
+          "cli:deadletter/list|flush": "Esr.Resource.DeadLetterQueue.list/clear",
           "cli:adapter/start/<type>": "WorkerSupervisor.ensure_adapter(type, instance_id, config, ws_url) — auto-spawns a Python adapter_runner pointed at ws://127.0.0.1:<phoenix_port>/adapter_hub/socket/websocket?vsn=2.0.0",
           "cli:trace": "Esr.Telemetry.Buffer.query(:default, duration_seconds: N)",
-          "cli:workspace/register": "Esr.Workspaces.Registry.put",
+          "cli:workspace/register": "Esr.Resource.Workspace.Registry.put",
           "<fallback>": "%{data: %{error: \"unknown_topic: <topic>\"}}"
         }
       }
@@ -299,7 +299,7 @@
       "Esr.SessionRegistry (ChannelChannel stores ws_pid, marks offline on terminate)",
       "Esr.HandlerRouter (subscribes to handler_reply:<id> on Phoenix.PubSub)",
       "Esr.Topology.Registry + Esr.Topology.Instantiator (cli:run/<name>, cli:stop/<name>, cli:drain)",
-      "Esr.DeadLetter, Esr.Telemetry.Buffer, Esr.Workspaces.Registry, Esr.WorkerSupervisor (CliChannel dispatches)"
+      "Esr.Resource.DeadLetterQueue, Esr.Telemetry.Buffer, Esr.Resource.Workspace.Registry, Esr.WorkerSupervisor (CliChannel dispatches)"
     ]
   },
   "test_results": {

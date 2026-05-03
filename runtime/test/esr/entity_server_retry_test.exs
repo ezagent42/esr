@@ -2,7 +2,7 @@ defmodule Esr.EntityServerRetryTest do
   @moduledoc """
   PRD 01 F06 — On `{:error, :handler_timeout}` the Entity.Server retries
   HandlerRouter.call once with a fresh attempt; on exhaustion it
-  enqueues the event into `Esr.DeadLetter` and emits
+  enqueues the event into `Esr.Resource.DeadLetterQueue` and emits
   `[:esr, :handler, :retry_exhausted]`.
   """
 
@@ -12,7 +12,7 @@ defmodule Esr.EntityServerRetryTest do
   alias Esr.TestSupport.AuthContext
 
   setup do
-    Esr.DeadLetter.clear(Esr.DeadLetter)
+    Esr.Resource.DeadLetterQueue.clear(Esr.Resource.DeadLetterQueue)
     AuthContext.load_admin("test_admin")
     :ok
   end
@@ -102,7 +102,7 @@ defmodule Esr.EntityServerRetryTest do
     assert metadata[:event_id] == "e-retry-ok"
   end
 
-  test "handler_timeout twice → [:esr, :handler, :retry_exhausted] + event lands in DeadLetter" do
+  test "handler_timeout twice → [:esr, :handler, :retry_exhausted] + event lands in DeadLetterQueue" do
     # No worker started — every call times out.
     handler = "retry-dead-#{System.unique_integer([:positive])}"
     actor_id = "retry-peer-2-#{System.unique_integer([:positive])}"
@@ -121,8 +121,8 @@ defmodule Esr.EntityServerRetryTest do
     assert metadata[:actor_id] == actor_id
     assert metadata[:event_id] == "e-dead"
 
-    # DeadLetter captures the event for forensics.
-    entries = Esr.DeadLetter.list(Esr.DeadLetter)
+    # DeadLetterQueue captures the event for forensics.
+    entries = Esr.Resource.DeadLetterQueue.list(Esr.Resource.DeadLetterQueue)
     assert Enum.any?(entries, fn e ->
              e.reason == :handler_retry_exhausted and e.source == actor_id
            end)

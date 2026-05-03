@@ -349,7 +349,7 @@ defmodule Esr.Scope.Router do
   # PR-9 T11b.2: thread `session_id` and `workspace_name` into the params
   # map so downstream peers' `spawn_args/1` callbacks can read them
   # without having to re-derive. `workspace_name` is resolved via
-  # `Esr.Workspaces.Registry.workspace_for_chat/2` when the caller
+  # `Esr.Resource.Workspace.Registry.workspace_for_chat/2` when the caller
   # didn't supply one explicitly. Falls back to `"default"` — not nil —
   # so peers downstream always see a string.
   defp enrich_params(params, session_id) do
@@ -358,7 +358,7 @@ defmodule Esr.Scope.Router do
 
     workspace_name =
       get_param(params, :workspace_name) ||
-        case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+        case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
           {:ok, name} -> name
           :not_found -> "default"
         end
@@ -388,7 +388,7 @@ defmodule Esr.Scope.Router do
           cmd
 
         _ ->
-          case Esr.Workspaces.Registry.get(workspace_name) do
+          case Esr.Resource.Workspace.Registry.get(workspace_name) do
             {:ok, %{start_cmd: cmd}} when is_binary(cmd) and cmd != "" ->
               cmd
 

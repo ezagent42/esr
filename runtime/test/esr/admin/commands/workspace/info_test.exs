@@ -4,7 +4,7 @@ defmodule Esr.Admin.Commands.Workspace.InfoTest do
   alias Esr.Admin.Commands.Workspace.Info, as: WorkspaceInfo
 
   setup do
-    assert is_pid(Process.whereis(Esr.Workspaces.Registry))
+    assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
     on_exit(fn ->
       :ets.delete(:esr_workspaces, "ws_info_test")
@@ -15,7 +15,7 @@ defmodule Esr.Admin.Commands.Workspace.InfoTest do
 
   test "returns the workspace record when present" do
     :ok =
-      Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
         name: "ws_info_test",
         owner: "linyilun",
         role: "dev",

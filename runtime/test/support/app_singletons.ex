@@ -32,8 +32,8 @@ defmodule Esr.TestSupport.AppSingletons do
   def assert_with_grants(ctx) do
     :ok = assert_app_singletons(ctx)
 
-    assert is_pid(Process.whereis(Esr.Capabilities.Grants)),
-           "Esr.Capabilities.Grants not running"
+    assert is_pid(Process.whereis(Esr.Resource.Capability.Grants)),
+           "Esr.Resource.Capability.Grants not running"
 
     :ok
   end

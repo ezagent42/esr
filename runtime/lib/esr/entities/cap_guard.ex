@@ -105,13 +105,13 @@ defmodule Esr.Entities.CapGuard do
   # Internals
   # ------------------------------------------------------------------
 
-  # Esr.Capabilities.has?/2 guards on is_binary(principal_id). Tests
+  # Esr.Resource.Capability.has?/2 guards on is_binary(principal_id). Tests
   # and internal routes can legitimately omit principal_id — treat
   # anything non-binary as "no grant" so the check always returns a
   # boolean and the deny path records the absent principal clearly.
   defp granted?(principal_id, required)
        when is_binary(principal_id) and is_binary(required) do
-    Esr.Capabilities.has?(principal_id, required)
+    Esr.Resource.Capability.has?(principal_id, required)
   end
 
   defp granted?(_, _), do: false

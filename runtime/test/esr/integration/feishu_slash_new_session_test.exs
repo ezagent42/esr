@@ -114,7 +114,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # production-equivalent dispatch path.
     test_app_id = "default"
 
-    workspace = %Esr.Workspaces.Registry.Workspace{
+    workspace = %Esr.Resource.Workspace.Registry.Workspace{
       name: "esr-dev",
       owner: "t3_user",
       role: "dev",
@@ -122,10 +122,10 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       metadata: %{}
     }
 
-    Esr.Workspaces.Registry.put(workspace)
+    Esr.Resource.Workspace.Registry.put(workspace)
 
-    Esr.Users.Registry.load_snapshot(%{
-      "t3_user" => %Esr.Users.Registry.User{
+    Esr.Entity.User.Registry.load_snapshot(%{
+      "t3_user" => %Esr.Entity.User.Registry.User{
         username: "t3_user",
         feishu_ids: [@test_principal]
       }

@@ -1,7 +1,7 @@
 defmodule Esr.ApplicationRestoreTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Workspaces.Registry, as: WsReg
+  alias Esr.Resource.Workspace.Registry, as: WsReg
 
   setup do
     prev = System.get_env("ESRD_HOME")

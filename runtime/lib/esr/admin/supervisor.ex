@@ -14,8 +14,8 @@ defmodule Esr.Admin.Supervisor do
   a single `Process.send_after/3` timer that re-arms on init.
 
   Started from `Esr.Application.start/2` AFTER
-  `Esr.Capabilities.Supervisor` (Dispatcher checks capabilities during
-  authorization) and AFTER `Esr.Workspaces.Registry` (the
+  `Esr.Resource.Capability.Supervisor` (Dispatcher checks capabilities during
+  authorization) and AFTER `Esr.Resource.Workspace.Registry` (the
   `register_adapter` command validates workspace names at execution
   time).
   """

@@ -17,17 +17,17 @@
   "supervision_tree": {
     "root": "Esr.Supervisor",
     "strategy": ":one_for_one",
-    "restore_on_start": "After start_link returns, Esr.Application loads $ESRD_HOME/default/workspaces.yaml into Esr.Workspaces.Registry and $ESRD_HOME/default/adapters.yaml via WorkerSupervisor.ensure_adapter; feishu adapters trigger Task-spawned feishu-app-session topology auto-restore (2s grace).",
+    "restore_on_start": "After start_link returns, Esr.Application loads $ESRD_HOME/default/workspaces.yaml into Esr.Resource.Workspace.Registry and $ESRD_HOME/default/adapters.yaml via WorkerSupervisor.ensure_adapter; feishu adapters trigger Task-spawned feishu-app-session topology auto-restore (2s grace).",
     "children_in_order": [
       {"idx": 1, "name": "DNSCluster", "args": "query: Application.get_env(:esr, :dns_cluster_query) || :ignore"},
       {"idx": 2, "name": "EsrWeb.Telemetry"},
       {"idx": 3, "name": "Phoenix.PubSub", "args": "name: EsrWeb.PubSub"},
       {"idx": 4, "name": "Registry (Esr.Entity.Registry)", "args": "keys: :unique", "note": "must be up before any PeerServer registers"},
       {"idx": 5, "name": "Esr.Entity.Supervisor", "kind": "DynamicSupervisor", "note": "hosts live PeerServers"},
-      {"idx": 6, "name": "Esr.DeadLetter", "args": "name: Esr.DeadLetter", "note": "default 10_000 entries"},
+      {"idx": 6, "name": "Esr.Resource.DeadLetterQueue", "args": "name: Esr.Resource.DeadLetterQueue", "note": "default 10_000 entries"},
       {"idx": 7, "name": "Esr.WorkerSupervisor", "note": "Python adapter_runner/handler_worker subprocess launcher (Phase 8f)"},
       {"idx": 8, "name": "Esr.SessionRegistry", "note": "CC <-> WS bindings (PRD v0.2 §3.2)"},
-      {"idx": 9, "name": "Esr.Workspaces.Registry", "note": "PRD v0.2 §3.6"},
+      {"idx": 9, "name": "Esr.Resource.Workspace.Registry", "note": "PRD v0.2 §3.6"},
       {"idx": 10, "name": "Esr.AdapterHub.Supervisor"},
       {"idx": 11, "name": "Esr.HandlerRouter.Supervisor"},
       {"idx": 12, "name": "Esr.Topology.Supervisor"},
@@ -119,7 +119,7 @@
     "build/3": "produces 'esr://<host>/<type>/<id>' (port/org/params not assembled)"
   },
   "dead_letter": {
-    "module": "Esr.DeadLetter",
+    "module": "Esr.Resource.DeadLetterQueue",
     "type": "GenServer backed by :queue with size counter",
     "default_capacity": 10000,
     "eviction": "oldest-first (FIFO drop) on overflow, size stays at max",
@@ -151,7 +151,7 @@
   "restore_semantics": {
     "trigger": "Application.start/2 after Supervisor.start_link, only if Application.get_env(:esr, :restore_on_start, true)",
     "home": "System.get_env(\"ESRD_HOME\", Path.join(System.user_home!(), \".esrd\"))",
-    "workspaces": "load_workspaces_from_disk/1 reads <home>/default/workspaces.yaml via Esr.Workspaces.Registry.load_from_file -> for each {name, ws} put into registry. Missing file returns :ok.",
+    "workspaces": "load_workspaces_from_disk/1 reads <home>/default/workspaces.yaml via Esr.Resource.Workspace.Registry.load_from_file -> for each {name, ws} put into registry. Missing file returns :ok.",
     "adapters": "restore_adapters_from_disk/2 reads <home>/default/adapters.yaml via YamlElixir; for each instance calls opts[:spawn_fn] (default = WorkerSupervisor.ensure_adapter with default_adapter_ws_url()). If type==feishu and config.app_id is non-empty, spawns Task.start/0 that sleeps 2s, then Topology.Registry.get_artifact(\"feishu-app-session\") + Topology.Instantiator.instantiate with %{\"app_id\"=>app_id}. Logs info/warning on outcome.",
     "actor_state": "PeerServer.init/1 independently rehydrates per-actor state from :esr_actor_states ETS table via Esr.Persistence.Ets.get — prior state wins, initial_state is the fresh-spawn fallback."
   },

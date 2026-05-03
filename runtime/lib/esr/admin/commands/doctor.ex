@@ -42,8 +42,8 @@ defmodule Esr.Admin.Commands.Doctor do
   def execute(_cmd), do: {:ok, %{"text" => "🩺 (no args)"}}
 
   defp check_user(principal_id) do
-    if Process.whereis(Esr.Users.Registry) do
-      case Esr.Users.Registry.lookup_by_feishu_id(principal_id) do
+    if Process.whereis(Esr.Entity.User.Registry) do
+      case Esr.Entity.User.Registry.lookup_by_feishu_id(principal_id) do
         {:ok, username} ->
           {"  ✅ 用户身份: 已绑定 esr user `#{username}`", true}
 
@@ -51,12 +51,12 @@ defmodule Esr.Admin.Commands.Doctor do
           {"  ❌ 用户身份: 未绑定 (你的 open_id: `#{principal_id}`)", false}
       end
     else
-      {"  ⚠️ 用户身份: Esr.Users.Registry 未运行", false}
+      {"  ⚠️ 用户身份: Esr.Entity.User.Registry 未运行", false}
     end
   end
 
   defp check_chat(chat_id, app_id) do
-    case Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
       {:ok, ws} -> {"  ✅ Chat 绑定: workspace `#{ws}`", true, ws}
       :not_found -> {"  ❌ Chat 绑定: 未绑定任何 workspace", false, nil}
     end

@@ -8,9 +8,9 @@ defmodule Esr.Entities.FeishuChatProxyCrossAppTest do
   correct adapter's mailbox.
 
   Test seams used:
-    * `Esr.Capabilities.Grants.load_snapshot/1` — pattern from
+    * `Esr.Resource.Capability.Grants.load_snapshot/1` — pattern from
       runtime/test/esr/capabilities_has_all_test.exs.
-    * `Esr.Workspaces.Registry.put/1` with %Workspace{}.
+    * `Esr.Resource.Workspace.Registry.put/1` with %Workspace{}.
     * `Esr.Entity.Registry.register/2` only registers `self()`, hence the
       relay registers itself before entering its receive loop.
   """
@@ -28,7 +28,7 @@ defmodule Esr.Entities.FeishuChatProxyCrossAppTest do
       end
 
     on_exit(fn ->
-      Esr.Capabilities.Grants.load_snapshot(prior_grants)
+      Esr.Resource.Capability.Grants.load_snapshot(prior_grants)
 
       :ets.delete(:esr_workspaces, "ws_kanban")
       :ets.delete(:esr_workspaces, "ws_unknown")
@@ -63,15 +63,15 @@ defmodule Esr.Entities.FeishuChatProxyCrossAppTest do
   # Helper to seed grants for a principal — uses the same load_snapshot
   # pattern as runtime/test/esr/capabilities_has_all_test.exs.
   defp grant_caps(principal_id, caps) do
-    Esr.Capabilities.Grants.load_snapshot(%{principal_id => caps})
+    Esr.Resource.Capability.Grants.load_snapshot(%{principal_id => caps})
   end
 
   # Helper to seed (chat_id, app_id) → workspace_name. Uses
   # Workspaces.Registry.put/1 with the existing Workspace struct
-  # at Esr.Workspaces.Registry.Workspace (note: nested under Registry,
-  # not at Esr.Workspaces.Workspace).
+  # at Esr.Resource.Workspace.Registry.Workspace (note: nested under Registry,
+  # not at Esr.Resource.Workspace.Workspace).
   defp put_chat_in_workspace(ws_name, chat_id, app_id) do
-    Esr.Workspaces.Registry.put(%Esr.Workspaces.Registry.Workspace{
+    Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
       name: ws_name,
       owner: nil,
       start_cmd: "",
@@ -266,8 +266,8 @@ defmodule Esr.Entities.FeishuChatProxyCrossAppTest do
   end
 
   test "cross-app reply strips reply_to_message_id and edit_message_id", ctx do
-    # NOTE: plan §Step 2 originally called Esr.Capabilities.put_principal_caps/2
-    # and Esr.Workspaces.Registry.put_chat_workspace/2, neither of which
+    # NOTE: plan §Step 2 originally called Esr.Resource.Capability.put_principal_caps/2
+    # and Esr.Resource.Workspace.Registry.put_chat_workspace/2, neither of which
     # exists. Replaced with the same helpers the other tests use.
     grant_caps("ou_admin", ["workspace:ws_kanban/msg.send"])
     put_chat_in_workspace("ws_kanban", "oc_kanban", "feishu_kanban")

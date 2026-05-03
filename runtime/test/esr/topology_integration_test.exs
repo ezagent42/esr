@@ -18,7 +18,7 @@ defmodule Esr.TopologyIntegrationTest do
 
   alias Esr.Entities.CCProcess
   alias Esr.Topology
-  alias Esr.Workspaces.Registry, as: WS
+  alias Esr.Resource.Workspace.Registry, as: WS
 
   setup do
     for {name, _} <- :ets.tab2list(:esr_workspaces), do: :ets.delete(:esr_workspaces, name)

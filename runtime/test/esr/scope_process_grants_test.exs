@@ -1,14 +1,14 @@
 defmodule Esr.ScopeProcessGrantsTest do
   @moduledoc """
   P3-3a.2: `Esr.Scope.Process` projects its principal's grants locally
-  from the global `Esr.Capabilities.Grants` snapshot at init, subscribes
+  from the global `Esr.Resource.Capability.Grants` snapshot at init, subscribes
   to `grants_changed:<principal_id>` on PubSub, and refreshes its local
   map on change. `Scope.Process.has?/2` is served from the local map
   (no global ETS lookup per call).
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
   alias Esr.Scope
 
   setup do

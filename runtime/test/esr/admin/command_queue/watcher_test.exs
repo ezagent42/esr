@@ -26,7 +26,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
 
   alias Esr.Admin.CommandQueue.Watcher
   alias Esr.Scope
-  alias Esr.Capabilities.Grants
+  alias Esr.Resource.Capability.Grants
 
   @test_principal "ou_watcher_test"
 
