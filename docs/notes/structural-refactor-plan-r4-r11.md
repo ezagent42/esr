@@ -207,16 +207,21 @@ Audit of the 7 registry-flavored modules surfaces two distinct shapes:
 
 ---
 
-### R7 — Audit + possibly split `Esr.Admin.Dispatcher` (448 LOC)
+### R7 — Audit `Esr.Admin.Dispatcher` (448 LOC) — RESOLVED: stay monolithic
 
-**Prerequisite:** R4 done (uses `Esr.Interface.Operation` if split happens).
+**Audit (2026-05-04):** Dispatcher's 4 concerns share state heavily:
+- `handle_cast({:execute, command, reply_to})` — runs command, stores pending entry
+- `handle_info({:command_result, id, result})` — looks up pending entry, removes
+- `handle_info({:cleanup_signal, session_id, status, details})` — bridges command's result delivery to subsequent cleanup phase via `pending_cleanups` state
+- `register_cleanup/2`, `deregister_cleanup/1` — manage `pending_cleanups`
 
-**Scope:**
-1. **Audit phase** — inspect Dispatcher's actual concerns. Likely: command-queue consume + result-report + auth-context propagation.
-2. **Decide autonomously per §十一**:
-   - If concerns are tightly coupled (shared state, hot-path performance critical) → **stay monolithic** + add `@behaviour Esr.Interface.Operation`. Simple PR.
-   - If concerns are independent → **split into 2-3 modules**. Each implements relevant Interface.
-3. **`Esr.Admin.Commands.Scope.BranchEnd` (453 LOC)** — audit during R7 too. If single-command-bundling, split.
+The state.pending and state.pending_cleanups maps are interlocked: a command's lifecycle spans execute → result → optional cleanup-signal. Splitting concerns would require either (a) duplicate state across modules, or (b) inter-module GenServer.call chains for state lookup. Both pessimize a hot-path that runs every admin command.
+
+**Decision per §J1 (conservative) + §J2 (smaller PR):** stay monolithic. R7 is a doc-only PR documenting the audit conclusion.
+
+**`@behaviour Esr.Interface.Operation`** — skip. Operation defines `enqueue/1` (Dispatcher has no public enqueue — the file-watcher does that), `execute/2` (Dispatcher has `handle_cast({:execute, ...})` not a direct execute), `report/2` (reports as side effect, not API). API doesn't match. Documented in Dispatcher's moduledoc; defer to API-normalization sweep.
+
+**`Esr.Admin.Commands.Scope.BranchEnd` (453 LOC)** — audit-noted but **deferred** to a separate R-batch. BranchEnd's concerns (cleanup handshake / worktree script / branches.yaml mutation / routing.yaml mutation) ARE separable, but the split touches `Esr.Resource.Branches` and `Esr.Worktree.Cleanup` modules that don't exist yet. That's a more substantial design effort — appropriate as a standalone R7.5 spec post-AFK.
 
 ---
 
