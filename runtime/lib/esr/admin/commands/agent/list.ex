@@ -3,7 +3,7 @@ defmodule Esr.Admin.Commands.Agent.List do
   `/list-agents` slash command — list every agent name compiled from
   `agents.yaml` (PR-21κ, 2026-04-30).
 
-  Reads `Esr.SessionRegistry.list_agents/0`.
+  Reads `Esr.Entity.Agent.Registry.list_agents/0`.
 
   ## Latent bug fixed by this module
 
@@ -22,7 +22,7 @@ defmodule Esr.Admin.Commands.Agent.List do
   @spec execute(map()) :: result()
   def execute(_cmd) do
     text =
-      case Esr.SessionRegistry.list_agents() do
+      case Esr.Entity.Agent.Registry.list_agents() do
         [] ->
           "no agents loaded (agents.yaml empty or not found)"
 

@@ -32,7 +32,7 @@ defmodule Esr.Integration.VoiceE2ETest do
     # "*" grants everything so any downstream cap checks pass.
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_voice_e2e")
 
-    :ok = Esr.SessionRegistry.load_agents(@fixture)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture)
 
     # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
@@ -60,7 +60,7 @@ defmodule Esr.Integration.VoiceE2ETest do
     # Resolve VoiceE2E pid from SessionRegistry refs. PR-A T1: no app_id
     # was passed at create_session, so the router defaults to "default".
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, "default")
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, "default")
 
     voice_pid = refs[:voice_e2e]
     assert is_pid(voice_pid)
@@ -93,6 +93,6 @@ defmodule Esr.Integration.VoiceE2ETest do
     :ok = Esr.Scope.Router.end_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, "default")
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, "default")
   end
 end

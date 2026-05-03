@@ -1,65 +1,71 @@
-defmodule Esr.SessionRegistry do
+defmodule Esr.Resource.ChatScope.Registry do
   @moduledoc """
-  YAML-compiled topology registry + runtime mappings.
+  Chat-scope routing registry — `(chat_id, app_id) → session_id` and the
+  D8-uniqueness URI-claim indexes (R5 split from the legacy
+  `Esr.SessionRegistry`).
 
-  Single source of truth for:
-  - `agents.yaml` compiled agent definitions
-  - `(chat_id, app_id) → session_id` routing lookup
-  - `(session_id, peer_name) → pid` lookup
-  - yaml hot-reload
+  Two responsibilities, one GenServer:
 
-  See spec §3.3, §3.5, and PR-A multi-app spec §2.1.
+    1. **Chat-current routing** — exactly one active session per
+       `(chat_id, app_id)` slot. `register_session/3` overwrites, leaving
+       the prior session as an orphan reachable only by sid (e.g. via
+       `/end-session`). PR-21λ collapsed the historic 3-tuple key
+       `(chat_id, app_id, thread_id)` because Feishu surfaces a fresh
+       thread_id for every top-level message in some chats — keying on
+       it caused every "hi" after `/new-session` to miss the slot and
+       silently auto-spawn or land on a dead old session.
 
-  ## PR-21λ: chat-current single-session model
+    2. **URI uniqueness (PR-21g D8)** — within a single esrd environment
+       (`$ESR_INSTANCE`), each
+         `(env, username, workspace, name)` tuple AND
+         `(env, username, workspace, worktree_branch)` tuple
+       must be unique. Collisions reject at register-time so two
+       `/new-session` calls competing for the same name (or worktree
+       branch) fail fast rather than silently overwriting sessions /
+       worktree paths.
 
-  A `(chat_id, app_id)` slot binds at most one active session.
-  `/new-session` always overwrites the slot, leaving any prior
-  session as an orphan reachable only by sid (e.g. via
-  `/end-session`). Pre-PR-21λ the key was a 3-tuple including the
-  inbound `thread_id`, but Feishu surfaces a fresh thread_id for
-  every top-level message in some chats — sessions registered under
-  one thread_id were unreachable from a follow-up message that
-  carried a different thread_id, causing every "hi" after
-  `/new-session` to miss the slot and silently auto-spawn or land
-  on a dead old session.
+  See `docs/notes/structural-refactor-plan-r4-r11.md` §四-R5 for the
+  motivation: legacy `SessionRegistry` mixed three concerns (agents.yaml,
+  chat routing, URI claims). R5 split the agents.yaml concern to
+  `Esr.Entity.Agent.Registry`; chat + URI concerns live here.
+
+  ## ETS layout
+
+  Three named, protected `:set` tables, owned by this GenServer.
+  Reads run directly from the caller process, bypassing the GenServer
+  mailbox; writes route through the owner (handle_call) so consistency
+  with the in-memory `sessions` map is preserved. Mirrors the pattern in
+  `Esr.Resource.Capability.Grants` and the prior SessionRegistry.
+
+  ## R5 §A2 / §B1 note (autonomous decision)
+
+  The R5 spec called for `@behaviour Esr.Interface.LiveRegistry`. The
+  match isn't exact: this module exposes
+  `register_session/3` (not `register/2`), `unregister_session/1`
+  (not `unregister/1`), and several lookup variants that don't fit the
+  generic `lookup/1` shape. Forcing the @behaviour today would require
+  renaming the public API and breaking every caller (out of R5 scope
+  per §N1). Per §B4, a follow-up R-batch can reconcile once the
+  `lookup return value normalization` (§四-R4 step 4) sweeps callers.
+  **Skipping `@behaviour` for now and documenting here.**
   """
 
   @behaviour Esr.Role.State
   use GenServer
   require Logger
 
-  @reserved_fields ~w(rate_limits timeout_ms allowed_principals)a
-
   # ETS index for (chat_id, app_id) → {session_id, refs}. PR-21λ
   # collapsed the historic thread_id slot — see moduledoc.
-  #
-  # Owned by the GenServer; writes route through the owner (handle_call)
-  # so consistency with the in-memory `sessions` map is preserved. Reads
-  # run directly from the caller process, bypassing the GenServer mailbox.
-  # Mirrors the pattern in `Esr.Resource.Capability.Grants`.
-  @ets_table :esr_session_chat_index
+  @ets_table :esr_chat_scope_chat_index
 
   # PR-21g: D8 uniqueness — additional ETS indexes on
   #   {env, username, workspace, name}            → session_id
   #   {env, username, workspace, worktree_branch} → session_id
-  # within a single esrd environment ($ESR_INSTANCE), each tuple must
-  # be unique. Collisions reject at register-time so two `/new-session`
-  # calls competing for the same name (or worktree branch) fail fast
-  # rather than silently overwriting sessions / worktree paths.
-  @ets_name_index :esr_session_name_index
-  @ets_worktree_index :esr_session_worktree_index
+  @ets_name_index :esr_chat_scope_name_index
+  @ets_worktree_index :esr_chat_scope_worktree_index
 
   # Public API
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-
-  def load_agents(path), do: GenServer.call(__MODULE__, {:load_agents, path})
-  def agent_def(name), do: GenServer.call(__MODULE__, {:agent_def, name})
-
-  @doc """
-  List all known agent names (PR-21κ — surfaces `/list-agents` data).
-  Sorted alphabetically.
-  """
-  def list_agents, do: GenServer.call(__MODULE__, :list_agents)
 
   def register_session(session_id, chat_thread_key, peer_refs),
     do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
@@ -144,49 +150,11 @@ defmodule Esr.SessionRegistry do
     :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
     :ets.new(@ets_name_index, [:named_table, :set, :protected, read_concurrency: true])
     :ets.new(@ets_worktree_index, [:named_table, :set, :protected, read_concurrency: true])
-    # Eagerly load <runtime_home>/agents.yaml at init so agents are
-    # available before Admin.Supervisor starts (and its watcher
-    # dispatches any pre-queued session_new commands). E2E discovered
-    # the race: Application's post-supervisor load_agents_from_disk
-    # ran AFTER Supervisor.start_link, allowing the admin_queue
-    # watcher to fire `session_new agent=cc` before agents were
-    # populated — resulting in `unknown_agent`. Init-time load
-    # eliminates the race (this registry is child #8 in the supervisor
-    # tree, before Admin.Supervisor at #15).
-    #
-    # Missing file is fine — callers can still invoke `load_agents/1`
-    # to reload or load from an alternate path.
-    agents =
-      case parse_agents_file(Path.join(Esr.Paths.runtime_home(), "agents.yaml")) do
-        {:ok, a} -> a
-        _ -> %{}
-      end
 
-    {:ok, %{agents: agents, sessions: %{}, chat_to_session: %{}}}
+    {:ok, %{sessions: %{}, chat_to_session: %{}}}
   end
 
   @impl true
-  def handle_call({:load_agents, path}, _from, state) do
-    case parse_agents_file(path) do
-      {:ok, agents} ->
-        {:reply, :ok, %{state | agents: agents}}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:agent_def, name}, _from, state) do
-    case Map.fetch(state.agents, name) do
-      {:ok, def_} -> {:reply, {:ok, def_}, state}
-      :error -> {:reply, {:error, :not_found}, state}
-    end
-  end
-
-  def handle_call(:list_agents, _from, state) do
-    {:reply, state.agents |> Map.keys() |> Enum.sort(), state}
-  end
-
   def handle_call(
         {:register_session, session_id, %{chat_id: c, app_id: a} = key, refs},
         _from,
@@ -205,7 +173,7 @@ defmodule Esr.SessionRegistry do
 
       prev_sid ->
         Logger.info(
-          "session_registry: chat_current slot {#{c}, #{a}} reassigned " <>
+          "chat_scope_registry: chat_current slot {#{c}, #{a}} reassigned " <>
             "#{prev_sid} → #{session_id} (prior session is now an orphan)"
         )
     end
@@ -272,7 +240,10 @@ defmodule Esr.SessionRegistry do
   end
 
   def handle_call({:claim_uri, _sid, _bad}, _from, state),
-    do: {:reply, {:error, {:invalid_args, "claim_uri requires env/username/workspace/name/worktree_branch"}}, state}
+    do:
+      {:reply,
+       {:error, {:invalid_args, "claim_uri requires env/username/workspace/name/worktree_branch"}},
+       state}
 
   defp drop_uri_rows_for(sid) do
     drop_matching(@ets_name_index, sid)
@@ -288,42 +259,5 @@ defmodule Esr.SessionRegistry do
     end)
   rescue
     ArgumentError -> :ok
-  end
-
-  # Internal: yaml parse + reserved-field warning
-  defp parse_agents_file(path) do
-    with {:ok, content} <- File.read(path),
-         {:ok, parsed} <- YamlElixir.read_from_string(content) do
-      agents = parsed["agents"] || %{}
-
-      agents_compiled =
-        for {name, spec} <- agents, into: %{} do
-          warn_if_reserved_fields(name, spec)
-          {name, compile_agent(spec)}
-        end
-
-      {:ok, agents_compiled}
-    end
-  end
-
-  defp warn_if_reserved_fields(name, spec) do
-    for field <- @reserved_fields, Map.has_key?(spec, Atom.to_string(field)) do
-      Logger.warning(
-        "agents.yaml: agent '#{name}' uses reserved field '#{field}' (not implemented; will be ignored)"
-      )
-    end
-  end
-
-  defp compile_agent(spec) do
-    %{
-      description: spec["description"] || "",
-      capabilities_required: spec["capabilities_required"] || [],
-      pipeline: %{
-        inbound: spec["pipeline"]["inbound"] || [],
-        outbound: spec["pipeline"]["outbound"] || []
-      },
-      proxies: spec["proxies"] || [],
-      params: spec["params"] || []
-    }
   end
 end

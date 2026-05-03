@@ -56,7 +56,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
@@ -89,9 +89,9 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     on_exit(fn ->
       # PR-A T1: Scope.Router defaults app_id to "default" when the
       # slash flow doesn't carry one (T3 will surface app_id explicitly).
-      Esr.SessionRegistry.lookup_by_chat(@chat_id, "default")
+      Esr.Resource.ChatScope.Registry.lookup_by_chat(@chat_id, "default")
       |> case do
-        {:ok, sid, _} -> Esr.SessionRegistry.unregister_session(sid)
+        {:ok, sid, _} -> Esr.Resource.ChatScope.Registry.unregister_session(sid)
         _ -> :ok
       end
     end)
@@ -168,7 +168,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # PR-A T1: slash flow doesn't yet supply app_id so Scope.Router
     # defaults to "default".
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(@chat_id, "default"),
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(@chat_id, "default"),
            "SessionRegistry.lookup_by_chat_thread/3 must return the session " <>
              "created by the slash command"
 

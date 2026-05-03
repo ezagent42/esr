@@ -27,12 +27,12 @@ defmodule Esr.Admin.Commands.Scope.EndTest do
   setup do
     # App-level singletons must already be up for Scope.Router to
     # do real work.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
     assert is_pid(Process.whereis(Esr.Scope.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
       )
 
@@ -141,7 +141,7 @@ defmodule Esr.Admin.Commands.Scope.EndTest do
 
       # Stage URI claim so lookup_by_name resolves to sid.
       :ok =
-        Esr.SessionRegistry.claim_uri(sid, %{
+        Esr.Resource.ChatScope.Registry.claim_uri(sid, %{
           env: env,
           username: "linyilun",
           workspace: "esr-dev",
@@ -163,7 +163,7 @@ defmodule Esr.Admin.Commands.Scope.EndTest do
 
       # URI claim cleared by unregister_session under the hood
       assert :not_found =
-               Esr.SessionRegistry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
+               Esr.Resource.ChatScope.Registry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
     end
 
     test "args.name without args.username → invalid_args" do

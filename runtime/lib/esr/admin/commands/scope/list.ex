@@ -18,7 +18,7 @@ defmodule Esr.Admin.Commands.Scope.List do
           ]
         }}
 
-  Reads `Esr.SessionRegistry.list_uris/3` — the URI-keyed live-session
+  Reads `Esr.Resource.ChatScope.Registry.list_uris/3` — the URI-keyed live-session
   table claimed at /new-session time (PR-21g). Independent of the
   legacy routing.yaml / branches.yaml shape below.
 
@@ -56,7 +56,7 @@ defmodule Esr.Admin.Commands.Scope.List do
        }}
     else
       sessions =
-        Esr.SessionRegistry.list_uris(env, username, ws)
+        Esr.Resource.ChatScope.Registry.list_uris(env, username, ws)
         |> Enum.map(fn {name, sid} ->
           %{"name" => name, "session_id" => sid}
         end)

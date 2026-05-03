@@ -56,7 +56,12 @@ defmodule Esr.Application do
 
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
       Esr.Resource.AdapterSocket.Registry,
-      {Esr.SessionRegistry, []},
+
+      # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
+      # agents.yaml-compiled definitions cache + hot-reload. Started before
+      # Scope.Admin since admin commands (e.g. session_new) validate the
+      # requested agent name against this registry.
+      {Esr.Entity.Agent.Registry, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
@@ -72,9 +77,17 @@ defmodule Esr.Application do
       # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
       Esr.Scope.Supervisor,
 
+      # 4e.3b ChatScope.Registry (R5 split from legacy SessionRegistry):
+      # `(chat_id, app_id) → session_id` chat-current routing + URI-claim
+      # uniqueness indexes. Started just before Scope.Router since the
+      # router is the primary writer (register_session on success path,
+      # unregister_session on session end) and FeishuAppAdapter / admin
+      # commands are the primary readers.
+      {Esr.Resource.ChatScope.Registry, []},
+
       # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
-      # the agents.yaml pipeline. Depends on SessionRegistry,
+      # the agents.yaml pipeline. Depends on ChatScope.Registry,
       # Scope.Supervisor, and Session.Registry (all earlier
       # children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
@@ -150,7 +163,8 @@ defmodule Esr.Application do
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
       # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
-      # by Esr.SessionRegistry.lookup_by_chat_thread/3 in the new peer chain.
+      # by Esr.Resource.ChatScope.Registry.lookup_by_chat/2 in the new
+      # peer chain (post-R5).
       Esr.HandlerRouter.Supervisor,
       Esr.Persistence.Supervisor,
       Esr.Telemetry.Supervisor,
@@ -240,11 +254,11 @@ defmodule Esr.Application do
   end
 
   @doc """
-  Load `<runtime_home>/agents.yaml` into `Esr.SessionRegistry` at boot.
-  Mirrors `load_workspaces_from_disk/1` — missing file is not an error,
-  parse failures are logged. Exists so e2e scenarios (which drop an
-  agents.yaml at the instance root before `scripts/esrd.sh start`) don't
-  have to reach into ExUnit test support to load agents manually.
+  Load `<runtime_home>/agents.yaml` into `Esr.Entity.Agent.Registry` at
+  boot. Mirrors `load_workspaces_from_disk/1` — missing file is not an
+  error, parse failures are logged. Exists so e2e scenarios (which drop
+  an agents.yaml at the instance root before `scripts/esrd.sh start`)
+  don't have to reach into ExUnit test support to load agents manually.
   """
   @spec load_agents_from_disk() :: :ok
   def load_agents_from_disk do
@@ -252,7 +266,7 @@ defmodule Esr.Application do
     path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
 
     if File.exists?(path) do
-      case Esr.SessionRegistry.load_agents(path) do
+      case Esr.Entity.Agent.Registry.load_agents(path) do
         :ok ->
           Logger.info("agents.yaml: loaded from #{path}")
           :ok

@@ -8,7 +8,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     # `Esr.Scope.Admin.Process` (via P2-9's Scope.Admin) are now started
     # at app boot, so a redundant `start_supervised!` would crash with
     # :already_started. Reuse the app-level processes.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
     assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
     # No `name:` on the supervisor — a hard-coded atom collided across
     # tests when a previous run's DynamicSupervisor hadn't fully torn
@@ -37,7 +37,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     test_pid = self()
 
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         "session-abc",
         # PR-A T1: registry key is (chat_id, app_id, thread_id). Pre-PR-A
         # envelopes (no args["app_id"]) fall back to state.instance_id —
@@ -75,7 +75,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
     # Arrange: register a session keyed under app_id "feishu_DEV"
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         "S_PRA_FAA",
         %{chat_id: "oc_PRA", app_id: "feishu_DEV", thread_id: ""},
         %{feishu_chat_proxy: test_pid}
@@ -128,7 +128,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     send(pid_fallback, {:inbound_event, env_without_app_id})
     assert_receive {:feishu_inbound, ^env_without_app_id}, 500
 
-    Esr.SessionRegistry.unregister_session("S_PRA_FAA")
+    Esr.Resource.ChatScope.Registry.unregister_session("S_PRA_FAA")
   end
 
   test "registration key is instance_id, not Feishu-platform app_id (PR-9 T10)",

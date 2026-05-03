@@ -39,7 +39,7 @@ defmodule Esr.Integration.N2SessionsTest do
 
   setup do
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
       )
 
@@ -48,7 +48,7 @@ defmodule Esr.Integration.N2SessionsTest do
 
     on_exit(fn ->
       for sid <- ["n2-session-A", "n2-session-B"] do
-        Esr.SessionRegistry.unregister_session(sid)
+        Esr.Resource.ChatScope.Registry.unregister_session(sid)
       end
 
       if Process.alive?(sup_a), do: Process.exit(sup_a, :shutdown)
@@ -99,14 +99,14 @@ defmodule Esr.Integration.N2SessionsTest do
     # decisions. PR-A T1: app_id mirrors the FAA instance_id below so
     # the legacy fallback path resolves correctly.
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         "n2-session-A",
         %{chat_id: "oc_a", app_id: "app_A", thread_id: "om_a"},
         %{feishu_chat_proxy: proxy_a}
       )
 
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         "n2-session-B",
         %{chat_id: "oc_b", app_id: "app_B", thread_id: "om_b"},
         %{feishu_chat_proxy: proxy_b}
@@ -174,7 +174,7 @@ defmodule Esr.Integration.N2SessionsTest do
     # Unregister A so the adapter's lookup returns :not_found for A's
     # (chat_id, thread_id). A second A-inbound must NOT resurrect the
     # dead relay or leak to B.
-    :ok = Esr.SessionRegistry.unregister_session("n2-session-A")
+    :ok = Esr.Resource.ChatScope.Registry.unregister_session("n2-session-A")
 
     env_b2 = %{
       "payload" => %{

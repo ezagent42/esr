@@ -18,14 +18,14 @@ defmodule Esr.Admin.Commands.Attach do
 
   @behaviour Esr.Role.Control
 
-  alias Esr.SessionRegistry
+  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
   alias Esr.Uri, as: EsrUri
 
   def execute(%{"args" => args}) do
     chat_id = Map.get(args, "chat_id", "")
     app_id = Map.get(args, "app_id", "")
 
-    case SessionRegistry.lookup_by_chat(chat_id, app_id) do
+    case ChatScopeRegistry.lookup_by_chat(chat_id, app_id) do
       {:ok, sid, _refs} ->
         uri = EsrUri.build_path(["sessions", sid, "attach"], "localhost")
         http_url = EsrUri.to_http_url(uri, EsrWeb.Endpoint)
