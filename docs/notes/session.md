@@ -1,6 +1,6 @@
 # ESR Sessions — 目标态设计
 
-**Date:** 2026-05-03 (rev 8, was templates.md → views.md → session.md)
+**Date:** 2026-05-03 (rev 9, was templates.md → views.md → session.md)
 **Audience:** 同 `concepts.md`
 **Status:** prescriptive 设计文档；**不**描述当前实现，**不**讨论迁移路径
 
@@ -235,7 +235,7 @@
 - `GrantInterface` — grant / revoke / check
 
 **两态**：
-- **Declarative**：cap 在代码 / yaml 里声明
+- **Declarative**：cap 在代码里声明
 - **Granted**：grant 关系存于 CapabilityRegistry（admin Scope 的成员）
 
 ---

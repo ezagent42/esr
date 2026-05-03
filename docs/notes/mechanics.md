@@ -1,6 +1,6 @@
 # ESR 运行 Mechanics — 怎么 implement 一个功能
 
-**Date:** 2026-05-03 (rev 8)
+**Date:** 2026-05-03 (rev 9)
 **Audience:** 同 `concepts.md`
 **Status:** prescriptive 设计文档；**不**描述当前实现，**不**讨论迁移路径
 
@@ -58,9 +58,9 @@ Entity 之间互相协调通过 **Channel Resource**，对应 Phoenix.PubSub 的
 - 哪些 member 订阅哪些 Channel
 - 哪些 Adapter 收到外部 event 后 publish 到哪个 Channel
 
-**Topology 是 Session 的 wiring 部分**，不是独立 yaml file。具体在 `concepts.md §六` 里的 Session 定义中。
+**Topology 是 Session 的 wiring 部分**，跟 Context 一起在 Session declaration（code）里表达。具体在 `concepts.md §六` 里的 Session 定义中。
 
-加新功能不用改 Elixir 连接逻辑——改 Session 的 Topology 声明 → startup time 重新 instantiate Scope，或者 runtime watcher 重 reload。
+加新功能不用改 Elixir 连接逻辑——改 Session 的 Topology 声明 → startup time 重新 instantiate Scope。
 
 ---
 
@@ -105,7 +105,7 @@ Entity 之间互相协调通过 **Channel Resource**，对应 Phoenix.PubSub 的
 1. 写一个 Handler-composing Entity（`use Handler` + `@behaviour SlashParseInterface`），实现 slash text → (kind, args) 解析
 2. 修 AdminSession.Topology：声明这个新 Entity 默认是 admin Scope 的 member，订阅 SlashRouteRegistry（修 wiring）
 
-注意：**没有"slash-route yaml 加一行"这个独立 bucket**——slash-route yaml 是 AdminSession.Topology 在 yaml 里的具体表达，修 yaml 等于"修 wiring"落点。
+注意：**没有"slash-route 加一行配置"这个独立 bucket**——slash-route 配置就是 AdminSession.Topology 中"哪些 Entity 处理哪些 kind"的 wiring，修配置等于"修 wiring"落点。
 
 ### Q：怎么让现有 Scope 发送一种新事件？
 
@@ -170,46 +170,7 @@ trace 顺序：
 
 ---
 
-## 五、Session yaml schema（规范设计）
-
-> 注意：这是**目标态**的 schema 设计，不是当前实现。每个 Session declaration 包含 Context（kind）和 Topology（默认 wiring）两部分。
-
-```yaml
-# session yaml schema (草案) — 每个 Session declaration
-
-GroupChatSession:
-  # Context facet — kind 部分
-  context:
-    kind: scope
-    interfaces:
-      - SessionLifecycleInterface
-    member_interfaces_required:  # 加入这个 Scope 的成员必须实现这些
-      - MemberInterface
-
-  # Topology facet — wiring 部分
-  topology:
-    default_members:  # 实例化时默认包含的 members
-      - kind: resource
-        type: Channel
-        name: shared-channel
-      - kind: entity
-        type: User
-        instances: from-membership-list  # 动态成员
-
-    subscriptions:  # 默认订阅关系
-      - subscriber: all-members
-        channel: shared-channel
-        callback: handle_info
-
-    routing:  # 这个 Scope 的 inbound 怎么进来
-      from_routing_channel: yes
-```
-
-每个 Session 都按这个格式声明。加新功能 = 加 Session 文件 / 加 declaration / 加 Topology 边，不改老代码。
-
----
-
-## 六、相关文档
+## 五、相关文档
 
 - `docs/notes/concepts.md` — metamodel 定义（必先读）
 - `docs/notes/session.md` — Session catalog + Entity / Resource declarations

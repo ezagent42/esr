@@ -1,6 +1,6 @@
 # ESR 概念词汇 — Tetrad Metamodel
 
-**Date:** 2026-05-03 (P1-1 brainstorm, rev 8)
+**Date:** 2026-05-03 (P1-1 brainstorm, rev 9)
 **Audience:** 任何在 ESR 仓库读代码、写 spec、讨论架构的人——人类或 AI
 **Status:** prescriptive；本文档定义元模型，不讨论现状偏差
 
@@ -12,7 +12,7 @@
 
 用法：
 
-- 写新模块 / 新 yaml entry 时，先确认要表达的概念在 metamodel 里是什么 primitive、由哪个 Session 产出
+- 写新模块时，先确认要表达的概念在 metamodel 里是什么 primitive、由哪个 Session 产出
 - review PR 时，对 noun 的理解不同就回到本文档对齐
 - 写 spec 时，**只**用 metamodel 词汇 + `session.md` 里登记的具体 Session 名字
 
