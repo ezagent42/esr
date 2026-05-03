@@ -1,6 +1,6 @@
 # ESR Concept Rename Map — current code → metamodel vocabulary
 
-**Date:** 2026-05-03 (rev 5 — Admin/Daemon under Scope.* + Esr.Application clarification per user 2026-05-03 11:51)
+**Date:** 2026-05-03 (rev 6 — DaemonScope ≡ Esr.Application, never get its own module per user 2026-05-03 12:14)
 **Audience:** anyone executing the post-metamodel refactor
 **Status:** prescriptive plan; lists which modules rename when, in which batch, with what blast radius. Not the metamodel itself — see `concepts.md` / `session.md` / `mechanics.md` for that.
 
@@ -45,7 +45,7 @@ Token swap `Session*` → `Scope.*` on the **runtime-instance** layer, **plus** 
 | `Esr.SessionProcess` | `Esr.Scope.Process` | The Scope's state GenServer (`session_id`, agent_name, grants cache, chat_thread_key) | File move: `runtime/lib/esr/session_process.ex` → `runtime/lib/esr/scope/process.ex` |
 | `Esr.SessionRouter` | `Esr.Scope.Router` | Control-plane coordinator for Scope lifecycle (`create_session_sync`, `end_session_sync`, `new_chat_thread`) | The 3 sync messages & the PubSub topic `"session_router"` rename in lockstep |
 | `Esr.SessionsSupervisor` | `Esr.Scope.Supervisor` | DynamicSupervisor that owns all live Scope subtrees | Touches application supervision tree |
-| `Esr.AdminSession` | `Esr.Scope.Admin` | The admin Scope kind — singleton, always-on Scope hosting session-less Entities (FeishuAppAdapter, SlashHandler, pools) | Lives **under** `Esr.Scope.*` namespace as a Scope kind, parallel to future `Esr.Scope.Daemon` / `Esr.Scope.GroupChat`. Atom config `:esr, :admin_children_sup_name` unchanged |
+| `Esr.AdminSession` | `Esr.Scope.Admin` | The admin Scope kind — singleton, always-on Scope hosting session-less Entities (FeishuAppAdapter, SlashHandler, pools) | Lives **under** `Esr.Scope.*` namespace as a Scope kind, parallel to future `Esr.Scope.GroupChat` and other kinds. (DaemonScope is _not_ a Scope kind in this sense — it ≡ `Esr.Application`; see §🔧-5.) Atom config `:esr, :admin_children_sup_name` unchanged |
 | `Esr.AdminSessionProcess` | `Esr.Scope.Admin.Process` | Admin-Scope state GenServer (parallel to `Esr.Scope.Process`) | File move: `admin_session_process.ex` → `scope/admin/process.ex` |
 | `Esr.Admin.Commands.Session.*` (6 modules: `New`, `End`, `BranchNew`, `BranchEnd`, `List`, `Switch`) | `Esr.Admin.Commands.Scope.*` | Slash-command Handler-composing Entities operating on Scopes | Directory-level rename; same R1 PR. The commands operate on Scope instances, not Session declarations |
 | `Esr.SessionSocketRegistry` | `Esr.AdapterSocketRegistry` | Tracks live CLI-adapter WS bindings (today: cc; future: Cursor/Aider/…) | R3 will fold this under `Esr.Resource.AdapterSocketRegistry`. R1 rename keeps it top-level for simplicity |
@@ -144,28 +144,26 @@ After R3 (Resource-namespace consolidation; see §三-bis below), `Esr.Workspace
 
 Open question deferred to a future spec: does Workspace need its own Resource type, or compose existing `Dir` + `Capability` Interface? Out of scope for R1/R2/R3.
 
-### 🔧-5. Esr.Application + DaemonScope vs. AdminScope (rev 5)
+### 🔧-5. Esr.Application + DaemonScope vs. AdminScope (rev 6, decisive)
 
-User 2026-05-03 asked: what is `Esr.Application`? Is it Phoenix? And should AdminScope be standalone, under `Esr.Scope.*`, or merged with DaemonScope?
+**`Esr.Application` is OTP convention, not Phoenix.** Every Erlang/Elixir application has an `Application` callback module — Phoenix uses one too, but the concept is from OTP. Its job is `start/2` (boot supervision tree) and `stop/1` (shutdown). The module name is bound by `mix.exs` `application/0` callback's `:mod` key. Renaming would break OTP boot. **Stays as-is.**
 
-**`Esr.Application` is OTP convention, not Phoenix.** Every Erlang/Elixir application has an `Application` callback module — Phoenix uses one too, but the concept is from OTP. Its job is `start/2` (boot supervision tree) and `stop/1` (shutdown). The module name `Esr.Application` is bound by `mix.exs` `application/0` callback's `:mod` key. Renaming would break OTP boot. **Stays as-is, framework-level.**
+**DaemonScope ≡ `Esr.Application`** (per user 2026-05-03 12:14). The Daemon Scope (runtime root, per `session.md §二`) is **literally** the OTP Application's supervision tree. There is no `Esr.Scope.Daemon` module, now or in the future. When code or docs need to talk about the daemon-scope's supervisor or members, they refer to `Esr.Application` directly.
 
-**AdminScope placement decision: under `Esr.Scope.*` (option b refined), NOT merged with DaemonScope.** Per metamodel:
+The future declarative `Esr.Sessions.Daemon` module (Phase 4 / new-feature work) is a different beast: it's the **declarative description** of the daemon's kind+wiring, separate from the runtime instance. The runtime instance IS `Esr.Application`. No naming asymmetry, no extra wrapper module.
+
+**AdminScope placement: `Esr.Scope.Admin` (option b refined).** Per metamodel:
 
 | | DaemonScope | AdminScope |
 |---|---|---|
 | Per metamodel | Top-level (root) Scope | Member of DaemonScope |
-| Has its own state GenServer? | No (supervision tree IS state) | Yes (`Esr.Scope.Admin.Process`) |
-| Has its own subtree supervisor? | No (`Esr.Application` IS its supervisor) | Yes (`Esr.Scope.Admin`) |
-| Lifecycle | = OTP application boot | Always-on, child of DaemonScope's supervisor |
-| Module today | None (implicit in `Esr.Application`) | `Esr.AdminSession` + `Esr.AdminSessionProcess` |
-| Module after R1 | None (implicit in `Esr.Application`) | `Esr.Scope.Admin` + `Esr.Scope.Admin.Process` |
+| Code today | implicit in `Esr.Application` | `Esr.AdminSession` + `Esr.AdminSessionProcess` |
+| Code after R1 | **`Esr.Application`** (no rename, no wrapper, no `Esr.Scope.Daemon`) | `Esr.Scope.Admin` + `Esr.Scope.Admin.Process` |
+| Lifecycle | = OTP application boot | Always-on, child of `Esr.Application`'s supervisor |
 
-**Why not merge:** the metamodel separates them deliberately — DaemonScope owns AdminScope as a member (alongside group-chat Scopes, User Entities, etc.). Merging collapses the "AdminScope is one Scope kind among many" framing. Future kinds (`Esr.Scope.GroupChat`, `Esr.Scope.Daemon`) plug in as siblings under `Esr.Scope.*` with the same shape.
+**Why AdminScope ≠ DaemonScope (no merge):** metamodel separates them — DaemonScope owns AdminScope as a member, alongside group-chat Scopes, User Entities, etc. Merging collapses "AdminScope is one Scope kind among many." Future kinds (`Esr.Scope.GroupChat`) plug in as siblings under `Esr.Scope.*`.
 
-**Why under `Esr.Scope.*` (option b refined, not standalone):** Admin is a Scope kind. Lives in the Scope primitive's namespace. Avoids polluting top-level `Esr.*` with one more entry. Keeps four-namespace symmetry (`Esr.Scope.*` / `Esr.Entity.*` / `Esr.Resource.*` post-R3 / framework infra).
-
-**Why DaemonScope stays implicit in `Esr.Application` for now:** OTP convention forces the existence of `Esr.Application`; it already plays the daemon-scope-supervisor role. Adding `Esr.Scope.Daemon` as a thin wrapper is **new code, not a rename** — defer until declarative `Esr.Sessions.Daemon` lands (Phase 4) and there's actual API surface to expose (`members/0`, etc.). Document the implicit mapping inline so readers know `Esr.Application` _is_ the daemon scope's supervisor.
+**Why AdminScope under `Esr.Scope.*` (not standalone, not plural):** Admin is a Scope kind; lives under the Scope primitive's namespace. Keeps top-level `Esr.*` lean and the four-namespace symmetry (`Esr.Scope.*` / `Esr.Entity.*` / `Esr.Resource.*` post-R3 / OTP+infra).
 
 ---
 
