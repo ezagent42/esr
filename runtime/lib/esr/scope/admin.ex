@@ -74,13 +74,13 @@ defmodule Esr.Scope.Admin do
     with {:ok, asr_pid} <-
            DynamicSupervisor.start_child(
              sup,
-             pool_spec(:voice_asr_pool, Esr.Entities.VoiceASR, pools_yaml_path)
+             pool_spec(:voice_asr_pool, Esr.Entity.VoiceASR, pools_yaml_path)
            ),
          :ok <- Esr.Scope.Admin.Process.register_admin_peer(:voice_asr_pool, asr_pid),
          {:ok, tts_pid} <-
            DynamicSupervisor.start_child(
              sup,
-             pool_spec(:voice_tts_pool, Esr.Entities.VoiceTTS, pools_yaml_path)
+             pool_spec(:voice_tts_pool, Esr.Entity.VoiceTTS, pools_yaml_path)
            ),
          :ok <- Esr.Scope.Admin.Process.register_admin_peer(:voice_tts_pool, tts_pid) do
       :ok
@@ -92,7 +92,7 @@ defmodule Esr.Scope.Admin do
   end
 
   @doc """
-  Start the admin-scope `Esr.Entities.SlashHandler` under Scope.Admin's
+  Start the admin-scope `Esr.Entity.SlashHandler` under Scope.Admin's
   children supervisor. Called from `Esr.Application.start/2` after
   Scope.Admin is up (Risk F bootstrap exception — same as voice pools).
 
@@ -112,7 +112,7 @@ defmodule Esr.Scope.Admin do
   def bootstrap_slash_handler do
     sup = children_supervisor_name()
 
-    case Esr.Entity.Factory.spawn_peer_bootstrap(sup, Esr.Entities.SlashHandler, %{}, []) do
+    case Esr.Entity.Factory.spawn_peer_bootstrap(sup, Esr.Entity.SlashHandler, %{}, []) do
       {:ok, _pid} -> :ok
       {:ok, _pid, _info} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -122,7 +122,7 @@ defmodule Esr.Scope.Admin do
   end
 
   @doc """
-  Start one `Esr.Entities.FeishuAppAdapter` per `type: feishu` instance
+  Start one `Esr.Entity.FeishuAppAdapter` per `type: feishu` instance
   declared in `adapters.yaml`. Called from `Esr.Application.start/2`
   after `bootstrap_slash_handler` (Risk F bootstrap exception — same
   policy: missing file / spawn failure is logged, not fatal).
@@ -197,7 +197,7 @@ defmodule Esr.Scope.Admin do
       proxy_ctx: %{}
     }
 
-    case DynamicSupervisor.start_child(sup, {Esr.Entities.FeishuAppAdapter, args}) do
+    case DynamicSupervisor.start_child(sup, {Esr.Entity.FeishuAppAdapter, args}) do
       {:ok, _pid} ->
         :ok
 

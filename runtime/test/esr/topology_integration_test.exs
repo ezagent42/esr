@@ -16,7 +16,7 @@ defmodule Esr.TopologyIntegrationTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Entities.CCProcess
+  alias Esr.Entity.CCProcess
   alias Esr.Topology
   alias Esr.Resource.Workspace.Registry, as: WS
 

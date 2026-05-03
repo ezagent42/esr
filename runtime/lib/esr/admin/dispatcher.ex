@@ -4,7 +4,7 @@ defmodule Esr.Admin.Dispatcher do
 
   Receives commands via two async paths — both `GenServer.cast` —
   from `Esr.Admin.CommandQueue.Watcher` (file-based CLI queue) and
-  `Esr.Entities.SlashHandler` (Feishu slash-command path, P3-14 onward —
+  `Esr.Entity.SlashHandler` (Feishu slash-command path, P3-14 onward —
   previously `Esr.Routing.SlashHandler`). Both paths supply
   `{:execute, command, {:reply_to, target}}` where `target` is one of:
 
@@ -68,7 +68,7 @@ defmodule Esr.Admin.Dispatcher do
   # (`Esr.Admin.Commands.Scope.New`, formerly Session.AgentNew); the
   # legacy branch-worktree path is `session_branch_new`. Both share the
   # PR-21κ Phase 6 (2026-04-30): `@required_permissions` and
-  # `@command_modules` constants deleted. `Esr.Resource.SlashRouteRegistry` is now the
+  # `@command_modules` constants deleted. `Esr.Resource.SlashRoute.Registry` is now the
   # single source of truth — kind → {permission, command_module} lives
   # in `slash-routes.yaml` (slashes:) + `internal_kinds:` blocks.
   # `dispatch_kind/1` below resolves both via SlashRouteRegistry ETS reads.
@@ -127,7 +127,7 @@ defmodule Esr.Admin.Dispatcher do
     # `:not_found` ⇒ unknown kind. `nil` ⇒ no permission required
     # (e.g. /help, /whoami). Anything else is the cap string.
     required =
-      case is_binary(kind) && Esr.Resource.SlashRouteRegistry.permission_for(kind) do
+      case is_binary(kind) && Esr.Resource.SlashRoute.Registry.permission_for(kind) do
         :not_found -> :unknown_kind
         other -> other
       end
@@ -286,7 +286,7 @@ defmodule Esr.Admin.Dispatcher do
   end
 
   defp run_command(kind, command) do
-    case Esr.Resource.SlashRouteRegistry.command_module_for(kind) do
+    case Esr.Resource.SlashRoute.Registry.command_module_for(kind) do
       :not_found ->
         {:error, %{"type" => "unknown_kind", "kind" => kind}}
 

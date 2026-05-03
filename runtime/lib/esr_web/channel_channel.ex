@@ -11,7 +11,7 @@ defmodule EsrWeb.ChannelChannel do
   use Phoenix.Channel
   require Logger
 
-  alias Esr.AdapterSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
 
   @impl Phoenix.Channel
   def join("cli:channel/" <> session_id, _payload, socket) do
@@ -25,7 +25,7 @@ defmodule EsrWeb.ChannelChannel do
     # another client is legitimately holding the slot. Reject the new
     # join — the remote can retry after the owner disconnects (which
     # flips status=:offline via `ChannelChannel.terminate/2` →
-    # `AdapterSocketRegistry.mark_offline/1`).
+    # `Registry.mark_offline/1`).
     case AdapterSocketRegistry.lookup(session_id) do
       {:ok, %{status: :online, ws_pid: existing_ws}} when is_pid(existing_ws) ->
         if existing_ws != self() and Process.alive?(existing_ws) do
@@ -79,7 +79,7 @@ defmodule EsrWeb.ChannelChannel do
   # Capabilities spec §6.2/§6.3 — CC session worker declares its
   # principal_id (the admin/user running CC) and workspace_name (which
   # workspace row this session operates in) on register. Both end up
-  # on the AdapterSocketRegistry row AND on the socket's assigns so the
+  # on the Registry row AND on the socket's assigns so the
   # tool_invoke handler can inject principal_id into the arity-6
   # {:tool_invoke, ...} tuple that Lane B (CAP-4) enforces against.
   #

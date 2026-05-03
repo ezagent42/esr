@@ -24,7 +24,7 @@
       {"idx": 3, "name": "Phoenix.PubSub", "args": "name: EsrWeb.PubSub"},
       {"idx": 4, "name": "Registry (Esr.Entity.Registry)", "args": "keys: :unique", "note": "must be up before any PeerServer registers"},
       {"idx": 5, "name": "Esr.Entity.Supervisor", "kind": "DynamicSupervisor", "note": "hosts live PeerServers"},
-      {"idx": 6, "name": "Esr.Resource.DeadLetterQueue", "args": "name: Esr.Resource.DeadLetterQueue", "note": "default 10_000 entries"},
+      {"idx": 6, "name": "Esr.Resource.DeadLetter.Queue", "args": "name: Esr.Resource.DeadLetter.Queue", "note": "default 10_000 entries"},
       {"idx": 7, "name": "Esr.WorkerSupervisor", "note": "Python adapter_runner/handler_worker subprocess launcher (Phase 8f)"},
       {"idx": 8, "name": "Esr.SessionRegistry", "note": "CC <-> WS bindings (PRD v0.2 §3.2)"},
       {"idx": 9, "name": "Esr.Resource.Workspace.Registry", "note": "PRD v0.2 §3.6"},
@@ -119,7 +119,7 @@
     "build/3": "produces 'esr://<host>/<type>/<id>' (port/org/params not assembled)"
   },
   "dead_letter": {
-    "module": "Esr.Resource.DeadLetterQueue",
+    "module": "Esr.Resource.DeadLetter.Queue",
     "type": "GenServer backed by :queue with size counter",
     "default_capacity": 10000,
     "eviction": "oldest-first (FIFO drop) on overflow, size stays at max",

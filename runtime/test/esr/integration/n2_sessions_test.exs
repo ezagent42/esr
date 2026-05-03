@@ -32,7 +32,7 @@ defmodule Esr.Integration.N2SessionsTest do
   import Esr.TestSupport.AppSingletons, only: [assert_app_singletons: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
 
-  alias Esr.Entities.FeishuAppAdapter
+  alias Esr.Entity.FeishuAppAdapter
 
   setup :assert_app_singletons
   setup :wipe_sessions_on_exit

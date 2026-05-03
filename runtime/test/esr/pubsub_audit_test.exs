@@ -40,10 +40,10 @@ defmodule Esr.PubSubAuditTest do
     "lib/esr/admin/commands/notify.ex",
     "lib/esr/admin/commands/scope/branch_end.ex",
     "lib/esr/handler_router.ex",
-    "lib/esr/peer_server.ex",
+    "lib/esr/entity/server.ex",
     "lib/esr_web/handler_channel.ex",
     "lib/esr_web/adapter_channel.ex",
-    "lib/esr/entities/feishu_app_adapter.ex",
+    "lib/esr/entity/feishu_app_adapter.ex",
     "lib/esr/resource/capability/grants.ex"
   ]
 

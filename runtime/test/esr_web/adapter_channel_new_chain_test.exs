@@ -1,7 +1,7 @@
 defmodule EsrWeb.AdapterChannelNewChainTest do
   @moduledoc """
   P2-11 — For `adapter:feishu/<app_id>` topics, EsrWeb.AdapterChannel
-  routes inbound envelopes to the registered `Esr.Entities.FeishuAppAdapter`
+  routes inbound envelopes to the registered `Esr.Entity.FeishuAppAdapter`
   for that app_id (looked up via `Esr.Scope.Admin.Process.admin_peer/1`
   under the symbolic name `:feishu_app_adapter_<app_id>`).
 
@@ -10,7 +10,7 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Entities.FeishuAppAdapter
+  alias Esr.Entity.FeishuAppAdapter
 
   setup do
     # Drift from expansion: both `Esr.SessionRegistry` and

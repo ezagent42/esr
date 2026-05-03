@@ -4,7 +4,7 @@ defmodule Esr.EntityServerLaneBDenyDispatchTest do
   `{:outbound, %{"kind" => "reply", ...}}` message to the source app's
   FAA peer (resolved via `Esr.Entity.Registry` keyed by
   `"feishu_app_adapter_<instance_id>"`). Cap check + rate-limit live
-  in `Esr.Entities.CapGuard`; FAA's existing `handle_downstream/2`
+  in `Esr.Entity.CapGuard`; FAA's existing `handle_downstream/2`
   wraps the outbound into a directive on `adapter:feishu/<id>`.
 
   Three cases:
@@ -34,7 +34,7 @@ defmodule Esr.EntityServerLaneBDenyDispatchTest do
     Grants.load_snapshot(%{})
     # PR-21x: reset CapGuard rate-limit between tests so a fresh
     # principal_id always passes the rate-limit gate.
-    if pid = Process.whereis(Esr.Entities.CapGuard) do
+    if pid = Process.whereis(Esr.Entity.CapGuard) do
       :sys.replace_state(pid, fn state -> %{state | last_emit: %{}} end)
     end
 

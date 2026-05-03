@@ -72,7 +72,7 @@ defmodule EsrWeb.PtySocket do
   @impl true
   def handle_in({data, [opcode: :binary]}, state) when is_binary(data) do
     # Raw stdin from browser (keystrokes + xterm.js terminal-cap replies).
-    Esr.Entities.PtyProcess.write(state.sid, data)
+    Esr.Entity.PtyProcess.write(state.sid, data)
     {:ok, state}
   end
 
@@ -82,7 +82,7 @@ defmodule EsrWeb.PtySocket do
       {:ok, %{"cols" => cols, "rows" => rows}}
       when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 ->
         Logger.info("pty_socket.resize sid=#{state.sid} cols=#{cols} rows=#{rows}")
-        Esr.Entities.PtyProcess.resize(state.sid, cols, rows)
+        Esr.Entity.PtyProcess.resize(state.sid, cols, rows)
         {:ok, state}
 
       other ->

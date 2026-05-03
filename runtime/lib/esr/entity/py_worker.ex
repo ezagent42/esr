@@ -4,8 +4,8 @@ defmodule Esr.Entity.PyWorker do
   via `Esr.PyProcess` and use a pending-map to correlate request/reply
   over JSON-line IPC.
 
-  Extracted from the shared boilerplate of `Esr.Entities.VoiceASR` and
-  `Esr.Entities.VoiceTTS`. Each peer declares its Python module name via
+  Extracted from the shared boilerplate of `Esr.Entity.VoiceASR` and
+  `Esr.Entity.VoiceTTS`. Each peer declares its Python module name via
   `use Esr.Entity.PyWorker, module: "voice_asr"` and supplies one
   callback:
 
@@ -18,7 +18,7 @@ defmodule Esr.Entity.PyWorker do
   `{:rpc, payload, timeout}` shape this macro's `handle_call/3`
   consumes.
 
-  Not suitable for stream-style peers like `Esr.Entities.VoiceE2E`, which
+  Not suitable for stream-style peers like `Esr.Entity.VoiceE2E`, which
   uses `handle_cast` + no id correlation — keep those as hand-rolled
   GenServers.
 

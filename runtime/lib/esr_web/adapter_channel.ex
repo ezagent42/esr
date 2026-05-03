@@ -9,7 +9,7 @@ defmodule EsrWeb.AdapterChannel do
    - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
      are forwarded unconditionally into the new peer chain via
      `forward_to_new_chain/2` → `Esr.Scope.Admin.Process.admin_peer/1`
-     → `Esr.Entities.FeishuAppAdapter`.
+     → `Esr.Entity.FeishuAppAdapter`.
    - Non-Feishu topics receiving `:inbound_event` get an explicit error
      reply; the legacy `AdapterHub.Registry → Entity.Registry` path was
      deleted in P2-16 (peer chain migration complete; the transitional
@@ -157,7 +157,7 @@ defmodule EsrWeb.AdapterChannel do
 
   @doc """
   Forward an inbound Feishu envelope to the new-chain peer
-  `Esr.Entities.FeishuAppAdapter` for `app_id` (parsed from `topic`).
+  `Esr.Entity.FeishuAppAdapter` for `app_id` (parsed from `topic`).
 
   Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
   to the adapter's mailbox), `:error` when no adapter is registered under

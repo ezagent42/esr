@@ -1,7 +1,7 @@
 defmodule Esr.EntityServerEsrChannelTest do
   use ExUnit.Case, async: false
 
-  alias Esr.AdapterSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
 
   setup do
     sid = "sess-ch-#{System.unique_integer([:positive])}"

@@ -1,7 +1,7 @@
 defmodule EsrWeb.ChannelChannelTest do
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.AdapterSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
 
   @topic "cli:channel/test-sid"
 

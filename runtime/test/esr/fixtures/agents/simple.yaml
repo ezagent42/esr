@@ -8,13 +8,13 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entities.FeishuChatProxy
+          impl: Esr.Entity.FeishuChatProxy
         - name: cc_proxy
-          impl: Esr.Entities.CCProxy
+          impl: Esr.Entity.CCProxy
         - name: cc_process
-          impl: Esr.Entities.CCProcess
+          impl: Esr.Entity.CCProcess
         - name: pty_process
-          impl: Esr.Entities.PtyProcess
+          impl: Esr.Entity.PtyProcess
       outbound:
         - pty_process
         - cc_process
@@ -22,7 +22,7 @@ agents:
         - feishu_chat_proxy
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Entities.FeishuAppProxy
+        impl: Esr.Entity.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"
     params:
       - name: dir

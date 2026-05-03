@@ -239,7 +239,7 @@ defmodule Esr.OSProcess do
         # Any other message is treated as a downstream peer event and
         # routed through the parent's `handle_downstream/2` callback.
         # This is the integration path used by upstream peers (e.g.
-        # `Esr.Entities.CCProcess`'s `:send_input` action targeted at
+        # `Esr.Entity.CCProcess`'s `:send_input` action targeted at
         # the PTY peer): the upstream peer calls
         # `send(pty_pid, {:send_input, text})`, and the wrapping
         # OSProcessWorker dispatches the message into the parent's
