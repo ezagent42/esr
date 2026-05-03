@@ -1,6 +1,6 @@
 # ESR Concept Rename Map — current code → metamodel vocabulary
 
-**Date:** 2026-05-03 (rev 3 — second-level nesting + workspace clarified per user 2026-05-03 11:34)
+**Date:** 2026-05-03 (rev 4 — adds R3 Resource.* consolidation + DaemonScope clarification per user 2026-05-03 11:40)
 **Audience:** anyone executing the post-metamodel refactor
 **Status:** prescriptive plan; lists which modules rename when, in which batch, with what blast radius. Not the metamodel itself — see `concepts.md` / `session.md` / `mechanics.md` for that.
 
@@ -81,7 +81,27 @@ Wide blast radius: every concrete actor module declares `@behaviour Esr.Peer.Pro
 
 ---
 
-## 五、Phase 3 — Structural (🔧) — needs separate spec
+## 四-bis、Phase 3 — Resource-namespace consolidation (⚠️/✅, R3)
+
+After R1 (`Esr.Scope.*`) and R2 (`Esr.Entity.*`) land, the natural symmetric move is to consolidate Resource concepts under `Esr.Resource.*`. This mirrors the metamodel's four runtime primitives (Scope / Entity / Resource / Interface) at the namespace level.
+
+| Current | New | Resource type | Notes |
+|---|---|---|---|
+| `Esr.Workspaces.*` | `Esr.Resource.Workspace.*` | Workspace Resource (Dir-flavor) | Per user 2026-05-03 |
+| `Esr.Capabilities.*` | `Esr.Resource.Capability.*` | Capability Resource | See 🔧-3 below for Resource-vs-Interface split (separate spec) |
+| `Esr.Permissions.*` | `Esr.Resource.Permission.*` | Permission Resource | Travels with Capabilities; same Resource/Interface spec |
+| `Esr.Users.*` | `Esr.Entity.User.*` | User is an **Entity**, not a Resource — moved into Phase 2 / R2 namespace | Aligns with `Esr.Entity.*` already established by R2 |
+| `Esr.SlashRoutes` | `Esr.Resource.SlashRouteRegistry` | Registry-base Resource | Single-module rename |
+| `Esr.DeadLetter` | `Esr.Resource.DeadLetterQueue` | JobQueue-base Resource | Single-module rename |
+| `Esr.Admin.CommandQueue.*` | `Esr.Resource.AdminQueue.*` (or stays under Admin if tightly admin-scoped) | JobQueue-base Resource instance | ❓ open: keep nested under Admin or pull out? |
+
+**Why R3 not R1/R2:** keeps each PR's blast radius bounded. R1 + R2 already touch ~230 files between them; consolidating Resource namespace in the same PR risks the renames colliding mid-flight (a module imported by both a Scope migration and a Resource migration would conflict). After R1+R2 are green, R3 has clear surface to walk.
+
+**Why ⚠️/✅:** mostly mechanical (token swap + namespace nest), with one structural piece for `Capabilities` ↔ `Permissions` Resource/Interface decomposition (covered separately in 🔧-3).
+
+---
+
+## 五、Phase 4 — Structural (🔧) — needs separate spec
 
 Concepts that the new metamodel separates but current code conflates. Each needs a small design spec before the rename PR.
 
@@ -116,11 +136,28 @@ Today `Esr.Capabilities` and `Esr.Permissions` are both monolithic façades with
 
 **Spec needed:** whether to physically split modules, or stay as façade. Likely lighter touch (façades stay; doc cross-reference to interface contracts). Bundle both subsystems into one spec.
 
-### 🔧-4. Workspace's metamodel role — RESOLVED (rev 3)
+### 🔧-4. Workspace's metamodel role — RESOLVED (rev 3, refined rev 4)
 
 Per user 2026-05-03: **Workspace is a Resource**, similar in shape to `Dir` (named filesystem-like namespace bounding permissions + dirs). Not a Scope.
 
-Implication: `Esr.Workspaces.Registry` is a Registry of Workspace Resources — name stays. Open question deferred to a future spec: does Workspace need its own Resource type, or compose existing `Dir` + `Capability` Interface? Out of scope for R1/R2.
+After R3 (Resource-namespace consolidation; see §三-bis below), `Esr.Workspaces.Registry` becomes `Esr.Resource.Workspace.Registry`. Until R3 lands, the module name stays as-is.
+
+Open question deferred to a future spec: does Workspace need its own Resource type, or compose existing `Dir` + `Capability` Interface? Out of scope for R1/R2/R3.
+
+### 🔧-5. DaemonScope vs. AdminScope asymmetry (rev 4)
+
+Per `session.md §二`, the metamodel has **DaemonScope** as the root container of all members (AdminScope, group-chat Scopes, User Entities, Adapter Entities, Capability Resources). The user 2026-05-03 asked: how is DaemonScope handled? Same as AdminScope?
+
+**Answer: structurally asymmetric, no rename needed in R1.**
+
+| | DaemonScope | AdminScope |
+|---|---|---|
+| Has its own state GenServer? | No — supervision tree IS the state | Yes (`Esr.AdminScope.Process`) |
+| Has its own subtree supervisor? | No — `Esr.Application` is its supervisor | Yes (`Esr.AdminScope`) |
+| Lifecycle | = OTP application boot | Always-on, parallel to OTP boot |
+| Code module today | None — implicit in `Esr.Application` | `Esr.AdminSession` + `Esr.AdminSessionProcess` |
+
+R1 leaves DaemonScope **implicit** (the OTP application IS the daemon scope). When declarative `Esr.Sessions.Daemon` lands (Phase 4 / new-feature work), we may add `Esr.DaemonScope` as a thin wrapper exposing the daemon-scope's metamodel API (e.g., `members/0` returning AdminScope + active Scopes + registered Entities). For now, no module-level rename is required.
 
 ---
 
@@ -133,13 +170,20 @@ These are already aligned, framework-level, or domain-neutral. **Do not rename i
 | Module | Why stays |
 |---|---|
 | `Esr.Topology` | Topology is a metamodel facet name; module already accurate |
-| `Esr.HandlerRouter`, `Esr.Handler` | Handler is an Entity-base in the metamodel; name is correct |
-| `Esr.Admin.Dispatcher`, `Esr.Admin.Supervisor`, `Esr.Admin.CommandQueue.{Watcher,Janitor}` | Admin subsystem internals; Dispatcher is a Handler-composing Entity, others are infrastructure |
+| `Esr.Handler`, `Esr.HandlerRouter` | Handler is an Entity-base in the metamodel; name is correct. (May move to `Esr.Entity.Handler.*` in a future Entity-types-consolidation pass; not in R1/R2/R3) |
+| `Esr.Admin.Dispatcher`, `Esr.Admin.Supervisor` | Admin subsystem internals; Dispatcher is a Handler-composing Entity |
 | `Esr.Role` | Internal taxonomy of OTP-actor roles; not a metamodel-level concept |
-| `Esr.SlashRoutes` | Per `session.md §六`, this IS the SlashRouteRegistry instance — name aligns |
-| `Esr.DeadLetter` | A bounded JobQueue Resource instance; current name is the role-name |
-| `Esr.Workspaces.Registry`, `Esr.Users.Registry` | Both are Registry Resource instances; names are accurate |
 | `Esr.Yaml.*` | Yaml is implementation detail (Registry persistence backing); naming stays |
+
+**Note**: the following modules originally listed as "stays as-is" in rev 2 now migrate in R3 — see §四-bis. Listed here for completeness so future readers know they're _planned_ moves, not stable:
+
+- `Esr.Workspaces.*` → `Esr.Resource.Workspace.*`
+- `Esr.Capabilities.*` → `Esr.Resource.Capability.*`
+- `Esr.Permissions.*` → `Esr.Resource.Permission.*`
+- `Esr.Users.*` → `Esr.Entity.User.*`
+- `Esr.SlashRoutes` → `Esr.Resource.SlashRouteRegistry`
+- `Esr.DeadLetter` → `Esr.Resource.DeadLetterQueue`
+- `Esr.Admin.CommandQueue.*` → ❓ (keep nested under Admin, or `Esr.Resource.AdminQueue.*`)
 
 ### Elixir — infrastructure / framework-level (no metamodel concept)
 
@@ -175,15 +219,15 @@ Smallest blast radius first; each PR ends green (e2e 06+07 + DOM dataset check).
 
 | PR | Contents | Blast radius | Validation |
 |---|---|---|---|
-| **R1** | Phase 1 batch — `Esr.Session*` → `Esr.Scope.*` (nested, 6 modules + 6 admin command subtree) | ~80 files, mostly Elixir + a few yaml/doc refs | mix test + uv run pytest + e2e 06/07 |
+| **R1** | Phase 1 batch — `Esr.Session*` → `Esr.Scope.*` (nested) + 6 admin command subtree + `Esr.SessionSocketRegistry` → `Esr.AdapterSocketRegistry` | ~80 files, mostly Elixir + a few yaml/doc refs | mix test + uv run pytest + e2e 06/07 + DOM dataset |
 | **R2** | Phase 2 batch — `Esr.Peer*` → `Esr.Entity.*` (nested, 8 modules + namespace + behaviour names) | ~150 files (every concrete entity module's `@behaviour`) | mix test + uv run pytest + e2e 06/07; telemetry events untouched |
-| **R3 spec** | Phase 3-1 design — split `Esr.SessionRegistry` → 3 Registries | spec only, no code | subagent review |
-| **R3 impl** | Phase 3-1 implementation | ~30 files | mix test + e2e 06/07 |
-| **R4 spec + impl** | Phase 3-2 — `Esr.SessionSocketRegistry` final name | small | mix test + e2e 06/07 |
-| **R5 spec** | Phase 3-3 — Capabilities Resource / Interface split | spec only, likely doc-only outcome | subagent review |
-| **R6 spec** | Phase 3-4 — Workspace's metamodel role | spec only | subagent review |
+| **R3** | Phase 3 batch — Resource-namespace consolidation (Workspaces / Capabilities / Permissions / SlashRoutes / DeadLetter / CommandQueue → `Esr.Resource.*`; Users → `Esr.Entity.User.*`) | ~120 files | mix test + uv run pytest + e2e 06/07 |
+| **R4 spec** | Phase 4-1 design — split `Esr.SessionRegistry` → 3 Registries | spec only, no code | subagent review |
+| **R4 impl** | Phase 4-1 implementation | ~30 files | mix test + e2e 06/07 |
+| **R5 spec** | Phase 4-2 — Capabilities + Permissions Resource / Interface split (was 🔧-3) | spec only | subagent review |
+| **R6 spec** | Phase 4-3 — Workspace Resource subtype vs. Dir+Capability composition (was 🔧-4 follow-up) | spec only | subagent review |
 
-After R1+R2 land, the codebase is "mechanical-rename complete" — every Session→Scope and Peer→Entity rename is done. Phase 3 specs can be drafted concurrently with R1/R2 implementation work.
+After R1+R2+R3 land, the codebase has clean four-namespace symmetry mirroring the metamodel: `Esr.Scope.*` / `Esr.Entity.*` / `Esr.Resource.*` (+ infrastructure). Phase 4 specs can be drafted concurrently with R1/R2/R3 implementation work.
 
 ---
 
