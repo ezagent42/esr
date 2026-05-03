@@ -34,7 +34,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Peers.FeishuAppAdapter
+  alias Esr.Entities.FeishuAppAdapter
 
   @tag :perf
   test "Scope.Router dispatch latency: 1000 iterations, record p50 / p99" do

@@ -4,7 +4,7 @@ defmodule Esr.Admin.Commands.Help do
   `Esr.SlashRoutes.list_slashes/0` (PR-21κ, 2026-04-30).
 
   Pre-PR-21κ this text was a hardcoded heredoc in
-  `Esr.Peers.FeishuAppAdapter.help_text/0`. Now it's data-driven from
+  `Esr.Entities.FeishuAppAdapter.help_text/0`. Now it's data-driven from
   `slash-routes.yaml`: each slash's `description` + `category` + `args`
   spec composes the rendered output.
 

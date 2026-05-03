@@ -49,7 +49,7 @@ defmodule Esr.HandlerRouter do
     # Broadcast under the unified "envelope" event shape Python's
     # handler_worker._on_frame filters on (event="envelope",
     # payload.kind="handler_call"). The envelope carries its own kind
-    # for dispatch — matching the Instantiator / PeerServer convention.
+    # for dispatch — matching the Instantiator / Entity.Server convention.
     EsrWeb.Endpoint.broadcast(channel_topic, "envelope", envelope)
 
     try do

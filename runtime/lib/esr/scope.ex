@@ -7,7 +7,7 @@ defmodule Esr.Scope do
     1. Esr.Scope.Process (:permanent)
     2. A DynamicSupervisor named via the Session.Registry under
        {:peers_sup, session_id} — hosts all peers in the agent's pipeline.
-       PeerFactory.spawn_peer/5 resolves to this supervisor via
+       Entity.Factory.spawn_peer/5 resolves to this supervisor via
        Esr.Scope.supervisor_name/1.
 
   The Scope.Admin's children supervisor is a special case: for session_id

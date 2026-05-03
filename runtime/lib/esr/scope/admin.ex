@@ -7,7 +7,7 @@ defmodule Esr.Scope.Admin do
   Bootstrap exception (Risk F, spec §6): Scope.Admin is started directly
   by `Esr.Supervisor`, NOT by `Esr.Scope.Router` (which doesn't exist
   yet at boot; introduced in PR-3). Children of Scope.Admin are spawned
-  via `Esr.PeerFactory.spawn_peer_bootstrap/4` which bypasses the
+  via `Esr.Entity.Factory.spawn_peer_bootstrap/4` which bypasses the
   Scope.Router control-plane resolution.
 
   See spec §3.4 and §6 Risk F.
@@ -55,7 +55,7 @@ defmodule Esr.Scope.Admin do
   is up (Risk F exception — bootstrap bypasses Scope.Router).
 
   Pool sizes come from `pools.yaml` via `Esr.Pools.pool_max/2`. Each
-  `Esr.PeerPool` is registered both as a globally-named process
+  `Esr.Entity.Pool` is registered both as a globally-named process
   (`:voice_asr_pool`, `:voice_tts_pool`) and as an admin peer under
   Scope.Admin.Process so session-local proxies can resolve it
   symbolically.
@@ -74,13 +74,13 @@ defmodule Esr.Scope.Admin do
     with {:ok, asr_pid} <-
            DynamicSupervisor.start_child(
              sup,
-             pool_spec(:voice_asr_pool, Esr.Peers.VoiceASR, pools_yaml_path)
+             pool_spec(:voice_asr_pool, Esr.Entities.VoiceASR, pools_yaml_path)
            ),
          :ok <- Esr.Scope.Admin.Process.register_admin_peer(:voice_asr_pool, asr_pid),
          {:ok, tts_pid} <-
            DynamicSupervisor.start_child(
              sup,
-             pool_spec(:voice_tts_pool, Esr.Peers.VoiceTTS, pools_yaml_path)
+             pool_spec(:voice_tts_pool, Esr.Entities.VoiceTTS, pools_yaml_path)
            ),
          :ok <- Esr.Scope.Admin.Process.register_admin_peer(:voice_tts_pool, tts_pid) do
       :ok
@@ -92,7 +92,7 @@ defmodule Esr.Scope.Admin do
   end
 
   @doc """
-  Start the admin-scope `Esr.Peers.SlashHandler` under Scope.Admin's
+  Start the admin-scope `Esr.Entities.SlashHandler` under Scope.Admin's
   children supervisor. Called from `Esr.Application.start/2` after
   Scope.Admin is up (Risk F bootstrap exception — same as voice pools).
 
@@ -112,7 +112,7 @@ defmodule Esr.Scope.Admin do
   def bootstrap_slash_handler do
     sup = children_supervisor_name()
 
-    case Esr.PeerFactory.spawn_peer_bootstrap(sup, Esr.Peers.SlashHandler, %{}, []) do
+    case Esr.Entity.Factory.spawn_peer_bootstrap(sup, Esr.Entities.SlashHandler, %{}, []) do
       {:ok, _pid} -> :ok
       {:ok, _pid, _info} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -122,7 +122,7 @@ defmodule Esr.Scope.Admin do
   end
 
   @doc """
-  Start one `Esr.Peers.FeishuAppAdapter` per `type: feishu` instance
+  Start one `Esr.Entities.FeishuAppAdapter` per `type: feishu` instance
   declared in `adapters.yaml`. Called from `Esr.Application.start/2`
   after `bootstrap_slash_handler` (Risk F bootstrap exception — same
   policy: missing file / spawn failure is logged, not fatal).
@@ -171,13 +171,13 @@ defmodule Esr.Scope.Admin do
   otherwise.
 
   The FAA peer name is `feishu_app_adapter_<instance_id>` (registered
-  via `Esr.PeerRegistry` from FeishuAppAdapter.start_link/1).
+  via `Esr.Entity.Registry` from FeishuAppAdapter.start_link/1).
   """
   @spec terminate_feishu_app_adapter(String.t()) :: :ok | :not_found
   def terminate_feishu_app_adapter(instance_id) when is_binary(instance_id) do
     sup = children_supervisor_name()
 
-    case Esr.PeerRegistry.lookup("feishu_app_adapter_#{instance_id}") do
+    case Esr.Entity.Registry.lookup("feishu_app_adapter_#{instance_id}") do
       {:ok, pid} ->
         _ = DynamicSupervisor.terminate_child(sup, pid)
         :ok
@@ -197,7 +197,7 @@ defmodule Esr.Scope.Admin do
       proxy_ctx: %{}
     }
 
-    case DynamicSupervisor.start_child(sup, {Esr.Peers.FeishuAppAdapter, args}) do
+    case DynamicSupervisor.start_child(sup, {Esr.Entities.FeishuAppAdapter, args}) do
       {:ok, _pid} ->
         :ok
 
@@ -219,7 +219,7 @@ defmodule Esr.Scope.Admin do
 
     %{
       id: name,
-      start: {Esr.PeerPool, :start_link, [[name: name, worker: worker_mod, max: max]]},
+      start: {Esr.Entity.Pool, :start_link, [[name: name, worker: worker_mod, max: max]]},
       restart: :permanent,
       type: :worker
     }

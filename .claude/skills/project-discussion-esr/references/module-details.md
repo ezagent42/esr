@@ -418,7 +418,7 @@ cd /home/yaosh/projects/esr/runtime && MIX_ENV=test mix test test/esr/adapter_hu
 | `Esr.Topology.Registry.{register,lookup,list_all,put_artifact,get_artifact,deactivate}` | runtime/lib/esr/topology/registry.ex:42 | Handle + artifact ETS registry; atomic insert_new; deactivate fires reverse-order stop cascade (F14). |
 | `Esr.Workspaces.Registry.{get,list,put,load_from_file}` | runtime/lib/esr/workspaces/registry.ex:23 | In-memory workspaces.yaml cache keyed by workspace name. |
 
-**Dependencies:** `:telemetry + :telemetry_registry (event bus for F15/F16)`, `Phoenix.PubSub + Phoenix.Channel via EsrWeb.Endpoint (Handler/Adapter channels + reply pubsub)`, `YamlElixir (parsing workspaces.yaml, adapters.yaml, compiled command YAML)`, `stdlib: :ets, :erlang.term_to_binary/1, Process.monitor/1, GenServer, Supervisor, Task`, `Cross-module: Esr.PeerRegistry (bind→pid), Esr.PeerSupervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)`
+**Dependencies:** `:telemetry + :telemetry_registry (event bus for F15/F16)`, `Phoenix.PubSub + Phoenix.Channel via EsrWeb.Endpoint (Handler/Adapter channels + reply pubsub)`, `YamlElixir (parsing workspaces.yaml, adapters.yaml, compiled command YAML)`, `stdlib: :ets, :erlang.term_to_binary/1, Process.monitor/1, GenServer, Supervisor, Task`, `Cross-module: Esr.Entity.Registry (bind→pid), Esr.Entity.Supervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)`
 
 **User flows:**
 - **AdapterHub: Python adapter subprocess registers its topic** (entry: `runtime/lib/esr/adapter_hub/registry.ex:38`) — first step: `Topology.Instantiator.spawn_in_order calls bind_adapter/1 → HubRegistry.bind("adapter:<name>/<instance_id>", actor_id).`
@@ -463,7 +463,7 @@ cd /home/yaosh/projects/esr/runtime && MIX_ENV=test mix test test/esr_web/channe
 
 **Dependencies:**
 - **external**: ['phoenix — Phoenix.Endpoint, Phoenix.Socket, Phoenix.Channel, Phoenix.Controller', 'phoenix_pubsub — EsrWeb.PubSub used for directive_ack:<id> and handler_reply:<id> broadcasts', 'plug — Plug.Static,
-- **internal_runtime**: ['Esr.AdapterHub.Registry (topic <-> actor_id binding ETS, shared across tests)', 'Esr.PeerRegistry (actor_id -> PID; looked up by AdapterChannel.forward and ChannelChannel.tool_invoke)', 'Esr.PeerSer
+- **internal_runtime**: ['Esr.AdapterHub.Registry (topic <-> actor_id binding ETS, shared across tests)', 'Esr.Entity.Registry (actor_id -> PID; looked up by AdapterChannel.forward and ChannelChannel.tool_invoke)', 'Esr.PeerSer
 
 **User flows:**
 - **** — first step: `Python adapter_runner WebSocket connects to ws://HOST:PORT/adapter_hub/socket/websocket?vsn=2.0.0`

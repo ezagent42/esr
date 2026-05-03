@@ -8,7 +8,7 @@ defmodule EsrWeb.PendingActionsGuard do
   rather than routed to the active thread.
 
   Per D15, the interception point is in
-  `Esr.Peers.FeishuAppAdapter.handle_upstream/2` (or equivalent
+  `Esr.Entities.FeishuAppAdapter.handle_upstream/2` (or equivalent
   inbound-entry hook) **before** slash-command parsing AND **before**
   the active-thread fallback. `intercept?/1` returns either:
 

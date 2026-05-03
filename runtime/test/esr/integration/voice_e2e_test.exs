@@ -81,7 +81,7 @@ defmodule Esr.Integration.VoiceE2ETest do
     # Synthetic-injection at the peer boundary: call VoiceE2E.turn/2
     # directly. Stub voice_e2e sidecar emits 3 stream_chunk frames +
     # stream_end for any input. Base64("hello") = "aGVsbG8=".
-    :ok = Esr.Peers.VoiceE2E.turn(voice_pid, "aGVsbG8=")
+    :ok = Esr.Entities.VoiceE2E.turn(voice_pid, "aGVsbG8=")
 
     for seq <- 0..2 do
       assert_receive {:voice_chunk, _audio_b64, ^seq}, 3_000

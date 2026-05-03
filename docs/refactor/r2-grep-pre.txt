@@ -1,0 +1,13 @@
+# R2 Peer→Entity rename — pre-rename grep counts (2026-05-03T13:15:11Z)
+
+Generated from 386a7a663cead580cddebbf6d9c68175d7197285 on branch refactor/r2-peer-to-entity.
+
+Esr\.Peer: 348 hits
+Esr\.Peer\.Proxy: 74 hits
+Esr\.Peer\.Stateful: 192 hits
+Esr\.PeerServer: 104 hits
+Esr\.PeerRegistry: 140 hits
+Esr\.PeerFactory: 31 hits
+Esr\.PeerPool: 68 hits
+Esr\.PeerSupervisor: 31 hits
+Esr\.Peers\.: 491 hits

@@ -24,8 +24,8 @@ defmodule Esr.Permissions.BootstrapTest do
     assert Registry.declared?("cap.read")
   end
 
-  test "handler-declared permissions from Esr.PeerServer are registered" do
-    # PeerServer declares the built-in MCP tools (reply, send_file,
+  test "handler-declared permissions from Esr.Entity.Server are registered" do
+    # Entity.Server declares the built-in MCP tools (reply, send_file,
     # _echo, session.signal_cleanup). CAP-4 would deny every
     # tool_invoke without these in the Registry, so coverage here
     # guards the happy path. PR-9 T5 removed `react` — it's now a
@@ -44,13 +44,13 @@ defmodule Esr.Permissions.BootstrapTest do
     assert Registry.declared?("cap.manage")
   end
 
-  test "Esr.PeerServer implements the Esr.Handler behaviour" do
-    # The MCP tool names come from PeerServer.permissions/0 — verify
+  test "Esr.Entity.Server implements the Esr.Handler behaviour" do
+    # The MCP tool names come from Entity.Server.permissions/0 — verify
     # the callback shape directly so a future rename to the behaviour
     # surface gets caught here rather than via a cryptic missed grant.
-    assert function_exported?(Esr.PeerServer, :permissions, 0)
+    assert function_exported?(Esr.Entity.Server, :permissions, 0)
 
-    assert Esr.PeerServer.permissions() == [
+    assert Esr.Entity.Server.permissions() == [
              "reply",
              "send_file",
              "_echo",

@@ -3,7 +3,7 @@ defmodule Esr.PoolsTest do
   P4a-7 — `Esr.Pools` reads the optional
   `${ESRD_HOME}/<instance>/pools.yaml` to override per-pool max-worker
   counts. Defaults come from an inline map (voice pools default 4);
-  overrides are clamped to `Esr.PeerPool.default_max_workers/0`.
+  overrides are clamped to `Esr.Entity.Pool.default_max_workers/0`.
   """
   use ExUnit.Case, async: false
 
@@ -20,7 +20,7 @@ defmodule Esr.PoolsTest do
     assert Esr.Pools.pool_max(:voice_tts_pool, @fixture) == 4
   end
 
-  test "pool_max/2 caps at Esr.PeerPool.default_max_workers" do
+  test "pool_max/2 caps at Esr.Entity.Pool.default_max_workers" do
     # An override higher than the global 128 cap is clamped.
     path =
       Path.join(

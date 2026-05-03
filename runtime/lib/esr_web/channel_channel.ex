@@ -4,7 +4,7 @@ defmodule EsrWeb.ChannelChannel do
 
   Topic: `cli:channel/<session_id>`. One channel process per CC
   session WS. Routes `tool_invoke` to the owning feishu_thread
-  PeerServer; server-pushes `notification` and `session_killed`
+  Entity.Server; server-pushes `notification` and `session_killed`
   frames; marks the session offline on terminate so telemetry and
   the watchdog see it.
   """
@@ -123,7 +123,7 @@ defmodule EsrWeb.ChannelChannel do
 
     peer_name = "thread:" <> session_id
 
-    case Registry.lookup(Esr.PeerRegistry, peer_name) do
+    case Registry.lookup(Esr.Entity.Registry, peer_name) do
       [{peer_pid, _}] ->
         send(peer_pid, {:tool_invoke, req_id, tool, args, self(), principal_id})
         {:noreply, socket}

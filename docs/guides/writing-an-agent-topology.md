@@ -50,13 +50,13 @@ agents:
       # 一个 IM 消息 → FCP → CCProxy → CCProcess → TmuxProcess
       inbound:
         - name: feishu_chat_proxy        # 局部别名（在本 agent 内引用）
-          impl: Esr.Peers.FeishuChatProxy  # 实际 Elixir 模块
+          impl: Esr.Entities.FeishuChatProxy  # 实际 Elixir 模块
         - name: cc_proxy
-          impl: Esr.Peers.CCProxy
+          impl: Esr.Entities.CCProxy
         - name: cc_process
-          impl: Esr.Peers.CCProcess
+          impl: Esr.Entities.CCProcess
         - name: tmux_process
-          impl: Esr.Peers.TmuxProcess
+          impl: Esr.Entities.TmuxProcess
 
       # 4b) outbound — 发消息时的反向路径（CC 的 reply 走这条）
       outbound:
@@ -70,7 +70,7 @@ agents:
     # 但每个 session 都需要往它发消息 → 用一个 Proxy 模块代理。
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Peers.FeishuAppProxy
+        impl: Esr.Entities.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"  # ${app_id} 来自 params
 
     # 6) Params — 创建 session 时必填/可选参数
@@ -214,7 +214,7 @@ self.actor_id` 加到 envelope）一直传到 cc_mcp 的
        拿目标 workspace
     2. `Esr.Capabilities.has?(state.principal_id,
        "workspace:<target_ws>/msg.send")` 校验 cap
-    3. `Registry.lookup(Esr.PeerRegistry,
+    3. `Registry.lookup(Esr.Entity.Registry,
        "feishu_app_adapter_<app_id>")` 找目标 FAA peer
     4. `send(target_pid, {:outbound, %{"kind" => "reply",
        "args" => %{"chat_id" => ..., "text" => ...}}})` 把
@@ -284,15 +284,15 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Peers.FeishuChatProxy   # 复用
+          impl: Esr.Entities.FeishuChatProxy   # 复用
         - name: kb_process
-          impl: Esr.Peers.KBProcess         # 你新写的
+          impl: Esr.Entities.KBProcess         # 你新写的
       outbound:
         - kb_process
         - feishu_chat_proxy
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Peers.FeishuAppProxy
+        impl: Esr.Entities.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"
     params:
       - name: app_id
@@ -307,21 +307,21 @@ agents:
 `runtime/lib/esr/peers/kb_process.ex`，看现有 peer 当模板：
 
 ```elixir
-defmodule Esr.Peers.KBProcess do
-  use Esr.Peer.Stateful
+defmodule Esr.Entities.KBProcess do
+  use Esr.Entity.Stateful
 
-  @impl Esr.Peer
+  @impl Esr.Entity
   def spawn_args(params) do
     %{
-      kb_id: Esr.Peer.get_param(params, :kb_id),
-      session_id: Esr.Peer.get_param(params, :session_id)
+      kb_id: Esr.Entity.get_param(params, :kb_id),
+      session_id: Esr.Entity.get_param(params, :session_id)
     }
   end
 
   @impl GenServer
   def init(args), do: {:ok, args |> Map.put(:neighbors, []) |> Map.put(:history, [])}
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_upstream({:text, text, _meta}, state) do
     # 1. 调 LLM（同步或异步皆可，本例同步）
     answer = call_kb_llm(text, state.kb_id, state.history)

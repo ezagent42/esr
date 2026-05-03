@@ -25,11 +25,11 @@ defmodule EsrWeb.ChannelIntegrationTest do
     sid = "int-sid-#{System.unique_integer([:positive])}"
     actor_id = "thread:" <> sid
 
-    # Start a real PeerServer under the test supervisor so it registers
-    # in Esr.PeerRegistry under the actor_id that ChannelChannel looks up.
+    # Start a real Entity.Server under the test supervisor so it registers
+    # in Esr.Entity.Registry under the actor_id that ChannelChannel looks up.
     {:ok, _pid} =
       start_supervised(
-        {Esr.PeerServer,
+        {Esr.Entity.Server,
          [
            actor_id: actor_id,
            actor_type: "feishu_thread_proxy",
@@ -61,7 +61,7 @@ defmodule EsrWeb.ChannelIntegrationTest do
       "args" => %{"chat_id" => "oc_int", "text" => "hello"}
     })
 
-    # The emit_and_track in PeerServer broadcasts to the adapter topic.
+    # The emit_and_track in Entity.Server broadcasts to the adapter topic.
     # Receive the directive envelope and extract the id.
     assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 2_000
     directive_id = env["id"]
@@ -82,7 +82,7 @@ defmodule EsrWeb.ChannelIntegrationTest do
        }}
     )
 
-    # PeerServer sends {:tool_result, req_id, result} to the ChannelChannel
+    # Entity.Server sends {:tool_result, req_id, result} to the ChannelChannel
     # process, which pushes an "envelope" back over the MCP socket.
     assert_receive %Phoenix.Socket.Message{
                      event: "envelope",

@@ -24,7 +24,7 @@ defmodule Esr.AdapterSocketRegistry do
 
   Reviewer S1: peer_pid is intentionally NOT in the registry row.
   Earlier spec drafts suggested storing it here; the v0.2 implementation
-  uses `Registry.lookup(Esr.PeerRegistry, "thread:<sid>")` in
+  uses `Registry.lookup(Esr.Entity.Registry, "thread:<sid>")` in
   ChannelChannel.handle_in(tool_invoke) as the authoritative lookup.
   Storing peer_pid in two places would risk drift.
   """

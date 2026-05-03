@@ -9,9 +9,9 @@ defmodule EsrWeb.AdapterChannel do
    - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
      are forwarded unconditionally into the new peer chain via
      `forward_to_new_chain/2` → `Esr.Scope.Admin.Process.admin_peer/1`
-     → `Esr.Peers.FeishuAppAdapter`.
+     → `Esr.Entities.FeishuAppAdapter`.
    - Non-Feishu topics receiving `:inbound_event` get an explicit error
-     reply; the legacy `AdapterHub.Registry → PeerRegistry` path was
+     reply; the legacy `AdapterHub.Registry → Entity.Registry` path was
      deleted in P2-16 (peer chain migration complete; the transitional
      `USE_NEW_PEER_CHAIN` feature flag that gated this migration in
      early drafts was removed in P2-17).
@@ -21,7 +21,7 @@ defmodule EsrWeb.AdapterChannel do
 
   @impl Phoenix.Channel
   def join("adapter:" <> _rest = topic, _payload, socket) do
-    # Join succeeds regardless of whether a PeerServer is bound yet —
+    # Join succeeds regardless of whether a Entity.Server is bound yet —
     # Python adapter workers are spawned *before* topology instantiation
     # so they can be on the topic when init_directive broadcasts. Routing
     # (forward/2) looks up the binding fresh at send time; an unbound
@@ -90,9 +90,9 @@ defmodule EsrWeb.AdapterChannel do
 
   def handle_in("directive_ack", %{"id" => id} = envelope, socket) do
     # Dual-publish: broadcast to directive_ack:<id> so the original
-    # issuer (Instantiator for init_directive F13b, PeerServer for
+    # issuer (Instantiator for init_directive F13b, Entity.Server for
     # regular Emits) can correlate; and deliver to the bound
-    # PeerServer as a fallback tag so F09's routing stays intact.
+    # Entity.Server as a fallback tag so F09's routing stays intact.
     Phoenix.PubSub.broadcast(
       EsrWeb.PubSub,
       "directive_ack:" <> id,
@@ -123,7 +123,7 @@ defmodule EsrWeb.AdapterChannel do
   # Inbound Feishu frames flow unconditionally through the new chain
   # (post-P2-17). The topic is `adapter:feishu/<app_id>`; non-feishu
   # topics receiving `:inbound_event` get an explicit error reply
-  # (legacy `AdapterHub.Registry → PeerRegistry` was deleted in P2-16).
+  # (legacy `AdapterHub.Registry → Entity.Registry` was deleted in P2-16).
   defp forward(socket, {:inbound_event, envelope}) do
     topic = socket.assigns.topic
 
@@ -157,7 +157,7 @@ defmodule EsrWeb.AdapterChannel do
 
   @doc """
   Forward an inbound Feishu envelope to the new-chain peer
-  `Esr.Peers.FeishuAppAdapter` for `app_id` (parsed from `topic`).
+  `Esr.Entities.FeishuAppAdapter` for `app_id` (parsed from `topic`).
 
   Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
   to the adapter's mailbox), `:error` when no adapter is registered under

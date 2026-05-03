@@ -44,9 +44,9 @@ defmodule Esr.ScopeAdminTest do
     assert is_pid(Process.whereis(:test_admin_children_sup))
   end
 
-  test "PeerFactory.spawn_peer_bootstrap/4 bypasses Session.supervisor_name/1" do
+  test "Entity.Factory.spawn_peer_bootstrap/4 bypasses Session.supervisor_name/1" do
     defmodule DummyAdminPeer do
-      use Esr.Peer.Stateful
+      use Esr.Entity.Stateful
       use GenServer
       def start_link(args), do: GenServer.start_link(__MODULE__, args)
       def init(args), do: {:ok, args}
@@ -56,7 +56,7 @@ defmodule Esr.ScopeAdminTest do
     end
 
     assert {:ok, pid} =
-             Esr.PeerFactory.spawn_peer_bootstrap(
+             Esr.Entity.Factory.spawn_peer_bootstrap(
                :test_admin_children_sup,
                DummyAdminPeer,
                %{},

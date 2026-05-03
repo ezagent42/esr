@@ -7,7 +7,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       FeishuChatProxy-style envelope
               |
               v
-      Esr.Peers.SlashHandler  — parses the slash, casts session_new
+      Esr.Entities.SlashHandler  — parses the slash, casts session_new
               |
               v
       Esr.Admin.Dispatcher    — cap-checks (D18) + Tasks the command
@@ -56,7 +56,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
 
-  alias Esr.Peers.SlashHandler
+  alias Esr.Entities.SlashHandler
 
   @test_principal "ou_smoke_user"
   @test_principal_nocap "ou_smoke_nocap"
@@ -89,7 +89,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         @test_principal_nocap => []
       })
 
-    # PR-8 T1: Esr.Peers.SlashHandler is now auto-started by
+    # PR-8 T1: Esr.Entities.SlashHandler is now auto-started by
     # `Esr.Scope.Admin.bootstrap_slash_handler/0` during
     # `Esr.Application.start/2`, so no manual `start_supervised/1` is
     # needed here — the production path is the test path. Fall back to

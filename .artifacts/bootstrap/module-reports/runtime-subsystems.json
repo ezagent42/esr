@@ -8,7 +8,7 @@
       "lines": 146,
       "key_symbols": [
         {"name": "Esr.AdapterHub.Registry", "type": "module (GenServer)", "line": 1, "description": "ETS-backed map topic → actor_id for adapter Phoenix topics `adapter:<name>/<instance_id>`. Table `:esr_adapter_hub_bindings`; public reads skip the GenServer (ETS public/set)."},
-        {"name": "bind/2", "type": "function", "line": 38, "description": "Upserts {topic, actor_id}; GenServer resolves actor_id → pid via Esr.PeerRegistry and Process.monitor's it so DOWN cleans the binding."},
+        {"name": "bind/2", "type": "function", "line": 38, "description": "Upserts {topic, actor_id}; GenServer resolves actor_id → pid via Esr.Entity.Registry and Process.monitor's it so DOWN cleans the binding."},
         {"name": "unbind/1", "type": "function", "line": 43, "description": "Idempotent delete of topic + its monitor bookkeeping."},
         {"name": "lookup/1", "type": "function", "line": 48, "description": "O(1) ETS read → {:ok, actor_id} | :error."},
         {"name": "list/0", "type": "function", "line": 56, "description": "Full table dump for admin/GC."},
@@ -183,7 +183,7 @@
     "Phoenix.PubSub + Phoenix.Channel via EsrWeb.Endpoint (Handler/Adapter channels + reply pubsub)",
     "YamlElixir (parsing workspaces.yaml, adapters.yaml, compiled command YAML)",
     "stdlib: :ets, :erlang.term_to_binary/1, Process.monitor/1, GenServer, Supervisor, Task",
-    "Cross-module: Esr.PeerRegistry (bind→pid), Esr.PeerSupervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)"
+    "Cross-module: Esr.Entity.Registry (bind→pid), Esr.Entity.Supervisor (start/stop_peer), Esr.WorkerSupervisor (ensure_handler/adapter Python subprocesses), EsrWeb.Endpoint (broadcast)"
   ],
   "test_results": {
     "command": "cd /home/yaosh/projects/esr/runtime && MIX_ENV=test mix test test/esr/adapter_hub/ test/esr/handler_router/ test/esr/persistence/ test/esr/telemetry/ test/esr/topology/ --max-failures 0",

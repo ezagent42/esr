@@ -8,12 +8,12 @@ from that spec to code on disk. PRs are tracked under
 ## Elixir runtime (`runtime/lib/esr/`)
 
 ### Peer behaviours
-- `esr/peer.ex` — `Esr.Peer` base behaviour. Every peer declares its `peer_kind` (`:proxy` or `:stateful`).
-- `esr/peer/proxy.ex` — `Esr.Peer.Proxy` for request-forwarding peers. Compile-time callback-ban ensures no state.
-- `esr/peer/stateful.ex` — `Esr.Peer.Stateful` for state-owning peers. Declares `handle_upstream/2`, `handle_downstream/2`; init belongs to the host GenServer / OSProcess.
+- `esr/peer.ex` — `Esr.Entity` base behaviour. Every peer declares its `peer_kind` (`:proxy` or `:stateful`).
+- `esr/peer/proxy.ex` — `Esr.Entity.Proxy` for request-forwarding peers. Compile-time callback-ban ensures no state.
+- `esr/peer/stateful.ex` — `Esr.Entity.Stateful` for state-owning peers. Declares `handle_upstream/2`, `handle_downstream/2`; init belongs to the host GenServer / OSProcess.
 
 ### OS-process底座
-- `esr/os_process.ex` — `Esr.OSProcess` macro layering `erlexec` (PTY + bidirectional stdio + BEAM-exit cleanup) over `Esr.Peer.Stateful`. See `docs/notes/erlexec-migration.md`.
+- `esr/os_process.ex` — `Esr.OSProcess` macro layering `erlexec` (PTY + bidirectional stdio + BEAM-exit cleanup) over `Esr.Entity.Stateful`. See `docs/notes/erlexec-migration.md`.
 
 ### Per-chain peers (`runtime/lib/esr/peers/`)
 - `feishu_app_adapter.ex` + `feishu_chat_proxy.ex` — Feishu inbound chain (PR-2).
@@ -38,7 +38,7 @@ from that spec to code on disk. PRs are tracked under
 - See `docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md`.
 
 ### Single-lane authentication (Lane A drop, 2026-04-26)
-- Pre-Lane-A removal had two enforcement lanes (Python adapter + Elixir runtime) which drifted. Now: `Esr.PeerServer` `handle_info({:inbound_event, _})` is the single gate; checks `workspace:<ws>/msg.send`; on deny, dispatches a deny-DM directive via the FAA peer.
+- Pre-Lane-A removal had two enforcement lanes (Python adapter + Elixir runtime) which drifted. Now: `Esr.Entity.Server` `handle_info({:inbound_event, _})` is the single gate; checks `workspace:<ws>/msg.send`; on deny, dispatches a deny-DM directive via the FAA peer.
 - See `docs/notes/auth-lane-a-removal.md` (migration); `docs/notes/lane-a-rca.md` (why dual-lane existed).
 
 ### Topology + reachable_set (PR-C 2026-04-27)
@@ -65,7 +65,7 @@ from that spec to code on disk. PRs are tracked under
 
 ### Capabilities
 - `esr/capabilities.ex` + `esr/capabilities/grants.ex` — canonical `prefix:name/perm` permission model. Diff-based `{:grants_changed, principal_id}` PubSub drives session-scoped projection.
-- Single enforcement lane (post 2026-04-26 Lane A drop): `Esr.PeerServer` `handle_info({:inbound_event, _}, _)` gates inbound on `workspace:<ws>/msg.send`, dispatches a deny-DM directive via the FAA peer on deny. See `docs/notes/auth-lane-a-removal.md` for the migration; `docs/notes/lane-a-rca.md` for why dual-lane existed and how to prevent it next time.
+- Single enforcement lane (post 2026-04-26 Lane A drop): `Esr.Entity.Server` `handle_info({:inbound_event, _}, _)` gates inbound on `workspace:<ws>/msg.send`, dispatches a deny-DM directive via the FAA peer on deny. See `docs/notes/auth-lane-a-removal.md` for the migration; `docs/notes/lane-a-rca.md` for why dual-lane existed and how to prevent it next time.
 
 ## Python code (`py/src/`)
 
@@ -142,7 +142,7 @@ the registered type set if needed, never inventing a new scheme. See
 practical reference (grammar, every existing emit site, builder
 examples, when to add a new type).
 
-The reachable_set ACL in `Esr.PeerServer` keys off these URIs to
+The reachable_set ACL in `Esr.Entity.Server` keys off these URIs to
 enforce cross-boundary routing per spec §6.
 
 ## Cross-references
