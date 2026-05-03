@@ -69,7 +69,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 

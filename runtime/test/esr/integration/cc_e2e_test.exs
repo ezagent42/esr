@@ -72,7 +72,7 @@ defmodule Esr.Integration.CCE2ETest do
     # Esr.TestSupport.Grants on exit.
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
 
-    :ok = Esr.SessionRegistry.load_agents(@fixture_path)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
     # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
@@ -174,7 +174,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # 4. Resolve the spawned peer pids from SessionRegistry.
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
 
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
@@ -308,7 +308,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # Registry reflects the teardown.
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
   end
 
   # ------------------------------------------------------------------

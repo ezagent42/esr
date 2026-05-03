@@ -45,7 +45,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # agent_def if any downstream code consults it. Mirrors the setup
     # in `runtime/test/esr/integration/n2_sessions_test.exs`.
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
       )
 
@@ -77,7 +77,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # forwards `{:feishu_inbound, envelope}` here on
     # lookup_by_chat_thread hit.
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         session_id,
         # PR-A T1: app_id mirrors instance_id so the FAA fallback path
         # (state.instance_id when args["app_id"] absent) hits this row.
@@ -101,7 +101,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     on_exit(fn ->
-      Esr.SessionRegistry.unregister_session(session_id)
+      Esr.Resource.ChatScope.Registry.unregister_session(session_id)
 
       if Process.alive?(session_sup) do
         Esr.Scope.Supervisor.stop_session(session_sup)

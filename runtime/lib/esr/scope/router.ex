@@ -14,7 +14,7 @@ defmodule Esr.Scope.Router do
                                  `do_create/1`.
     * `:peer_crashed`          — internal, raised by `Process.monitor`
                                  DOWNs on spawned peer pids
-    * `:agents_yaml_reloaded`  — from `SessionRegistry` watcher (stub;
+    * `:agents_yaml_reloaded`  — from `Esr.Entity.Agent.Registry` watcher (stub;
                                  handled by a no-op `handle_info` clause
                                  in PR-3)
 
@@ -172,7 +172,7 @@ defmodule Esr.Scope.Router do
 
       pid when is_pid(pid) ->
         :ok = Esr.Scope.Supervisor.stop_session(pid)
-        :ok = Esr.SessionRegistry.unregister_session(sid)
+        :ok = Esr.Resource.ChatScope.Registry.unregister_session(sid)
         {:reply, :ok, state}
     end
   end
@@ -315,7 +315,7 @@ defmodule Esr.Scope.Router do
   # populated because `do_create/1` calls `register_session/3` on its
   # success path; we just need to look it up and send the message.
   defp redeliver_triggering_envelope(chat_id, app_id, _thread_id, envelope) do
-    case Esr.SessionRegistry.lookup_by_chat(chat_id, app_id) do
+    case Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id) do
       {:ok, _sid, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         :ok
@@ -442,7 +442,7 @@ defmodule Esr.Scope.Router do
   end
 
   defp fetch_agent(name) do
-    case Esr.SessionRegistry.agent_def(name) do
+    case Esr.Entity.Agent.Registry.agent_def(name) do
       {:ok, d} -> {:ok, d}
       {:error, :not_found} -> {:error, :unknown_agent}
     end
@@ -747,8 +747,8 @@ defmodule Esr.Scope.Router do
   defp register(session_id, params, refs_map) do
     # PR-21λ: routing key dropped thread_id. The full chat-binding map
     # still lives in `params` for FCP/CC reply rendering — this only
-    # narrows what `SessionRegistry` indexes on.
-    Esr.SessionRegistry.register_session(
+    # narrows what `ChatScope.Registry` indexes on.
+    Esr.Resource.ChatScope.Registry.register_session(
       session_id,
       %{
         chat_id: get_param(params, :chat_id) || "",

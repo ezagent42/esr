@@ -11,7 +11,7 @@ defmodule Esr.Admin.Commands.Scope.New do
   ## Flow
 
     1. Validate `args.agent` present (D11) and `args.dir` present (D13).
-    2. Resolve the agent definition via `Esr.SessionRegistry.agent_def/1`.
+    2. Resolve the agent definition via `Esr.Entity.Agent.Registry.agent_def/1`.
     3. Batch-verify `capabilities_required` (D18) via
        `Esr.Resource.Capability.has_all?/2` — returns every missing cap at once
        so the operator can see the full gap in a single reply.
@@ -132,7 +132,7 @@ defmodule Esr.Admin.Commands.Scope.New do
         # (a) operator pointed at an existing checkout intentionally
         #     (e.g., session reuse) — proceed without re-running git
         # (b) collision with another session's worktree — would have
-        #     been caught by Esr.SessionRegistry.claim_uri post-spawn
+        #     been caught by Esr.Resource.ChatScope.Registry.claim_uri post-spawn
         # Treating as (a) here; (b) is the URI-uniqueness gate's job.
         require Logger
         Logger.info("session_new: cwd #{cwd} already exists, treating as reuse")
@@ -156,15 +156,16 @@ defmodule Esr.Admin.Commands.Scope.New do
   defp maybe_create_worktree(_args), do: :ok
 
   # PR-21g: if the slash command threaded URI components (name +
-  # username + workspace + worktree), claim them in SessionRegistry
-  # against the freshly-spawned sid. Collisions roll back the spawn
-  # so the pair (Registry, supervisor tree) stays consistent.
+  # username + workspace + worktree), claim them in
+  # Esr.Resource.ChatScope.Registry against the freshly-spawned sid.
+  # Collisions roll back the spawn so the pair (Registry, supervisor
+  # tree) stays consistent.
   defp maybe_claim_uri(%{"name" => name, "username" => u, "workspace" => ws, "worktree" => wt} = _args, sid)
        when is_binary(name) and name != "" and is_binary(u) and u != "" and
               is_binary(ws) and ws != "" and is_binary(wt) and wt != "" do
     env = Esr.Paths.current_instance()
 
-    case Esr.SessionRegistry.claim_uri(sid, %{
+    case Esr.Resource.ChatScope.Registry.claim_uri(sid, %{
            env: env,
            username: u,
            workspace: ws,
@@ -227,7 +228,7 @@ defmodule Esr.Admin.Commands.Scope.New do
   defp validate_args(_, _), do: :ok
 
   defp fetch_agent(name) do
-    case Esr.SessionRegistry.agent_def(name) do
+    case Esr.Entity.Agent.Registry.agent_def(name) do
       {:ok, d} -> {:ok, d}
       {:error, :not_found} -> {:error, %{"type" => "unknown_agent", "agent" => name}}
     end

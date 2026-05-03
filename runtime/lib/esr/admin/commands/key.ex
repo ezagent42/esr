@@ -28,7 +28,7 @@ defmodule Esr.Admin.Commands.Key do
 
   @behaviour Esr.Role.Control
 
-  alias Esr.SessionRegistry
+  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => args}) do
@@ -62,7 +62,7 @@ defmodule Esr.Admin.Commands.Key do
   defp do_execute(chat_id, app_id, keyspec) do
     case translate_all(keyspec) do
       {:ok, bytes} ->
-        case SessionRegistry.lookup_by_chat(chat_id, app_id) do
+        case ChatScopeRegistry.lookup_by_chat(chat_id, app_id) do
           {:ok, sid, _refs} ->
             _ = Esr.Entity.PtyProcess.write(sid, bytes)
             {:ok, %{"text" => "🎹 sent #{byte_size(bytes)} byte(s) to PTY"}}

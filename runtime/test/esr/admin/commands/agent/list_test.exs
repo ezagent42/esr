@@ -12,7 +12,7 @@ defmodule Esr.Admin.Commands.Agent.ListTest do
 
   test "lists agents from agents.yaml" do
     fixture = Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
-    :ok = Esr.SessionRegistry.load_agents(fixture)
+    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
 
     assert {:ok, %{"text" => text}} = AgentList.execute(%{})
     assert text =~ "available agents:"
@@ -22,7 +22,7 @@ defmodule Esr.Admin.Commands.Agent.ListTest do
   test "empty agents → 'no agents loaded' text" do
     empty = Path.join(System.tmp_dir!(), "agents-empty-#{System.unique_integer([:positive])}.yaml")
     File.write!(empty, "agents: {}\n")
-    :ok = Esr.SessionRegistry.load_agents(empty)
+    :ok = Esr.Entity.Agent.Registry.load_agents(empty)
 
     assert {:ok, %{"text" => text}} = AgentList.execute(%{})
     assert text =~ "no agents loaded"

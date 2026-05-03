@@ -66,7 +66,7 @@ defmodule Esr.Integration.CCVoiceTest do
     # peer_pool:voice_tts/acquire, pty:default/spawn.
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_cc_voice")
 
-    :ok = Esr.SessionRegistry.load_agents(@fixture)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture)
 
     if Process.whereis(Esr.Scope.Router) == nil do
       start_supervised!(Esr.Scope.Router)
@@ -141,7 +141,7 @@ defmodule Esr.Integration.CCVoiceTest do
       })
 
     assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
 
     # Stateful peers are live pids.
     assert is_pid(refs.feishu_chat_proxy)
@@ -192,6 +192,6 @@ defmodule Esr.Integration.CCVoiceTest do
     :ok = Esr.Scope.Router.end_session(sid)
 
     assert :not_found =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
   end
 end

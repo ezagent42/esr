@@ -8,7 +8,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
   These tests cover:
 
     * arg validation (D11: agent required; D13: dir required)
-    * agent resolution via `Esr.SessionRegistry.agent_def/1`
+    * agent resolution via `Esr.Entity.Agent.Registry.agent_def/1`
     * `capabilities_required` verification (D18) via the new
       `Esr.Resource.Capability.has_all?/2` helper — full coverage, total miss,
       partial miss
@@ -28,12 +28,12 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
 
   setup do
     # App-level singletons (booted by Esr.Application).
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
     assert is_pid(Process.whereis(Esr.Scope.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../../../fixtures/agents/simple.yaml", __DIR__)
       )
 
@@ -301,16 +301,16 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       assert {:ok, ^sid, refs} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3", "esr_dev_helper")
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T3", "esr_dev_helper")
 
       # The "default" fallback slot must remain empty — proves the fix
       # threaded app_id rather than letting it default.
-      assert :not_found = Esr.SessionRegistry.lookup_by_chat("oc_T3", "default")
+      assert :not_found = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T3", "default")
 
       # Post-T4: refs is populated with the spawned pipeline peer pids.
       assert is_map(refs)
 
-      on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
+      on_exit(fn -> Esr.Resource.ChatScope.Registry.unregister_session(sid) end)
     end
 
     test "omitted chat_id/thread_id skips SessionRegistry registration (pending fallback)" do
@@ -328,7 +328,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       assert :not_found =
-               Esr.SessionRegistry.lookup_by_chat("pending", "pending"),
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("pending", "pending"),
              "the pending placeholder must not end up in the registry"
 
       # The session itself is still up — registration skip doesn't prevent
@@ -357,18 +357,18 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
       assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
 
       assert {:ok, ^sid1, _} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
 
       cmd2 = put_in(cmd1["args"]["dir"], "/tmp/t3-second")
       assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
       refute sid2 == sid1, "second execute yields a fresh session_id"
 
       assert {:ok, ^sid2, _} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
 
       on_exit(fn ->
-        Esr.SessionRegistry.unregister_session(sid1)
-        Esr.SessionRegistry.unregister_session(sid2)
+        Esr.Resource.ChatScope.Registry.unregister_session(sid1)
+        Esr.Resource.ChatScope.Registry.unregister_session(sid2)
       end)
     end
   end
@@ -401,7 +401,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
       # Post-T4 invariant: refs contains a real feishu_chat_proxy pid
       # spawned by Scope.Router.spawn_pipeline/3, not an empty map.
       assert {:ok, ^sid, %{feishu_chat_proxy: proxy_pid} = refs} =
-               Esr.SessionRegistry.lookup_by_chat("oc_T4", "cli_test")
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T4", "cli_test")
 
       assert is_pid(proxy_pid)
       assert Process.alive?(proxy_pid)
@@ -410,7 +410,7 @@ defmodule Esr.Admin.Commands.Scope.NewTest do
       assert is_pid(refs.cc_process)
       assert is_pid(refs.pty_process)
 
-      on_exit(fn -> Esr.SessionRegistry.unregister_session(sid) end)
+      on_exit(fn -> Esr.Resource.ChatScope.Registry.unregister_session(sid) end)
     end
   end
 end

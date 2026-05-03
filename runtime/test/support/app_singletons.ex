@@ -3,8 +3,8 @@ defmodule Esr.TestSupport.AppSingletons do
   Shared ExUnit setup helper: assert the Esr.Application-booted
   singletons are up before the test body runs. Intended as
   `setup :assert_app_singletons` in integration tests that depend
-  on the app-level `SessionRegistry` / `Scope.Admin.Process` /
-  `Scope.Supervisor` / `Session.Registry`.
+  on the app-level `Entity.Agent.Registry` / `Resource.ChatScope.Registry`
+  / `Scope.Admin.Process` / `Scope.Supervisor` / `Scope.Registry`.
 
   When a test needs to load the capabilities Grants registry
   specifically, pass `setup {Esr.TestSupport.AppSingletons,
@@ -16,7 +16,8 @@ defmodule Esr.TestSupport.AppSingletons do
   @spec assert_app_singletons(map()) :: :ok
   def assert_app_singletons(_ctx) do
     for mod <- [
-          Esr.SessionRegistry,
+          Esr.Entity.Agent.Registry,
+          Esr.Resource.ChatScope.Registry,
           Esr.Scope.Admin.Process,
           Esr.Scope.Supervisor,
           Esr.Scope.Registry

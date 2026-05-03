@@ -32,13 +32,13 @@ defmodule Esr.ScopeRouterTest do
     # App-level deps exist: SessionRegistry, Session.Registry,
     # Scope.Supervisor, Grants. Start the Scope.Router under the
     # test supervisor so each test gets a clean instance.
-    assert is_pid(Process.whereis(Esr.SessionRegistry))
+    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
     assert is_pid(Process.whereis(Esr.Scope.Registry))
     assert is_pid(Process.whereis(Esr.Scope.Supervisor))
 
     # "*" grants everything — avoids cap-denied drops in the pipeline.
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_alice" => ["*"]})
-    :ok = Esr.SessionRegistry.load_agents(@fixture_path)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
     if Process.whereis(Esr.Scope.Router) == nil do
       start_supervised!(Esr.Scope.Router)
@@ -83,7 +83,7 @@ defmodule Esr.ScopeRouterTest do
     # SessionRegistry records the chat-thread → session mapping and
     # the Stateful peer refs.
     assert {:ok, ^session_id, refs} =
-             Esr.SessionRegistry.lookup_by_chat("oc_xx", "cli_test")
+             Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_xx", "cli_test")
 
     # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
     # cc_process → pty_process. The three Stateful peers are spawned
@@ -124,7 +124,7 @@ defmodule Esr.ScopeRouterTest do
     # FeishuChatProxy's state already carries session_id; workspace_name
     # should be reachable to peers via enriched params.
     {:ok, ^session_id, refs} =
-      Esr.SessionRegistry.lookup_by_chat("oc_T11b2", "cli_test")
+      Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T11b2", "cli_test")
 
     fcp_state = :sys.get_state(refs.feishu_chat_proxy)
     assert fcp_state.session_id == session_id
@@ -165,11 +165,11 @@ defmodule Esr.ScopeRouterTest do
 
     # Precondition: lookup succeeds.
     assert {:ok, ^sid, _refs} =
-             Esr.SessionRegistry.lookup_by_chat("oc_aa", "cli_test")
+             Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
 
     :ok = Scope.Router.end_session(sid)
 
-    assert :not_found = Esr.SessionRegistry.lookup_by_chat("oc_aa", "cli_test")
+    assert :not_found = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
 
     # And the Session supervisor is gone.
     via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, sid}}}
@@ -231,9 +231,9 @@ defmodule Esr.ScopeRouterTest do
       # Load the voice fixture on top of the existing agents so both
       # `cc` (simple.yaml) and `cc-voice` (voice.yaml) resolve.
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
-      :ok = Esr.SessionRegistry.load_agents(voice_fixture)
+      :ok = Esr.Entity.Agent.Registry.load_agents(voice_fixture)
 
-      assert {:ok, _agent_def} = Esr.SessionRegistry.agent_def("cc-voice")
+      assert {:ok, _agent_def} = Esr.Entity.Agent.Registry.agent_def("cc-voice")
 
       assert {:ok, session_id} =
                Esr.Scope.Router.create_session(%{
@@ -248,7 +248,7 @@ defmodule Esr.ScopeRouterTest do
       assert is_binary(session_id)
 
       {:ok, ^session_id, refs} =
-        Esr.SessionRegistry.lookup_by_chat("oc_voice", "cli_test")
+        Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_voice", "cli_test")
 
       # Stateful peers in cc-voice inbound: feishu_chat_proxy, cc_process,
       # pty_process. VoiceASRProxy, CCProxy are stateless modules;
@@ -269,9 +269,9 @@ defmodule Esr.ScopeRouterTest do
 
     test "P4a-9: voice-e2e agent spawns FeishuChatProxy + VoiceE2E per-session peer" do
       voice_fixture = Path.expand("fixtures/agents/voice.yaml", __DIR__)
-      :ok = Esr.SessionRegistry.load_agents(voice_fixture)
+      :ok = Esr.Entity.Agent.Registry.load_agents(voice_fixture)
 
-      assert {:ok, _agent_def} = Esr.SessionRegistry.agent_def("voice-e2e")
+      assert {:ok, _agent_def} = Esr.Entity.Agent.Registry.agent_def("voice-e2e")
 
       assert {:ok, session_id} =
                Esr.Scope.Router.create_session(%{
@@ -284,7 +284,7 @@ defmodule Esr.ScopeRouterTest do
                })
 
       {:ok, ^session_id, refs} =
-        Esr.SessionRegistry.lookup_by_chat("oc_e2e", "cli_test")
+        Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_e2e", "cli_test")
 
       assert is_pid(refs.feishu_chat_proxy)
       assert is_pid(refs.voice_e2e)
@@ -320,7 +320,7 @@ defmodule Esr.ScopeRouterTest do
       # Find one spawned peer and kill it; the router's monitor will
       # DOWN and fire the telemetry event.
       {:ok, _sid2, refs} =
-        Esr.SessionRegistry.lookup_by_chat("oc_crash", "cli_test")
+        Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_crash", "cli_test")
       Process.exit(refs.cc_process, :kill)
 
       assert_receive {[:esr, :session_router, :peer_crashed], _ref, %{count: 1}, meta}, 500
@@ -375,7 +375,7 @@ defmodule Esr.ScopeRouterTest do
         app_id: app_id,
       })
 
-    {:ok, _sid2, refs} = Esr.SessionRegistry.lookup_by_chat("oc_T6", app_id)
+    {:ok, _sid2, refs} = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T6", app_id)
 
     fcp = refs.feishu_chat_proxy
     cc = refs.cc_process

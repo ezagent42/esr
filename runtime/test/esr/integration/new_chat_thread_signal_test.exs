@@ -31,7 +31,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
   setup do
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
-    :ok = Esr.SessionRegistry.load_agents(@fixture_path)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
     if Process.whereis(Esr.Scope.Router) == nil do
       start_supervised!(Esr.Scope.Router)
@@ -88,7 +88,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
     # SessionRegistry now knows about the (chat_id, app_id, thread_id) mapping.
     assert {:ok, sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
 
     assert sid == meta.session_id
     assert is_pid(refs.feishu_chat_proxy)

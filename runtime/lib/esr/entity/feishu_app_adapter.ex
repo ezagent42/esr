@@ -5,7 +5,7 @@ defmodule Esr.Entity.FeishuAppAdapter do
 
   Role: sole Elixir consumer of `adapter:feishu/<instance_id>`
   Phoenix-channel inbound frames. Routes each frame to the owning
-  Session's FeishuChatProxy via `SessionRegistry.lookup_by_chat_thread/3`,
+  Session's FeishuChatProxy via `Esr.Resource.ChatScope.Registry.lookup_by_chat/2`,
   or broadcasts `:new_chat_thread` on PubSub for Scope.Router (PR-3)
   to create a new session.
 
@@ -235,7 +235,7 @@ defmodule Esr.Entity.FeishuAppAdapter do
     # PR-21λ: routing key is (chat_id, app_id) only. thread_id still
     # flows downstream via the envelope so FCP/CC can quote-reply, but
     # it does not select the session anymore.
-    case Esr.SessionRegistry.lookup_by_chat(chat_id, app_id) do
+    case Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         {:forward, [], state}
