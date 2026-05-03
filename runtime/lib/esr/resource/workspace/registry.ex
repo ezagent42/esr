@@ -86,6 +86,71 @@ defmodule Esr.Resource.Workspace.Registry do
     end)
   end
 
+  @doc """
+  Resolve the workspace `start_cmd` for the given workspace name and
+  per-spawn `params`. R6 (extracted from `Esr.Scope.Router`).
+
+    * Caller-supplied `params[:start_cmd]` (atom or string key) wins
+      when non-empty.
+    * Otherwise falls back to the `start_cmd` field of the workspace
+      registered under `workspace_name`.
+    * Returns `nil` when neither is set; downstream callers treat
+      `nil` as "fall through to the peer's hardcoded launcher".
+
+  PR-21ρ 2026-05-01: `workspaces.yaml`'s `start_cmd` is conventionally
+  a repo-relative path (`scripts/esr-cc.sh`). The peer's cwd is the
+  session's worktree (or `/tmp` for auto-created sessions), so a
+  relative path won't resolve. Prepend `$ESR_REPO_DIR` (set by the
+  launchd plist) when the start_cmd doesn't already look absolute.
+  Tilde (`~`) is expanded against `$HOME`.
+  """
+  @spec start_cmd_for(String.t(), map()) :: String.t() | nil
+  def start_cmd_for(workspace_name, params) when is_binary(workspace_name) and is_map(params) do
+    raw =
+      case get_param(params, :start_cmd) do
+        cmd when is_binary(cmd) and cmd != "" ->
+          cmd
+
+        _ ->
+          case get(workspace_name) do
+            {:ok, %{start_cmd: cmd}} when is_binary(cmd) and cmd != "" -> cmd
+            _ -> nil
+          end
+      end
+
+    expand_start_cmd(raw)
+  end
+
+  def start_cmd_for(_, _), do: nil
+
+  defp expand_start_cmd(nil), do: nil
+  defp expand_start_cmd(""), do: nil
+
+  defp expand_start_cmd(cmd) when is_binary(cmd) do
+    [head | rest] = String.split(cmd, " ", parts: 2, trim: true)
+
+    head =
+      cond do
+        String.starts_with?(head, "/") ->
+          head
+
+        String.starts_with?(head, "~") ->
+          String.replace_prefix(head, "~", System.get_env("HOME") || "")
+
+        true ->
+          case System.get_env("ESR_REPO_DIR") do
+            repo when is_binary(repo) and repo != "" -> Path.join(repo, head)
+            _ -> head
+          end
+      end
+
+    Enum.join([head | rest], " ")
+  end
+
+  defp get_param(params, key) when is_atom(key) do
+    Map.get(params, key) || Map.get(params, Atom.to_string(key))
+  end
+
   @spec put(Workspace.t()) :: :ok
   def put(%Workspace{} = ws), do: GenServer.call(__MODULE__, {:put, ws})
 
