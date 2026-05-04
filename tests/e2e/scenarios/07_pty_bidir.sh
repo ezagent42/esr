@@ -116,12 +116,12 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Step 2: bootstrap (answer dev-channels dialog) ------------------
-# Give claude a moment to actually spawn its TUI before the bootstrap
-# tries to answer the dialog; cc-bootstrap.sh has its own 4s sleep
-# inside the WS session, but the WS itself can't open until the
-# session's PtyProcess has registered with PeerRegistry. 2s here
-# matches the gap we saw in PR-24 live-debug between admin-completed
-# and the dialog rendering on stdout.
+# As of 2026-05-04 (feature/pty-auto-confirm-dev-channels), FCP's
+# boot-bridge watches `pty:<sid>` for the dev-channels dialog text and
+# answers "1\r" via Esr.Entity.PtyProcess.write/2 directly — no
+# external helper needed. The bash helper below stays as a redundant
+# safety net (it's idempotent: if FCP already confirmed, the second
+# "1\r" goes to the empty TUI prompt and claude ignores it).
 sleep 2
 "$BOOTSTRAP" "$sid" >/dev/null 2>&1 || true
 

@@ -94,7 +94,19 @@ defmodule Esr.Entity.FeishuChatProxy do
     state = Map.merge(state, %{
       boot_mode: true,
       pty_buffer: "",
-      pty_flush_timer: nil
+      pty_flush_timer: nil,
+      # PR-185 follow-up (in-process unblock): claude binary opens a
+      # `--dangerously-load-development-channels` confirmation dialog at
+      # boot. Pre-this-PR an external bash+websocat helper answered it,
+      # which had a known timing fragility (4s pre-roll didn't always
+      # cover claude's startup latency). Since FCP already subscribes
+      # to `pty:<sid>` and PtyProcess.write/2 is a public API, we can
+      # detect the dialog's text in the stdout stream and reply "1\r"
+      # directly via erlexec — no bash, no websocat, no agent-browser.
+      # `dev_channels_confirmed` flips once after the first write so
+      # subsequent occurrences of the signature in the buffer (it stays
+      # there until flush) don't trigger duplicate writes.
+      dev_channels_confirmed: false
     })
 
     if Process.whereis(EsrWeb.PubSub) do
@@ -247,7 +259,39 @@ defmodule Esr.Entity.FeishuChatProxy do
         existing -> existing
       end
 
-    {:noreply, %{state | pty_buffer: new_buffer, pty_flush_timer: timer}}
+    state =
+      state
+      |> Map.put(:pty_buffer, new_buffer)
+      |> Map.put(:pty_flush_timer, timer)
+      |> maybe_confirm_dev_channels()
+
+    {:noreply, state}
+  end
+
+  # Once-only auto-confirm of claude's `--dangerously-load-development-
+  # channels` dialog. We match against the buffer's stripped content
+  # (ANSI codes mangle `Loading development channels` into segments
+  # like `Loading[1Cdevelopment[1Cchannels`). The match string lives
+  # AFTER strip so it's robust against whatever escape sequence claude
+  # interleaves between words for layout. The first match writes "1\r"
+  # to the PTY's stdin via erlexec — answering the dialog from inside
+  # the BEAM, no external helper needed.
+  defp maybe_confirm_dev_channels(%{dev_channels_confirmed: true} = state), do: state
+
+  defp maybe_confirm_dev_channels(%{pty_buffer: buf, session_id: sid} = state) do
+    stripped = Esr.AnsiStrip.strip(buf)
+
+    if String.contains?(stripped, "Loading development channels") and
+         String.contains?(stripped, "I am using this for local development") do
+      Logger.info(
+        "feishu_chat_proxy: auto-confirming dev-channels dialog session_id=#{sid}"
+      )
+
+      _ = Esr.Entity.PtyProcess.write(sid, "1\r")
+      %{state | dev_channels_confirmed: true}
+    else
+      state
+    end
   end
 
   def handle_info(:flush_pty_buffer, state) do
