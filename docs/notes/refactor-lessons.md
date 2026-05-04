@@ -205,7 +205,39 @@ This was the lesson from R3 (2026-05-03). The next rename batch should bail at t
 
 ---
 
-## 六、Related docs
+## 六、E2E lessons (added 2026-05-04 post-R11)
+
+### 6.1 Don't excuse missing rendering as "tooling limitation"
+
+During R4-R11 every PR's gate ran `bash tests/e2e/scenarios/06_pty_attach.sh + 07_pty_bidir.sh + DOM dataset check (cols/rows ranges)`. All passed. After R11 the user asked "can you actually see Claude's reply on the attach page?" I tried `chrome --headless --screenshot` with `--virtual-time-budget=20000 --run-all-compositor-stages-before-draw`, got an empty xterm (21 KB PNG), and **rationalized it** as "headless Chrome can't wait for WS-streamed cc TUI" (referencing a baseline note from PR-22).
+
+That rationalization was wrong. The user's correct response: **"if a real screenshot shows empty, it means the page didn't render — your timeout excuse is illogical."** When I switched to `agent-browser open <url>; agent-browser screenshot <file>` (the tool memory rule §K mandates for web/UI work), the screenshot captured Claude Code TUI cleanly: "Welcome back Allen", "Opus 4.7 (1M context)", "Listening for channel messages from: server:esr-channel", "Try refactor <filepath>", "INSERT" — full content rendered.
+
+**Rule:** if a screenshot is empty, **the page is broken or the screenshot tool is wrong**. Don't use "headless can't wait" as an excuse. Try the documented agent-browser path FIRST, not as fallback.
+
+### 6.2 Always use agent-browser for UI verification
+
+Per memory rule (user-set 2026-05-02): "ALWAYS use agent-browser for web/UI work; launch headless Chrome from agent side BEFORE asking user to verify; never iterate via 'try it and tell me what you see'."
+
+`agent-browser open <url>` keeps the page alive across calls and `agent-browser screenshot <file>` captures the **actual rendered DOM** (Playwright/CDP based) including content streamed in via WebSocket — exactly what `chrome --screenshot` cannot do.
+
+I violated this rule throughout R1-R11 (used raw `chrome --screenshot` everywhere) and the gate hook still does. Both should switch to agent-browser.
+
+### 6.3 The pre-merge-dev gate's content blindness
+
+The current gate (`scripts/hooks/pre-merge-dev-gate.sh` step 2b) only checks `data-opened-cols` / `data-opened-rows` dataset attrs — these get populated by xterm.js `init()` immediately on page load, BEFORE any WS data arrives. So the gate confirms "xterm initialized to a sane size" but NOT "content actually streamed in."
+
+This means a regression that breaks the WS PTY channel (e.g., a wire-protocol mismatch) would NOT trip the gate; only the e2e scenario 07 catches it. If e2e 07 also has a hole, the regression ships.
+
+**Follow-up TODO** (added to `docs/futures/todo.md`): upgrade the gate to use `agent-browser` + content assertion (e.g., `screenshot → assert image contains "Claude Code"` via OCR, OR `agent-browser eval` to read xterm cell text). Until then, manual visual check via agent-browser is the only true content gate.
+
+### 6.4 Daemon state file caching is real
+
+R1-R3 each had a daemon-state-file step where `~/.esrd-dev/default/{slash-routes,agents,permissions_registry}.{yaml,json}` cached old module names and broke daemon boot until swept + restarted. R4-R11 internalized this — every R-batch's playbook included the sweep + restart step. **Skip at peril.**
+
+---
+
+## 七、Related docs
 
 - `docs/notes/concept-rename-map.md` — the rename catalog (R1/R2/R3 plus future R4-R6)
 - `docs/notes/concepts.md` — the metamodel that drove the rename
