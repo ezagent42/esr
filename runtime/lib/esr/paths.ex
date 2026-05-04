@@ -21,4 +21,5 @@ defmodule Esr.Paths do
   def pools_yaml, do: Path.join(runtime_home(), "pools.yaml")
   def commands_compiled_dir, do: Path.join([runtime_home(), "commands", ".compiled"])
   def admin_queue_dir, do: Path.join(runtime_home(), "admin_queue")
+  def plugins_yaml, do: Path.join(runtime_home(), "plugins.yaml")
 end

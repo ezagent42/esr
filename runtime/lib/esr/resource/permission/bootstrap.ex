@@ -24,7 +24,12 @@ defmodule Esr.Resource.Permission.Bootstrap do
   # subsystem itself, always present regardless of loaded modules.
   @subsystem_permissions [
     {"cap.manage", Esr.Resource.Capability},
-    {"cap.read", Esr.Resource.Capability}
+    {"cap.read", Esr.Resource.Capability},
+    # Track 0 Task 0.6 — `plugin/manage` gates the 5 `/plugin {list,info,
+    # install,enable,disable}` admin commands. Declared by the plugin
+    # subsystem itself, always present regardless of which plugins are
+    # installed.
+    {"plugin/manage", Esr.Plugin.Loader}
   ]
 
   @doc """

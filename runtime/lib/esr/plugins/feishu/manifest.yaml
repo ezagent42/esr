@@ -1,0 +1,41 @@
+# Feishu plugin manifest (Track 2, plugin extraction Phase 1).
+#
+# Phase 1 (this commit): manifest declares what's already in core.
+# Modules listed below currently live under runtime/lib/esr/entity/
+# and py/src/feishu_*. Operators see this plugin in `/plugin list`.
+#
+# Phase 2 (deferred): physical code move + remove feishu-specific
+# modules from core's compile path. The feishu sidecar mapping
+# (`feishu → feishu_adapter_runner`) currently lives in core as a
+# Phase-1 fallback in Esr.Application.start/2; Phase 2 moves it here
+# and removes the fallback.
+#
+# Spec: docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md §四.
+
+name: feishu
+version: 0.1.0
+description: |
+  Feishu (Lark) chat platform integration. Provides webhook adapter
+  (FeishuAppAdapter), per-chat proxy (FeishuChatProxy), per-app proxy
+  (FeishuAppProxy), and the feishu_adapter_runner Python sidecar.
+
+depends_on:
+  core: ">= 0.1.0"
+  plugins: []
+
+declares:
+  # Injection #5 — Entity modules.
+  entities:
+    - module: Esr.Entity.FeishuAppAdapter
+      kind: stateful
+    - module: Esr.Entity.FeishuChatProxy
+      kind: proxy
+    - module: Esr.Entity.FeishuAppProxy
+      kind: proxy
+
+  # Injection #12 — python sidecar. Phase 1 keeps the fallback
+  # registration in core's Application.start/2; documenting here so
+  # Phase 2 can flip the source-of-truth without surface churn.
+  python_sidecars:
+    - adapter_type: feishu
+      python_module: feishu_adapter_runner

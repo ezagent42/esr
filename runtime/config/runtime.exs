@@ -29,6 +29,22 @@ if public_host = System.get_env("ESR_PUBLIC_HOST") do
   config :esr, EsrWeb.Endpoint, url: [host: public_host, port: public_port]
 end
 
+# Track 0 Task 0.5 (plugin work). Read `plugins.yaml` from the current
+# esrd_home/<instance>/ and populate `:enabled_plugins` so the
+# Application's load_enabled_plugins/0 (called in
+# `Esr.Application.start/2`) knows which plugins to start.
+#
+# Parse semantics + fallback policy live in `Esr.Plugin.EnabledList` so
+# they're unit-testable (runtime.exs itself is not). See moduledoc
+# there for file schema + edge cases.
+plugins_yaml_path =
+  Path.join(
+    System.get_env("ESRD_HOME") || Path.expand("~/.esrd"),
+    Path.join(System.get_env("ESR_INSTANCE", "default"), "plugins.yaml")
+  )
+
+config :esr, :enabled_plugins, Esr.Plugin.EnabledList.read(plugins_yaml_path)
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

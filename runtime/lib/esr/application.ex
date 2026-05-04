@@ -57,6 +57,12 @@ defmodule Esr.Application do
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
       Esr.Resource.AdapterSocket.Registry,
 
+      # 4d.0 Sidecar.Registry — adapter_type → python_module dispatch table.
+      # Replaces WorkerSupervisor's hardcoded @sidecar_dispatch (Track 0
+      # plugin work). Plugins register their sidecar mappings via manifest;
+      # Phase-1 fallbacks below preserve existing feishu/cc_mcp behaviour.
+      {Esr.Resource.Sidecar.Registry, []},
+
       # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
       # agents.yaml-compiled definitions cache + hot-reload. Started before
       # Scope.Admin since admin commands (e.g. session_new) validate the
@@ -188,6 +194,13 @@ defmodule Esr.Application do
     # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
+        # Fallback sidecar mappings for adapters that ship in core today
+        # (pre-plugin-extraction). Once feishu / cc_mcp move into plugins,
+        # the plugin manifests will register these and these calls become
+        # redundant. Idempotent — plugins overwriting later is fine.
+        :ok = Esr.Resource.Sidecar.Registry.register("feishu", "feishu_adapter_runner")
+        :ok = Esr.Resource.Sidecar.Registry.register("cc_mcp", "cc_adapter_runner")
+
         case Esr.Scope.Admin.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
           :ok ->
             :ok
@@ -213,6 +226,15 @@ defmodule Esr.Application do
                 "slash commands will be unavailable until restart"
             )
         end
+
+        # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on
+        # disk → no-op. Once `runtime.exs` populates `:enabled_plugins`
+        # (Task 0.5) and plugins materialize under
+        # `runtime/lib/esr/plugins/`, this fans out to register their
+        # contributions in core registries (Phase-1 covers
+        # python_sidecars; capabilities/slash routes/agents follow as
+        # those registries gain register/3 APIs).
+        load_enabled_plugins()
 
       _ ->
         :ok
@@ -251,6 +273,50 @@ defmodule Esr.Application do
     end
 
     result
+  end
+
+  @doc """
+  Discover plugins under `runtime/lib/esr/plugins/`, topo-sort the
+  enabled subset (from `Application.get_env(:esr, :enabled_plugins)`),
+  and register each plugin's contributions in core registries.
+
+  Phase 0 default: enabled list empty → no plugins started. Failures
+  are logged but non-fatal so an on-disk plugin with a bad manifest
+  doesn't take down the rest of the runtime.
+
+  Track 0 Task 0.4. Spec:
+  `docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md` §五.
+  """
+  @spec load_enabled_plugins() :: :ok
+  def load_enabled_plugins do
+    require Logger
+    enabled = Application.get_env(:esr, :enabled_plugins, []) |> Enum.map(&to_string/1)
+
+    with {:ok, discovered} <- Esr.Plugin.Loader.discover(),
+         {:ok, ordered} <- Esr.Plugin.Loader.topo_sort_enabled(discovered, enabled) do
+      for {name, manifest} <- ordered do
+        case Esr.Plugin.Loader.start_plugin(name, manifest) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "plugin loader: start_plugin(#{name}) failed: #{inspect(reason)}; " <>
+                "plugin will be unavailable until next restart"
+            )
+        end
+      end
+
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "plugin loader: discovery / topo-sort failed: #{inspect(reason)}; " <>
+            "no plugins started"
+        )
+
+        :ok
+    end
   end
 
   @doc """
