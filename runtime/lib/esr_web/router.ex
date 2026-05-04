@@ -26,5 +26,9 @@ defmodule EsrWeb.Router do
   # is documented + the auto-confirm decision lands.
   scope "/debug", EsrWeb do
     get "/inject_notification/:sid", DebugController, :inject_notification
+    # Diagnostic PTY stdin write (writes via Esr.Entity.PtyProcess.write/2).
+    # Used by tools/esr-debug send-keys.
+    post "/pty_send/:sid", DebugController, :pty_send
+    get "/pty_send/:sid", DebugController, :pty_send
   end
 end
