@@ -1,0 +1,27 @@
+# Mock plugin C — Session declaration (composite).
+#
+# Bundles multiple capability declarations + sidecars + a stub entity
+# reference (Esr.Entity.Server, which always exists in core). Used to
+# verify Loader handles a "real-shaped" plugin manifest end-to-end:
+# multiple caps, multiple sidecars, entity validation passes.
+name: mock_c
+version: 0.0.1
+description: Mock session-declaration plugin (composite).
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins: []
+
+declares:
+  capabilities:
+    - mock_c/cmd1
+    - mock_c/cmd2
+    - mock_c/admin
+  python_sidecars:
+    - adapter_type: mock_c_a
+      python_module: mock_c_runner_a
+    - adapter_type: mock_c_b
+      python_module: mock_c_runner_b
+  entities:
+    - module: Esr.Entity.Server
+      kind: stateful

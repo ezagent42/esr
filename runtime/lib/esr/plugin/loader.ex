@@ -161,8 +161,10 @@ defmodule Esr.Plugin.Loader do
 
   @doc """
   Validate `manifest` then register its declared contributions in core
-  registries. Phase-1 supports `python_sidecars`; future contributions
-  arrive as their target registries grow `register/2`-style APIs.
+  registries. Phase-1 supports `python_sidecars` + `capabilities`;
+  remaining declaration types (slash_routes, agent_defs, entities,
+  http_routes, …) arrive as their target registries grow
+  `register/2`-style APIs in subsequent tasks.
 
   Returns `{:ok, :registered}` on success or `{:error, reason}` if
   validation fails.
@@ -170,6 +172,7 @@ defmodule Esr.Plugin.Loader do
   @spec start_plugin(plugin_name(), Manifest.t()) :: {:ok, :registered} | {:error, term()}
   def start_plugin(name, %Manifest{} = manifest) do
     with :ok <- Manifest.validate(manifest),
+         :ok <- register_capabilities(name, manifest),
          :ok <- register_python_sidecars(manifest) do
       Logger.info("plugin loader: started #{name} v#{manifest.version}")
       {:ok, :registered}
@@ -185,6 +188,24 @@ defmodule Esr.Plugin.Loader do
   # ------------------------------------------------------------------
   # Phase-1 contribution handlers
   # ------------------------------------------------------------------
+
+  # Inject manifest-declared capability strings into the core
+  # Permission.Registry under the plugin's owning module. Idempotent —
+  # Permission.Registry.register/2 silently no-ops on re-registration.
+  # Cap-prefix enforcement already happened in Manifest.validate/1.
+  defp register_capabilities(plugin_name, %Manifest{declares: declares}) do
+    caps = Map.get(declares, :capabilities, [])
+
+    declared_by_atom =
+      ("Elixir.Esr.Plugins." <> Macro.camelize(plugin_name))
+      |> String.to_atom()
+
+    Enum.each(caps, fn cap when is_binary(cap) ->
+      Esr.Resource.Permission.Registry.register(cap, declared_by: declared_by_atom)
+    end)
+
+    :ok
+  end
 
   defp register_python_sidecars(%Manifest{declares: declares}) do
     sidecars = Map.get(declares, :python_sidecars, [])

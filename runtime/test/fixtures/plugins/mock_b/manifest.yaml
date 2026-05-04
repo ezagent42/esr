@@ -1,0 +1,21 @@
+# Mock plugin B — Topology fragment with deps.
+#
+# Depends on mock_a; declares its own caps + sidecar. Used to verify
+# Loader.topo_sort_enabled/2 honors the ordering edge (mock_a must
+# start before mock_b) and that two plugins' contributions both land
+# in core registries without overwriting each other.
+name: mock_b
+version: 0.0.1
+description: Mock topology plugin depending on mock_a.
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins:
+    - mock_a
+
+declares:
+  capabilities:
+    - mock_b/echo
+  python_sidecars:
+    - adapter_type: mock_b_adapter
+      python_module: mock_b_runner
