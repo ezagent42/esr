@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Date:** 2026-05-04 (rev 2 — subagent review fixes applied; 14 issues including 3 critical)
+**Date:** 2026-05-04 (rev 3 — added /plugin install command + CLI-surface e2e scenario per user 2026-05-04 08:20)
 **Audience:** anyone implementing the plugin work; combines specs A (`2026-05-04-core-decoupling-design.md`) and B (`2026-05-04-plugin-mechanism-design.md`)
 **Goal:** extract feishu / claude_code / voice as plugins; core boots and runs without any plugin loaded
 **Architecture:** feature-track structure (per user 2026-05-04) — each plugin's extraction is a self-contained track. Foundation work first (loader skeleton + new core APIs), then voice (smallest pilot), then feishu, then cc.
@@ -143,19 +143,30 @@ This plan picks (a): swap 0.5 and 0.6 ordering. Re-numbered below.
 - [ ] **Step 2: Default to `[:feishu, :claude_code, :voice]` if file missing** (so today's behavior is preserved).
 - [ ] **Step 3: Commit**.
 
-### Task 0.6 — Core admin commands `/plugin {list,info,enable,disable}` (was 0.5)
+### Task 0.6 — Core admin commands `/plugin {list,info,install,enable,disable}` (was 0.5)
 
 **Files:**
-- Create: `runtime/lib/esr/admin/commands/plugin/{list,info,enable,disable}.ex`
-- Modify: `runtime/priv/slash-routes.default.yaml` — add 4 new routes
+- Create: `runtime/lib/esr/admin/commands/plugin/{list,info,install,enable,disable}.ex` (5 modules)
+- Modify: `runtime/priv/slash-routes.default.yaml` — add 5 new routes
 
-- [ ] **Step 1: Implement 4 command modules** consuming `Esr.Plugin.Loader.discover/0` for list/info; writing `~/.esrd-dev/<env>/plugins.yaml` for enable/disable.
+- [ ] **Step 1: Implement 5 command modules**:
+  - `list` — consumes `Esr.Plugin.Loader.discover/0` + reads `enabled_plugins` config
+  - `info <name>` — dumps manifest summary
+  - `install <local_path | git_url>` — Phase 1 implementation: copy/clone source into `runtime/lib/esr/plugins/<name>/`; validate `manifest.yaml`; run `mix compile`; report success + restart-required hint. Reject if plugin already exists at target path. Phase 2 may add hex/remote registry support.
+  - `enable <name>` — writes `~/.esrd-dev/<env>/plugins.yaml` (atomic file replace); reports restart-required
+  - `disable <name>` — same write pattern
 
-- [ ] **Step 2: Add slash routes** with `permission: "plugin/manage"` (declare new core cap `plugin/manage` in capabilities.yaml).
+- [ ] **Step 2: Add 5 slash routes** with `permission: "plugin/manage"` (declare new core cap `plugin/manage` in capabilities.yaml).
 
-- [ ] **Step 3: Test enable/disable** — write to plugins.yaml, restart, verify enabled_plugins changed.
+- [ ] **Step 3: Test each command** in isolation:
+  - `list` — discoverable plugin enumeration with enabled-status flag
+  - `info` — manifest dump for a known plugin
+  - `install` — local-path install creates files at expected location, manifest validation rejects malformed plugin
+  - `enable`/`disable` — plugins.yaml write produces expected file content
 
-- [ ] **Step 4: Commit**.
+- [ ] **Step 4: Integration test** — write to plugins.yaml, restart, verify `Application.get_env(:esr, :enabled_plugins)` reflects the change (this depends on Task 0.5 having landed).
+
+- [ ] **Step 5: Commit**.
 
 ### Task 0.7 — e2e 08 core-only scenario
 
@@ -173,13 +184,39 @@ This plan picks (a): swap 0.5 and 0.6 ordering. Re-numbered below.
 
 - [ ] **Step 3: Update `scripts/hooks/pre-merge-dev-gate.sh`** to also run scenario 08.
 
-- [ ] **Step 4: Commit + open PR**.
+- [ ] **Step 4: Commit**.
+
+### Task 0.8 — e2e 11 CLI surface scenario
+
+**Files:**
+- Create: `tests/e2e/scenarios/11_cli_surface.sh`
+- Modify: `Makefile` — add `e2e-11` target + include in `e2e` aggregate
+
+End-to-end coverage of the `esr cmd plugin {list,info,install,enable,disable}` CLI surface: the operator's only interaction path before any plugin is loaded.
+
+- [ ] **Step 1: Set up an isolated test plugin** — `tests/e2e/_helpers/dummy_plugin/` with a minimal valid manifest (declares one cap `dummy/test`, no entities, no slash routes).
+
+- [ ] **Step 2: Write scenario** that:
+  - Spawns esrd with `ESR_ENABLED_PLUGINS=` (empty)
+  - Runs `esr cmd plugin list` → asserts exit 0 + output mentions zero enabled plugins
+  - Runs `esr cmd plugin install tests/e2e/_helpers/dummy_plugin` → asserts exit 0 + dummy plugin files exist at `runtime/lib/esr/plugins/dummy/`
+  - Runs `esr cmd plugin info dummy` → asserts manifest dump output
+  - Runs `esr cmd plugin enable dummy` → asserts plugins.yaml updated
+  - Runs `esr cmd plugin disable dummy` → asserts plugins.yaml reverted
+  - Cleanup: removes the dummy plugin files
+
+- [ ] **Step 3: Run** + verify green.
+
+- [ ] **Step 4: Update `scripts/hooks/pre-merge-dev-gate.sh`** to also run scenario 11.
+
+- [ ] **Step 5: Commit + open Track 0 PR**.
 
 **Track 0 done criteria:**
 - mix test green (no test regressions vs dev baseline)
-- e2e 06 / 07 / 08 all green
-- Plugin loader infrastructure exists but no plugins enabled yet
+- e2e 06 / 07 / 08 / 11 all green
+- Plugin loader infrastructure exists but no real plugins enabled yet
 - Application boots cleanly with `enabled_plugins: []`
+- 5 `/plugin` admin commands functional (list / info / install / enable / disable)
 
 ---
 

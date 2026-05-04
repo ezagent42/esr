@@ -1,6 +1,6 @@
 # Plugin Mechanism Design (Spec B)
 
-**Date:** 2026-05-04 (rev 3 — Plugin→Core direction principle + recommendations applied)
+**Date:** 2026-05-04 (rev 4 — added /plugin install command)
 **Audience:** anyone implementing the plugin mechanism after Spec A's core decoupling lands
 **Status:** prescriptive design
 
@@ -269,12 +269,18 @@ Default: all three plugins enabled (matches today's behavior). Operator can over
 /plugin info <name>
   → dumps manifest summary (depends, declares, version)
 
+/plugin install <local_path | git_url>
+  → Phase 1: copies/clones source to runtime/lib/esr/plugins/<name>/
+  → validates manifest.yaml; rejects on validation failure
+  → runs `mix compile`; reports compile errors
+  → emits "restart required" message after success
+
 /plugin enable <name>
-  → writes new enabled_plugins config + emits "restart required" message
+  → writes new enabled_plugins config (plugins.yaml) + emits "restart required" message
   → does NOT runtime-load (Phase 1)
 
 /plugin disable <name>
-  → writes new enabled_plugins config + emits "restart required" message
+  → writes new enabled_plugins config (plugins.yaml) + emits "restart required" message
 ```
 
 ### 6.3 No runtime-toggle in Phase 1
@@ -287,6 +293,7 @@ Enabling/disabling requires `esrd restart`. Phase 2 may add hot-load (Mix.Projec
 runtime/lib/esr/admin/commands/plugin/
   list.ex       Esr.Admin.Commands.Plugin.List
   info.ex       Esr.Admin.Commands.Plugin.Info
+  install.ex    Esr.Admin.Commands.Plugin.Install
   enable.ex     Esr.Admin.Commands.Plugin.Enable
   disable.ex    Esr.Admin.Commands.Plugin.Disable
 ```
