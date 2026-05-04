@@ -1,18 +1,26 @@
 defmodule Esr.Plugin.LoaderIntegrationTest do
   @moduledoc """
-  End-to-end test that real mock plugin manifests round-trip through
-  the loader pipeline: discover → topo_sort → start_plugin → core
+  End-to-end test that real plugin manifests round-trip through the
+  loader pipeline: discover → topo_sort → start_plugin → core
   registries actually carry the plugin's contributions.
 
   Distinct from `Esr.Plugin.LoaderTest` which uses synthetic in-memory
-  manifests; this test reads three actual manifest.yaml files under
+  manifests; this test reads three actual `manifest.yaml` files under
   `runtime/test/fixtures/plugins/` to prove the on-disk path works
   end-to-end.
 
-  Per user feedback 2026-05-04: "stub manifests" (PR-180's voice/feishu/
-  claude_code) only proved the manifest schema is valid; they did NOT
-  prove the loader can actually push contributions into core. This test
-  closes that gap.
+  The three fixtures map to Spec B §二's three plugin types:
+
+    - `bare_component` — Component-only (1 cap, 1 sidecar, no deps)
+    - `dependent_topology` — Topology fragment with `depends_on:
+      [bare_component]`
+    - `composite_session` — Session declaration (multi-cap, multi-
+      sidecar, entity reference)
+
+  Per user feedback 2026-05-04: the stub manifests shipped in PR-180
+  (voice/feishu/claude_code) only proved the manifest schema parses;
+  they did NOT prove the loader can push contributions into core
+  registries. This test closes that gap.
   """
   use ExUnit.Case, async: false
 
@@ -21,112 +29,130 @@ defmodule Esr.Plugin.LoaderIntegrationTest do
   alias Esr.Resource.Sidecar.Registry, as: SidecarRegistry
 
   @fixtures_root Path.expand("../../fixtures/plugins", __DIR__)
+  @fixture_names ~w(bare_component dependent_topology composite_session)
 
   setup do
     on_exit(fn ->
-      # Clean up sidecar registrations our test plugins inserted so
+      # Clean up sidecar registrations our fixture plugins inserted so
       # parallel suites and re-runs see a fresh table.
-      :ok = SidecarRegistry.unregister("mock_a_adapter")
-      :ok = SidecarRegistry.unregister("mock_b_adapter")
-      :ok = SidecarRegistry.unregister("mock_c_a")
-      :ok = SidecarRegistry.unregister("mock_c_b")
+      :ok = SidecarRegistry.unregister("bare_component_adapter")
+      :ok = SidecarRegistry.unregister("dependent_topology_adapter")
+      :ok = SidecarRegistry.unregister("composite_session_alpha")
+      :ok = SidecarRegistry.unregister("composite_session_beta")
     end)
 
     :ok
   end
 
   describe "discover/1 against real fixture manifests" do
-    test "finds all 3 mock plugins" do
+    test "finds all 3 fixture plugins" do
       assert {:ok, plugins} = Loader.discover(@fixtures_root)
       names = Enum.map(plugins, &elem(&1, 0))
-      assert "mock_a" in names
-      assert "mock_b" in names
-      assert "mock_c" in names
+      assert Enum.sort(names) == Enum.sort(@fixture_names)
     end
 
     test "manifest fields are populated for each plugin" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
-      mock_a = Enum.find(plugins, fn {n, _} -> n == "mock_a" end) |> elem(1)
-      assert mock_a.version == "0.0.1"
-      assert mock_a.description =~ "Mock component"
-      assert mock_a.depends_on.plugins == []
 
-      mock_b = Enum.find(plugins, fn {n, _} -> n == "mock_b" end) |> elem(1)
-      assert mock_b.depends_on.plugins == ["mock_a"]
+      bare = Enum.find(plugins, fn {n, _} -> n == "bare_component" end) |> elem(1)
+      assert bare.version == "0.0.1"
+      assert bare.description =~ "Component-shape"
+      assert bare.depends_on.plugins == []
+
+      dep = Enum.find(plugins, fn {n, _} -> n == "dependent_topology" end) |> elem(1)
+      assert dep.depends_on.plugins == ["bare_component"]
     end
   end
 
   describe "topo_sort_enabled/2 against real fixtures" do
-    test "mock_a comes before mock_b when both enabled" do
+    test "bare_component comes before dependent_topology when both enabled" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
 
       assert {:ok, ordered} =
-               Loader.topo_sort_enabled(plugins, ["mock_a", "mock_b", "mock_c"])
+               Loader.topo_sort_enabled(plugins, @fixture_names)
 
       ordered_names = Enum.map(ordered, &elem(&1, 0))
-      a_idx = Enum.find_index(ordered_names, &(&1 == "mock_a"))
-      b_idx = Enum.find_index(ordered_names, &(&1 == "mock_b"))
-      assert a_idx < b_idx, "mock_a (#{a_idx}) must come before mock_b (#{b_idx})"
+      bare_idx = Enum.find_index(ordered_names, &(&1 == "bare_component"))
+      dep_idx = Enum.find_index(ordered_names, &(&1 == "dependent_topology"))
+
+      assert bare_idx < dep_idx,
+             "bare_component (#{bare_idx}) must come before dependent_topology (#{dep_idx})"
     end
 
-    test "enabling mock_b without mock_a fails with missing_dep" do
+    test "enabling dependent_topology without bare_component fails with missing_dep" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
 
-      assert {:error, {:missing_dep, "mock_b", "mock_a"}} =
-               Loader.topo_sort_enabled(plugins, ["mock_b"])
+      assert {:error, {:missing_dep, "dependent_topology", "bare_component"}} =
+               Loader.topo_sort_enabled(plugins, ["dependent_topology"])
     end
   end
 
-  describe "start_plugin/2 — Component-only (mock_a)" do
+  describe "start_plugin/2 — Component-only (bare_component)" do
     test "registers python_sidecar entry into Esr.Resource.Sidecar.Registry" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
-      mock_a = Enum.find_value(plugins, fn {n, m} -> if n == "mock_a", do: m end)
 
-      assert {:ok, :registered} = Loader.start_plugin("mock_a", mock_a)
+      bare =
+        Enum.find_value(plugins, fn {n, m} -> if n == "bare_component", do: m end)
 
-      assert {:ok, "mock_a_runner"} == SidecarRegistry.lookup("mock_a_adapter")
+      assert {:ok, :registered} = Loader.start_plugin("bare_component", bare)
+
+      assert {:ok, "bare_component_runner"} ==
+               SidecarRegistry.lookup("bare_component_adapter")
     end
 
     test "registers capability into Esr.Resource.Permission.Registry" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
-      mock_a = Enum.find_value(plugins, fn {n, m} -> if n == "mock_a", do: m end)
 
-      assert {:ok, :registered} = Loader.start_plugin("mock_a", mock_a)
+      bare =
+        Enum.find_value(plugins, fn {n, m} -> if n == "bare_component", do: m end)
 
-      assert PermRegistry.declared?("mock_a/ping"),
-             "Permission.Registry should know about mock_a/ping after start_plugin"
+      assert {:ok, :registered} = Loader.start_plugin("bare_component", bare)
+
+      assert PermRegistry.declared?("bare_component/ping"),
+             "Permission.Registry should know about bare_component/ping after start_plugin"
     end
   end
 
-  describe "start_plugin/2 — Topology with deps (mock_b)" do
-    test "second plugin's contributions land alongside the first" do
+  describe "start_plugin/2 — Topology with deps (dependent_topology)" do
+    test "downstream plugin's contributions land alongside the upstream's" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
-      {:ok, ordered} = Loader.topo_sort_enabled(plugins, ["mock_a", "mock_b"])
+
+      {:ok, ordered} =
+        Loader.topo_sort_enabled(plugins, ["bare_component", "dependent_topology"])
 
       for {name, m} <- ordered do
         assert {:ok, :registered} = Loader.start_plugin(name, m)
       end
 
-      # Both plugins' caps + sidecars are present.
-      assert {:ok, "mock_a_runner"} == SidecarRegistry.lookup("mock_a_adapter")
-      assert {:ok, "mock_b_runner"} == SidecarRegistry.lookup("mock_b_adapter")
-      assert PermRegistry.declared?("mock_a/ping")
-      assert PermRegistry.declared?("mock_b/echo")
+      assert {:ok, "bare_component_runner"} ==
+               SidecarRegistry.lookup("bare_component_adapter")
+
+      assert {:ok, "dependent_topology_runner"} ==
+               SidecarRegistry.lookup("dependent_topology_adapter")
+
+      assert PermRegistry.declared?("bare_component/ping")
+      assert PermRegistry.declared?("dependent_topology/echo")
     end
   end
 
-  describe "start_plugin/2 — Composite session declaration (mock_c)" do
+  describe "start_plugin/2 — Composite session declaration (composite_session)" do
     test "registers multiple caps + multiple sidecars + passes entity validation" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
-      mock_c = Enum.find_value(plugins, fn {n, m} -> if n == "mock_c", do: m end)
 
-      assert {:ok, :registered} = Loader.start_plugin("mock_c", mock_c)
+      composite =
+        Enum.find_value(plugins, fn {n, m} -> if n == "composite_session", do: m end)
 
-      assert {:ok, "mock_c_runner_a"} == SidecarRegistry.lookup("mock_c_a")
-      assert {:ok, "mock_c_runner_b"} == SidecarRegistry.lookup("mock_c_b")
-      assert PermRegistry.declared?("mock_c/cmd1")
-      assert PermRegistry.declared?("mock_c/cmd2")
-      assert PermRegistry.declared?("mock_c/admin")
+      assert {:ok, :registered} = Loader.start_plugin("composite_session", composite)
+
+      assert {:ok, "composite_session_runner_alpha"} ==
+               SidecarRegistry.lookup("composite_session_alpha")
+
+      assert {:ok, "composite_session_runner_beta"} ==
+               SidecarRegistry.lookup("composite_session_beta")
+
+      for cap <- ~w(composite_session/cmd1 composite_session/cmd2 composite_session/admin) do
+        assert PermRegistry.declared?(cap)
+      end
     end
   end
 
@@ -134,9 +160,7 @@ defmodule Esr.Plugin.LoaderIntegrationTest do
     test "discover → topo_sort → start each → all 3 plugins' contributions present" do
       {:ok, plugins} = Loader.discover(@fixtures_root)
 
-      assert {:ok, ordered} =
-               Loader.topo_sort_enabled(plugins, ["mock_a", "mock_b", "mock_c"])
-
+      assert {:ok, ordered} = Loader.topo_sort_enabled(plugins, @fixture_names)
       assert length(ordered) == 3
 
       for {name, manifest} <- ordered do
@@ -144,17 +168,29 @@ defmodule Esr.Plugin.LoaderIntegrationTest do
                "start_plugin(#{name}) failed"
       end
 
-      # 4 sidecar mappings registered (1 from a, 1 from b, 2 from c)
+      # 4 sidecar mappings registered (1 + 1 + 2)
+      expected_adapters = [
+        "bare_component_adapter",
+        "dependent_topology_adapter",
+        "composite_session_alpha",
+        "composite_session_beta"
+      ]
+
       registered_types =
         SidecarRegistry.list()
         |> Enum.map(&elem(&1, 0))
-        |> Enum.filter(&String.starts_with?(&1, "mock_"))
+        |> Enum.filter(&(&1 in expected_adapters))
 
-      assert MapSet.new(registered_types) ==
-               MapSet.new(["mock_a_adapter", "mock_b_adapter", "mock_c_a", "mock_c_b"])
+      assert MapSet.new(registered_types) == MapSet.new(expected_adapters)
 
-      # 6 capabilities registered total (1 + 1 + 3, plus prefix-validated).
-      for cap <- ~w(mock_a/ping mock_b/echo mock_c/cmd1 mock_c/cmd2 mock_c/admin) do
+      # 5 capabilities registered total (1 + 1 + 3).
+      for cap <- ~w(
+            bare_component/ping
+            dependent_topology/echo
+            composite_session/cmd1
+            composite_session/cmd2
+            composite_session/admin
+          ) do
         assert PermRegistry.declared?(cap),
                "expected Permission.Registry to know #{cap} after full sweep"
       end
