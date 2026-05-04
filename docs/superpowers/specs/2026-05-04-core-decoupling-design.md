@@ -1,6 +1,6 @@
 # Core Decoupling Design (Spec A)
 
-**Date:** 2026-05-04 (rev 2 — subagent-reviewed; substantive fixes applied)
+**Date:** 2026-05-04 (rev 3 — direction principle + PtyProcess fix + recommendations applied)
 **Audience:** anyone planning to implement the plugin work; companion to `2026-05-04-plugin-mechanism-design.md` (Spec B)
 **Status:** prescriptive design
 
@@ -44,7 +44,7 @@ Concretely:
 
 **Entity primitive (no concrete instances except generic mechanisms):**
 - `entity/{entity.ex, server.ex, registry.ex, factory.ex, pool.ex, supervisor.ex, proxy.ex, stateful.ex, py_worker.ex}` — Entity primitive infra
-- `entity/pty_process.ex` — **Generic PTY-backed peer**, BUT ⚠️ contains cc-launcher path resolution (`scripts/esr-cc.sh`) and cc-specific bootstrap args. **Migration prep work required**: extract cc-launch concerns into a small `Esr.Plugins.ClaudeCode.PtyLauncher` adapter that PtyProcess delegates to via a `launch_args/1` callback. PtyProcess itself stays core after extraction.
+- `entity/pty_process.ex` — **Generic PTY-backed peer**, BUT ⚠️ contains cc-launcher path resolution (`scripts/esr-cc.sh`) and cc-specific bootstrap args. **Migration prep work required**: **strip cc-specific hardcoding from PtyProcess** (path resolution, --dangerously-load flags, bootstrap args). After strip, PtyProcess accepts a generic `cmd:` parameter. Plugin/cc's CCProcess **directly calls** `PtyProcess.start_link(cmd: build_cc_cmd(...), ...)` — no intermediate "PtyLauncher" module needed. This is the **plugin → core** direction (default for most injection points).
 - `entity/slash_handler.ex` — **Slash command dispatcher** (parses + routes), BUT ⚠️ currently contains feishu-aware paths (calls `lookup_by_feishu_id`, references FeishuChatProxy directly). **Migration prep work required**: introduce a "platform identity hook" registered by plugins that slash_handler consults instead of calling feishu-specific functions directly.
 - `entity/user/*` — User Entity base type. ⚠️ User schema has a `feishu_id` field that's plugin/feishu-specific — see §三 user_schema_fields injection point.
 
@@ -280,7 +280,7 @@ To avoid R3-style cascade, migrate one plugin at a time, in this order:
 3. `Esr.Admin.Commands.{Doctor, Whoami}` switch from direct `lookup_by_feishu_id` calls to the platform identity hook
 4. `Esr.Application.start/2` `bootstrap_feishu_app_adapters` / `bootstrap_voice_pools` calls become conditional on plugin enablement (no-op if plugin disabled)
 5. `Esr.Resource.CapGuard` extracts the regex/lane-B mechanism out of `Esr.Entity.CapGuard` (which becomes a feishu-specific Rules module)
-6. `Esr.Entity.PtyProcess` extracts cc-launcher path resolution into `Esr.Plugins.ClaudeCode.PtyLauncher`
+6. `Esr.Entity.PtyProcess` strips cc-specific hardcoded paths (`scripts/esr-cc.sh`, `--dangerously-load`, etc.); after strip, accepts generic `cmd:` parameter. Plugin/cc's CCProcess directly calls `PtyProcess.start_link(cmd: ..., ...)` (plugin → core direction; no intermediate launcher module)
 
 These are 6 small PRs that decouple core's plugin-aware code paths BEFORE any file moves. Without step 0, the file moves themselves break core-only mode.
 

@@ -1,6 +1,6 @@
 # Plugin Mechanism Design (Spec B)
 
-**Date:** 2026-05-04 (rev 2 — subagent-reviewed; substantive fixes applied)
+**Date:** 2026-05-04 (rev 3 — Plugin→Core direction principle + recommendations applied)
 **Audience:** anyone implementing the plugin mechanism after Spec A's core decoupling lands
 **Status:** prescriptive design
 
@@ -52,30 +52,34 @@ A plugin's manifest declares which subset of types it implements. Most real plug
 
 ---
 
-## 三、Plugin → Core injection points (17 enumerated)
+## 三、Plugin → Core injection points (20 enumerated)
 
-| # | Injection point | Core mechanism | Plugin contributes |
-|---|---|---|---|
-| 1 | Capability declarations | `Esr.Resource.Permission.Registry` | new cap names (e.g., `feishu/notify`, `voice/asr`) |
-| 2 | Slash route declarations | `Esr.Resource.SlashRoute.Registry` | new slash kind + command_module mapping |
-| 3 | Agent declarations | `Esr.Entity.Agent.Registry` | new agent type + pipeline topology (agents.yaml fragment) |
-| 4 | Adapter declarations | adapters.yaml | new adapter instances (feishu app config) |
-| 5 | Entity types | `Esr.Entity.Server` host + `Esr.Entity.Factory` | concrete Entity modules implementing `@behaviour Esr.Interface.{Member, Boundary, Agent}` |
-| 6 | Topology fragments | agents.yaml + future `Esr.Sessions.*` declarations | inbound/proxies lists referring to plugin Entity modules |
-| 7 | Workspace schema fields | `Esr.Resource.Workspace.Registry` | plugin-specific schema additions (e.g., voice plugin adds `voice_lang:`) |
-| 8 | PubSub topic namespace | `Phoenix.PubSub` | plugin uses prefix-namespaced topics (`feishu/`, `voice/`, `cc/`) |
-| 9 | HTTP routes | `EsrWeb.Router` | plugin adds endpoints (e.g., voice plugin's `/audio/<sid>`) |
-| 10 | Phoenix Channel topic | `EsrWeb.{Adapter,Channel,Handler,Pty}Socket.channel/2` (4 distinct sockets, no UserSocket) | plugin registers Channel modules under one of these sockets |
-| 11 | AdminScope startup hook | `Esr.Scope.Admin.bootstrap_*` (today: `bootstrap_voice_pools/1`, `bootstrap_slash_handler/0`, `bootstrap_feishu_app_adapters/1` — see `Esr.Application.start/2` lines 192-260) | plugin starts always-on entities at admin scope boot (FAA, voice pool). After Spec A's prep step 4, these calls become conditional on plugin enablement. |
-| 12 | Python sidecar registration | `Esr.Resource.Sidecar.Registry` (Spec A §四) | plugin maps `adapter_type → python_module` |
-| 13 | OS env / config | `config/runtime.exs` | plugin declares required env vars (FEISHU_APP_ID, ANTHROPIC_BASE_URL) |
-| 14 | Doctor health check | `Esr.Admin.Commands.Doctor` | plugin registers health check (FAA WS status, voice ASR connection) |
-| 15 | Test fixtures + e2e helpers | `tests/e2e/`, `runtime/test/` | plugin ships fixtures + scenarios under its own dir |
-| 16 | Bootstrap principal capabilities | `ESR_BOOTSTRAP_PRINCIPAL_ID` auto-grant | plugin declares default-grant cap list for bootstrap principal |
-| 17 | Doc generation | `gen-docs.sh` | plugin's `@moduledoc` flows into the generated reference |
-| 18 | User schema fields | `Esr.Entity.User.Registry` schema | plugin contributes platform-id fields (e.g., feishu plugin owns `feishu_id:` field on User entries) |
-| 19 | Platform identity hook | `Esr.Entity.SlashHandler` + `Esr.Admin.Commands.{Doctor, Whoami}` (per Spec A's prep step 2-3) | plugin registers a `resolve_external_id(platform, ext_id)` callback so core admin commands don't reference feishu directly |
-| 20 | yaml `impl:` module reference resolver | core agents.yaml load path | plugin must declare its Entity modules in manifest so core can validate `impl:` references at boot (fail-fast if a yaml entry references a disabled plugin's module) |
+**Direction principle**: most injection points are **Plugin → Core** — plugin starts up, calls core's declare/register API, and the manifest is just declarative documentation. Only a few are **Core → Plugin** (lifecycle hooks where core invokes plugin code at specific moments). This dramatically simplifies the loader.
+
+| # | Injection point | Direction | Core mechanism | Plugin contributes |
+|---|---|---|---|---|
+| 1 | Capability declarations | **P→C** | `Esr.Resource.Permission.Registry.register/2` | plugin calls register at startup; cap name MUST start with `<plugin_name>/` (boot-time enforcement) |
+| 2 | Slash route declarations | **P→C** | `Esr.Resource.SlashRoute.Registry` | plugin yaml fragment merged at boot |
+| 3 | Agent declarations | **P→C** | `Esr.Entity.Agent.Registry.load_snapshot/1` | plugin yaml fragment merged at boot |
+| 4 | Adapter declarations | **P→C** | adapters.yaml | plugin yaml fragment merged at boot |
+| 5 | Entity types | **P→C** | `Esr.Entity.Server` host + `Esr.Entity.Factory` | plugin module declared in manifest; manifest validation at boot (`Code.ensure_loaded?`); plugin spawns instances by calling `Factory.spawn_peer/5` |
+| 6 | Topology fragments | **P→C** | agents.yaml | plugin yaml fragment with `inbound`/`proxies` referring to its own Entity modules |
+| 7 | Workspace schema fields | **P→C** | `Esr.Resource.Workspace.Registry` | manifest declares fields; Workspace.Registry validates yaml against composed schema |
+| 8 | PubSub topic namespace | **P→C** | `Phoenix.PubSub` | plugin owns `<plugin_name>/` prefix; calls `PubSub.subscribe/publish` directly |
+| 9 | HTTP routes | **P→C** | `EsrWeb.Router` (via `forward`/`scope`) | manifest declares route; loader injects scope at app start |
+| 10 | Phoenix Channel topic | **P→C** | `EsrWeb.{Adapter,Channel,Handler,Pty}Socket.channel/2` | plugin Channel module declared; loader injects channel/2 macro call |
+| 11 | AdminScope startup hook | **C→P** | `Esr.Scope.Admin.bootstrap_*` | core invokes plugin's startup function at admin scope boot |
+| 12 | Python sidecar registration | **P→C** | `Esr.Resource.Sidecar.Registry` (Spec A §四) | manifest declares mapping; loader writes to registry at boot |
+| 13 | OS env / config | **P→C** | `config/runtime.exs` reads from env | manifest declares required env vars; validator fails boot if missing |
+| 14 | Doctor health check | **C→P** | `Esr.Admin.Commands.Doctor` iterates registered checks | manifest declares health-check function; doctor calls it |
+| 15 | Test fixtures + e2e helpers | **P→C** | `tests/e2e/`, `runtime/test/` | plugin ships under its own dir; e2e scenario files reference plugin's helpers |
+| 16 | Bootstrap principal capabilities | **P→C** | bootstrap auto-grant logic | plugin declares default-grant list; loader writes to grants.yaml at first boot |
+| 17 | Doc generation | **P→C** | `gen-docs.sh` | gen-docs scans plugin dirs; plugin's `@moduledoc` is regular Elixir doc |
+| 18 | User schema fields | **P→C** | `Esr.Entity.User.Registry` | manifest declares fields; User.Registry validates against composed schema |
+| 19 | Platform identity hook | **C→P** | `Esr.Entity.SlashHandler` + `Esr.Admin.Commands.{Doctor, Whoami}` (per Spec A's prep step 2-3) | core invokes plugin's `resolve_external_id/2` callback when rendering identity |
+| 20 | yaml `impl:` module reference resolver | **P→C** | core agents.yaml load path | manifest declares Entity modules; validator at boot rejects yaml referencing modules of disabled plugins |
+
+**Summary**: 17 Plugin→Core (default; just regular Elixir module calls + manifest documentation) + 3 Core→Plugin (#11 admin bootstrap, #14 doctor checks, #19 identity hook — these need explicit registration mechanisms).
 
 ---
 
@@ -178,6 +182,8 @@ declares:
 - All declared module names must exist (compile-time check via `Code.ensure_loaded?/1`)
 - All referenced files (agents.yaml, adapters.yaml, …) must exist relative to plugin root
 - Capability names must follow `<resource>/<scope>` or `<resource>/<scope>/<perm>` shape (per existing convention)
+- **Capability namespace prefix enforcement**: every cap declared by plugin `<name>` MUST start with `<name>/` (e.g., plugin `feishu` declares `feishu/notify` ✓; declaring `cc/foo` from feishu plugin ✗). Boot-time hard fail. Prevents long-term naming collisions and makes ownership obvious.
+- **User customization layer**: each plugin's contributed yaml fragment is overridable by `~/.esrd-dev/<env>/<domain>.user.yaml` (e.g., `agents.user.yaml`). The merge order is: core defaults → plugin1 → plugin2 → ... → user override. This separates "what the plugin ships" from "what the operator customized" cleanly.
 
 ---
 
