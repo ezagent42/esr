@@ -41,6 +41,16 @@ echo "$0: connecting ws=${ws_url}" >&2
 # input it never sees. The 2s post-roll lets the bytes reach the PTY
 # before the WS closes from EOF on stdin.
 #
+# Known fragility (RCA 2026-05-04): on busy hosts claude can take
+# longer than 4s to render the dialog, in which case "1\r" arrives
+# during bracketed-paste startup and is silently dropped. A multi-
+# frame retry approach (5×3s) was tried + reverted because websocat
+# in --binary -E mode appeared to close the WS after the first stdin
+# chunk regardless of subsequent writes. A more robust solution
+# probably wants agent-browser keyboard input (which is known to
+# reach the PTY correctly per the Standard 2 evidence test) instead
+# of a bash+websocat helper. See docs/futures/todo.md.
+#
 # No JSON resize is sent — `websocat --binary` would put it on the
 # wire as a binary frame and the server would write the literal JSON
 # bytes to the PTY as keystrokes. FeishuChatProxy's boot bridge has

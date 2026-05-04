@@ -173,8 +173,14 @@ seen_tool_invoke=0
 # in the reply tool's `chat_id` arg — finding it on a `tool_invoke`
 # line proves both that the inject went out and that claude routed a
 # correctly-shaped reply call back through cc_mcp.
+#
+# IMPORTANT: use `grep -a` (treat as text). Phoenix's millisecond
+# logger emits the µ sigil as raw `\xc2\xb5` bytes; once a single such
+# line lands in the log, plain `grep` decides the file is binary and
+# silently returns no matches even when the pattern is present. Cost
+# us a full RCA cycle 2026-05-04 — see the fix-flow notes in this PR.
 while (( $(date +%s) < deadline )); do
-  if grep -F 'tool_invoke' "$LOG_FILE" | grep -qF 'scenario07_chat'; then
+  if grep -aF 'tool_invoke' "$LOG_FILE" | grep -qaF 'scenario07_chat'; then
     seen_tool_invoke=1
     break
   fi
@@ -184,7 +190,7 @@ done
 if (( seen_tool_invoke == 0 )); then
   echo "FAIL: claude did not call mcp__esr-channel__reply within 60s" >&2
   echo "--- last tool_invoke lines (any session) ---" >&2
-  grep -F 'tool_invoke' "$LOG_FILE" 2>/dev/null | tail -5 >&2 || true
+  grep -aF 'tool_invoke' "$LOG_FILE" 2>/dev/null | tail -5 >&2 || true
   echo "--- log tail ---" >&2
   tail -40 "$LOG_FILE" >&2
   exit 1
