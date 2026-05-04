@@ -38,7 +38,8 @@ LIST_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
   --wait --timeout 10)
 echo "$LIST_OUT"
 assert_contains "$LIST_OUT" "ok: true" "plugin_list returned ok"
-assert_contains "$LIST_OUT" "no plugins installed" "list reports empty"
+# Phase 1: 3 stub manifests on disk, all disabled (enabled: [] above).
+assert_contains "$LIST_OUT" "[disabled]" "list reports plugins as disabled"
 
 # --- 2) /plugin info <unknown> ---------------------------------------
 INFO_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \

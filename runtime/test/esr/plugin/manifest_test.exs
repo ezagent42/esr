@@ -74,15 +74,25 @@ defmodule Esr.Plugin.ManifestTest do
       assert {:error, {:missing_field, "version"}} = Manifest.parse(manifest_path(yaml))
     end
 
-    test "name must be kebab-case" do
+    test "name must be kebab-case OR snake_case (lowercase)" do
       yaml = """
-      name: BadName_With_Underscores
+      name: BadNameWithCaps
       version: 0.1.0
       description: x
       """
 
-      assert {:error, {:invalid_name, "BadName_With_Underscores"}} =
+      assert {:error, {:invalid_name, "BadNameWithCaps"}} =
                Manifest.parse(manifest_path(yaml))
+    end
+
+    test "snake_case names are accepted (legacy `claude_code`)" do
+      yaml = """
+      name: claude_code
+      version: 0.1.0
+      description: x
+      """
+
+      assert {:ok, %{name: "claude_code"}} = Manifest.parse(manifest_path(yaml))
     end
 
     test "depends_on defaults to core: '>= 0.0.0', plugins: []" do

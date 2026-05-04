@@ -29,7 +29,7 @@ defmodule Esr.Plugin.Loader do
 
   alias Esr.Plugin.Manifest
 
-  @default_root Path.expand("../../plugins", __DIR__)
+  @default_root Path.expand("../plugins", __DIR__)
 
   @typedoc "A plugin's name (kebab-case binary)."
   @type plugin_name :: String.t()

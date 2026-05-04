@@ -89,6 +89,7 @@ defmodule Esr.Admin.Commands.Plugin.Install do
   # (`runtime/lib/esr/plugins/`). We mirror the path expansion rather
   # than calling into Loader internals.
   defp plugins_dir do
+    # __DIR__ = runtime/lib/esr/admin/commands/plugin → up 3 = runtime/lib/esr
     Path.expand("../../../plugins", __DIR__)
   end
 end

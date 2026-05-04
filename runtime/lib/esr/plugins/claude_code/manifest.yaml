@@ -1,0 +1,41 @@
+# Claude Code plugin manifest (Track 3, plugin extraction Phase 1).
+#
+# Phase 1 (this commit): manifest declares what's already in core.
+# CCProcess + CCProxy + cc_mcp Python sidecar currently live in
+# core; they will physically move into this directory in Phase 2.
+#
+# Note on PtyProcess: per spec "Plugin → Core direction" principle,
+# PtyProcess stays in core (it's a generic mechanism). Plugin/cc
+# spawns a PtyProcess for its claude binary by calling
+# `Esr.Entity.PtyProcess.start_link(cmd: ...)` — no plugin-specific
+# extension required.
+#
+# Spec: docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md §四.
+
+name: claude_code
+version: 0.1.0
+description: |
+  Claude Code (CC) integration: cc_mcp adapter for the Anthropic MCP
+  protocol, CCProcess for session lifecycle, CCProxy for streaming
+  reply directives. Spawns a claude binary inside a core-provided
+  PtyProcess; the cc agent_def in agents.yaml wires the pipeline
+  (PtyProcess + CCProcess + CCProxy + cc_mcp).
+
+depends_on:
+  core: ">= 0.1.0"
+  plugins: []
+
+declares:
+  # Injection #5 — Entity modules.
+  entities:
+    - module: Esr.Entity.CCProcess
+      kind: stateful
+    - module: Esr.Entity.CCProxy
+      kind: proxy
+
+  # Injection #12 — python sidecar. Phase 1 keeps the fallback
+  # registration in core's Application.start/2; Phase 2 moves source-
+  # of-truth here.
+  python_sidecars:
+    - adapter_type: cc_mcp
+      python_module: cc_adapter_runner

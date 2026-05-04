@@ -49,13 +49,18 @@ HELP_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
 echo "$HELP_OUT"
 assert_contains "$HELP_OUT" "ok: true" "core-only: /help returned ok"
 
-# `/plugin list` must report nothing installed (not error). The plugin
-# subsystem itself is core, so this command is always available.
+# `/plugin list` must report each known plugin as disabled (since
+# enabled: [] above). The plugin subsystem itself is core, so this
+# command is always available regardless of plugin enable state.
 PLUGIN_LIST_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
   uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_list \
   --wait --timeout 10)
 echo "$PLUGIN_LIST_OUT"
 assert_contains "$PLUGIN_LIST_OUT" "ok: true" "core-only: /plugin list returned ok"
-assert_contains "$PLUGIN_LIST_OUT" "no plugins installed" "core-only: list reports empty"
+
+# In Phase 1 the 3 stub manifests (voice / feishu / claude_code) live
+# under runtime/lib/esr/plugins/. They show as [disabled] when nothing
+# in enabled_plugins picks them up.
+assert_contains "$PLUGIN_LIST_OUT" "[disabled]" "core-only: list reports plugins as disabled"
 
 echo "PASS: scenario 08 — core-only boot + /plugin list"

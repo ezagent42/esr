@@ -41,7 +41,12 @@ defmodule Esr.Plugin.Manifest do
           path: Path.t() | nil
         }
 
-  @kebab_case ~r/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
+  # Allow lowercase + digits + `-` or `_` separators. Spec B §四
+  # specifies "kebab-case" but the legacy default list inherited from
+  # config (`claude_code`) is snake_case; rather than churn the legacy
+  # name, we accept either separator. Mixed (`foo-bar_baz`) is fine —
+  # the rule is "lowercase token segments separated by - or _".
+  @kebab_case ~r/^[a-z][a-z0-9]*([-_][a-z0-9]+)*$/
 
   @doc """
   Parse `manifest.yaml` at `path`. Returns `{:ok, struct}` or
