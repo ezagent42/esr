@@ -227,6 +227,15 @@ defmodule Esr.Application do
             )
         end
 
+        # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on
+        # disk → no-op. Once `runtime.exs` populates `:enabled_plugins`
+        # (Task 0.5) and plugins materialize under
+        # `runtime/lib/esr/plugins/`, this fans out to register their
+        # contributions in core registries (Phase-1 covers
+        # python_sidecars; capabilities/slash routes/agents follow as
+        # those registries gain register/3 APIs).
+        load_enabled_plugins()
+
       _ ->
         :ok
     end
@@ -264,6 +273,50 @@ defmodule Esr.Application do
     end
 
     result
+  end
+
+  @doc """
+  Discover plugins under `runtime/lib/esr/plugins/`, topo-sort the
+  enabled subset (from `Application.get_env(:esr, :enabled_plugins)`),
+  and register each plugin's contributions in core registries.
+
+  Phase 0 default: enabled list empty → no plugins started. Failures
+  are logged but non-fatal so an on-disk plugin with a bad manifest
+  doesn't take down the rest of the runtime.
+
+  Track 0 Task 0.4. Spec:
+  `docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md` §五.
+  """
+  @spec load_enabled_plugins() :: :ok
+  def load_enabled_plugins do
+    require Logger
+    enabled = Application.get_env(:esr, :enabled_plugins, []) |> Enum.map(&to_string/1)
+
+    with {:ok, discovered} <- Esr.Plugin.Loader.discover(),
+         {:ok, ordered} <- Esr.Plugin.Loader.topo_sort_enabled(discovered, enabled) do
+      for {name, manifest} <- ordered do
+        case Esr.Plugin.Loader.start_plugin(name, manifest) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "plugin loader: start_plugin(#{name}) failed: #{inspect(reason)}; " <>
+                "plugin will be unavailable until next restart"
+            )
+        end
+      end
+
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "plugin loader: discovery / topo-sort failed: #{inspect(reason)}; " <>
+            "no plugins started"
+        )
+
+        :ok
+    end
   end
 
   @doc """
