@@ -42,6 +42,18 @@ defmodule Esr.Entity.Agent.Registry do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   def load_agents(path), do: GenServer.call(__MODULE__, {:load_agents, path})
+
+  @doc """
+  Atomically replace the in-memory agents map with `snapshot`. Per
+  `Esr.Interface.SnapshotRegistry`. Used by `Esr.Yaml.FragmentMerger`
+  to install a composed snapshot built from core defaults + plugin
+  fragments + user override.
+  """
+  @spec load_snapshot(map()) :: :ok
+  def load_snapshot(snapshot) when is_map(snapshot) do
+    GenServer.call(__MODULE__, {:load_snapshot, snapshot})
+  end
+
   def agent_def(name), do: GenServer.call(__MODULE__, {:agent_def, name})
 
   @doc """
@@ -83,6 +95,10 @@ defmodule Esr.Entity.Agent.Registry do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:load_snapshot, snapshot}, _from, state) do
+    {:reply, :ok, %{state | agents: snapshot}}
   end
 
   def handle_call({:agent_def, name}, _from, state) do

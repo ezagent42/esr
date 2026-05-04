@@ -28,24 +28,16 @@ defmodule Esr.WorkerSupervisor do
 
   ## Sidecar dispatch
 
-  `sidecar_module/1` maps an adapter name to the Python module that
-  hosts its sidecar (e.g. `"feishu" → "feishu_adapter_runner"`).
-  Unknown names fall back to `generic_adapter_runner`.
+  `sidecar_module/1` consults `Esr.Resource.Sidecar.Registry` (an ETS-
+  backed table populated at boot by core fallback registrations and at
+  runtime by plugin manifests). Unknown adapter types fall back to
+  `generic_adapter_runner`.
   """
 
   @behaviour Esr.Role.OTP
 
   use GenServer
   require Logger
-
-  # Per-adapter-type sidecar dispatch. Adapters we ship own code for get
-  # a dedicated Python module so their dependency footprint stays scoped;
-  # anything not in the map falls through to generic_adapter_runner
-  # (which emits a DeprecationWarning on stderr at startup).
-  @sidecar_dispatch %{
-    "feishu" => "feishu_adapter_runner",
-    "cc_mcp" => "cc_adapter_runner"
-  }
 
   # ------------------------------------------------------------------
   # Public API
@@ -54,12 +46,16 @@ defmodule Esr.WorkerSupervisor do
   @doc """
   Map an adapter name to the Python module that should host its sidecar.
 
-  Known adapters route to dedicated sidecars; unknown names fall back
-  to `generic_adapter_runner`.
+  Reads from `Esr.Resource.Sidecar.Registry`; unknown names fall back to
+  `generic_adapter_runner`.
   """
   @spec sidecar_module(String.t()) :: String.t()
-  def sidecar_module(name) when is_binary(name),
-    do: Map.get(@sidecar_dispatch, name, "generic_adapter_runner")
+  def sidecar_module(name) when is_binary(name) do
+    case Esr.Resource.Sidecar.Registry.lookup(name) do
+      {:ok, python_module} -> python_module
+      :error -> "generic_adapter_runner"
+    end
+  end
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do

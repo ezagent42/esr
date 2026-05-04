@@ -57,6 +57,12 @@ defmodule Esr.Application do
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
       Esr.Resource.AdapterSocket.Registry,
 
+      # 4d.0 Sidecar.Registry — adapter_type → python_module dispatch table.
+      # Replaces WorkerSupervisor's hardcoded @sidecar_dispatch (Track 0
+      # plugin work). Plugins register their sidecar mappings via manifest;
+      # Phase-1 fallbacks below preserve existing feishu/cc_mcp behaviour.
+      {Esr.Resource.Sidecar.Registry, []},
+
       # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
       # agents.yaml-compiled definitions cache + hot-reload. Started before
       # Scope.Admin since admin commands (e.g. session_new) validate the
@@ -188,6 +194,13 @@ defmodule Esr.Application do
     # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
+        # Fallback sidecar mappings for adapters that ship in core today
+        # (pre-plugin-extraction). Once feishu / cc_mcp move into plugins,
+        # the plugin manifests will register these and these calls become
+        # redundant. Idempotent — plugins overwriting later is fine.
+        :ok = Esr.Resource.Sidecar.Registry.register("feishu", "feishu_adapter_runner")
+        :ok = Esr.Resource.Sidecar.Registry.register("cc_mcp", "cc_adapter_runner")
+
         case Esr.Scope.Admin.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
           :ok ->
             :ok
