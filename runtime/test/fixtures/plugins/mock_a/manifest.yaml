@@ -1,0 +1,19 @@
+# Mock plugin A — Component-only.
+#
+# Declares a single capability + a single python_sidecar mapping. Used
+# to verify that Loader.start_plugin/2 actually registers both into core
+# registries (Permission.Registry, Sidecar.Registry).
+name: mock_a
+version: 0.0.1
+description: Mock component plugin for loader tests.
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins: []
+
+declares:
+  capabilities:
+    - mock_a/ping
+  python_sidecars:
+    - adapter_type: mock_a_adapter
+      python_module: mock_a_runner
