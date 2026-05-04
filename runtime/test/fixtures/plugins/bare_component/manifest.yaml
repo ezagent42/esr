@@ -1,0 +1,21 @@
+# Bare component plugin — covers Spec B §二 "Component" type:
+# declares one or more Entity / Resource modules implementing core
+# Interfaces, no topology wiring, no dependencies.
+#
+# Smallest possible plugin shape: 1 cap + 1 python_sidecar mapping.
+# Used to verify the loader's happiest path — discover, validate,
+# register into core registries.
+name: bare_component
+version: 0.0.1
+description: Smallest Component-shape plugin (one cap, one sidecar, no deps).
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins: []
+
+declares:
+  capabilities:
+    - bare_component/ping
+  python_sidecars:
+    - adapter_type: bare_component_adapter
+      python_module: bare_component_runner
