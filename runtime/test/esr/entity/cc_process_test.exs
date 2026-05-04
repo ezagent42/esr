@@ -18,48 +18,12 @@ defmodule Esr.Entity.CCProcessTest do
 
   @handler_module "cc_adapter_runner"
 
-  test "on {:text, bytes}, buffers send_input until cc_mcp_ready flushes it" do
-    me = self()
-    pty = spawn_link(fn -> relay(me) end)
-    cc_proxy = spawn_link(fn -> relay(me) end)
-
-    {:ok, pid} =
-      CCProcess.start_link(%{
-        session_id: "sid1",
-        handler_module: @handler_module,
-        neighbors: [pty_process: pty, cc_proxy: cc_proxy],
-        proxy_ctx: %{}
-      })
-
-    :ok =
-      CCProcess.put_handler_override(pid, fn mod, _payload, _timeout ->
-        assert mod == @handler_module
-        {:ok, %{"history" => ["hello"]}, [%{"type" => "send_input", "text" => "hello\n"}]}
-      end)
-
-    # PR-9 T12-comms-3c: send_input is buffered when cc_mcp hasn't
-    # joined cli:channel/<sid> yet (the common case for the first
-    # auto-created inbound). Subscribe to the topic BEFORE the ready
-    # signal so we only see the flush-on-ready broadcast — verifies
-    # the buffered envelope comes through with correct content.
-    :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cli:channel/sid1")
-
-    send(pid, {:text, "hello"})
-
-    # With cc_mcp_ready = false (default), the send_input action is
-    # buffered — nothing should hit the cli:channel topic yet.
-    refute_receive {:notification, _}, 200
-
-    # Simulate ChannelChannel's cc_mcp join → flush buffer.
-    send(pid, {:cc_mcp_ready, "sid1"})
-
-    assert_receive {:notification,
-                    %{
-                      "kind" => "notification",
-                      "content" => "hello\n"
-                    }},
-                   500
-  end
+  # The pre-PR-24 "buffer send_input + flush on cc_mcp_ready" assertion
+  # that used to live here was rewritten in
+  # test/esr/entity/cc_process_inbound_regression_test.exs to match
+  # production: post-PR-24 dispatch_action routes not-ready send_input
+  # to PtyProcess.write (boot-bridge fallback), no buffer-then-flush.
+  # See companion RCA in feature/cc-inbound-regression-tests.
 
   test "on {:legacy_output, bytes}, drops silently (legacy diagnostic — production never sends this)" do
     # Post-T11b the conversation path runs through cli:channel MCP
