@@ -192,17 +192,17 @@ This plan picks (a): swap 0.5 and 0.6 ordering. Re-numbered below.
 - Create: `tests/e2e/scenarios/11_cli_surface.sh`
 - Modify: `Makefile` — add `e2e-11` target + include in `e2e` aggregate
 
-End-to-end coverage of the `esr cmd plugin {list,info,install,enable,disable}` CLI surface: the operator's only interaction path before any plugin is loaded.
+End-to-end coverage of the `esr plugin {list,info,install,enable,disable}` CLI surface: the operator's only interaction path before any plugin is loaded.
 
 - [ ] **Step 1: Set up an isolated test plugin** — `tests/e2e/_helpers/dummy_plugin/` with a minimal valid manifest (declares one cap `dummy/test`, no entities, no slash routes).
 
 - [ ] **Step 2: Write scenario** that:
   - Spawns esrd with `ESR_ENABLED_PLUGINS=` (empty)
-  - Runs `esr cmd plugin list` → asserts exit 0 + output mentions zero enabled plugins
-  - Runs `esr cmd plugin install tests/e2e/_helpers/dummy_plugin` → asserts exit 0 + dummy plugin files exist at `runtime/lib/esr/plugins/dummy/`
-  - Runs `esr cmd plugin info dummy` → asserts manifest dump output
-  - Runs `esr cmd plugin enable dummy` → asserts plugins.yaml updated
-  - Runs `esr cmd plugin disable dummy` → asserts plugins.yaml reverted
+  - Runs `esr plugin list` → asserts exit 0 + output mentions zero enabled plugins
+  - Runs `esr plugin install tests/e2e/_helpers/dummy_plugin` → asserts exit 0 + dummy plugin files exist at `runtime/lib/esr/plugins/dummy/`
+  - Runs `esr plugin info dummy` → asserts manifest dump output
+  - Runs `esr plugin enable dummy` → asserts plugins.yaml updated
+  - Runs `esr plugin disable dummy` → asserts plugins.yaml reverted
   - Cleanup: removes the dummy plugin files
 
 - [ ] **Step 3: Run** + verify green.
@@ -432,8 +432,8 @@ Same pattern as Tasks 1.3 / 2.6.
 - `find runtime/lib/esr/plugins/claude_code/cc_mcp -name '*.py' | head -1` returns at least one file
 - `cat runtime/lib/esr/plugins/claude_code/manifest.yaml` parses + validates
 - `ESR_ENABLED_PLUGINS= bash tests/e2e/scenarios/08_core_admin.sh` exits 0 (with NO plugins enabled)
-- `ESR_ENABLED_PLUGINS= esr cmd plugin list` returns expected output (3 plugins discovered, 0 enabled)
-- `ESR_ENABLED_PLUGINS= esr cmd plugin enable claude_code` writes `~/.esrd-dev/<env>/plugins.yaml` with `enabled: [claude_code]`
+- `ESR_ENABLED_PLUGINS= esr plugin list` returns expected output (3 plugins discovered, 0 enabled)
+- `ESR_ENABLED_PLUGINS= esr plugin enable claude_code` writes `~/.esrd-dev/<env>/plugins.yaml` with `enabled: [claude_code]`
 - After daemon restart, `ESR_ENABLED_PLUGINS=` env unset, plugins.yaml takes over → claude_code loads → e2e 06+07 exit 0
 - All other e2e scenarios still pass with their respective plugins enabled
 

@@ -1,6 +1,6 @@
 # Plugin Mechanism Design (Spec B)
 
-**Date:** 2026-05-04 (rev 4 — added /plugin install command)
+**Date:** 2026-05-04 (rev 5 — CLI form `esr plugin <action>` matching existing groups; added /plugin install)
 **Audience:** anyone implementing the plugin mechanism after Spec A's core decoupling lands
 **Status:** prescriptive design
 
@@ -15,7 +15,7 @@
 Concretely:
 1. Plugin manifest schema covering 17 injection points enumerated in §三.
 2. Plugin Loader module that scans `runtime/lib/esr/plugins/*/manifest.yaml`, topologically sorts by dependency, starts each in supervision tree.
-3. CLI surface: `/plugin {list, info, enable, disable}` admin commands.
+3. CLI surface: `esr plugin {list, info, install, enable, disable}` admin commands (matches existing CLI groups like `esr cap`, `esr daemon`, `esr user`).
 4. Cold-start flow: core boots without any plugin; operator enables plugins via `esr` CLI; restart loads them.
 5. Phase 1 build-time include implementation (no runtime hot-load).
 
@@ -308,8 +308,8 @@ Operator on a fresh machine:
 
 ```
 1. esrd start                            # core comes up; admin queue + esr CLI active
-2. esr cmd plugin list                   # output: 3 plugins discovered, all enabled per default
-3. (optional) esr cmd plugin disable voice    # if voice not needed
+2. esr plugin list                   # output: 3 plugins discovered, all enabled per default
+3. (optional) esr plugin disable voice    # if voice not needed
 4. esrd restart                          # changes take effect
 5. From this point, operator/end-user uses Feishu chat (since plugin/feishu is enabled)
    to send slash commands to esrd
