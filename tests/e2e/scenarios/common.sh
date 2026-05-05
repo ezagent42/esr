@@ -54,24 +54,21 @@ export _E2E_REPO_ROOT
 # Both rails read the same `${ESRD_HOME}/${ESR_INSTANCE}/esrd.port` file
 # for endpoint discovery; escript needs ESR_HOST exported (it does not
 # yet auto-discover from the port file — Phase B follow-up).
+# 2026-05-06 cli-deletion: dual-rail (python|escript) collapsed to
+# escript-only — the Python click CLI was deleted alongside its
+# yaml-scenario runner. The `RUN_VIA=python` path produced no value
+# beyond divergence-detection while both rails existed.
 esr_cli() {
-  if [[ "${RUN_VIA:-python}" == "escript" ]]; then
-    local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
-    local host="127.0.0.1:4001"
-    if [[ -r "${port_file}" ]]; then
-      host="127.0.0.1:$(cat "${port_file}")"
-    fi
-    ESR_HOST="${host}" \
-    ESR_INSTANCE="${ESR_INSTANCE}" \
-    ESRD_HOME="${ESRD_HOME}" \
-    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
-      "${_E2E_REPO_ROOT}/runtime/esr" "$@"
-  else
-    ESR_INSTANCE="${ESR_INSTANCE}" \
-    ESRD_HOME="${ESRD_HOME}" \
-    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
-      uv run --project "${_E2E_REPO_ROOT}/py" esr "$@"
+  local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
+  local host="127.0.0.1:4001"
+  if [[ -r "${port_file}" ]]; then
+    host="127.0.0.1:$(cat "${port_file}")"
   fi
+  ESR_HOST="${host}" \
+  ESR_INSTANCE="${ESR_INSTANCE}" \
+  ESRD_HOME="${ESRD_HOME}" \
+  ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
+    "${_E2E_REPO_ROOT}/runtime/esr" "$@"
 }
 export -f esr_cli
 

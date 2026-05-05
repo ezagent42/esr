@@ -1,24 +1,26 @@
 [project]
 name = "esr"
 version = "0.1.0"
-description = "ESR v0.1 Python SDK + CLI"
+description = "ESR v0.1 Python SDK (sidecar IPC + adapter SDK)"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "ESR contributors" }
 ]
+# 2026-05-06: `esr` click CLI deleted. Operator surface is the Elixir
+# escript at `runtime/esr` + slash commands. The Python package is
+# now scoped to: (1) sidecar IPC helpers (`esr.ipc.handler_worker`),
+# (2) handler/adapter SDK decorators (`esr.handler`, `esr.adapter`),
+# (3) workspace yaml + capabilities loaders consumed by the feishu
+# adapter sidecar. `click` dependency dropped with the CLI.
 dependencies = [
     "pydantic>=2.5",
     "aiohttp>=3.9",
-    "click>=8.1",
     "pyyaml>=6.0",
     "anyio>=4.0",
     "ruamel.yaml>=0.18",
     "python-ulid>=3.0",
 ]
-
-[project.scripts]
-esr = "esr.cli.main:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
