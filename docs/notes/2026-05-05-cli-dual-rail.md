@@ -1,9 +1,9 @@
-# e2e CLI rail history (Phase A → C — 2026-05-05)
+# e2e CLI dual-rail (Phase A — 2026-05-05)
 
-**Status:** Phase C deleted the Python rail. `runtime/esr` (Elixir
-escript) is the canonical operator CLI; `esr_cli` in common.sh is now
-escript-only. The dual-rail history below is preserved as the record
-of how the migration was verified.
+**Status:** Phase A landed. Phase B-1/2/3 closed escript-rail gaps.
+Phase C (delete `py/src/esr/cli/`) was attempted in PR #216 and
+**withdrawn** in the revert PR — see "Phase C retro" at the bottom.
+Today: dual-rail still in place; both Python and escript rails work.
 
 ## Why this exists
 
@@ -95,19 +95,15 @@ section), the predicted red set:
 The point of the PR isn't to fix these. The point is to make them
 **measurable**. Phase B PRs each turn one assertion green.
 
-## Phase progression (2026-05-05 autonomous run)
+## What this PR does not do
 
-| Phase | PR | Outcome |
-|---|---|---|
-| A   | #211 | dual-rail switch + `RUN_VIA={python,escript}` toggle |
-| B-1 | #212 | escript `render_result/1` aligned to Python YAML envelope; `/actors` slash route |
-| D-1 | #213 | deleted hardcoded `StatefulRegistry.register/1` fallbacks; Loader is canonical |
-| B-2 | #214 | escript click-style flag parser + `/cap {list,show,who-can,grant,revoke}` |
-| B-3 | #215 | `/users {list,add,remove,bind-feishu,unbind-feishu}` + `user.manage` permission |
-| C   | #216 | **deleted `py/src/esr/cli/`** + `[project.scripts] esr` entry; e2e default rail flipped to escript-only |
-
-After Phase C `esr_cli` rejects `RUN_VIA=python` with a hard error so
-a stale CI config can't silently degrade.
+- **Does not auto-discover** the esrd port from the port file in
+  the escript itself — the helper does it, but `esr` binary still
+  reads `ESR_HOST` only. Phase B follow-up.
+- **Does not align output format** between Python and escript.
+  Phase B-1.
+- **Does not add new slash routes.** That's Phase B-1 through B-4.
+- **Does not delete any Python CLI code.** That's Phase C.
 
 ## Files touched
 
@@ -127,3 +123,45 @@ a stale CI config can't silently degrade.
 - North Star: plugin isolation. The escript dispatching purely via
   slash routes (no plugin-name hardcoding) directly serves the goal
   of "future devs work on different plugins without coordination."
+
+## Phase C retro (2026-05-05 — withdrawn)
+
+PR #216 deleted `py/src/esr/cli/` claiming "runtime/esr is canonical
+and covers every operator surface the e2e suite exercises." User
+flagged the false claim same day:
+
+> "看起来 handler/adapter/cmd 都是核心功能，不应该被 deferred"
+
+Audit confirmed `scripts/final_gate.sh` (SHA-pinned via loopguard
+LG-4) used four deleted commands:
+
+| Command | Used at | Status post-PR-216 |
+|---|---|---|
+| `esr scenario run e2e-esr-channel` | L1 mock check | broken |
+| `esr adapters list` | L0a feishu instance assert | broken |
+| `esr workspace add esr-dev ...` | workspace registration | broken |
+| `esr cmd stop feishu-thread-session` | L5 session_killed | broken |
+
+PR #216 was reverted (this PR). The Python CLI is restored verbatim;
+dual-rail in `common.sh` is back; `[project.scripts] esr =` returns.
+Phase C is **withdrawn** — the "Python CLI replacement complete"
+claim required `final_gate.sh` to keep working, and it did not.
+
+**Lesson** (saved as a memory rule): "completion claim requires
+invariant test" applies to the e2e *AND* the operator-facing
+gates. Phase A's e2e dual-rail proved escript covers what e2e
+exercises, but `final_gate.sh` is a separate gate with its own
+operator surface — one I missed in the survey. Future deletion
+needs to enumerate ALL gates that consume the deletion target,
+not just the one I happened to be running locally.
+
+The proper Phase C re-do plan (call it Phase C-revisited) is:
+1. Phase B-5/6/7: port `adapter list/add/remove/rename`,
+   `handler list/install`, `cmd stop/list/install/show/compile/run`,
+   `workspace add` as slash routes.
+2. Update `final_gate.sh` to invoke escript paths.
+3. THEN delete `py/src/esr/cli/`.
+
+Until then: dual-rail stays. Operators can use either rail. The
+Phase A invariant ("escript covers every escript-rail e2e") still
+holds.

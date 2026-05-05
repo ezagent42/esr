@@ -1,4 +1,4 @@
-.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-cli
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-escript e2e-cli
 
 test: test-py test-ex
 
@@ -57,11 +57,16 @@ e2e-08:
 e2e-11:
 	$(E2E_RUN) tests/e2e/scenarios/11_plugin_cli_surface.sh
 
-# `make e2e-cli` exercises the CLI-touching scenarios (08 + 11). All
-# rails go through `esr_cli` (Phase C 2026-05-05 collapsed the Python
-# rail; `runtime/esr` is the canonical CLI now). See
+# Phase A — CLI dual-rail (2026-05-05). `make e2e-cli` exercises the
+# CLI-touching scenarios (08 + 11) on whichever rail RUN_VIA selects;
+# `make e2e-escript` is the shorthand for the escript rail. Both reuse
+# the same scenario scripts via the `esr_cli` helper in common.sh.
+# A failing escript rail IS the migration progress signal — see
 # docs/notes/2026-05-05-cli-dual-rail.md.
 e2e-cli: e2e-08 e2e-11
+
+e2e-escript:
+	RUN_VIA=escript $(MAKE) e2e-cli
 
 # CI variant: absolute cleanup (§7.2). Same scripts, different env.
 e2e-ci:
