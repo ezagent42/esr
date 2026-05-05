@@ -1,4 +1,4 @@
-defmodule Esr.Admin.CommandQueue.Janitor do
+defmodule Esr.Slash.QueueJanitor do
   @moduledoc """
   Nightly cleanup sweep of `admin_queue/{completed,failed}/`.
 
@@ -7,7 +7,7 @@ defmodule Esr.Admin.CommandQueue.Janitor do
   `$ESR_ADMIN_QUEUE_RETENTION_DAYS` (default **14**) days. Anything
   older is removed.
 
-  Runs as a supervised `GenServer` under `Esr.Admin.Supervisor` and
+  Runs as a supervised `GenServer` under `Esr.Slash.Supervisor` and
   schedules itself every 24h. `sweep/1` is exposed as a public API so
   tests (and an eventual admin command) can drive a sweep without
   waiting for the next tick.

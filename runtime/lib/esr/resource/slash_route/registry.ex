@@ -12,7 +12,7 @@ defmodule Esr.Resource.SlashRoute.Registry do
       `aliases`, and `args` schema.
 
     * `internal_kinds:` — kind-only entries with `{permission,
-      command_module}`. Used by `Esr.Admin.CommandQueue.Watcher` for
+      command_module}`. Used by `Esr.Slash.QueueWatcher` for
       CLI-driven commands that never come through slash. Yaml is the
       single source of truth for kind → command mapping.
 

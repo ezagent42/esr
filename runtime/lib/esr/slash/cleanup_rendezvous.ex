@@ -27,7 +27,7 @@ defmodule Esr.Slash.CleanupRendezvous do
 
   ## Lifecycle
 
-  Started under `Esr.Application` BEFORE `Esr.Admin.Supervisor` so
+  Started under `Esr.Application` BEFORE `Esr.Slash.Supervisor` so
   callsites in BranchEnd / Server can find it during boot. Because
   each entry is short-lived (registered on BranchEnd entry, removed
   on signal-or-timeout), the in-memory map in GenServer state is

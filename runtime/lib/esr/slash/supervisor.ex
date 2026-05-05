@@ -1,10 +1,10 @@
-defmodule Esr.Admin.Supervisor do
+defmodule Esr.Slash.Supervisor do
   @moduledoc """
   OTP Supervisor for the Admin subsystem.
 
   PR-2.3b-2 deleted `Esr.Admin.Dispatcher`; the unified dispatch
   path now flows through `Esr.Entity.SlashHandler` (chat) and
-  `Esr.Admin.CommandQueue.Watcher → SlashHandler.dispatch_command/2`
+  `Esr.Slash.QueueWatcher → SlashHandler.dispatch_command/2`
   (admin queue files).
 
   Children:
@@ -32,8 +32,8 @@ defmodule Esr.Admin.Supervisor do
   @impl true
   def init(_opts) do
     children = [
-      {Esr.Admin.CommandQueue.Watcher, []},
-      {Esr.Admin.CommandQueue.Janitor, []}
+      {Esr.Slash.QueueWatcher, []},
+      {Esr.Slash.QueueJanitor, []}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)
