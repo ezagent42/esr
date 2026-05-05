@@ -51,7 +51,6 @@ ws="$ESR_WORKSPACE"
 # spawn path will set before invoking this script.
 root=$(yq -r ".workspaces.${ws}.root // \"\"" "$WORKSPACES_YAML")
 role=$(yq -r ".workspaces.${ws}.role // \"dev\"" "$WORKSPACES_YAML")
-chats_json=$(yq -o=json -I=0 ".workspaces.${ws}.chats // []" "$WORKSPACES_YAML")
 
 if [ -n "${ESR_CWD:-}" ]; then
   cwd="$ESR_CWD"
@@ -72,26 +71,25 @@ cwd="${cwd/#\~/$HOME}"
 mkdir -p "$cwd"
 cd "$cwd"
 
-# PR-21σ 2026-05-01: MCP env values must be strings (claude rejects
-# the config with `Does not adhere to MCP server configuration schema`
-# when ESR_CHAT_IDS comes through as a raw JSON array). JSON-encode
-# the chats array as a string by escaping internal double quotes.
-chats_string="${chats_json//\"/\\\"}"
+# PR-3.5 (2026-05-05): HTTP MCP transport. Replaces the stdio-bridge
+# `command:` form below. esrd hosts `/mcp/<session_id>` on its main
+# Bandit listener (see EsrWeb.McpController). Single source of truth
+# for the URL is ESR_ESRD_URL (already used by the WS path); flip
+# scheme ws://→http:// and append /mcp/<sid>.
+#
+# Tailscale / remote-claude scenarios just set
+# ESR_ESRD_URL=ws://100.64.0.27:4001 and the HTTP MCP URL follows.
+: "${ESR_ESRD_URL:=ws://127.0.0.1:4001}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_URL/ws:/http:}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_HTTP_URL/wss:/https:}"
 
 # Write .mcp.json at workspace cwd
 cat > .mcp.json <<EOF
 {
   "mcpServers": {
     "esr-channel": {
-      "command": "uv",
-      "args": ["run", "--project", "$REPO_ROOT/py", "python", "-m", "esr_cc_mcp.channel"],
-      "env": {
-        "ESR_ESRD_URL": "${ESR_ESRD_URL:-ws://127.0.0.1:4001}",
-        "ESR_SESSION_ID": "$ESR_SESSION_ID",
-        "ESR_WORKSPACE": "$ws",
-        "ESR_CHAT_IDS": "$chats_string",
-        "ESR_ROLE": "$role"
-      }
+      "type": "http",
+      "url": "${ESR_ESRD_HTTP_URL}/mcp/${ESR_SESSION_ID}"
     }
   }
 }

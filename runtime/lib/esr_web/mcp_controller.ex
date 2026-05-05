@@ -50,15 +50,17 @@ defmodule EsrWeb.McpController do
   # POST /mcp/:session_id — JSON-RPC requests
   # ------------------------------------------------------------------
 
-  def handle_request(conn, %{"session_id" => session_id}) do
-    {:ok, body, conn} = Plug.Conn.read_body(conn)
-
-    case Jason.decode(body) do
-      {:ok, %{"jsonrpc" => "2.0", "method" => method, "id" => req_id} = req} ->
+  def handle_request(conn, params) do
+    session_id = Map.fetch!(params, "session_id")
+    # Phoenix endpoint already parsed the JSON body via Plug.Parsers;
+    # read it from `body_params` (raw `read_body/1` returns empty by
+    # this point because the parser consumed the stream).
+    case conn.body_params do
+      %{"jsonrpc" => "2.0", "method" => method, "id" => req_id} = req ->
         result = dispatch(method, req["params"] || %{}, session_id)
         send_jsonrpc(conn, req_id, result)
 
-      {:ok, %{"jsonrpc" => "2.0", "method" => method} = req} ->
+      %{"jsonrpc" => "2.0", "method" => method} = req ->
         # Notification (no id) — dispatch but don't return a response.
         _ = dispatch(method, req["params"] || %{}, session_id)
         send_resp(conn, 204, "")
