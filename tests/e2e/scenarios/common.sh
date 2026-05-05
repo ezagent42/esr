@@ -41,37 +41,32 @@ mkdir -p "${ESR_E2E_BARRIER_DIR}" "${ESRD_HOME}" "$(dirname "${ESR_E2E_TMUX_SOCK
 _E2E_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 export _E2E_REPO_ROOT
 
-# --- CLI dual-rail (Phase A 2026-05-05) ------------------------------
-# Run esr via either Python click-CLI (default) or Elixir-native escript.
-# Toggle with `RUN_VIA=escript` to exercise the migration target.
+# --- esr CLI (escript-only — Phase C 2026-05-05) ---------------------
+# Phase A established a dual-rail switch (Python click-CLI | Elixir
+# escript) for migration verification. Phase B-1/2/3 closed every gap
+# the dual-rail surfaced. Phase C deleted `py/src/esr/cli/` entirely;
+# `runtime/esr` is now the canonical operator CLI.
 #
-# Why dual-rail: pre-Phase-A every e2e exercised only the Python rail,
-# so the "escript replaces Python CLI" Phase 2 claim was never verified.
-# A failing escript rail IS the honest signal of which commands need
-# porting before PR-4.6 / PR-4.7 can land. See
-# `docs/notes/2026-05-05-cli-dual-rail.md`.
-#
-# Both rails read the same `${ESRD_HOME}/${ESR_INSTANCE}/esrd.port` file
-# for endpoint discovery; escript needs ESR_HOST exported (it does not
-# yet auto-discover from the port file — Phase B follow-up).
+# `RUN_VIA=python` is intentionally NOT supported anymore — there's no
+# Python rail to fall back to. Setting `RUN_VIA=python` errors out
+# loudly so a stale CI config doesn't silently degrade to "no rail."
 esr_cli() {
-  if [[ "${RUN_VIA:-python}" == "escript" ]]; then
-    local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
-    local host="127.0.0.1:4001"
-    if [[ -r "${port_file}" ]]; then
-      host="127.0.0.1:$(cat "${port_file}")"
-    fi
-    ESR_HOST="${host}" \
-    ESR_INSTANCE="${ESR_INSTANCE}" \
-    ESRD_HOME="${ESRD_HOME}" \
-    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
-      "${_E2E_REPO_ROOT}/runtime/esr" "$@"
-  else
-    ESR_INSTANCE="${ESR_INSTANCE}" \
-    ESRD_HOME="${ESRD_HOME}" \
-    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
-      uv run --project "${_E2E_REPO_ROOT}/py" esr "$@"
+  if [[ "${RUN_VIA:-escript}" == "python" ]]; then
+    _fail_with_context \
+      "RUN_VIA=python is no longer supported (Phase C deleted py/src/esr/cli/ on 2026-05-05). Use the escript at runtime/esr."
+    return 1
   fi
+
+  local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
+  local host="127.0.0.1:4001"
+  if [[ -r "${port_file}" ]]; then
+    host="127.0.0.1:$(cat "${port_file}")"
+  fi
+  ESR_HOST="${host}" \
+  ESR_INSTANCE="${ESR_INSTANCE}" \
+  ESRD_HOME="${ESRD_HOME}" \
+  ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
+    "${_E2E_REPO_ROOT}/runtime/esr" "$@"
 }
 export -f esr_cli
 
