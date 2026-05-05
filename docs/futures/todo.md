@@ -18,6 +18,18 @@
 
 (none — PR-21β shipped, see Done section below)
 
+## Pending — Plugin work multi-Phase plan (2026-05-05 brainstorm)
+
+PR-180/181/182/183/184/185/186/187 (today) = **Phase 1**: Loader + Manifest + 3 stub manifests + integration tests + RCA helpers + scenario-07 grep fix + in-process auto-confirm + tools/esr-debug.
+
+Phase-2/3/4 are next, per brainstorm:
+
+| Phase | Spec | What | Notes |
+|---|---|---|---|
+| **Phase 2** — slash/CLI/REPL/admin unification | `docs/superpowers/specs/2026-05-05-slash-cli-repl-elixir-native.md` | Single dispatch path: delete Admin.Dispatcher (duplicates SlashHandler), rewrite Python CLI as Elixir-native escript, add REPL, schema-driven CLI/autocomplete from slash-routes.yaml. Net delete ~2500+ LOC. **Voice plugin deletion** included as PR-2.0 (we never used voice). | pending — spec being drafted |
+| **Phase 3** — plugin physical migration | `docs/superpowers/specs/2026-05-05-plugin-physical-migration.md` | Move feishu + claude_code modules from core into `runtime/lib/esr/plugins/<name>/`. Includes Channel abstraction (per-session BEAM-supervised peer that owns esr-channel transport, decoupled from cc_mcp's claude/tmux lifecycle — ref docs/issues/02). Decouple cc agent_def from feishu (CCProcess "feishu" hardcoding fix; Scope.Router platform-proxy injection). | pending — spec being drafted, references Phase 2 contract |
+| **Phase 4** — cleanup | TBD — spec written after Phases 2 and 3 land | Stub manifest deletion (the bare voice/feishu/claude_code stubs PR-180 added), legacy bash + websocat helpers (`tests/e2e/_helpers/dev_channels_unblock.sh` superseded by FCP in-process auto-confirm of PR-186), `Esr.Admin.*` namespace possibly merged elsewhere if it's down to a few non-admin guards, `~/.esrd/<env>/permissions_registry.json` JSON dump if Elixir-native CLI no longer needs it. | pending — wait until 2 + 3 ship 
+
 ## Pending — concrete next PRs
 
 | What | Tracked PR | Notes |
