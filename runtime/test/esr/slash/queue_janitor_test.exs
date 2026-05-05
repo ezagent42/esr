@@ -1,4 +1,4 @@
-defmodule Esr.Admin.CommandQueue.JanitorTest do
+defmodule Esr.Slash.QueueJanitorTest do
   @moduledoc """
   DI-7b Task 14c — CommandQueue.Janitor retention sweep.
 
@@ -10,7 +10,7 @@ defmodule Esr.Admin.CommandQueue.JanitorTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Admin.CommandQueue.Janitor
+  alias Esr.Slash.QueueJanitor, as: Janitor
 
   setup do
     tmp =

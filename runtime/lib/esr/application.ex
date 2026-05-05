@@ -161,7 +161,7 @@ defmodule Esr.Application do
       # 4g.0 Slash subsystem — CleanupRendezvous (PR-2.3a). Tracks
       # session_id → task_pid for `/end-session` Tasks blocking on
       # MCP-side `session.signal_cleanup` ack. Started BEFORE
-      # Esr.Admin.Supervisor so callsites in BranchEnd / Server can
+      # Esr.Slash.Supervisor so callsites in BranchEnd / Server can
       # find it during the same boot pass. Runs in parallel to the
       # legacy Dispatcher path until PR-2.3b deletes Dispatcher.
       Esr.Slash.CleanupRendezvous,
@@ -169,7 +169,7 @@ defmodule Esr.Application do
       # 4g.1 SlashHandler bootstrap (PR-2.3b-2). One-shot init child
       # whose `init/1` brings up SlashHandler under Scope.Admin's
       # children sup, then returns :ignore. Placed BEFORE
-      # Esr.Admin.Supervisor so the Watcher's dispatch of pending
+      # Esr.Slash.Supervisor so the Watcher's dispatch of pending
       # orphans at boot lands on a live :slash_handler peer.
       Esr.Slash.HandlerBootstrap,
 
@@ -178,7 +178,7 @@ defmodule Esr.Application do
       # (Dispatcher checks grants during authorization) and AFTER
       # Workspaces.Registry (register_adapter validates workspace
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
-      Esr.Admin.Supervisor,
+      Esr.Slash.Supervisor,
 
       # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
       # Esr.Routing.SlashHandler removed. The new slash-parsing path
@@ -241,7 +241,7 @@ defmodule Esr.Application do
 
         # PR-2.3b-2: SlashHandler is now bootstrapped via the
         # Esr.Slash.HandlerBootstrap supervision child (placed before
-        # Esr.Admin.Supervisor so Watcher orphan-recovery lands on a
+        # Esr.Slash.Supervisor so Watcher orphan-recovery lands on a
         # live peer). No post-start work needed here.
 
         # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on

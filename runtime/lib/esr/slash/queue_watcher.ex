@@ -1,4 +1,4 @@
-defmodule Esr.Admin.CommandQueue.Watcher do
+defmodule Esr.Slash.QueueWatcher do
   @moduledoc """
   GenServer that watches `<admin_queue_dir>/pending/` for new command
   YAML files written by the CLI (see spec §6.3 and §6.8).

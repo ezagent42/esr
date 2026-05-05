@@ -188,10 +188,10 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   # the Admin.Supervisor may race against siblings.
   defp ensure_admin_dispatcher do
     if Process.whereis(Esr.Admin.Dispatcher) == nil do
-      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Admin.Supervisor)
+      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Slash.Supervisor)
 
       if Process.whereis(Esr.Admin.Dispatcher) == nil do
-        {:ok, _} = Esr.Admin.Supervisor.start_link([])
+        {:ok, _} = Esr.Slash.Supervisor.start_link([])
       end
     end
 

@@ -1,4 +1,4 @@
-defmodule Esr.Admin.CommandQueue.WatcherTest do
+defmodule Esr.Slash.QueueWatcherTest do
   @moduledoc """
   DI-7b Task 14d — Watcher boot-time orphan scan.
 
@@ -24,7 +24,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Admin.CommandQueue.Watcher
+  alias Esr.Slash.QueueWatcher, as: Watcher
   alias Esr.Scope
   alias Esr.Resource.Capability.Grants
 
@@ -83,7 +83,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
 
       File.rm_rf!(tmp)
 
-      # Best-effort: let Esr.Admin.Supervisor restart the Watcher for
+      # Best-effort: let Esr.Slash.Supervisor restart the Watcher for
       # subsequent test modules. Resilient to the supervisor itself
       # having been torn down by another test.
       restart_admin_children()
@@ -186,8 +186,8 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   end
 
   defp ensure_admin_supervisor do
-    if Process.whereis(Esr.Admin.Supervisor) == nil do
-      case Supervisor.restart_child(Esr.Supervisor, Esr.Admin.Supervisor) do
+    if Process.whereis(Esr.Slash.Supervisor) == nil do
+      case Supervisor.restart_child(Esr.Supervisor, Esr.Slash.Supervisor) do
         {:ok, _} ->
           :ok
 
@@ -196,7 +196,7 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
 
         _ ->
           # Last resort — stand one up directly.
-          {:ok, _} = Esr.Admin.Supervisor.start_link([])
+          {:ok, _} = Esr.Slash.Supervisor.start_link([])
           :ok
       end
     else
@@ -205,16 +205,16 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   end
 
   defp stop_admin_watcher do
-    case Process.whereis(Esr.Admin.CommandQueue.Watcher) do
+    case Process.whereis(Esr.Slash.QueueWatcher) do
       nil ->
         :ok
 
       _pid ->
-        if Process.whereis(Esr.Admin.Supervisor) do
+        if Process.whereis(Esr.Slash.Supervisor) do
           _ =
             Supervisor.terminate_child(
-              Esr.Admin.Supervisor,
-              Esr.Admin.CommandQueue.Watcher
+              Esr.Slash.Supervisor,
+              Esr.Slash.QueueWatcher
             )
         end
 
@@ -223,8 +223,8 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
   end
 
   defp restart_admin_children do
-    if Process.whereis(Esr.Admin.Supervisor) do
-      _ = Supervisor.restart_child(Esr.Admin.Supervisor, Esr.Admin.CommandQueue.Watcher)
+    if Process.whereis(Esr.Slash.Supervisor) do
+      _ = Supervisor.restart_child(Esr.Slash.Supervisor, Esr.Slash.QueueWatcher)
     end
 
     :ok
