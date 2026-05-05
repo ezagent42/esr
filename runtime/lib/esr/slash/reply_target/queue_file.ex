@@ -1,36 +1,68 @@
 defmodule Esr.Slash.ReplyTarget.QueueFile do
   @moduledoc """
   ReplyTarget impl that persists the reply as a yaml file in
-  `~/.esrd/<env>/admin_queue/completed/<id>.yaml`.
+  `~/.esrd/<env>/admin_queue/<dest_dir>/<id>.yaml` via
+  `Esr.Slash.QueueResult.finish/3`.
 
-  **Stub in PR-2.2.** The full implementation lands in PR-2.3a/b
-  alongside `Esr.Slash.QueueResult`, which owns the secret-redaction
-  rules and the pending → processing → completed/failed file state
-  machine. Reason for stubbing now: PR-2.2 establishes the abstraction
-  shape; PR-2.3a builds the modules behind it.
+  ## Target shape
 
-  Until PR-2.3a lands, every `respond/3` here logs a warning and
-  returns `{:error, :not_implemented}`. SlashHandler treats that as a
-  best-effort delivery failure (logs and moves on).
+      %{id: String.t(), command: map()}
 
-  ## Target shape (provisional)
+  - `id` — the queue file id (basename without `.yaml` extension).
+  - `command` — the original command doc parsed from
+    `pending/<id>.yaml`. Used so the destination doc carries the
+    full submission record (id, kind, args, submitted_by) plus the
+    `result` field merged from the response.
 
-      %{queue_id: String.t(), env: String.t(), submitted_by: String.t()}
+  ## Behaviour
 
-  PR-2.3a will pin this down once `QueueResult.finish/2` is in place.
+  Looks at the response's success/error shape to pick the destination
+  directory:
+    - `{:ok, _}`       → `completed/`
+    - anything else    → `failed/`
+    - `{:text, str}`   → `failed/` with the synthesized error doc
+                         (covers timeout / unknown-command / validation
+                         errors that don't carry a structured result)
+
+  Calls `QueueResult.finish/3` which atomically moves
+  `processing/<id>.yaml` → `<dest_dir>/<id>.yaml` and writes the
+  merged document on top, with redaction.
+
+  PR-2.3b-1 promoted this from stub to real impl. The Watcher pivot
+  to use it (and the corresponding Dispatcher deletion) lands in
+  PR-2.3b-2 to keep the test fallout small per change.
   """
 
   @behaviour Esr.Slash.ReplyTarget
 
-  require Logger
+  alias Esr.Slash.QueueResult
 
   @impl Esr.Slash.ReplyTarget
-  def respond(target, _result, _ref) do
-    Logger.warning(
-      "Esr.Slash.ReplyTarget.QueueFile.respond/3: stub — implemented in PR-2.3a; " <>
-        "target=#{inspect(target)}"
-    )
+  def respond(%{id: id, command: command}, response, _ref)
+      when is_binary(id) and is_map(command) do
+    {dest_dir, result_map} = render(response)
 
-    {:error, :not_implemented}
+    doc =
+      command
+      |> Map.put("result", result_map)
+
+    QueueResult.finish(id, dest_dir, doc)
+  end
+
+  defp render({:ok, %{} = m}), do: {"completed", Map.merge(%{"ok" => true}, stringify(m))}
+  defp render({:ok, other}), do: {"completed", %{"ok" => true, "value" => inspect(other)}}
+
+  defp render({:error, %{} = m}), do: {"failed", Map.merge(%{"ok" => false}, stringify(m))}
+  defp render({:error, other}), do: {"failed", %{"ok" => false, "error" => inspect(other)}}
+
+  defp render({:text, text}) when is_binary(text),
+    do: {"failed", %{"ok" => false, "error" => text}}
+
+  defp render(other), do: {"failed", %{"ok" => false, "error" => inspect(other)}}
+
+  defp stringify(map) when is_map(map) do
+    for {k, v} <- map, into: %{} do
+      {to_string(k), v}
+    end
   end
 end
