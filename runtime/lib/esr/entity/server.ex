@@ -99,7 +99,8 @@ defmodule Esr.Entity.Server do
   @doc """
   Returns a snapshot of the peer's public introspection fields
   (`actor_id`, `actor_type`, `handler_module`, `paused`, `state`).
-  Used by `EsrWeb.CliChannel` for `cli:actors/inspect`.
+  Used by `Esr.Commands.Actors.Inspect` (the `/actors inspect`
+  slash / admin-queue command).
   """
   @spec describe(String.t()) :: map()
   def describe(actor_id) do
@@ -817,78 +818,18 @@ defmodule Esr.Entity.Server do
   # Returns `{:ok, :direct_ack, %{"data" => %{...}}}` — synchronous,
   # no adapter directive emitted.
   defp build_emit_for_tool("describe_topology", args, _state) do
-    case Map.get(args, "workspace_name") do
-      ws_name when is_binary(ws_name) and ws_name != "" ->
-        case Esr.Resource.Workspace.Registry.get(ws_name) do
-          {:ok, ws} ->
-            neighbours = resolve_neighbour_workspaces_for_describe(ws)
+    ws_name = Map.get(args, "workspace_name")
 
-            data = %{
-              "current_workspace" => filter_workspace_for_describe(ws),
-              "neighbor_workspaces" =>
-                Enum.map(neighbours, &filter_workspace_for_describe/1)
-            }
+    case Esr.Resource.Workspace.Describe.describe(ws_name) do
+      {:ok, data} ->
+        {:ok, :direct_ack, %{"data" => data}}
 
-            {:ok, :direct_ack, %{"data" => data}}
+      {:error, :unknown_workspace} ->
+        {:error, "unknown_workspace: #{ws_name}"}
 
-          :error ->
-            {:error, "unknown_workspace: #{ws_name}"}
-        end
-
-      _ ->
+      {:error, :missing_workspace_name} ->
         {:error, "describe_topology requires workspace_name"}
     end
-  end
-
-  # PR-21z 2026-04-30 — security boundary: this is the ONLY function
-  # that decides what `describe_topology` exposes to the LLM. Build it
-  # as an explicit allowlist (NOT a denylist on the struct), so adding
-  # a new field to `%Workspace{}` doesn't accidentally leak it.
-  #
-  # **Excluded by design:**
-  #   - `owner` (esr-username — sensitive once paired with `users.yaml`'s
-  #     feishu_ids; describe_topology is principal-agnostic on purpose)
-  #   - `start_cmd` (operator config; could leak shell paths / args)
-  #   - `env` (workspace env block — may carry secrets)
-  #
-  # The chats sub-map uses its own allowlist for the same reason.
-  # **Never expose `users.yaml` data here** — feishu open_ids / esr-
-  # username pairings are out-of-band identity material that the LLM
-  # has no business reading. Default-deny: if you need a new field,
-  # add it AND a regression test in `peer_server_describe_topology_test.exs`.
-  defp filter_workspace_for_describe(%Esr.Resource.Workspace.Registry.Workspace{} = ws) do
-    %{
-      "name" => ws.name,
-      "role" => ws.role || "dev",
-      "chats" =>
-        Enum.map(ws.chats || [], fn chat ->
-          if is_map(chat) do
-            Map.take(chat, ["chat_id", "app_id", "kind", "name", "metadata"])
-          else
-            %{}
-          end
-        end),
-      "neighbors_declared" => ws.neighbors || [],
-      "metadata" => ws.metadata || %{}
-    }
-  end
-
-  defp resolve_neighbour_workspaces_for_describe(%Esr.Resource.Workspace.Registry.Workspace{
-         neighbors: neighbours
-       }) do
-    neighbours
-    |> Enum.flat_map(fn entry ->
-      case String.split(entry || "", ":", parts: 2) do
-        ["workspace", name] ->
-          case Esr.Resource.Workspace.Registry.get(name) do
-            {:ok, ws} -> [ws]
-            :error -> []
-          end
-
-        _ ->
-          []
-      end
-    end)
   end
 
   defp build_emit_for_tool("session.signal_cleanup", args, _state) do

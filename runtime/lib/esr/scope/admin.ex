@@ -89,9 +89,8 @@ defmodule Esr.Scope.Admin do
   The FAA peer name is `feishu_app_adapter_<instance_id>` (registered
   via `Esr.Entity.Registry` from the per-app FAA peer's start_link/1).
 
-  Stays in core for now (used by `cli:adapters/{remove,rename}` in
-  `EsrWeb.CliChannel`); per-instance lifecycle is a Phase D-3
-  candidate.
+  Stays in core for now (used by `Esr.Commands.Adapter.{Remove,Rename}`
+  slash commands); per-instance lifecycle is a Phase D-3 candidate.
   """
   @spec terminate_feishu_app_adapter(String.t()) :: :ok | :not_found
   def terminate_feishu_app_adapter(instance_id) when is_binary(instance_id) do

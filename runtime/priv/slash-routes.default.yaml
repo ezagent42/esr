@@ -93,6 +93,26 @@ slashes:
     args:
       - { name: workspace, required: false }
 
+  "/workspace describe":
+    kind: workspace_describe
+    permission: "session.list"
+    command_module: "Esr.Commands.Workspace.Describe"
+    # requires_workspace_binding: false — diverges from /workspace info
+    # (which is true) on purpose. /workspace describe is the operator-
+    # facing twin of the LLM's `describe_topology` MCP tool; both use
+    # the same security-filtered allowlist (Esr.Resource.Workspace.Describe)
+    # which excludes owner/start_cmd/env/users.yaml. Operators may need
+    # to inspect ANY workspace for diagnostic reasons (cross-workspace
+    # neighbour topology checks, debugging the LLM's view), so binding
+    # to one workspace would defeat the purpose. The data is already
+    # safe to expose; permission `session.list` gates raw access.
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "显示 workspace 的安全过滤后视图（与 describe_topology MCP 工具同一数据源）"
+    args:
+      - { name: workspace, required: true }
+
   "/workspace sessions":
     kind: session_list
     permission: "session.list"
@@ -316,6 +336,66 @@ internal_kinds:
   user_unbind_feishu:
     permission: "user.manage"
     command_module: "Esr.Commands.User.UnbindFeishu"
+
+  # 2026-05-05 cli-channel→slash migration:
+  # `cli:deadletter/{list,flush}` migrated from EsrWeb.CliChannel into
+  # `Esr.Commands.Deadletter.{List,Flush}`. Permission `runtime.deadletter`
+  # registered in Esr.Resource.Permission.Bootstrap.
+  deadletter_list:
+    permission: "runtime.deadletter"
+    command_module: "Esr.Commands.Deadletter.List"
+
+  deadletter_flush:
+    permission: "runtime.deadletter"
+    command_module: "Esr.Commands.Deadletter.Flush"
+
+  debug_pause:
+    permission: "runtime.debug"
+    command_module: "Esr.Commands.Debug.Pause"
+
+  debug_resume:
+    permission: "runtime.debug"
+    command_module: "Esr.Commands.Debug.Resume"
+
+  # 2026-05-05 cli-channel→slash migration step 8: `adapters_list`
+  # is the file-read companion to the live `/actors` slash. Operators
+  # invoke it via escript as `esr adapters list` (sub-action
+  # concatenation produces kind=`adapters_list`). Pure read of
+  # `~/.esrd/<env>/adapters.yaml` — no runtime dependency beyond the
+  # Esr.Paths helper.
+  adapters_list:
+    permission: null
+    command_module: "Esr.Commands.Adapters.List"
+
+  actors_tree:
+    permission: null
+    command_module: "Esr.Commands.Actors.Tree"
+
+  actors_inspect:
+    permission: null
+    command_module: "Esr.Commands.Actors.Inspect"
+
+  trace:
+    permission: null
+    command_module: "Esr.Commands.Trace"
+
+  # 2026-05-05 cli-channel→slash migration step 7: adapter family
+  # (start / refresh / remove / rename) gated by `adapter.manage`.
+  adapter_start:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Start"
+
+  adapter_refresh:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Refresh"
+
+  adapter_remove:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Remove"
+
+  adapter_rename:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Rename"
 
   cross_app_test:
     permission: "cross_app_test.invoke"

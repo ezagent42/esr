@@ -42,6 +42,7 @@ Phase-2/3/4 are next, per brainstorm:
 | Cap principal_id rekey: caps stored under `linyilun` instead of `ou_*` post-bind | done | PR-21y #102. `bind-feishu` migrates existing `ou_xxx` caps + grants bootstrap under username. `unbind-feishu` revokes bootstrap when last binding goes. `cap grant ou_*` emits operator hint. PR-21s graceful resolve stays as backstop. |
 | `describe_topology` filter for `users.yaml` | done | PR-21z #103. Allowlist hardened in `filter_workspace_for_describe/1` + 5 regression tests + `docs/notes/describe-topology-security.md`. |
 | `AdapterChannelNewChainTest` known-flake formal entry | done | Now in `docs/operations/known-flakes.md`. |
+| Delete `py/src/esr/cli/` (Python CLI) | deferred from cli-channel→slash migration PR (2026-05-05) | All runtime-coupled Python CLI commands now hit `unknown_topic` because cli_channel.ex's dispatch table is empty. The CLI is functionally neutered. Outstanding before deletion: (a) port `esr scenario run` to escript or shell — final_gate.sh:56 depends on it as the e2e harness; (b) decide what to do about `esr cmd stop` calls in final_gate.sh L5/L6 (P3-13-dead since topology was deleted; never worked under cli_channel either); (c) audit `py/src/esr/` (non-CLI) for cross-module deps that survive deletion. Field note: `docs/notes/2026-05-05-cli-channel-migration.md`. |
 
 ## Pending — design discussions before PR
 
