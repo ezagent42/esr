@@ -18,17 +18,11 @@ def resolve_url(fallback_url: str) -> str:
     not contain a decimal string — the launchctl-unmanaged path
     (``mix phx.server`` on a fixed port) still works.
     """
-    import os
-    from pathlib import Path
     from urllib.parse import urlparse, urlunparse
 
-    # Phase C (2026-05-05): inlined to drop the `esr.cli.paths` dep
-    # ahead of `py/src/esr/cli/` deletion. Mirrors
-    # `Esr.Paths.runtime_home/0` exactly: reads ESRD_HOME + ESR_INSTANCE
-    # with the same defaults.
-    home = Path(os.environ.get("ESRD_HOME") or os.path.expanduser("~/.esrd"))
-    instance = os.environ.get("ESR_INSTANCE", "default")
-    port_file = home / instance / "esrd.port"
+    from esr.cli import paths
+
+    port_file = paths.runtime_home() / "esrd.port"
     try:
         port_txt = port_file.read_text().strip()
     except (FileNotFoundError, OSError):

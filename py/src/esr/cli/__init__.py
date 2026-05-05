@@ -1,0 +1,1 @@
+"""`esr` CLI entry points."""

@@ -1,7 +1,7 @@
 [project]
 name = "esr"
 version = "0.1.0"
-description = "ESR v0.1 Python SDK (CLI moved to runtime/esr Elixir escript, 2026-05-05)"
+description = "ESR v0.1 Python SDK + CLI"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
@@ -10,16 +10,15 @@ authors = [
 dependencies = [
     "pydantic>=2.5",
     "aiohttp>=3.9",
+    "click>=8.1",
     "pyyaml>=6.0",
     "anyio>=4.0",
     "ruamel.yaml>=0.18",
     "python-ulid>=3.0",
 ]
-# Phase C (2026-05-05): `[project.scripts] esr = "esr.cli.main:cli"`
-# entry deleted with `py/src/esr/cli/`. The Elixir-native escript at
-# `runtime/esr` (built via `mix escript.build` in runtime/) is now the
-# canonical operator CLI. Click also dropped from runtime deps —
-# nothing on the Python side imports it after the cli/ deletion.
+
+[project.scripts]
+esr = "esr.cli.main:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
