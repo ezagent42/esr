@@ -93,6 +93,17 @@ slashes:
     args:
       - { name: workspace, required: false }
 
+  "/workspace describe":
+    kind: workspace_describe
+    permission: "session.list"
+    command_module: "Esr.Commands.Workspace.Describe"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "显示 workspace 的安全过滤后视图（与 describe_topology MCP 工具同一数据源）"
+    args:
+      - { name: workspace, required: true }
+
   "/workspace sessions":
     kind: session_list
     permission: "session.list"
