@@ -88,20 +88,23 @@ defmodule EsrWeb.McpController do
   defp sse_loop(conn) do
     receive do
       {:notification, payload} when is_map(payload) ->
-        notification_method = "notifications/claude/channel"
-        params = build_notification_params(payload)
-        frame = encode_sse(notification_method, params)
+        case payload["kind"] do
+          "session_killed" ->
+            # Peer broadcasts {:notification, %{kind: "session_killed"}}
+            # on its `cli:channel/<sid>` topic when the session ends.
+            # Close the SSE stream — claude's MCP client reconnects on
+            # next session.
+            conn
 
-        case chunk(conn, frame) do
-          {:ok, conn} -> sse_loop(conn)
-          {:error, _reason} -> conn
+          _ ->
+            params = build_notification_params(payload)
+            frame = encode_sse("notifications/claude/channel", params)
+
+            case chunk(conn, frame) do
+              {:ok, conn} -> sse_loop(conn)
+              {:error, _reason} -> conn
+            end
         end
-
-      {:push_envelope, %{"kind" => "session_killed"} = env} ->
-        # Mirror the cc_mcp `session_killed` semantic: the session is
-        # gone, close the SSE stream so claude's MCP client cleans up.
-        Logger.info("mcp_controller: session_killed sid=#{inspect(env["session_id"])}")
-        conn
 
       _other ->
         sse_loop(conn)
