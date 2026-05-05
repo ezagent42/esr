@@ -348,6 +348,16 @@ internal_kinds:
     permission: "runtime.debug"
     command_module: "Esr.Commands.Debug.Resume"
 
+  # 2026-05-05 cli-channel→slash migration step 8: `adapters_list`
+  # is the file-read companion to the live `/actors` slash. Operators
+  # invoke it via escript as `esr adapters list` (sub-action
+  # concatenation produces kind=`adapters_list`). Pure read of
+  # `~/.esrd/<env>/adapters.yaml` — no runtime dependency beyond the
+  # Esr.Paths helper.
+  adapters_list:
+    permission: null
+    command_module: "Esr.Commands.Adapters.List"
+
   actors_tree:
     permission: null
     command_module: "Esr.Commands.Actors.Tree"
