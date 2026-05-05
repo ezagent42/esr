@@ -286,9 +286,14 @@ trap 'scripts/esrd.sh stop --instance='"$instance"' >/dev/null 2>&1 || true;
 # Give restore_state_from_disk time to re-instantiate feishu-app-session.
 sleep 5
 
-l0_adapters=$(uv run --project py esr adapters list 2>/tmp/fg.live.l0a.log \
+# 2026-05-05 cli-channel→slash migration: L0a/L0b switched to the
+# Elixir escript. `runtime/esr <kind> [args...]` routes through the
+# admin_queue → slash dispatch (no more cli:* WS topic). ESR_INSTANCE
+# matches the running esrd's `--instance` flag so the queue reaches
+# the right boot.
+l0_adapters=$(ESR_INSTANCE="$instance" runtime/esr adapters list 2>/tmp/fg.live.l0a.log \
               | grep -F "$FEISHU_APP_ID" | head -1 || true)
-l0_actor=$(uv run --project py esr actors list 2>/tmp/fg.live.l0b.log \
+l0_actor=$(ESR_INSTANCE="$instance" runtime/esr actors list 2>/tmp/fg.live.l0b.log \
            | grep -F "feishu-app:$FEISHU_APP_ID" | head -1 || true)
 if [[ -z "$l0_adapters" ]]; then
   echo "FAIL — L0a: esr adapters list does not show the feishu instance"
@@ -306,11 +311,18 @@ echo "  L0b actor line    : $(echo "$l0_actor" | head -c 120)"
 
 # Register the diagnostic workspace (required by /new-session esr-dev).
 section "8/13 live L0 — workspace add esr-dev (role=diagnostic)"
-uv run --project py esr workspace add esr-dev \
-    --cwd "$HOME/Workspace/esr" \
-    --start-cmd scripts/esr-cc.sh \
-    --role diagnostic \
-    --chat "$FEISHU_TEST_CHAT_ID:$FEISHU_APP_ID:dm" \
+# 2026-05-05 cli-channel→slash migration: workspace registration goes
+# through `/new-workspace` slash command via the escript, not the
+# deleted `cli:workspace/register` WS topic. The slash command is
+# idempotent — `action: created` first run, `action: added_chat` /
+# `already_bound` thereafter — so this step survives a re-run without
+# manual workspaces.yaml cleanup.
+ESR_INSTANCE="$instance" runtime/esr exec /new-workspace \
+    name=esr-dev \
+    role=diagnostic \
+    start_cmd=scripts/esr-cc.sh \
+    chat_id="$FEISHU_TEST_CHAT_ID" \
+    app_id="$FEISHU_APP_ID" \
     >/tmp/fg.live.ws.log 2>&1 || {
   echo "FAIL to add workspace"; cat /tmp/fg.live.ws.log; exit 1; }
 
