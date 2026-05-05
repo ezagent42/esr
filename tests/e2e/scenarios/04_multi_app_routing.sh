@@ -120,7 +120,7 @@ curl -sS --connect-timeout 1 --max-time 5 -X POST -H 'content-type: application/
 # Wait for the auto-created session for ou_restricted to appear.
 SID_RESTRICTED=""
 for _ in $(seq 1 300); do
-  SID_RESTRICTED=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+  SID_RESTRICTED=$(esr_cli actors list 2>/dev/null \
     | awk '/^thread:/ { sub("thread:", "", $1); print $1 }' \
     | while read sid; do
         if grep -q "auto-created session ${sid} for new_chat_thread.*chat_id=\"oc_pra_restricted\"" "$LOG_PATH" 2>/dev/null; then
@@ -135,8 +135,7 @@ done
 
 # Synthesize the forbidden cross-app tool_invoke. ou_restricted's
 # caps are workspace:ws_dev/* — does NOT match workspace:ws_kanban/msg.send.
-STEP3_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit cross_app_test \
+STEP3_OUT=$(esr_cli admin submit cross_app_test \
     --arg "session_id=${SID_RESTRICTED}" \
     --arg "chat_id=oc_pra_kanban" \
     --arg "app_id=feishu_app_kanban" \
@@ -166,7 +165,7 @@ assert_not_contains "$KAN3" "step-1 done" "step3: kanban did NOT receive forbidd
 # attempts the cross-app reply via cross_app_test. FCP looks up
 # workspace_for_chat(oc_pra_orphan, feishu_app_kanban) → :not_found
 # → returns ok:false {"type": "unknown_chat_in_app"}.
-SID_DEV=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+SID_DEV=$(esr_cli actors list 2>/dev/null \
   | awk '/^thread:/ { sub("thread:", "", $1); print $1 }' \
   | while read sid; do
       # Log line format (verified): `auto-created session <sid> for
@@ -179,8 +178,7 @@ SID_DEV=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
     done)
 [[ -n "$SID_DEV" ]] || _fail_with_context "step4: no auto-created session for oc_pra_dev on feishu_app_dev"
 
-STEP4_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit cross_app_test \
+STEP4_OUT=$(esr_cli admin submit cross_app_test \
     --arg "session_id=${SID_DEV}" \
     --arg "chat_id=oc_pra_orphan" \
     --arg "app_id=feishu_app_kanban" \
@@ -201,20 +199,19 @@ KAN4=$(curl -sS --connect-timeout 1 --max-time 5 "http://127.0.0.1:${MOCK_FEISHU
 assert_not_contains "$KAN4" "step-2 done" "step4: kanban did NOT receive non-member text"
 
 # --- Step 5: cleanup -------------------------------------------------
-ACTORS_OUT=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null)
+ACTORS_OUT=$(esr_cli actors list 2>/dev/null)
 SIDS=()
 while IFS= read -r sid; do
   [[ -n "$sid" ]] && SIDS+=("$sid")
 done < <(echo "$ACTORS_OUT" | awk '/^thread:/ { sub("thread:", "", $1); print $1 }')
 
 for sid in "${SIDS[@]}"; do
-  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+  esr_cli admin submit session_end \
     --arg "session_id=${sid}" --wait --timeout 30
 done
 
 for _ in $(seq 1 50); do
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   if ! echo "$out" | grep -q "^thread:"; then break; fi
   sleep 0.1
 done
