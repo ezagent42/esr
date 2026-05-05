@@ -288,9 +288,17 @@ sleep 5
 
 # 2026-05-05 cli-channel→slash migration: L0a/L0b switched to the
 # Elixir escript. `runtime/esr <kind> [args...]` routes through the
-# admin_queue → slash dispatch (no more cli:* WS topic). ESR_INSTANCE
-# matches the running esrd's `--instance` flag so the queue reaches
-# the right boot.
+# admin_queue → slash dispatch (no more cli:* WS topic). Both
+# ESR_INSTANCE + ESRD_HOME are exported per call so the escript's
+# admin_queue path matches the running esrd's queue:
+#   - escript's `cmd_exec_kind` defaults ESRD_HOME → `~/.esrd-dev`,
+#   - the runtime's `Esr.Paths.esrd_home/0` defaults to `~/.esrd`,
+#   - and esrd.sh starts the runtime with ESRD_HOME=$HOME/.esrd unless
+#     overridden. The two defaults disagree, so leaving either env var
+#     unset would silently route the queue file to a path the daemon
+#     watcher isn't subscribed to (L0a would time out waiting for
+#     completed/<id>.yaml). Explicit exports avoid the trap.
+export ESRD_HOME="${ESRD_HOME:-$HOME/.esrd}"
 l0_adapters=$(ESR_INSTANCE="$instance" runtime/esr adapters list 2>/tmp/fg.live.l0a.log \
               | grep -F "$FEISHU_APP_ID" | head -1 || true)
 l0_actor=$(ESR_INSTANCE="$instance" runtime/esr actors list 2>/tmp/fg.live.l0b.log \

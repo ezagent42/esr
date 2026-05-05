@@ -7,9 +7,11 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
 
   - `Esr.Plugin.Loader.run_startup/0` — invoked at boot once
     `restore_adapters_from_disk/1` has loaded the yaml-on-disk state.
-  - `EsrWeb.CliChannel` `cli:adapters/{refresh,rename}` — operator-
-    triggered re-bootstrap after `esr adapter add` / `esr adapter
-    rename` mutates `adapters.yaml`.
+  - `Esr.Commands.Adapter.{Refresh,Rename}` slash commands —
+    operator-triggered re-bootstrap after `esr adapter add` /
+    `esr adapter rename` mutates `adapters.yaml`. (Both call
+    `Esr.Plugin.Loader.run_startup/0` rather than this module
+    directly, but this hook is what the loader invokes.)
 
   Each peer registers in `Esr.Scope.Admin.Process` under
   `:feishu_app_adapter_<instance_id>` (the YAML key — matching the

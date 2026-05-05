@@ -5,6 +5,29 @@ defmodule Esr.Commands.Adapter.Start do
   to adapters.yaml; for persistent registration use `register_adapter`
   (the existing `cli:adapters/refresh`-equivalent path) instead.
 
+  ## Args contract — **breaking change vs. `cli:adapter/start/<type>`**
+
+  Legacy WS topic took:
+
+      %{"instance_id" => "X", "config" => %{"app_id" => "Y", ...}}
+
+  i.e. `config:` was a nested map. This slash command takes flat args
+  per the migration convention (`docs/notes/2026-05-05-cli-channel-migration.md`):
+
+      args: %{
+        "type" => "feishu",
+        "instance_id" => "ESR开发助手",
+        "app_id" => "cli_xxx",          # was config.app_id
+        "app_secret" => "...",           # was config.app_secret
+        "base_url" => "https://..."     # was config.base_url
+      }
+
+  Internally `Map.drop(args, ["type", "instance_id"])` produces the
+  same shape `WorkerSupervisor.ensure_adapter/4` consumed via the
+  legacy `payload["config"]` path, so adapter sidecars see no
+  difference. Callers porting from the old topic must flatten their
+  config map.
+
   Migrated from `EsrWeb.CliChannel.dispatch("cli:adapter/start/<type>", ...)`.
   """
 

@@ -99,7 +99,8 @@ defmodule Esr.Entity.Server do
   @doc """
   Returns a snapshot of the peer's public introspection fields
   (`actor_id`, `actor_type`, `handler_module`, `paused`, `state`).
-  Used by `EsrWeb.CliChannel` for `cli:actors/inspect`.
+  Used by `Esr.Commands.Actors.Inspect` (the `/actors inspect`
+  slash / admin-queue command).
   """
   @spec describe(String.t()) :: map()
   def describe(actor_id) do
