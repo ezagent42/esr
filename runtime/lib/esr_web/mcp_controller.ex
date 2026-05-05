@@ -77,6 +77,19 @@ defmodule EsrWeb.McpController do
   def handle_sse(conn, %{"session_id" => session_id}) do
     Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cli:channel/" <> session_id)
 
+    # Replaces the WS-bridge-era signal that EsrWeb.ChannelChannel
+    # fired on join: FeishuChatProxy + CCProcess subscribe to
+    # `cc_mcp_ready/<sid>` and use this broadcast to flip from
+    # buffer-then-flush mode to send-immediately mode (per
+    # `docs/notes/cc-mcp-pubsub-race.md`). Without this fire, peers
+    # buffer notifications forever and claude never sees them. Topic
+    # name kept as-is for compat — peers know it as `cc_mcp_ready`.
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "cc_mcp_ready/" <> session_id,
+      {:cc_mcp_ready, session_id}
+    )
+
     conn
     |> put_resp_header("content-type", "text/event-stream")
     |> put_resp_header("cache-control", "no-cache")
