@@ -151,6 +151,14 @@ defmodule Esr.Application do
       # and dispatches an `{:outbound, ...}` to the source FAA peer.
       Esr.Entity.CapGuard,
 
+      # 4g.0 Slash subsystem — CleanupRendezvous (PR-2.3a). Tracks
+      # session_id → task_pid for `/end-session` Tasks blocking on
+      # MCP-side `session.signal_cleanup` ack. Started BEFORE
+      # Esr.Admin.Supervisor so callsites in BranchEnd / Server can
+      # find it during the same boot pass. Runs in parallel to the
+      # legacy Dispatcher path until PR-2.3b deletes Dispatcher.
+      Esr.Slash.CleanupRendezvous,
+
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER

@@ -107,7 +107,7 @@ defmodule Esr.Admin.Commands.Scope.BranchEndCleanupTest do
   defp poke_signal_after(session_id, status, details, delay_ms \\ 20) do
     Task.start(fn ->
       Process.sleep(delay_ms)
-      send(Dispatcher, {:cleanup_signal, session_id, status, details})
+      :ok = Esr.Slash.CleanupRendezvous.signal_cleanup(session_id, status, details)
     end)
   end
 
@@ -319,7 +319,7 @@ defmodule Esr.Admin.Commands.Scope.BranchEndCleanupTest do
       # Dispatcher state directly, but sending a second signal
       # immediately should not crash the dispatcher and should just
       # log a warning — assert the dispatcher is still alive.
-      send(Dispatcher, {:cleanup_signal, "ou_alice-feature-leak", "CLEANED", %{}})
+      :ok = Esr.Slash.CleanupRendezvous.signal_cleanup("ou_alice-feature-leak", "CLEANED", %{})
       # Give the handle_info a moment.
       Process.sleep(20)
       assert Process.alive?(Process.whereis(Dispatcher))
