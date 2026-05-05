@@ -30,28 +30,14 @@ defmodule Esr.Resource.Permission.Registry do
     :ets.tab2list(@table) |> Enum.map(fn {name, _} -> name end)
   end
 
-  @doc """
-  Write a JSON snapshot of registered permissions to `path`, grouped by
-  the declaring module.
-
-  Output shape: `{"Elixir.Mod.Name": ["perm.a", "perm.b"], ...}` —
-  consumed by `esr cap list` (py/src/esr/cli/cap.py). This is a
-  one-shot snapshot taken at the end of bootstrap; the file is not
-  touched again at runtime.
-  """
-  @spec dump_json(Path.t()) :: :ok
-  def dump_json(path) do
-    entries =
-      :ets.tab2list(@table)
-      |> Enum.group_by(
-        fn {_name, declared_by} -> to_string(declared_by) end,
-        fn {name, _} -> name end
-      )
-
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Jason.encode!(entries, pretty: true))
-    :ok
-  end
+  # PR-4.4: dump_json/1 deleted. The JSON snapshot at
+  # `~/.esrd/<env>/permissions_registry.json` was consumed only by
+  # `py/src/esr/cli/cap.py` for offline pretty-print of `esr cap list`.
+  # Phase 2 introduced the Elixir-native `esr exec /cap list` path
+  # which reads the in-memory registry via slash dispatch directly,
+  # making the cross-process file dump redundant. Python `esr cap
+  # list` still reads any pre-existing file but data ages until
+  # PR-4.6/4.7 ports / deletes the Python CLI.
 
   @doc false
   # Test-only: wipe all registrations. Not exposed via the façade.

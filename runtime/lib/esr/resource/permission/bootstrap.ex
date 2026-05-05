@@ -76,28 +76,15 @@ defmodule Esr.Resource.Permission.Bootstrap do
       Registry.register(perm, declared_by: mod)
     end
 
-    case Keyword.get(opts, :dump_path) do
-      nil -> :ok
-      path when is_binary(path) -> safe_dump(path)
-    end
+    # PR-4.4: dropped the boot-time JSON dump (was at
+    # `~/.esrd/<env>/permissions_registry.json`). The Elixir-native
+    # `esr exec /cap list` path (PR-2.6) reads the registry directly
+    # via the slash dispatch — no cross-process file is needed. The
+    # Python `esr cap list` consumer in py/src/esr/cli/cap.py becomes
+    # stale until Phase 4 PR-4.6/4.7 ports / deletes Python CLI.
+    _ = opts
 
     :ok
-  end
-
-  # Dump failures (e.g. permission denied, read-only volume) must not
-  # crash boot — snapshot is a convenience for CLI, not a liveness
-  # dependency. Log and continue.
-  defp safe_dump(path) do
-    try do
-      Registry.dump_json(path)
-    rescue
-      exc ->
-        require Logger
-        Logger.warning(
-          "permissions: dump_json failed at #{path} — #{Exception.message(exc)}; continuing"
-        )
-        :ok
-    end
   end
 
   # Find every loaded :esr module that exports permissions/0.
