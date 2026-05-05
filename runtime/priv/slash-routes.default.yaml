@@ -30,7 +30,7 @@ slashes:
   "/help":
     kind: help
     permission: null
-    command_module: "Esr.Admin.Commands.Help"
+    command_module: "Esr.Commands.Help"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "诊断"
@@ -40,7 +40,7 @@ slashes:
   "/whoami":
     kind: whoami
     permission: null
-    command_module: "Esr.Admin.Commands.Whoami"
+    command_module: "Esr.Commands.Whoami"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "诊断"
@@ -50,7 +50,7 @@ slashes:
   "/key":
     kind: key
     permission: null
-    command_module: "Esr.Admin.Commands.Key"
+    command_module: "Esr.Commands.Key"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "PTY"
@@ -61,7 +61,7 @@ slashes:
   "/doctor":
     kind: doctor
     permission: null
-    command_module: "Esr.Admin.Commands.Doctor"
+    command_module: "Esr.Commands.Doctor"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "诊断"
@@ -71,7 +71,7 @@ slashes:
   "/new-workspace":
     kind: workspace_new
     permission: "workspace.create"
-    command_module: "Esr.Admin.Commands.Workspace.New"
+    command_module: "Esr.Commands.Workspace.New"
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Workspace"
@@ -85,7 +85,7 @@ slashes:
   "/workspace info":
     kind: workspace_info
     permission: "session.list"
-    command_module: "Esr.Admin.Commands.Workspace.Info"
+    command_module: "Esr.Commands.Workspace.Info"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Workspace"
@@ -96,7 +96,7 @@ slashes:
   "/workspace sessions":
     kind: session_list
     permission: "session.list"
-    command_module: "Esr.Admin.Commands.Scope.List"
+    command_module: "Esr.Commands.Scope.List"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -108,7 +108,7 @@ slashes:
     aliases: ["/list-sessions"]
     kind: session_list
     permission: "session.list"
-    command_module: "Esr.Admin.Commands.Scope.List"
+    command_module: "Esr.Commands.Scope.List"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -120,7 +120,7 @@ slashes:
     aliases: ["/session new"]
     kind: session_new
     permission: "session:default/create"
-    command_module: "Esr.Admin.Commands.Scope.New"
+    command_module: "Esr.Commands.Scope.New"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -135,7 +135,7 @@ slashes:
     aliases: ["/session end"]
     kind: session_end
     permission: "session:default/end"
-    command_module: "Esr.Admin.Commands.Scope.End"
+    command_module: "Esr.Commands.Scope.End"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -148,7 +148,7 @@ slashes:
   "/list-agents":
     kind: agent_list
     permission: null
-    command_module: "Esr.Admin.Commands.Agent.List"
+    command_module: "Esr.Commands.Agent.List"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Agents"
@@ -158,7 +158,7 @@ slashes:
   "/attach":
     kind: attach
     permission: null
-    command_module: "Esr.Admin.Commands.Attach"
+    command_module: "Esr.Commands.Attach"
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Sessions"
@@ -168,7 +168,7 @@ slashes:
   "/plugin list":
     kind: plugin_list
     permission: "plugin/manage"
-    command_module: "Esr.Admin.Commands.Plugin.List"
+    command_module: "Esr.Commands.Plugin.List"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Plugins"
@@ -178,7 +178,7 @@ slashes:
   "/plugin info":
     kind: plugin_info
     permission: "plugin/manage"
-    command_module: "Esr.Admin.Commands.Plugin.Info"
+    command_module: "Esr.Commands.Plugin.Info"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Plugins"
@@ -189,7 +189,7 @@ slashes:
   "/plugin install":
     kind: plugin_install
     permission: "plugin/manage"
-    command_module: "Esr.Admin.Commands.Plugin.Install"
+    command_module: "Esr.Commands.Plugin.Install"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Plugins"
@@ -200,7 +200,7 @@ slashes:
   "/plugin enable":
     kind: plugin_enable
     permission: "plugin/manage"
-    command_module: "Esr.Admin.Commands.Plugin.Enable"
+    command_module: "Esr.Commands.Plugin.Enable"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Plugins"
@@ -211,7 +211,7 @@ slashes:
   "/plugin disable":
     kind: plugin_disable
     permission: "plugin/manage"
-    command_module: "Esr.Admin.Commands.Plugin.Disable"
+    command_module: "Esr.Commands.Plugin.Disable"
     requires_workspace_binding: false
     requires_user_binding: false
     category: "Plugins"
@@ -226,36 +226,36 @@ slashes:
 internal_kinds:
   notify:
     permission: "notify.send"
-    command_module: "Esr.Admin.Commands.Notify"
+    command_module: "Esr.Commands.Notify"
 
   reload:
     permission: "runtime.reload"
-    command_module: "Esr.Admin.Commands.Reload"
+    command_module: "Esr.Commands.Reload"
 
   register_adapter:
     permission: "adapter.register"
-    command_module: "Esr.Admin.Commands.RegisterAdapter"
+    command_module: "Esr.Commands.RegisterAdapter"
 
   session_branch_new:
     permission: "session:default/create"
-    command_module: "Esr.Admin.Commands.Scope.BranchNew"
+    command_module: "Esr.Commands.Scope.BranchNew"
 
   session_switch:
     permission: "session.switch"
-    command_module: "Esr.Admin.Commands.Scope.Switch"
+    command_module: "Esr.Commands.Scope.Switch"
 
   session_branch_end:
     permission: "session:default/end"
-    command_module: "Esr.Admin.Commands.Scope.BranchEnd"
+    command_module: "Esr.Commands.Scope.BranchEnd"
 
   grant:
     permission: "cap.manage"
-    command_module: "Esr.Admin.Commands.Cap.Grant"
+    command_module: "Esr.Commands.Cap.Grant"
 
   revoke:
     permission: "cap.manage"
-    command_module: "Esr.Admin.Commands.Cap.Revoke"
+    command_module: "Esr.Commands.Cap.Revoke"
 
   cross_app_test:
     permission: "cross_app_test.invoke"
-    command_module: "Esr.Admin.Commands.CrossAppTest"
+    command_module: "Esr.Commands.CrossAppTest"

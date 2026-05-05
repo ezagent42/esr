@@ -2,7 +2,7 @@ defmodule Esr.Admin.DispatcherTest do
   @moduledoc """
   DI-7b Task 14b — Dispatcher secret redaction + telemetry coverage.
 
-  `Esr.Admin.Commands.Notify` is the only wired-up kind at this phase,
+  `Esr.Commands.Notify` is the only wired-up kind at this phase,
   so we exercise the Dispatcher through a notify submission carrying
   secret-shaped args (app_secret / secret / token). The command itself
   ignores those fields (its contract is `to` + `text`), but the

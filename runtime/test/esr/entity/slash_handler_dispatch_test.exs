@@ -213,7 +213,7 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
   # depending on the priv default (which references real command
   # modules whose execute/1 we don't want to invoke here).
   defp test_routes do
-    notify = Esr.Admin.Commands.Notify
+    notify = Esr.Commands.Notify
 
     %{
       slashes: [

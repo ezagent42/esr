@@ -213,11 +213,11 @@ defmodule Esr.Entity.FeishuAppAdapter do
   end
 
   # PR-21κ Phase 4: help_text / whoami_text private helpers deleted —
-  # both moved to `Esr.Admin.Commands.{Help,Whoami}` and routed via
+  # both moved to `Esr.Commands.{Help,Whoami}` and routed via
   # SlashHandler.dispatch + Dispatcher (yaml-driven).
 
   # PR-21κ Phase 4: doctor_text + env_hint deleted —
-  # `Esr.Admin.Commands.Doctor` owns the bootstrap walk-through now.
+  # `Esr.Commands.Doctor` owns the bootstrap walk-through now.
 
   defp do_handle_upstream_inbound(envelope, args, chat_id, thread_id, state) do
     # PR-A T1: prefer args["app_id"] (Python adapter sets it post-PR-A);

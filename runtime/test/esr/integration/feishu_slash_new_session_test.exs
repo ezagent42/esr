@@ -30,7 +30,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
   This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
   returns the newly-created session); the T4-specific assertion —
   that `refs.feishu_chat_proxy` is a live pid — lives in
-  `Esr.Admin.Commands.Scope.NewTest`'s `:t4_session_router` describe
+  `Esr.Commands.Scope.NewTest`'s `:t4_session_router` describe
   block rather than here, to keep each test focused.
   """
   use ExUnit.Case, async: false

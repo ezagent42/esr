@@ -28,7 +28,7 @@ defmodule Esr.Admin.Dispatcher do
        synchronously so restart recovery sees a consistent in-flight
        view.
     4. `Task.start(fn -> run_and_report(...) end)` runs the command's
-       `Esr.Admin.Commands.<Kind>.execute/1` outside the Dispatcher
+       `Esr.Commands.<Kind>.execute/1` outside the Dispatcher
        process (commands can block for seconds — `reload` up to 30s)
        and sends `{:command_result, id, result}` back.
     5. On `{:command_result, id, result}`: move the queue file
@@ -65,7 +65,7 @@ defmodule Esr.Admin.Dispatcher do
   # kind → required permission (spec §6.2 table).
   #
   # PR-3 P3-8.7: `session_new` now means the **agent-session** command
-  # (`Esr.Admin.Commands.Scope.New`, formerly Session.AgentNew); the
+  # (`Esr.Commands.Scope.New`, formerly Session.AgentNew); the
   # legacy branch-worktree path is `session_branch_new`. Both share the
   # PR-21κ Phase 6 (2026-04-30): `@required_permissions` and
   # `@command_modules` constants deleted. `Esr.Resource.SlashRoute.Registry` is now the
@@ -85,7 +85,7 @@ defmodule Esr.Admin.Dispatcher do
 
   @doc """
   Register the current process as the Task awaiting a `:cleanup_signal`
-  for `session_id`. Called by `Esr.Admin.Commands.Scope.BranchEnd`
+  for `session_id`. Called by `Esr.Commands.Scope.BranchEnd`
   (the legacy branch-worktree path, formerly `Session.End` before the
   PR-3 P3-9 rename) on its non-force branch (DI-11 Task 25) before it
   blocks on `receive`.

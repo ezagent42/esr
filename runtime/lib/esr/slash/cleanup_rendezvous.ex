@@ -1,7 +1,7 @@
 defmodule Esr.Slash.CleanupRendezvous do
   @moduledoc """
   Phase 2 PR-2.3a: cleanup-signal rendezvous between
-  `Esr.Admin.Commands.Scope.BranchEnd` (the Task awaiting an MCP-side
+  `Esr.Commands.Scope.BranchEnd` (the Task awaiting an MCP-side
   ack) and the `session.signal_cleanup` MCP tool inbound (delivered
   via `Esr.Entity.Server.build_emit_for_tool/3`).
 
