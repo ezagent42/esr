@@ -9,7 +9,6 @@ defmodule Esr.Resource.Capability.Supervisor do
   @impl true
   def init(opts) do
     path = Keyword.get(opts, :path, default_path())
-    dump_path = Path.join(Path.dirname(path), "permissions_registry.json")
 
     maybe_bootstrap_file(path)
 
@@ -17,10 +16,10 @@ defmodule Esr.Resource.Capability.Supervisor do
       Esr.Resource.Permission.Registry,
       # Bootstrap must sit between Registry and Watcher so declared
       # permissions exist before FileLoader.validate/1 checks them.
-      # `dump_path:` tells Bootstrap to write a JSON snapshot of the
-      # registry once registration completes — consumed by
-      # `esr cap list` (py/src/esr/cli/cap.py).
-      {Esr.Resource.Permission.Bootstrap, dump_path: dump_path},
+      # PR-4.4: dropped `dump_path:` — the JSON dump for Python
+      # `esr cap list` is gone; the Elixir-native `esr exec /cap list`
+      # path reads the registry via slash dispatch.
+      Esr.Resource.Permission.Bootstrap,
       Esr.Resource.Capability.Grants,
       {Esr.Resource.Capability.Watcher, path: path}
     ]
