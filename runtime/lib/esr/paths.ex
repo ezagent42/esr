@@ -18,7 +18,6 @@ defmodule Esr.Paths do
   def workspaces_yaml, do: Path.join(runtime_home(), "workspaces.yaml")
   def users_yaml, do: Path.join(runtime_home(), "users.yaml")
   def slash_routes_yaml, do: Path.join(runtime_home(), "slash-routes.yaml")
-  def pools_yaml, do: Path.join(runtime_home(), "pools.yaml")
   def commands_compiled_dir, do: Path.join([runtime_home(), "commands", ".compiled"])
   def admin_queue_dir, do: Path.join(runtime_home(), "admin_queue")
   def plugins_yaml, do: Path.join(runtime_home(), "plugins.yaml")

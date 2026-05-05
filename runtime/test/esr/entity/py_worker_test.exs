@@ -2,7 +2,7 @@ defmodule Esr.Entity.PyWorkerTest do
   @moduledoc """
   PR-6 B2 — `Esr.Entity.PyWorker` macro absorbs the shared pending-map
   + request-id + PyProcess-wiring boilerplate used by pool-worker
-  voice peers (VoiceASR, VoiceTTS).
+  Python sidecar peers.
 
   Test uses a `FakePyProcess` GenServer injected via the `:esr,
   :py_process_module` app-env override. The macro reads this at init
