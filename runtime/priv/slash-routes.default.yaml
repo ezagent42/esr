@@ -292,6 +292,31 @@ internal_kinds:
     permission: "cap.manage"
     command_module: "Esr.Commands.Cap.Revoke"
 
+  # Phase B-3 (2026-05-05): user_* admin commands. The escript
+  # produces these kinds from `esr user list/add/remove/bind-feishu/
+  # unbind-feishu` via the sub-action concatenation (B-2's
+  # parse_admin_flags). `user_list` is read-only (no permission);
+  # mutations require `user.manage`.
+  user_list:
+    permission: null
+    command_module: "Esr.Commands.User.List"
+
+  user_add:
+    permission: "user.manage"
+    command_module: "Esr.Commands.User.Add"
+
+  user_remove:
+    permission: "user.manage"
+    command_module: "Esr.Commands.User.Remove"
+
+  user_bind_feishu:
+    permission: "user.manage"
+    command_module: "Esr.Commands.User.BindFeishu"
+
+  user_unbind_feishu:
+    permission: "user.manage"
+    command_module: "Esr.Commands.User.UnbindFeishu"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"

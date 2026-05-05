@@ -29,7 +29,10 @@ defmodule Esr.Resource.Permission.Bootstrap do
     # install,enable,disable}` admin commands. Declared by the plugin
     # subsystem itself, always present regardless of which plugins are
     # installed.
-    {"plugin/manage", Esr.Plugin.Loader}
+    {"plugin/manage", Esr.Plugin.Loader},
+    # Phase B-3 (2026-05-05): `user.manage` gates user_add/remove/
+    # bind-feishu/unbind-feishu. Read-only `user_list` is permission-less.
+    {"user.manage", Esr.Entity.User.Registry}
   ]
 
   @doc """
