@@ -52,8 +52,19 @@ if ! bash scripts/loopguard.sh >/tmp/fg.lg.log 2>&1; then
   echo "FAIL"; tail -20 /tmp/fg.lg.log; fail=1
 fi
 
-section "4/13 scenario run e2e-esr-channel (mock)"
-if ! uv run --project py esr scenario run e2e-esr-channel >/tmp/fg.scn.log 2>&1; then
+section "4/13 plugin core-only boot e2e (replaces fossil scenario yamls)"
+# 2026-05-06: was `esr scenario run e2e-esr-channel` against
+# scenarios/e2e-esr-channel.yaml — that yaml's primary verbs were
+# all P3-13-dead (`esr cmd run/stop/drain feishu-thread-session`),
+# so it had been silently producing fail=1 without breaking the
+# gate (since `if !` only sets a marker, not exit). Replaced with
+# the modern `tests/e2e/scenarios/08_plugin_core_only.sh` which
+# exercises the slash-command pipeline end-to-end (CommandQueue
+# Watcher → Dispatcher → SlashRoute.Registry → /help, /plugin
+# list) on a clean core-only boot — the load-bearing assertion
+# that catches structural regressions in plugin loader / yaml
+# parsing / boot supervision.
+if ! bash tests/e2e/scenarios/08_plugin_core_only.sh >/tmp/fg.scn.log 2>&1; then
   echo "FAIL"; tail -20 /tmp/fg.scn.log; fail=1
 fi
 
