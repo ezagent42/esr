@@ -85,14 +85,27 @@ defmodule Esr.Entity.SlashHandler do
   work — adapters opt-in by switching from `send(slash_handler,
   {:slash_cmd, ...})` to `SlashHandler.dispatch(...)`.
   """
-  @spec dispatch(map(), pid()) :: reference()
-  def dispatch(envelope, reply_to) when is_pid(reply_to) do
+  @typedoc """
+  Reply destination accepted by `dispatch/2,3`. Either a bare pid
+  (legacy chat-inbound path; auto-wrapped as `{ChatPid, pid}`) or an
+  explicit `{module, target}` tuple where `module` implements
+  `Esr.Slash.ReplyTarget`.
+  """
+  @type reply_to :: pid() | {module(), term()}
+
+  @spec dispatch(map(), reply_to()) :: reference()
+  def dispatch(envelope, reply_to) do
     dispatch(envelope, reply_to, make_ref())
   end
 
-  @spec dispatch(map(), pid(), reference()) :: reference()
-  def dispatch(envelope, reply_to, ref)
-      when is_pid(reply_to) and is_reference(ref) do
+  @spec dispatch(map(), reply_to(), reference()) :: reference()
+  def dispatch(envelope, reply_to, ref) when is_reference(ref) do
+    # PR-2.2: validate the shape early so callers get a clear ArgumentError
+    # at dispatch time, not at handle_cast time. handle_cast normalizes
+    # again (defensive) so the cast payload preserves the legacy shape
+    # (bare pid OR {module, target}) and existing FAA tests still match.
+    _ = Esr.Slash.ReplyTarget.normalize(reply_to)
+
     # PR-21κ Phase 6 fix: SlashHandler is supervised by Scope.Admin's
     # children DynamicSupervisor and registered as `:slash_handler` in
     # `Esr.Scope.Admin.Process` (not under its module name). Resolve
@@ -107,7 +120,11 @@ defmodule Esr.Entity.SlashHandler do
           "slash_handler.dispatch: no slash_handler registered (envelope dropped)"
         )
 
-        send(reply_to, {:reply, "slash routing unavailable (boot incomplete)", ref})
+        Esr.Slash.ReplyTarget.dispatch(
+          Esr.Slash.ReplyTarget.normalize(reply_to),
+          {:text, "slash routing unavailable (boot incomplete)"},
+          ref
+        )
     end
 
     ref
@@ -115,12 +132,17 @@ defmodule Esr.Entity.SlashHandler do
 
   @impl GenServer
   def handle_cast({:dispatch, envelope, reply_to, ref}, state) do
+    # Normalize defensively: callers that GenServer.cast directly
+    # (notably tests) may still pass bare pids per the legacy shape;
+    # both `pid` and `{module, target}` resolve to the same internal
+    # `{module, target}` representation here.
+    target = Esr.Slash.ReplyTarget.normalize(reply_to)
     text = extract_text(envelope)
     principal_id = envelope["principal_id"] || "ou_unknown"
 
     case Esr.Resource.SlashRoute.Registry.lookup(text) do
       :not_found ->
-        send(reply_to, {:reply, "unknown command: #{slash_head(text)}", ref})
+        Esr.Slash.ReplyTarget.dispatch(target, {:text, "unknown command: #{slash_head(text)}"}, ref)
         {:noreply, state}
 
       {:ok, route} ->
@@ -147,10 +169,10 @@ defmodule Esr.Entity.SlashHandler do
             {:execute, cmd, {:reply_to, {:pid, self(), ref}}}
           )
 
-          {:noreply, put_in(state.pending[ref], {:dispatch, reply_to, timer})}
+          {:noreply, put_in(state.pending[ref], {:dispatch, target, timer})}
         else
           {:error, msg} when is_binary(msg) ->
-            send(reply_to, {:reply, msg, ref})
+            Esr.Slash.ReplyTarget.dispatch(target, {:text, msg}, ref)
             {:noreply, state}
         end
     end
@@ -171,9 +193,9 @@ defmodule Esr.Entity.SlashHandler do
 
         {:noreply, state}
 
-      {{:dispatch, reply_to, timer}, rest} ->
+      {{:dispatch, target, timer}, rest} ->
         _ = Process.cancel_timer(timer)
-        send(reply_to, {:reply, format_result(result), ref})
+        Esr.Slash.ReplyTarget.dispatch(target, result, ref)
         {:noreply, %{state | pending: rest}}
     end
   end
@@ -184,9 +206,9 @@ defmodule Esr.Entity.SlashHandler do
   # message rather than silent death.
   def handle_info({:slash_dispatch_timeout, ref}, state) when is_reference(ref) do
     case Map.pop(state.pending, ref) do
-      {{:dispatch, reply_to, _timer}, rest} ->
+      {{:dispatch, target, _timer}, rest} ->
         Logger.warning("slash_handler: dispatch timeout for ref #{inspect(ref)}")
-        send(reply_to, {:reply, "command timed out (>5s)", ref})
+        Esr.Slash.ReplyTarget.dispatch(target, {:text, "command timed out (>5s)"}, ref)
         {:noreply, %{state | pending: rest}}
 
       _ ->
@@ -537,90 +559,9 @@ defmodule Esr.Entity.SlashHandler do
     end)
   end
 
-  # --------------------------------------------------------------------
-  # Result formatting — human-readable text for the ChatProxy reply.
-  # --------------------------------------------------------------------
-
-  # PR-21j: session_list workspace-scoped result.
-  defp format_result({:ok, %{"workspace" => ws, "sessions" => sessions}})
-       when is_list(sessions) do
-    if sessions == [] do
-      "workspace #{ws}: no live sessions"
-    else
-      lines =
-        sessions
-        |> Enum.map(fn %{"name" => n, "session_id" => sid} -> "  • #{n} (sid=#{sid})" end)
-        |> Enum.join("\n")
-
-      "workspace #{ws} sessions (#{length(sessions)}):\n#{lines}"
-    end
-  end
-
-  # PR-21k: workspace_new result.
-  defp format_result({:ok, %{"name" => name, "owner" => owner, "root" => root, "chats" => chats}})
-       when is_list(chats) do
-    chat_summary =
-      case chats do
-        [] -> "(no chat bindings)"
-        list -> "#{length(list)} chat(s) bound"
-      end
-
-    "workspace #{name} created (owner=#{owner}, root=#{root}, #{chat_summary}). " <>
-      "Now: /new-session #{name} name=<…> cwd=<…> worktree=<…>"
-  end
-
-  # PR-21j: workspace_info result.
-  defp format_result({:ok, %{"name" => name, "owner" => owner, "root" => root} = ws}) do
-    chats =
-      (Map.get(ws, "chats") || [])
-      |> Enum.map(fn c ->
-        "  • #{Map.get(c, "chat_id", "?")} @ #{Map.get(c, "app_id", "?")}"
-      end)
-      |> case do
-        [] -> "  (no chat bindings)"
-        list -> Enum.join(list, "\n")
-      end
-
-    role = Map.get(ws, "role", "-")
-    metadata_keys = (Map.get(ws, "metadata") || %{}) |> Map.keys() |> Enum.join(", ")
-
-    """
-    workspace #{name}:
-      owner: #{owner || "-"}
-      root:  #{root || "-"}
-      role:  #{role}
-      chats:
-    #{chats}
-      metadata keys: #{metadata_keys}
-    """
-    |> String.trim()
-  end
-
-  defp format_result({:ok, %{"branches" => b}}) when is_list(b),
-    do: "sessions: " <> Enum.join(b, ", ")
-
-  defp format_result({:ok, %{"session_id" => sid}}),
-    do: "session started: #{sid}"
-
-  # PR-21λ 2026-05-01: command modules that produce free-form display
-  # text (Help, Whoami, Doctor, Agent.List) all return
-  # `{:ok, %{"text" => "..."}}`. Render the text directly — pre-PR-21λ
-  # this clause didn't exist and the user saw `ok: %{"text" => "..."}`
-  # via the catch-all `inspect/1` clause below.
-  defp format_result({:ok, %{"text" => text}}) when is_binary(text), do: text
-
-  defp format_result({:ok, %{} = m}), do: "ok: " <> inspect(m)
-
-  # P3-8: Session.New emits string "missing_capabilities" (not atom); match
-  # accordingly. Pre-P3-8 the clause matched :missing_capabilities and never
-  # fired (see integration/new_session_smoke_test.exs module doc).
-  defp format_result({:error, %{"type" => "missing_capabilities", "caps" => caps}}),
-    do: "error: missing caps — " <> Enum.join(caps, ", ")
-
-  defp format_result({:error, %{"type" => t}}) when is_binary(t),
-    do: "error: " <> t
-
-  defp format_result(other), do: "result: " <> inspect(other)
+  # Result formatting moved to Esr.Slash.ReplyTarget.ChatPid
+  # (PR-2.2 dependency-inversion). Each ReplyTarget impl now owns
+  # rendering for its medium.
 
   defp generate_id,
     do: :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
