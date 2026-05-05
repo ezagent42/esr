@@ -40,7 +40,7 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Scope.BranchEnd, as: SessionBranchEnd
-  alias Esr.Admin.Dispatcher
+  alias Esr.Slash.CleanupRendezvous
 
   setup do
     unique = System.unique_integer([:positive])
@@ -64,11 +64,14 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
   end
 
   defp ensure_dispatcher do
-    if Process.whereis(Esr.Admin.Dispatcher) == nil do
-      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Admin.Supervisor)
-
-      if Process.whereis(Esr.Admin.Dispatcher) == nil do
-        {:ok, _} = Esr.Admin.Supervisor.start_link([])
+    # PR-2.3b-2: Dispatcher gone; CleanupRendezvous is what BranchEnd
+    # actually depends on. Make sure it's alive (Application boot
+    # registers it as a permanent worker, but other tests can tear
+    # it down).
+    if Process.whereis(CleanupRendezvous) == nil do
+      _ = Supervisor.restart_child(Esr.Supervisor, CleanupRendezvous)
+      if Process.whereis(CleanupRendezvous) == nil do
+        {:ok, _} = CleanupRendezvous.start_link([])
       end
     end
 
@@ -315,14 +318,12 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
                )
 
       # After timeout, a late signal for the same session_id should be
-      # dropped as stray (no pending waiter). We can't peek into
-      # Dispatcher state directly, but sending a second signal
-      # immediately should not crash the dispatcher and should just
-      # log a warning — assert the dispatcher is still alive.
-      :ok = Esr.Slash.CleanupRendezvous.signal_cleanup("ou_alice-feature-leak", "CLEANED", %{})
-      # Give the handle_info a moment.
+      # dropped as stray (no pending waiter). Sending a second signal
+      # immediately should not crash the rendezvous and should just
+      # log a warning — assert the process is still alive.
+      :ok = CleanupRendezvous.signal_cleanup("ou_alice-feature-leak", "CLEANED", %{})
       Process.sleep(20)
-      assert Process.alive?(Process.whereis(Dispatcher))
+      assert Process.alive?(Process.whereis(CleanupRendezvous))
     end
   end
 
@@ -453,22 +454,20 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
     end
   end
 
-  describe "dispatcher state tracking" do
+  describe "rendezvous state tracking" do
     test "register_cleanup + deregister_cleanup round-trip is a no-op on the task side" do
-      # Directly exercising the Dispatcher API to confirm the casts
-      # neither crash nor hang when no signal arrives. This is a
-      # regression guard for the state map surgery.
-      :ok = Dispatcher.register_cleanup("ou_alice-regression", self())
-      :ok = Dispatcher.deregister_cleanup("ou_alice-regression")
+      # Directly exercising the CleanupRendezvous API to confirm the
+      # casts neither crash nor hang when no signal arrives.
+      :ok = CleanupRendezvous.register_cleanup("ou_alice-regression", self())
+      :ok = CleanupRendezvous.deregister_cleanup("ou_alice-regression")
 
-      # Dispatcher still healthy.
-      assert Process.alive?(Process.whereis(Dispatcher))
+      assert Process.alive?(Process.whereis(CleanupRendezvous))
     end
 
     test "cleanup_signal with no registered waiter is logged & dropped (not crash)" do
-      send(Dispatcher, {:cleanup_signal, "ou_nobody-no-branch", "CLEANED", %{}})
+      :ok = CleanupRendezvous.signal_cleanup("ou_nobody-no-branch", "CLEANED", %{})
       Process.sleep(20)
-      assert Process.alive?(Process.whereis(Dispatcher))
+      assert Process.alive?(Process.whereis(CleanupRendezvous))
     end
   end
 end

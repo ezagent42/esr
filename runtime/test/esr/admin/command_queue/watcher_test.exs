@@ -121,43 +121,36 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
            "expected completed/#{id}.yaml at #{completed_path} — tmp=#{tmp}"
   end
 
-  test "on init, moves stale processing/*.yaml (>10min) back to pending/",
-       %{pending: pending, processing: processing} do
-    # This test targets the pure rename step in scan_stale_processing/2.
-    # We disable the real Dispatcher for this test so the subsequent
-    # pending-orphan sweep cannot advance the file past pending/, and
-    # the post-move state we assert is stable.
-    stop_admin_dispatcher()
-
+  test "on init, moves stale processing/*.yaml (>10min) out of processing/",
+       %{processing: processing} do
+    # This test targets the rename step in scan_stale_processing/2.
+    # Post PR-2.3b-2: the pending-orphan sweep that follows
+    # scan_stale_processing always runs (Dispatcher is gone — there's
+    # nothing to "disable"), so the file ends up either back in
+    # processing/ (transient during dispatch_command) or in failed/
+    # (after the QueueFile reply target persists the synthetic error).
+    # The invariant we assert is: the original stale file is no
+    # longer at its original processing/ path.
     id = "01ARZSTALE#{System.unique_integer([:positive])}"
     stale = Path.join(processing, "#{id}.yaml")
-    recovered = Path.join(pending, "#{id}.yaml")
 
-    # Give it a shape the Dispatcher would reject quickly if it were
-    # up, just to be extra safe: no `kind` key.
+    # Bare `id:` shape — no `kind` key — makes dispatch_command return
+    # an :invalid_kind error which routes to failed/<id>.yaml.
     File.write!(stale, "id: #{id}\n")
-    # mtime 11 minutes in the past — well past the 10-min cutoff.
     File.touch!(stale, System.system_time(:second) - 11 * 60)
 
     {:ok, _pid} = Watcher.start_link([])
 
-    # init/1 runs synchronously before start_link returns, so the
-    # rename has already happened by this point. With the Dispatcher
-    # down, the pending-orphan sweep's cast is a no-op (no registered
-    # name) and the file stays put in pending/.
-    refute File.exists?(stale)
-    assert File.exists?(recovered)
+    refute File.exists?(stale),
+           "stale processing file should have been moved out of processing/"
   end
 
-  test "on init, leaves fresh processing/*.yaml (<10min) alone",
+  test "on init, leaves fresh processing/*.yaml (<10min) in place",
        %{processing: processing} do
-    stop_admin_dispatcher()
-
     id = "01ARZFRESH#{System.unique_integer([:positive])}"
     fresh = Path.join(processing, "#{id}.yaml")
 
     File.write!(fresh, "id: #{id}\n")
-    # 30s old — well under the 10-min cutoff.
     File.touch!(fresh, System.system_time(:second) - 30)
 
     {:ok, _pid} = Watcher.start_link([])
@@ -229,32 +222,8 @@ defmodule Esr.Admin.CommandQueue.WatcherTest do
     end
   end
 
-  defp stop_admin_dispatcher do
-    case Process.whereis(Esr.Admin.Dispatcher) do
-      nil ->
-        :ok
-
-      _pid ->
-        if Process.whereis(Esr.Admin.Supervisor) do
-          # :rest_for_one means terminating Dispatcher also stops the
-          # Watcher and Janitor — our `stop_admin_watcher/0` call in
-          # `setup` already handled Watcher; Janitor is harmless here.
-          _ =
-            Supervisor.terminate_child(
-              Esr.Admin.Supervisor,
-              Esr.Admin.Dispatcher
-            )
-        end
-
-        :ok
-    end
-  end
-
   defp restart_admin_children do
     if Process.whereis(Esr.Admin.Supervisor) do
-      # Dispatcher first — :rest_for_one means restarting it
-      # re-establishes the tail (Watcher + Janitor) automatically.
-      _ = Supervisor.restart_child(Esr.Admin.Supervisor, Esr.Admin.Dispatcher)
       _ = Supervisor.restart_child(Esr.Admin.Supervisor, Esr.Admin.CommandQueue.Watcher)
     end
 

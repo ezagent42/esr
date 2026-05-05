@@ -2,11 +2,13 @@ defmodule Esr.Admin.SupervisorTest do
   @moduledoc """
   DI-5 Task 10 — Admin subsystem scaffold.
 
-  Asserts that starting `Esr.Admin.Supervisor` brings up both long-lived
-  GenServers (Dispatcher + CommandQueue.Watcher). The Application boot
-  already starts one instance, so the test tears that down first and
-  re-starts under a dedicated ESRD_HOME so the Watcher's mkdir_p runs
-  against a disposable tmp dir.
+  Asserts that starting `Esr.Admin.Supervisor` brings up the
+  long-lived GenServer children (post PR-2.3b-2: CommandQueue.Watcher
+  + CommandQueue.Janitor; the legacy Dispatcher was deleted).
+
+  The Application boot already starts one instance, so the test tears
+  that down first and re-starts under a dedicated ESRD_HOME so the
+  Watcher's mkdir_p runs against a disposable tmp dir.
   """
   use ExUnit.Case, async: false
 
@@ -24,7 +26,7 @@ defmodule Esr.Admin.SupervisorTest do
     :ok
   end
 
-  test "supervision tree starts Dispatcher and Watcher" do
+  test "supervision tree starts CommandQueue.Watcher + Janitor" do
     # Application boot already starts Esr.Admin.Supervisor. If it's
     # alive, stop it through the Application supervisor so the name is
     # fully unregistered before we re-start.
@@ -40,8 +42,8 @@ defmodule Esr.Admin.SupervisorTest do
     {:ok, _sup} = Esr.Admin.Supervisor.start_link([])
     # Give children a moment to register.
     Process.sleep(100)
-    assert Process.whereis(Esr.Admin.Dispatcher) != nil
     assert Process.whereis(Esr.Admin.CommandQueue.Watcher) != nil
+    assert Process.whereis(Esr.Admin.CommandQueue.Janitor) != nil
   end
 
   defp wait_for_down(pid, timeout) do

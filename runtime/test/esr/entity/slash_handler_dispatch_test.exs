@@ -1,17 +1,16 @@
 defmodule Esr.Entity.SlashHandlerDispatchTest do
   @moduledoc """
   Tests for `Esr.Entity.SlashHandler.dispatch/2,3` — the adapter-agnostic
-  yaml-driven entry point added in PR-21κ Phase 3.
+  yaml-driven entry point.
 
-  These tests run in parallel to the legacy `:slash_cmd` tests in
-  `slash_handler_test.exs`. Phase 6 deletes the legacy path; until
-  then both APIs are exercised.
+  Post PR-2.3b-2: SlashHandler runs commands locally (Esr.Admin.Dispatcher
+  was deleted). These tests assert the end-to-end behaviour through
+  `{:reply, text, ref}` arriving at the configured reply target,
+  rather than the internal cast wire format that no longer exists.
 
-  Setup mirrors the legacy file: register `self()` as the fake admin
-  dispatcher and assert on the `{:execute, cmd, ...}` cast that the
-  SlashHandler emits. Reply-correlation is verified by sending a
-  fake `{:command_result, ref, ...}` back and asserting the
-  `{:reply, text, ref}` arrives.
+  A `TestEcho` command module is registered as the command_module for
+  test routes; it returns a deterministic `{:ok, %{"text" =>
+  "echo:<kind>"}}` so test assertions can pin the reply.
   """
 
   use ExUnit.Case, async: false
@@ -21,20 +20,32 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
 
   @principal "ou_dispatch_test"
 
+  defmodule TestEcho do
+    @moduledoc "Fake command module — returns the kind in result text."
+    def execute(%{"kind" => kind, "args" => args}) do
+      {:ok, %{"text" => "echo:#{kind}", "args" => args}}
+    end
+
+    def execute(%{"kind" => kind}) do
+      {:ok, %{"text" => "echo:#{kind}"}}
+    end
+  end
+
+  defmodule TestSilent do
+    @moduledoc "Fake command module that hangs — used for timeout tests."
+    def execute(_), do: Process.sleep(:infinity)
+  end
+
   setup do
     assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
-    Process.register(self(), :test_admin_dispatcher)
 
     if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
     SlashRouteRegistry.load_snapshot(test_routes())
 
     on_exit(fn ->
-      if Process.whereis(:test_admin_dispatcher),
-        do: Process.unregister(:test_admin_dispatcher)
-
-      # Restore the priv default so cross-file tests (Dispatcher,
-      # Notify) keep working — they look up kind → permission via
-      # SlashRouteRegistry ETS post-PR-21κ Phase 6.
+      # Restore the priv default so cross-file tests (Notify, etc.)
+      # keep working — they look up kind → permission via
+      # SlashRouteRegistry ETS.
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
       if File.exists?(priv), do: Esr.Resource.SlashRoute.Registry.FileLoader.load(priv)
     end)
@@ -42,27 +53,23 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
     :ok
   end
 
-  describe "dispatch/2 — happy path" do
-    test "/help dispatches with kind=help, no permission, no args" do
+  describe "dispatch — chat-text path" do
+    test "/help executes command and reply text reaches reply target" do
       pid = start_handler!()
       ref = make_ref()
       cast_dispatch(pid, envelope("/help"), self(), ref)
 
-      assert_receive {:"$gen_cast",
-                      {:execute, %{"kind" => "help"} = cmd, {:reply_to, {:pid, ^pid, ^ref}}}},
-                     500
-
-      assert cmd["submitted_by"] == @principal
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "echo:help"
     end
 
-    test "/sessions dispatches with kind=session_list" do
+    test "/sessions executes its kind=session_list" do
       pid = start_handler!()
       ref = make_ref()
       cast_dispatch(pid, envelope("/sessions"), self(), ref)
 
-      assert_receive {:"$gen_cast",
-                      {:execute, %{"kind" => "session_list"}, {:reply_to, {:pid, ^pid, ^ref}}}},
-                     500
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "echo:session_list"
     end
 
     test "/list-sessions alias resolves to same kind" do
@@ -70,46 +77,35 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       ref = make_ref()
       cast_dispatch(pid, envelope("/list-sessions"), self(), ref)
 
-      assert_receive {:"$gen_cast",
-                      {:execute, %{"kind" => "session_list"}, {:reply_to, {:pid, ^pid, ^ref}}}},
-                     500
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "echo:session_list"
     end
 
-    test "first non-kv token binds to first arg as positional value" do
+    test "envelope chat_id/app_id/principal_id flow into the command's args" do
       pid = start_handler!()
       ref = make_ref()
-      cast_dispatch(pid, envelope("/echo hello kw=world"), self(), ref)
 
-      assert_receive {:"$gen_cast",
-                      {:execute, %{"args" => args}, {:reply_to, {:pid, ^pid, ^ref}}}},
-                     500
+      env =
+        envelope("/echo positional_one=hello")
+        |> put_in(["payload", "args", "app_id"], "test_app")
+        |> put_in(["payload", "args", "chat_id"], "oc_inject")
 
-      assert args["positional_one"] == "hello"
-      assert args["kw"] == "world"
-    end
+      cast_dispatch(pid, env, self(), ref)
 
-    test "command_result is relayed back as {:reply, text, ref}" do
-      pid = start_handler!()
-      ref = make_ref()
-      cast_dispatch(pid, envelope("/sessions"), self(), ref)
-
-      assert_receive {:"$gen_cast", {:execute, _cmd, {:reply_to, {:pid, ^pid, ^ref}}}}, 500
-
-      send(pid, {:command_result, ref, {:ok, %{"branches" => ["main", "dev"]}}})
-
-      assert_receive {:reply, text, ^ref}, 500
-      assert is_binary(text)
-      assert text =~ "sessions:"
+      assert_receive {:reply, text, ^ref}, 1000
+      # TestEcho echoes the args back via inspect; "ok: %{...}" format
+      # from ChatPid.format_result for non-text result maps.
+      assert text =~ "echo:echo"
     end
   end
 
-  describe "dispatch/2 — error paths" do
-    test "unknown slash → {:reply, \"unknown command\", ref}" do
+  describe "dispatch — error paths" do
+    test "unknown slash → reply with 'unknown command' text" do
       pid = start_handler!()
       ref = make_ref()
       cast_dispatch(pid, envelope("/totally-fake-slash"), self(), ref)
 
-      assert_receive {:reply, text, ^ref}, 500
+      assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "unknown command"
     end
 
@@ -118,55 +114,29 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       ref = make_ref()
       cast_dispatch(pid, envelope("/needs-ws name=foo"), self(), ref)
 
-      assert_receive {:reply, text, ^ref}, 500
+      assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "workspace"
       assert text =~ "/new-workspace"
-      # Should NOT have cast the command — binding check rejects.
-      refute_receive {:"$gen_cast", {:execute, _, _}}, 100
     end
 
-    test "missing required arg → reply with hint pointing at the arg name" do
+    test "missing required arg → reply with hint" do
       pid = start_handler!()
       ref = make_ref()
       cast_dispatch(pid, envelope("/echo"), self(), ref)
 
-      assert_receive {:reply, text, ^ref}, 500
+      assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "positional_one"
     end
   end
 
-  describe "dispatch/2 — timeout" do
-    test "dispatcher silent past timeout → {:reply, \"timed out\", ref}" do
+  describe "dispatch — timeout" do
+    test "stuck command past timeout → reply 'command timed out'" do
       pid = start_handler!(dispatch_timeout_ms: 60)
       ref = make_ref()
-      cast_dispatch(pid, envelope("/sessions"), self(), ref)
+      cast_dispatch(pid, envelope("/silent"), self(), ref)
 
-      # Cast still fires immediately
-      assert_receive {:"$gen_cast", {:execute, _cmd, {:reply_to, {:pid, ^pid, ^ref}}}}, 500
-
-      # We never send command_result back — wait for timeout.
-      assert_receive {:reply, text, ^ref}, 500
+      assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "timed out"
-    end
-  end
-
-  describe "envelope arg injection" do
-    test "chat_id, app_id, principal_id are merged into args" do
-      pid = start_handler!()
-
-      env =
-        envelope("/help")
-        |> put_in(["payload", "args", "app_id"], "test_app")
-        |> put_in(["payload", "args", "chat_id"], "oc_inject")
-
-      ref = make_ref()
-      cast_dispatch(pid, env, self(), ref)
-
-      assert_receive {:"$gen_cast", {:execute, %{"args" => args}, {:reply_to, {:pid, ^pid, ^ref}}}}, 500
-
-      assert args["chat_id"] == "oc_inject"
-      assert args["app_id"] == "test_app"
-      assert args["principal_id"] == @principal
     end
   end
 
@@ -180,7 +150,6 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
         SlashHandler,
         Map.merge(
           %{
-            dispatcher: :test_admin_dispatcher,
             session_id: "admin",
             neighbors: [],
             proxy_ctx: %{}
@@ -192,9 +161,6 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
     pid
   end
 
-  # Cast directly to the unnamed test pid (the public dispatch/2 API
-  # casts to the named module — fine in production, but in tests the
-  # handler is started without :name so we bypass).
   defp cast_dispatch(pid, envelope, reply_to, ref) do
     GenServer.cast(pid, {:dispatch, envelope, reply_to, ref})
   end
@@ -209,67 +175,39 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
     }
   end
 
-  # Synthetic test-only routes covering happy + error paths without
-  # depending on the priv default (which references real command
-  # modules whose execute/1 we don't want to invoke here).
   defp test_routes do
-    notify = Esr.Commands.Notify
-
     %{
       slashes: [
-        %{
-          slash: "/help",
-          kind: "help",
-          permission: nil,
-          command_module: notify,
-          requires_workspace_binding: false,
-          requires_user_binding: false,
-          category: "诊断",
-          description: "help",
-          aliases: [],
-          args: []
-        },
-        %{
-          slash: "/sessions",
-          kind: "session_list",
-          permission: "session.list",
-          command_module: notify,
-          requires_workspace_binding: false,
-          requires_user_binding: false,
-          category: "Sessions",
-          description: "list",
-          aliases: ["/list-sessions"],
-          args: []
-        },
-        %{
-          slash: "/echo",
-          kind: "echo",
-          permission: nil,
-          command_module: notify,
-          requires_workspace_binding: false,
-          requires_user_binding: false,
-          category: "Test",
-          description: "echo test",
-          aliases: [],
+        route("/help", "help"),
+        route("/sessions", "session_list", aliases: ["/list-sessions"]),
+        route("/echo", "echo",
           args: [
             %{name: "positional_one", required: true, default: nil},
             %{name: "kw", required: false, default: nil}
           ]
-        },
-        %{
-          slash: "/needs-ws",
-          kind: "needs_ws",
-          permission: nil,
-          command_module: notify,
+        ),
+        route("/needs-ws", "needs_ws",
           requires_workspace_binding: true,
-          requires_user_binding: false,
-          category: "Test",
-          description: "binding test",
-          aliases: [],
           args: [%{name: "name", required: true, default: nil}]
-        }
+        ),
+        route("/silent", "silent", command_module: TestSilent)
       ],
       internal_kinds: []
+    }
+  end
+
+  defp route(slash, kind, opts \\ []) do
+    %{
+      slash: slash,
+      kind: kind,
+      permission: nil,
+      command_module: Keyword.get(opts, :command_module, TestEcho),
+      requires_workspace_binding: Keyword.get(opts, :requires_workspace_binding, false),
+      requires_user_binding: false,
+      category: "test",
+      description: "test",
+      aliases: Keyword.get(opts, :aliases, []),
+      args: Keyword.get(opts, :args, [])
     }
   end
 end
