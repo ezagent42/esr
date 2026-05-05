@@ -209,12 +209,12 @@ defmodule Esr.Application do
     # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
-        # Fallback sidecar mappings for adapters that ship in core today
-        # (pre-plugin-extraction). Once feishu / cc_mcp move into plugins,
-        # the plugin manifests will register these and these calls become
-        # redundant. Idempotent — plugins overwriting later is fine.
-        :ok = Esr.Resource.Sidecar.Registry.register("feishu", "feishu_adapter_runner")
-        :ok = Esr.Resource.Sidecar.Registry.register("cc_mcp", "cc_adapter_runner")
+        # PR-3.1: fallback sidecar mappings (feishu/cc_mcp) removed.
+        # `Esr.Plugin.Loader` registers them from the plugin manifests
+        # (`runtime/lib/esr/plugins/{feishu,claude_code}/manifest.yaml`)
+        # via `load_enabled_plugins/0` below. Default-enabled list
+        # (when no operator plugins.yaml exists) is `["feishu",
+        # "claude_code"]` per `Esr.Plugin.EnabledList`.
 
         # PR-2.3b-2: SlashHandler is now bootstrapped via the
         # Esr.Slash.HandlerBootstrap supervision child (placed before

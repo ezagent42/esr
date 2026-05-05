@@ -20,7 +20,7 @@ defmodule Esr.Plugin.EnabledListTest do
 
   test "missing file returns the legacy default list" do
     assert EnabledList.read(Path.join(@tmp_dir, "ghost.yaml")) ==
-             ["feishu", "claude_code", "voice"]
+             ["feishu", "claude_code"]
   end
 
   test "explicit empty list disables every plugin (core-only)" do
@@ -53,15 +53,15 @@ defmodule Esr.Plugin.EnabledListTest do
 
   test "missing `enabled:` key falls back to legacy default" do
     path = write!("other_key: 1\n")
-    assert ["feishu", "claude_code", "voice"] == EnabledList.read(path)
+    assert ["feishu", "claude_code"] == EnabledList.read(path)
   end
 
   test "malformed yaml falls back to legacy default" do
     path = write!("enabled: \"unterminated\n")
-    assert ["feishu", "claude_code", "voice"] == EnabledList.read(path)
+    assert ["feishu", "claude_code"] == EnabledList.read(path)
   end
 
   test "legacy_default/0 exposes the fallback list" do
-    assert EnabledList.legacy_default() == ["feishu", "claude_code", "voice"]
+    assert EnabledList.legacy_default() == ["feishu", "claude_code"]
   end
 end
