@@ -174,7 +174,8 @@ defmodule Esr.Plugin.Loader do
     with :ok <- Manifest.validate(manifest),
          :ok <- register_capabilities(name, manifest),
          :ok <- register_python_sidecars(manifest),
-         :ok <- register_entities(manifest) do
+         :ok <- register_entities(manifest),
+         :ok <- register_startup(name, manifest) do
       Logger.info("plugin loader: started #{name} v#{manifest.version}")
       {:ok, :registered}
     end
@@ -185,6 +186,32 @@ defmodule Esr.Plugin.Loader do
   """
   @spec stop_plugin(plugin_name()) :: :ok
   def stop_plugin(_name), do: :ok
+
+  @doc """
+  PR-3.4 (2026-05-05): invoke every enabled plugin's `startup`
+  callback in plugin-enable order. Called once from
+  `Esr.Application.start/2` after `restore_adapters_from_disk/1`.
+
+  No `try/rescue`. A startup callback raising propagates and crashes
+  esrd boot — the user-set design philosophy (`feedback_let_it_crash_no_workarounds`)
+  prefers loud failure over silent-degrade `:warning` logs.
+  """
+  @spec run_startup() :: :ok
+  def run_startup do
+    callbacks = :persistent_term.get({__MODULE__, :startup_callbacks}, [])
+
+    Enum.each(callbacks, fn {plugin, module, function} ->
+      Logger.info("plugin loader: running startup #{plugin} → #{inspect(module)}.#{function}/0")
+      apply(module, function, [])
+    end)
+
+    :ok
+  end
+
+  @doc false
+  # Test-only: clear the startup-callbacks store so independent tests
+  # don't accumulate state across runs. Production never calls this.
+  def __reset_startup_callbacks__, do: :persistent_term.erase({__MODULE__, :startup_callbacks})
 
   # ------------------------------------------------------------------
   # Phase-1 contribution handlers
@@ -251,5 +278,28 @@ defmodule Esr.Plugin.Loader do
     {:ok, Module.concat([module_str])}
   rescue
     ArgumentError -> :error
+  end
+
+  # PR-3.4 (2026-05-05): parse the manifest's `startup:` block via
+  # `Manifest.startup_callback/1` (which validates + resolves module
+  # exports) and append the validated `{plugin, module, function}`
+  # tuple to the `:persistent_term` callbacks store. No `try/rescue`
+  # — invalid manifest crashes start_plugin/2 by design.
+  defp register_startup(plugin_name, %Manifest{} = manifest) do
+    case Manifest.startup_callback(manifest) do
+      :none ->
+        :ok
+
+      {:ok, {module, function}} ->
+        current = :persistent_term.get({__MODULE__, :startup_callbacks}, [])
+        :persistent_term.put(
+          {__MODULE__, :startup_callbacks},
+          current ++ [{plugin_name, module, function}]
+        )
+        :ok
+
+      {:error, _} = err ->
+        err
+    end
   end
 end

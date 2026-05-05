@@ -80,56 +80,18 @@ defmodule Esr.Scope.Admin do
   end
 
   @doc """
-  Start one `Esr.Entity.FeishuAppAdapter` per `type: feishu` instance
-  declared in `adapters.yaml`. Called from `Esr.Application.start/2`
-  after `bootstrap_slash_handler` (Risk F bootstrap exception — same
-  policy: missing file / spawn failure is logged, not fatal).
-
-  Each peer registers in `Esr.Scope.Admin.Process` under
-  `:feishu_app_adapter_<instance_id>` (the YAML key — matching the
-  Phoenix topic suffix `adapter:feishu/<instance_id>` the Python
-  `adapter_runner` joins) so that `EsrWeb.AdapterChannel.forward_to_new_chain/2`
-  can route inbound frames. The peer's state additionally carries the
-  Feishu-platform `app_id` from `config.app_id` (used for outbound Lark
-  REST calls and `workspaces.yaml` `chats[].app_id` matching).
-
-  Idempotent: re-registering an already-running instance is a no-op.
-  Non-feishu adapter types are skipped (this function only bootstraps
-  the feishu transport; other adapter types have their own bootstrap
-  paths).
-  """
-  @spec bootstrap_feishu_app_adapters(Path.t() | nil) :: :ok
-  def bootstrap_feishu_app_adapters(adapters_yaml_path \\ nil) do
-    path = adapters_yaml_path || Esr.Paths.adapters_yaml()
-    sup = children_supervisor_name()
-    require Logger
-
-    if File.exists?(path) do
-      with {:ok, parsed} <- YamlElixir.read_from_file(path),
-           instances when is_map(instances) <- parsed["instances"] || %{} do
-        for {instance_id, row} <- instances,
-            row["type"] == "feishu" do
-          config = row["config"] || %{}
-          app_id = config["app_id"] || instance_id
-          spawn_feishu_app_adapter(sup, instance_id, app_id)
-        end
-      else
-        _ -> :ok
-      end
-    end
-
-    :ok
-  end
-
-  @doc """
-  PR-L 2026-04-28: terminate the FAA peer for `instance_id`. Counterpart
-  to `bootstrap_feishu_app_adapters/1`. Looks up the peer in the
-  Scope.Admin DynamicSupervisor and kills it via `terminate_child/2`.
-  Idempotent — returns `:not_found` if the peer isn't running, `:ok`
-  otherwise.
+  PR-L 2026-04-28: terminate the FAA peer for `instance_id`.
+  Counterpart to the feishu plugin's startup hook. Looks up the peer
+  in the Scope.Admin DynamicSupervisor and kills it via
+  `terminate_child/2`. Idempotent — returns `:not_found` if the peer
+  isn't running, `:ok` otherwise.
 
   The FAA peer name is `feishu_app_adapter_<instance_id>` (registered
-  via `Esr.Entity.Registry` from FeishuAppAdapter.start_link/1).
+  via `Esr.Entity.Registry` from the per-app FAA peer's start_link/1).
+
+  Stays in core for now (used by `cli:adapters/{remove,rename}` in
+  `EsrWeb.CliChannel`); per-instance lifecycle is a Phase D-3
+  candidate.
   """
   @spec terminate_feishu_app_adapter(String.t()) :: :ok | :not_found
   def terminate_feishu_app_adapter(instance_id) when is_binary(instance_id) do
@@ -144,32 +106,4 @@ defmodule Esr.Scope.Admin do
         :not_found
     end
   end
-
-  defp spawn_feishu_app_adapter(sup, instance_id, app_id) do
-    require Logger
-
-    args = %{
-      instance_id: instance_id,
-      app_id: app_id,
-      neighbors: [],
-      proxy_ctx: %{}
-    }
-
-    case DynamicSupervisor.start_child(sup, {Esr.Entity.FeishuAppAdapter, args}) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "admin_session: feishu_app_adapter spawn failed " <>
-            "instance_id=#{inspect(instance_id)} reason=#{inspect(reason)}"
-        )
-
-        :ok
-    end
-  end
-
 end

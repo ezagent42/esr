@@ -48,3 +48,12 @@ declares:
   python_sidecars:
     - adapter_type: feishu
       python_module: feishu_adapter_runner
+
+  # PR-3.4 (2026-05-05): startup hook. `Esr.Plugin.Loader.run_startup/0`
+  # invokes this after `restore_adapters_from_disk/1` at boot. Both
+  # `module:` and `function:` are required (no defaults — manifest typos
+  # raise during register_startup/1). The function spawns one
+  # FeishuAppAdapter peer per `type: feishu` row in adapters.yaml.
+  startup:
+    module: Esr.Plugins.Feishu.Bootstrap
+    function: bootstrap
