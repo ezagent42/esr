@@ -30,6 +30,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__openclaw-channel__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/scripts/hooks/openclaw-channel-postcheck.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
