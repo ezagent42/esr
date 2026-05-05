@@ -223,21 +223,19 @@ defmodule Esr.Application do
         # (when no operator plugins.yaml exists) is `["feishu",
         # "claude_code"]` per `Esr.Plugin.EnabledList`.
 
-        # PR-3.2: register core-shipped Stateful Entities. Today the
-        # only genuinely-core stateful peer is `Esr.Entity.PtyProcess`
-        # (used by both feishu and claude_code pipelines as the actual
-        # PTY-managing per-session pid). The other three
-        # (FeishuChatProxy / FeishuAppAdapter / CCProcess) are
-        # transitional fallbacks for the period between PR-3.2 (this
-        # PR — registry exists) and PR-3.3/PR-3.6 (modules physically
-        # move to plugin dirs and the plugin Loader becomes the only
-        # writer). They mirror the old `@stateful_impls` MapSet so
-        # tests with `config :esr, :enabled_plugins, []` don't break.
-        # Idempotent — re-registering from manifests is safe.
+        # Phase D-1 (2026-05-05): only `Esr.Entity.PtyProcess` is
+        # genuinely core-shipped. All plugin stateful peers
+        # (FeishuChatProxy / FeishuAppAdapter / CCProcess) are now
+        # registered by `Esr.Plugin.Loader.register_entities/1` from
+        # the manifests of enabled plugins. Pre-Phase-D-1 those three
+        # were ALSO hardcoded here as "transitional fallbacks" — but
+        # PR-3.3/PR-3.6 had already shipped, so the fallback was dead
+        # weight that contradicted the "Loader is canonical" claim.
+        # See docs/notes/2026-05-05-cli-dual-rail.md for the dual-rail
+        # discipline that surfaced this gap; the corrected status doc
+        # at docs/notes/2026-05-05-phase-3-4-status.md (zh_cn parallel)
+        # called it out explicitly.
         :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.PtyProcess)
-        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.FeishuChatProxy)
-        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.FeishuAppAdapter)
-        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.CCProcess)
 
         # PR-2.3b-2: SlashHandler is now bootstrapped via the
         # Esr.Slash.HandlerBootstrap supervision child (placed before

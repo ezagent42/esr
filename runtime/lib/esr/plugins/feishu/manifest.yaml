@@ -25,11 +25,20 @@ depends_on:
 
 declares:
   # Injection #5 — Entity modules.
+  #
+  # Phase D-1 (2026-05-05): FeishuChatProxy reclassified `proxy` →
+  # `stateful` to match its actual implementation (`use GenServer`,
+  # `use Esr.Entity.Stateful` — per-session pid, not a stateless
+  # forwarding shim). Pre-fix the mis-classification was masked by a
+  # hardcoded `StatefulRegistry.register/1` call in core's
+  # `Esr.Application.start/2`; the same PR deletes that fallback so
+  # the Loader is the canonical source for ALL of feishu's stateful
+  # peers, no core hardcode behind it.
   entities:
     - module: Esr.Entity.FeishuAppAdapter
       kind: stateful
     - module: Esr.Entity.FeishuChatProxy
-      kind: proxy
+      kind: stateful
     - module: Esr.Entity.FeishuAppProxy
       kind: proxy
 
