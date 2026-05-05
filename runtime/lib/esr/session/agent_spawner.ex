@@ -57,12 +57,12 @@ defmodule Esr.Session.AgentSpawner do
   @behaviour Esr.Interface.Spawner
   require Logger
 
-  @stateful_impls MapSet.new([
-                    Esr.Entity.FeishuChatProxy,
-                    Esr.Entity.CCProcess,
-                    Esr.Entity.PtyProcess,
-                    Esr.Entity.FeishuAppAdapter
-                  ])
+  # PR-3.2: replaced compile-time MapSet with runtime registry.
+  # Core registers `Esr.Entity.PtyProcess` at boot; plugins register
+  # their own stateful peers via manifest `entities: [...]` blocks
+  # with `kind: stateful` (feishu plugin → FeishuChatProxy +
+  # FeishuAppAdapter; claude_code plugin → CCProcess). Reads go
+  # through `Esr.Entity.Agent.StatefulRegistry.stateful?/1`.
 
   @channel_adapter_regex ~r/^admin::([a-z0-9_]+)_adapter_.*$/
 
@@ -422,7 +422,7 @@ defmodule Esr.Session.AgentSpawner do
     name = String.to_atom(spec["name"])
     impl = resolve_impl(spec["impl"] || "")
 
-    if MapSet.member?(@stateful_impls, impl) do
+    if Esr.Entity.Agent.StatefulRegistry.stateful?(impl) do
       neighbors = build_neighbors(refs_acc)
       ctx = build_ctx(spec, params)
       args = spawn_args(impl, spec, params)

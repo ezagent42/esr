@@ -173,7 +173,8 @@ defmodule Esr.Plugin.Loader do
   def start_plugin(name, %Manifest{} = manifest) do
     with :ok <- Manifest.validate(manifest),
          :ok <- register_capabilities(name, manifest),
-         :ok <- register_python_sidecars(manifest) do
+         :ok <- register_python_sidecars(manifest),
+         :ok <- register_entities(manifest) do
       Logger.info("plugin loader: started #{name} v#{manifest.version}")
       {:ok, :registered}
     end
@@ -220,5 +221,35 @@ defmodule Esr.Plugin.Loader do
     end)
 
     :ok
+  end
+
+  # PR-3.2: register manifest-declared `entities:` entries with
+  # `kind: stateful` into `Esr.Entity.Agent.StatefulRegistry`.
+  # AgentSpawner uses the registry to decide whether to spawn a
+  # per-session pid for that module (vs. recording a stateless
+  # `{:proxy_module, Mod}` marker). Other kinds (`proxy`, etc.) are
+  # ignored by this handler today.
+  defp register_entities(%Manifest{declares: declares}) do
+    entities = Map.get(declares, :entities, [])
+
+    Enum.each(entities, fn entry ->
+      kind = (entry["kind"] || entry[:kind] || "") |> to_string()
+      module_str = entry["module"] || entry[:module]
+
+      if kind == "stateful" and is_binary(module_str) do
+        case safe_concat(module_str) do
+          {:ok, mod} -> :ok = Esr.Entity.Agent.StatefulRegistry.register(mod)
+          :error -> :ok
+        end
+      end
+    end)
+
+    :ok
+  end
+
+  defp safe_concat(module_str) when is_binary(module_str) do
+    {:ok, Module.concat([module_str])}
+  rescue
+    ArgumentError -> :error
   end
 end
