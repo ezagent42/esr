@@ -155,6 +155,17 @@ slashes:
     description: "列所有可用 agent"
     args: []
 
+  "/actors":
+    aliases: ["/list-actors"]
+    kind: actors
+    permission: null
+    command_module: "Esr.Commands.Actors.List"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "诊断"
+    description: "列所有 live Entity peer (<actor_id>  pid=<0.x.y>)"
+    args: []
+
   "/attach":
     kind: attach
     permission: null

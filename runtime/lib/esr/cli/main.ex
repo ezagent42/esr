@@ -271,26 +271,55 @@ defmodule Esr.Cli.Main do
     end)
   end
 
+  # Phase B-1 (2026-05-05): align with Python `yaml.safe_dump(result.get("result"))`
+  # so dual-rail e2e assertions (`assert_contains "$OUT" "ok: true"`,
+  # `awk '/^session_id:/'`, etc.) pass on both rails. Pre-Phase-B-1 escript
+  # printed only `result["text"]` for ok+text cases, missing the `ok: true`
+  # line that Python emitted. See docs/notes/2026-05-05-cli-dual-rail.md.
   defp render_result(result) when is_map(result) do
-    cond do
-      result["ok"] == true and is_binary(result["text"]) ->
-        result["text"]
+    # Stable key order: ok first, then text/error, then everything else
+    # alphabetically. Matches the deterministic shape Python emits via
+    # `yaml.safe_dump(..., sort_keys=False)` on a result dict that always
+    # ships `ok` first by convention.
+    head_keys = ["ok", "text", "error", "type"]
+    head = Enum.flat_map(head_keys, fn k ->
+      case Map.fetch(result, k) do
+        {:ok, v} -> [{k, v}]
+        :error -> []
+      end
+    end)
 
-      result["ok"] == true ->
-        "ok: " <> Jason.encode!(result)
+    tail =
+      result
+      |> Enum.reject(fn {k, _} -> k in head_keys end)
+      |> Enum.sort_by(fn {k, _} -> k end)
 
-      result["ok"] == false and is_binary(result["error"]) ->
-        "error: " <> result["error"]
-
-      result["ok"] == false and is_binary(result["type"]) ->
-        "error: " <> result["type"]
-
-      true ->
-        Jason.encode!(result)
-    end
+    (head ++ tail)
+    |> Enum.map(fn {k, v} -> "#{k}: #{render_yaml_scalar(v)}" end)
+    |> Enum.join("\n")
   end
 
   defp render_result(other), do: inspect(other)
+
+  # Render an Elixir value as a YAML scalar that round-trips through
+  # `yaml.safe_load`. Strings that match a "plain" pattern (alphanumeric
+  # + a few path-like punctuators, no leading special) are emitted bare;
+  # everything else goes through Jason which produces a valid YAML
+  # double-quoted scalar (JSON ⊂ YAML).
+  defp render_yaml_scalar(true), do: "true"
+  defp render_yaml_scalar(false), do: "false"
+  defp render_yaml_scalar(nil), do: "null"
+  defp render_yaml_scalar(v) when is_integer(v), do: Integer.to_string(v)
+  defp render_yaml_scalar(v) when is_float(v), do: Float.to_string(v)
+  defp render_yaml_scalar(v) when is_binary(v) do
+    cond do
+      v == "" -> "''"
+      String.contains?(v, "\n") -> Jason.encode!(v)
+      Regex.match?(~r/^[A-Za-z_][A-Za-z0-9_\-\.\/]*$/, v) -> v
+      true -> Jason.encode!(v)
+    end
+  end
+  defp render_yaml_scalar(v), do: Jason.encode!(v)
 
   # Parse "/foo arg=val arg2=val2" → {"foo", %{"arg" => "val", ...}}.
   # Stripped down version of SlashHandler's parser — escript can't
