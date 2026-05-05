@@ -8,11 +8,9 @@
 #
 # Flow:
 #   1. Submit a session_new via the admin queue (bypasses Feishu).
-#   2. Run tests/e2e/_helpers/dev_channels_unblock.sh to answer the
-#      `--dangerously-load-development-channels` warning dialog so
-#      cc_mcp boots and joins `cli:channel/<sid>`. (Operators normally
-#      open /attach in a browser and answer it themselves; this helper
-#      is e2e-only because the test runs unattended.)
+#   2. Wait for FCP's in-process boot bridge (PR-186) to auto-confirm
+#      the `--dangerously-load-development-channels` dialog so cc_mcp
+#      boots and joins `cli:channel/<sid>`. No external helper needed.
 #   3. Verify cc_mcp's session_register envelope arrived in the BEAM log.
 #   4. Inject a `notification` envelope via the dev-only HTTP debug
 #      endpoint (Direction 2: BEAM → claude). The injected text asks
@@ -21,7 +19,7 @@
 #      with the expected args (Direction 1: claude → BEAM).
 #
 # Requires: a running esrd-dev (default port 4001), admin queue under
-# `$ESRD_HOME/<instance>/admin_queue/`, websocat on PATH, jq on PATH.
+# `$ESRD_HOME/<instance>/admin_queue/`, jq on PATH.
 
 set -Eeuo pipefail
 
@@ -33,24 +31,12 @@ ESRD_INSTANCE="${ESRD_INSTANCE:-default}"
 QUEUE_DIR="${ESRD_HOME}/${ESRD_INSTANCE}/admin_queue"
 LOG_FILE="${ESRD_HOME}/${ESRD_INSTANCE}/logs/launchd-stdout.log"
 
-# Prefer the dev worktree the running esrd is running out of (set in
-# the launchd plist as ESR_REPO_DIR), so this scenario can run against
-# in-flight changes on a feature branch before they're merged back to
-# the main repo's `scripts/` directory.
-REPO_ROOT="${ESR_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-BOOTSTRAP="${REPO_ROOT}/tests/e2e/_helpers/dev_channels_unblock.sh"
-
-for tool in websocat jq curl uv; do
+for tool in jq curl uv; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "FAIL: required tool '$tool' not on PATH" >&2
     exit 2
   fi
 done
-
-if [[ ! -x "$BOOTSTRAP" ]]; then
-  echo "FAIL: dev-channels-unblock helper not found or not executable at $BOOTSTRAP" >&2
-  exit 2
-fi
 
 echo "[07_pty_bidir] esrd target: ${BASE_URL}, queue: ${QUEUE_DIR}"
 
@@ -115,15 +101,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Step 2: bootstrap (answer dev-channels dialog) ------------------
-# As of 2026-05-04 (feature/pty-auto-confirm-dev-channels), FCP's
-# boot-bridge watches `pty:<sid>` for the dev-channels dialog text and
-# answers "1\r" via Esr.Entity.PtyProcess.write/2 directly — no
-# external helper needed. The bash helper below stays as a redundant
-# safety net (it's idempotent: if FCP already confirmed, the second
-# "1\r" goes to the empty TUI prompt and claude ignores it).
+# --- Step 2: wait for FCP boot-bridge to auto-confirm ----------------
+# FCP's boot-bridge (PR-186, 2026-05-04) watches `pty:<sid>` for the
+# dev-channels dialog text and answers "1\r" via PtyProcess.write/2.
+# Just wait a beat for that to land before checking cc_mcp join.
 sleep 2
-"$BOOTSTRAP" "$sid" >/dev/null 2>&1 || true
 
 # --- Step 3: verify cc_mcp joined ------------------------------------
 deadline=$(( $(date +%s) + 30 ))
