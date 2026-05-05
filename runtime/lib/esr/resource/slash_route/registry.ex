@@ -123,6 +123,122 @@ defmodule Esr.Resource.SlashRoute.Registry do
     |> Enum.sort_by(fn route -> {route[:category] || "其他", route.kind} end)
   end
 
+  @doc """
+  List all internal-only routes (kinds in `internal_kinds:` that are
+  NOT also exposed under `slashes:`). Used by the schema dump's
+  `internal_kinds` section. Sorted by kind.
+  """
+  @spec list_internal_kinds() :: [map()]
+  def list_internal_kinds do
+    slash_kinds =
+      :ets.tab2list(@slash_table)
+      |> MapSet.new(fn {_key, route} -> route.kind end)
+
+    :ets.tab2list(@kind_table)
+    |> Enum.map(fn {_kind, route} -> route end)
+    |> Enum.reject(fn route -> MapSet.member?(slash_kinds, route.kind) end)
+    |> Enum.uniq_by(fn route -> route.kind end)
+    |> Enum.sort_by(fn route -> route.kind end)
+  end
+
+  @doc """
+  Emit a JSON-serializable map describing the schema. Single source of
+  truth for escript subcommand generation, REPL autocomplete, and any
+  external doc tooling.
+
+  Shape:
+
+      %{
+        "version" => 1,
+        "slashes" => [%{
+          "kind" => "session_new",
+          "slash" => "/new-session",
+          "aliases" => ["/new"],
+          "description" => "...",
+          "category" => "session",
+          "args" => [...],
+          "requires_workspace_binding" => true,
+          "requires_user_binding" => false,
+          # only when include_internal: true
+          "permission" => "session.create",
+          "command_module" => "Esr.Admin.Commands.Scope.New"
+        }, ...],
+        "internal_kinds" => [%{
+          "kind" => "grant",
+          "description" => "...",
+          # only when include_internal: true
+          "permission" => "cap.manage",
+          "command_module" => "Esr.Admin.Commands.Cap.Grant"
+        }, ...]
+      }
+
+  When `include_internal: false` (the default), the `permission` and
+  `command_module` fields are stripped from each entry. The
+  `internal_kinds:` section is still listed (kinds, descriptions,
+  categories) but operators cannot derive privilege requirements from
+  the public dump.
+  """
+  @spec dump(keyword()) :: map()
+  def dump(opts \\ []) do
+    include_internal = Keyword.get(opts, :include_internal, false)
+
+    %{
+      "version" => 1,
+      "slashes" => Enum.map(list_slashes(), &serialize(&1, include_internal)),
+      "internal_kinds" => Enum.map(list_internal_kinds(), &serialize(&1, include_internal))
+    }
+  end
+
+  defp serialize(route, include_internal) do
+    base = %{
+      "kind" => route.kind,
+      "description" => Map.get(route, :description),
+      "category" => Map.get(route, :category)
+    }
+
+    base =
+      case Map.get(route, :slash) do
+        nil -> base
+        slash -> Map.put(base, "slash", slash)
+      end
+
+    base =
+      case Map.get(route, :aliases, []) do
+        [] -> base
+        aliases -> Map.put(base, "aliases", aliases)
+      end
+
+    base =
+      case Map.get(route, :args) do
+        nil -> base
+        args -> Map.put(base, "args", args)
+      end
+
+    base =
+      case Map.get(route, :requires_workspace_binding) do
+        nil -> base
+        v -> Map.put(base, "requires_workspace_binding", v)
+      end
+
+    base =
+      case Map.get(route, :requires_user_binding) do
+        nil -> base
+        v -> Map.put(base, "requires_user_binding", v)
+      end
+
+    if include_internal do
+      base
+      |> Map.put("permission", Map.get(route, :permission))
+      |> Map.put("command_module", inspect_module(Map.get(route, :command_module)))
+    else
+      base
+    end
+  end
+
+  defp inspect_module(nil), do: nil
+  defp inspect_module(mod) when is_atom(mod), do: inspect(mod)
+  defp inspect_module(other), do: to_string(other)
+
   # ------------------------------------------------------------------
   # Snapshot API (FileLoader → here)
   # ------------------------------------------------------------------

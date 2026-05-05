@@ -18,6 +18,11 @@ defmodule EsrWeb.Router do
     get "/sessions/:sid/attach", AttachController, :show
   end
 
+  # Phase 2 PR-2.1: schema dump for escript / REPL / doc generation.
+  scope "/admin", EsrWeb do
+    get "/slash_schema.json", SlashSchemaController, :show
+  end
+
   # DIAGNOSTIC (temporary 2026-05-02 — PR-24 bidirectional verification).
   # Curl-driven injection of a `notification` envelope onto a session's
   # `cli:channel/<sid>` PubSub topic. Used to verify cc_mcp's inbound path

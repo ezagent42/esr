@@ -256,6 +256,106 @@ defmodule Esr.SlashRoutesTest do
   end
 
   # ------------------------------------------------------------------
+  # PR-2.1: dump/1 + list_internal_kinds/0
+  # ------------------------------------------------------------------
+
+  describe "list_internal_kinds/0" do
+    test "returns kinds present in internal_kinds: but not in slashes:" do
+      load_fixture(
+        slashes: %{"/help" => simple_route("help", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"},
+          "revoke" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      kinds = SlashRouteRegistry.list_internal_kinds()
+      assert Enum.map(kinds, & &1.kind) == ["grant", "revoke"]
+    end
+
+    test "excludes kinds that are also in slashes: (no double-listing)" do
+      # Same kind appearing in both — slashes: takes priority, internal_kinds:
+      # entry is filtered out of list_internal_kinds.
+      load_fixture(
+        slashes: %{"/notify" => simple_route("notify", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "notify" => %{"permission" => "notify.send", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      assert SlashRouteRegistry.list_internal_kinds() == []
+    end
+  end
+
+  describe "dump/1" do
+    test "returns version + two sections" do
+      load_fixture(
+        slashes: %{"/help" => simple_route("help", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      dump = SlashRouteRegistry.dump()
+      assert dump["version"] == 1
+      assert is_list(dump["slashes"])
+      assert is_list(dump["internal_kinds"])
+      assert length(dump["slashes"]) == 1
+      assert length(dump["internal_kinds"]) == 1
+    end
+
+    test "default include_internal: false strips permission + command_module" do
+      load_fixture(
+        slashes: %{"/help" => simple_route("help", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      dump = SlashRouteRegistry.dump()
+      [slash_entry] = dump["slashes"]
+      [internal_entry] = dump["internal_kinds"]
+
+      refute Map.has_key?(slash_entry, "permission")
+      refute Map.has_key?(slash_entry, "command_module")
+      refute Map.has_key?(internal_entry, "permission")
+      refute Map.has_key?(internal_entry, "command_module")
+    end
+
+    test "include_internal: true exposes permission + command_module on both sections" do
+      load_fixture(
+        slashes: %{"/help" => simple_route("help", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      dump = SlashRouteRegistry.dump(include_internal: true)
+      [slash_entry] = dump["slashes"]
+      [internal_entry] = dump["internal_kinds"]
+
+      assert Map.has_key?(slash_entry, "permission")
+      assert Map.has_key?(slash_entry, "command_module")
+      assert internal_entry["permission"] == "cap.manage"
+      assert internal_entry["command_module"] == "Esr.Admin.Commands.Notify"
+    end
+
+    test "JSON-encodable" do
+      load_fixture(
+        slashes: %{"/help" => simple_route("help", "Esr.Admin.Commands.Notify")},
+        internal_kinds: %{
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Admin.Commands.Notify"}
+        }
+      )
+
+      assert {:ok, json} = Jason.encode(SlashRouteRegistry.dump(include_internal: true))
+      assert is_binary(json)
+      decoded = Jason.decode!(json)
+      assert decoded["version"] == 1
+    end
+  end
+
+  # ------------------------------------------------------------------
   # Helpers
   # ------------------------------------------------------------------
 
