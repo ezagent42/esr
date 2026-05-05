@@ -48,7 +48,6 @@ asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 testpaths = [
     "tests",
-    "tests/voice",
     "tests/adapter_runners",
     "../adapters/feishu/tests",
     "../adapters/cc_mcp/tests",

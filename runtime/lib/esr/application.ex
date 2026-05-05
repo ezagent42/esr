@@ -201,19 +201,6 @@ defmodule Esr.Application do
         :ok = Esr.Resource.Sidecar.Registry.register("feishu", "feishu_adapter_runner")
         :ok = Esr.Resource.Sidecar.Registry.register("cc_mcp", "cc_adapter_runner")
 
-        case Esr.Scope.Admin.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            require Logger
-
-            Logger.warning(
-              "admin_session: bootstrap_voice_pools failed: #{inspect(reason)}; " <>
-                "voice peers will be unavailable until restart"
-            )
-        end
-
         case Esr.Scope.Admin.bootstrap_slash_handler() do
           :ok ->
             :ok

@@ -61,13 +61,7 @@ defmodule Esr.Session.AgentSpawner do
                     Esr.Entity.FeishuChatProxy,
                     Esr.Entity.CCProcess,
                     Esr.Entity.PtyProcess,
-                    Esr.Entity.FeishuAppAdapter,
-                    # P4a-9 additions. VoiceASR/VoiceTTS are pooled in
-                    # Scope.Admin and NOT spawned per-session (the
-                    # `cc-voice` pipeline references them only via the
-                    # VoiceASRProxy/VoiceTTSProxy). VoiceE2E is
-                    # per-session and needs to be spawned.
-                    Esr.Entity.VoiceE2E
+                    Esr.Entity.FeishuAppAdapter
                   ])
 
   @channel_adapter_regex ~r/^admin::([a-z0-9_]+)_adapter_.*$/
@@ -403,10 +397,7 @@ defmodule Esr.Session.AgentSpawner do
   # Resolve a proxies-block `target` string (e.g.
   # `"admin::feishu_app_adapter_${app_id}"`) to the live admin-peer pid.
   # Returns `{:ok, pid}` on success, `:error` otherwise. Missing targets
-  # and non-`admin::` targets (e.g. `admin::voice_asr_pool` — which IS
-  # admin::, but the pool case is intentionally left unresolved here —
-  # VoiceASRProxy runs its own pool-acquire, not a raw send to a pid)
-  # fall through.
+  # and unresolvable `admin::` targets fall through.
   defp resolve_proxy_target(nil, _params), do: :error
 
   defp resolve_proxy_target(target, params) when is_binary(target) do
@@ -514,26 +505,6 @@ defmodule Esr.Session.AgentSpawner do
       chat_id: get_param(params, :chat_id),
       app_id: get_param(params, :app_id),
       channel_adapter: get_param(params, :channel_adapter)
-    }
-  end
-
-  # P4a-9: VoiceASRProxy / VoiceTTSProxy ctx — attach the symbolic
-  # pool_name the proxy uses to acquire/release workers from
-  # Scope.Admin's pool. acquire_timeout is a conservative default
-  # (5s); can be overridden per-agent in a future PR.
-  defp build_ctx(%{"impl" => "Esr.Entity.VoiceASRProxy"}, params) do
-    %{
-      principal_id: get_param(params, :principal_id),
-      pool_name: :voice_asr_pool,
-      acquire_timeout: 5_000
-    }
-  end
-
-  defp build_ctx(%{"impl" => "Esr.Entity.VoiceTTSProxy"}, params) do
-    %{
-      principal_id: get_param(params, :principal_id),
-      pool_name: :voice_tts_pool,
-      acquire_timeout: 5_000
     }
   end
 
