@@ -21,20 +21,21 @@ and through the admin queue files. No Python dependency required for the
 core CLI surface: `esr exec`, `esr help`, `esr describe-slashes`,
 `esr daemon`, `esr admin submit`, `esr notify`.
 
-Migration note: previously these commands ran via `uv run --project py esr`.
-The remaining Python CLI surface (`adapter add/install`, `workspace add`,
-etc.) stays for now and is removed in Phase 4.
+Migration note: 2026-05-06 — Python click CLI fully deleted. The
+escript at `runtime/esr` (or `./esr.sh` wrapper) is the only operator
+surface. Adapter / workspace registration runs via slash commands
+through the admin queue.
 
 ## Getting started
 
 1. Ensure a Feishu app exists and its bot is a member of the chat(s) you
    want to drive CC sessions from. Copy `app_id` and `app_secret`.
 2. `bash scripts/esrd.sh start --instance=default`
-3. `uv run --project py esr adapter add feishu-prod --type feishu \
-       --app-id <app_id> --app-secret <app_secret>`
-4. `uv run --project py esr workspace add esr-dev \
-       --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
-       --role dev --chat <chat_id>:<app_id>:dm`
+3. `runtime/esr exec adapter_start type=feishu instance_id=feishu-prod \
+       app_id=<app_id> app_secret=<app_secret>` (or `./esr.sh ...`).
+4. `runtime/esr exec /new-workspace name=esr-dev role=dev \
+       start_cmd=scripts/esr-cc.sh \
+       chat_id=<chat_id> app_id=<app_id>`
 5. In Feishu, DM the bot: `/new-session esr-dev name=root`
 6. A tmux window `smoke-root` appears hosting a CC session with
    `esr-channel` MCP loaded. Subsequent messages to the bot (or with
@@ -123,7 +124,8 @@ def hello() -> None:
     )
 ```
 
-Invoke it via `esr cmd run hello --param name=world`.
+Invoke via `/new-session` (the topology DSL `esr cmd run` was P3-13-deleted
+along with `Esr.Topology`; sessions are spawned via slash routes now).
 
 ## Debugging
 

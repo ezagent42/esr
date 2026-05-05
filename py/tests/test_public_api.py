@@ -1,10 +1,17 @@
-"""PRD 02 F19 — public API entry points."""
+"""ESR Python SDK public API surface.
+
+The original assertion list (PRD 02 F19) included the topology DSL
+names `command`, `node`, `port`, `compose`. Those were removed
+2026-05-06 along with the P3-13-deleted `Esr.Topology` runtime;
+sessions are spawned via slash commands now. Surface narrowed to
+the handler/adapter SDK + message shapes.
+"""
 
 from __future__ import annotations
 
 
 def test_all_public_names_importable() -> None:
-    """Every name promised by PRD 02 F19 is importable from the top-level package."""
+    """Every name promised by the public SDK surface is importable from the top-level package."""
     import esr
 
     expected = {
@@ -12,10 +19,6 @@ def test_all_public_names_importable() -> None:
         "handler_state",
         "adapter",
         "AdapterConfig",
-        "command",
-        "node",
-        "port",
-        "compose",
         "Emit",
         "Route",
         "InvokeCommand",
