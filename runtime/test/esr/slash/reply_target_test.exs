@@ -116,10 +116,104 @@ defmodule Esr.Slash.ReplyTargetTest do
     end
   end
 
-  describe "QueueFile stub (PR-2.3a placeholder)" do
-    test "returns {:error, :not_implemented}" do
-      ref = make_ref()
-      assert {:error, :not_implemented} = QueueFile.respond(%{queue_id: "x"}, {:text, "_"}, ref)
+  describe "QueueFile (PR-2.3b — real impl)" do
+    setup do
+      unique = System.unique_integer([:positive])
+      tmp = Path.join(System.tmp_dir!(), "qf_rt_#{unique}")
+      File.mkdir_p!(Path.join(tmp, "default"))
+
+      for sub <- ["pending", "processing", "completed", "failed"] do
+        File.mkdir_p!(Path.join([tmp, "default", "admin_queue", sub]))
+      end
+
+      prev_home = System.get_env("ESRD_HOME")
+      System.put_env("ESRD_HOME", tmp)
+      System.put_env("ESR_INSTANCE", "default")
+
+      on_exit(fn ->
+        if prev_home,
+          do: System.put_env("ESRD_HOME", prev_home),
+          else: System.delete_env("ESRD_HOME")
+
+        File.rm_rf!(tmp)
+      end)
+
+      :ok
+    end
+
+    test "writes {:ok, _} result to completed/<id>.yaml" do
+      id = "qf-ok-#{System.unique_integer([:positive])}"
+      processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
+      File.write!(processing, "id: #{id}\n")
+
+      command = %{"id" => id, "kind" => "notify", "args" => %{"text" => "hi"}}
+      target = %{id: id, command: command}
+
+      assert :ok =
+               QueueFile.respond(target, {:ok, %{"echoed" => "hi"}}, make_ref())
+
+      out = Path.join(Esr.Paths.admin_queue_dir(), "completed/#{id}.yaml")
+      {:ok, parsed} = YamlElixir.read_from_file(out)
+      assert parsed["result"]["ok"] == true
+      assert parsed["result"]["echoed"] == "hi"
+    end
+
+    test "writes {:error, _} result to failed/<id>.yaml" do
+      id = "qf-err-#{System.unique_integer([:positive])}"
+      processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
+      File.write!(processing, "id: #{id}\n")
+
+      command = %{"id" => id, "kind" => "notify", "args" => %{}}
+      target = %{id: id, command: command}
+
+      assert :ok =
+               QueueFile.respond(
+                 target,
+                 {:error, %{"type" => "unauthorized", "kind" => "notify"}},
+                 make_ref()
+               )
+
+      out = Path.join(Esr.Paths.admin_queue_dir(), "failed/#{id}.yaml")
+      {:ok, parsed} = YamlElixir.read_from_file(out)
+      assert parsed["result"]["ok"] == false
+      assert parsed["result"]["type"] == "unauthorized"
+    end
+
+    test "writes {:text, _} synthetic error to failed/<id>.yaml" do
+      id = "qf-text-#{System.unique_integer([:positive])}"
+      processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
+      File.write!(processing, "id: #{id}\n")
+
+      command = %{"id" => id, "kind" => "notify", "args" => %{}}
+      target = %{id: id, command: command}
+
+      assert :ok =
+               QueueFile.respond(target, {:text, "command timed out (>5s)"}, make_ref())
+
+      out = Path.join(Esr.Paths.admin_queue_dir(), "failed/#{id}.yaml")
+      {:ok, parsed} = YamlElixir.read_from_file(out)
+      assert parsed["result"]["error"] =~ "timed out"
+    end
+
+    test "redaction applies to args.token / args.secret / args.app_secret" do
+      id = "qf-redact-#{System.unique_integer([:positive])}"
+      processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
+      File.write!(processing, "id: #{id}\n")
+
+      command = %{
+        "id" => id,
+        "kind" => "register_adapter",
+        "args" => %{"name" => "app1", "token" => "very-secret-abc"}
+      }
+
+      target = %{id: id, command: command}
+
+      assert :ok = QueueFile.respond(target, {:ok, %{"registered" => true}}, make_ref())
+
+      out = Path.join(Esr.Paths.admin_queue_dir(), "completed/#{id}.yaml")
+      {:ok, parsed} = YamlElixir.read_from_file(out)
+      assert parsed["args"]["token"] == "[redacted_post_exec]"
+      assert parsed["args"]["name"] == "app1"
     end
   end
 
