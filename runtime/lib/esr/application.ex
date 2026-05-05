@@ -59,9 +59,16 @@ defmodule Esr.Application do
 
       # 4d.0 Sidecar.Registry — adapter_type → python_module dispatch table.
       # Replaces WorkerSupervisor's hardcoded @sidecar_dispatch (Track 0
-      # plugin work). Plugins register their sidecar mappings via manifest;
-      # Phase-1 fallbacks below preserve existing feishu/cc_mcp behaviour.
+      # plugin work). Plugins register their sidecar mappings via manifest.
       {Esr.Resource.Sidecar.Registry, []},
+
+      # 4d.0b Stateful Entity registry (PR-3.2): tracks which modules
+      # AgentSpawner should spawn per-session vs treat as stateless
+      # proxy markers. Core registers PtyProcess at boot; plugins
+      # register their stateful peers via manifest `entities:` blocks
+      # with `kind: stateful`. Started before Esr.Entity.Agent.Registry
+      # which AgentSpawner already depends on.
+      {Esr.Entity.Agent.StatefulRegistry, []},
 
       # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
       # agents.yaml-compiled definitions cache + hot-reload. Started before
@@ -215,6 +222,22 @@ defmodule Esr.Application do
         # via `load_enabled_plugins/0` below. Default-enabled list
         # (when no operator plugins.yaml exists) is `["feishu",
         # "claude_code"]` per `Esr.Plugin.EnabledList`.
+
+        # PR-3.2: register core-shipped Stateful Entities. Today the
+        # only genuinely-core stateful peer is `Esr.Entity.PtyProcess`
+        # (used by both feishu and claude_code pipelines as the actual
+        # PTY-managing per-session pid). The other three
+        # (FeishuChatProxy / FeishuAppAdapter / CCProcess) are
+        # transitional fallbacks for the period between PR-3.2 (this
+        # PR — registry exists) and PR-3.3/PR-3.6 (modules physically
+        # move to plugin dirs and the plugin Loader becomes the only
+        # writer). They mirror the old `@stateful_impls` MapSet so
+        # tests with `config :esr, :enabled_plugins, []` don't break.
+        # Idempotent — re-registering from manifests is safe.
+        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.PtyProcess)
+        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.FeishuChatProxy)
+        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.FeishuAppAdapter)
+        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.CCProcess)
 
         # PR-2.3b-2: SlashHandler is now bootstrapped via the
         # Esr.Slash.HandlerBootstrap supervision child (placed before
