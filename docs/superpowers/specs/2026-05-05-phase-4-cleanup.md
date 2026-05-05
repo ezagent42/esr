@@ -1,25 +1,13 @@
 # Phase 4 — Cleanup
-# 第四阶段 — 清理
 
-**Date / 日期:** 2026-05-05
-**Status / 状态:** Draft for user review / 草案，待用户评审。
-**Predecessor / 前序:** Phase 2 + Phase 3 must be merged first / 第二、三阶段先合并。
-**Successor / 后继:** None — cleanup tail / 收尾，无后继。
-
-> **本规格说明书采用中英双语写作（English + 中文）**: 每个大节先英文叙述，再用中文总结。
->
-> **This spec is bilingual (English + Chinese)**: each section presents English text followed by Chinese summary.
+**Date:** 2026-05-05
+**Status:** Draft for user review.
+**Predecessor:** Phase 2 + Phase 3 must be merged first.
+**Successor:** None — cleanup tail.
 
 ---
 
-## 一、Why this phase exists / 为什么需要这个阶段
-
-> **中文要点**:
-> 1-3 阶段都倾向"先加新路径再删旧路径"，每个 PR 独立可回滚 — 代价是落地后仓库里残留：(1) `Esr.Application.start/2` 中只为 stub manifest 存在的 fallback registration；(2) 已被 PR-186 in-process 自动确认替代但保留作"冗余安全网"的 bash + websocat helper；(3) Phase 1 stub manifests（voice 已删，feishu/cc 在第三阶段被覆盖）；(4) `Esr.Admin.*` 命名空间（删除 Dispatcher 后只剩 watcher，不值占顶层）；(5) `permissions_registry.json` 跨语言桥（Elixir-native CLI 直接调 registry 后无用）；(6) `main.py` 31 个 click 命令大半不在 slash schema 范围内，第二阶段没动。
->
-> 第四阶段把这些一次性收齐删，每步独立、零行为变更（新路径已在 1-3 阶段验证完整覆盖旧路径）。
-
-## 一、Why this phase exists (English elaboration)
+## 一、Why this phase exists
 
 Phases 1–3 ship transitional code. By design — they prefer "add new path, then remove old path" over big-bang rewrites, so each PR is independently reviewable, mergeable, and revertable. The cost is that after the dust settles, the repo carries:
 
@@ -50,16 +38,7 @@ Phase 4's goal is to land all of this as a single clean-up PR series, with no be
 
 ---
 
-## 二、What gets cleaned up / 清理对象清单
-
-> **中文要点（7 组清理对象）**:
-> A. `Esr.Application.start/2` 中只为 stub manifest 存在的 fallback registration（feishu/cc_mcp Sidecar fallback、`bootstrap_feishu_app_adapters/0`），第三阶段后 plugin manifest 全权接管，删 fallback。
-> B. Phase-1 stub manifests — voice 已删，feishu/cc 已被第三阶段覆盖为真 manifest，本阶段只加 CI guard 验证。
-> C. `tests/e2e/_helpers/dev_channels_unblock.sh` — PR-186 in-process FCP auto-confirm 已经替代，连续 5 次 scenario 07 通过即可删。
-> D. `Esr.Admin.*` 命名空间 — Phase 2 删 Dispatcher + 重命名 Commands 后只剩 `Esr.Admin.CommandQueue.Watcher` 和 `Esr.Admin.Supervisor`，迁到 `Esr.Slash.QueueWatcher` + `Esr.Slash.Supervisor`，命名空间空了即可删。**注意**: PendingActionsGuard 在 EsrWeb，CapGuard 在 Esr.Entity，都不在 Admin namespace（review 修正了原 spec 的错误叙述）。
-> E. `permissions_registry.json` 跨语言 dump — Elixir-native CLI 直接调 registry 后，dump 文件无消费者，删除。
-> F. Python CLI 残余（`main.py` 的 31 个 click + `daemon.py`）— 第二阶段没动是因为不在 slash schema 范围内；本阶段逐一 port 或删除（约 ~600 LOC Elixir 替换 ~1900 LOC Python，净删 ~1300 LOC）。
-> G. Python venv 整体移除 — uv tool install esr 改为 mix escript.install 或类似，operator 重装一次。
+## 二、What gets cleaned up
 
 ### Group A — `Esr.Application.start/2` plugin-specific bootstraps
 
@@ -151,9 +130,7 @@ Once Phase 4 Group F finishes, the only `py/src/esr/` survival is `runtime_bridg
 
 ---
 
-## 三、Migration order / 迁移顺序
-
-> **中文要点**: 7 个独立 PR — PR-4.1 (A 组) → PR-4.2 (C 组) → PR-4.3 (D 组) → PR-4.4 (E 组) → PR-4.5 (B 组 CI guard) → PR-4.6 (F 组按 click 子命令分批) → PR-4.7 (G 组最终 Python 删除)。**第四阶段比 1-3 阶段安全**因为只是删除，每步 e2e 全套验证。
+## 三、Migration order
 
 Phase 4 is fundamentally lower-risk than Phases 1–3 (it's just removal). Each PR can be small and independent.
 
@@ -171,14 +148,7 @@ Dependencies: PR-4.1 → PR-4.5 (verify-then-stricten); PR-4.6 → PR-4.7 (port-
 
 ---
 
-## 四、Risks & mitigations / 风险与缓解
-
-> **中文要点**:
-> - **死代码其实活着**: grep 可能漏掉 string interpolation / Code.eval / 动态 atom — 每个删除 PR 全套 e2e 验证；e2e 失败暴露隐藏调用者。
-> - **Operator 重装 surprise**: PR-4.7 Group G 改 esr 安装方式 → 一次明确迁移说明 + 弃用提示先在 Python entry-point 打印一个 minor 版本。
-> - **测试 fixture 引用已删 helper**: PR-4.2 原子地删 helper + 删 scenario-07 source 行；CI 跑 scenario 07 验证。
-> - **`Esr.Admin.*` 重命名打破 supervisor child specs**: PR-4.3 同一 diff 内做 Application.start/2 child list 编辑 + 重命名。
-> - **文档腐烂**: PR-4.3 grep `Esr.Admin\.` 在 docs/、docs/notes/、docs/operations/ 里逐一更新或删除。
+## 四、Risks & mitigations
 
 ### "Dead code" turns out alive
 
@@ -202,9 +172,7 @@ Once `Esr.Admin.*` is deleted, every doc that mentions it is wrong. Mitigation: 
 
 ---
 
-## 五、Out of scope / 不在本阶段范围
-
-> **中文要点**: 发行打包（mix release vs escript，可作为第五阶段）/ 鉴权变更 / 添加新 plugin (telegram, codex 等，本阶段后是常规产品工作) / 重写测试（已在 2-3 阶段完成）。
+## 五、Out of scope
 
 - Distribution packaging (mix release vs escript) — could be a Phase 5.
 - Auth model changes.
@@ -213,9 +181,7 @@ Once `Esr.Admin.*` is deleted, every doc that mentions it is wrong. Mitigation: 
 
 ---
 
-## 六、Open questions / 待决问题
-
-> **中文要点**: `tests/e2e/_helpers/` 是否整个目录消失（PR-4.2 实施时定）/ `scenarios/e2e-*.yaml` 引用 Python uv 路径需 PR-4.6 更新（trivial）/ `Esr.Admin.Supervisor` 终归 `Esr.Slash.Supervisor` 还是 `Esr.Supervisor` 直接子（建议 Slash.Supervisor）/ Phase 5 发行打包独立 brainstorm。
+## 六、Open questions
 
 1. **`tests/e2e/_helpers/`** — should the directory survive? If only `tools/esr-debug` is used now, the helpers dir might be empty. Decision deferred to PR-4.2 implementation.
 2. **`scenarios/e2e-*.yaml` references**: scenario yaml files reference Python `uv run` paths in their setup; PR-4.6 must update those. Easy.

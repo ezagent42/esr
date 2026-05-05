@@ -1,26 +1,13 @@
 # Phase 3 — Plugin physical migration (feishu + claude_code)
-# 第三阶段 — Plugin 物理迁移（feishu + claude_code）
 
-**Date / 日期:** 2026-05-05
-**Status / 状态:** Draft for user review / 草案，待用户评审。
-**Predecessor / 前序:** Phase 2 (`docs/superpowers/specs/2026-05-05-slash-cli-repl-elixir-native.md`) establishes the slash/CLI/REPL contract this phase consumes / 第二阶段确立了本阶段消费的 slash/CLI/REPL 契约。
-**Successor / 后继:** Phase 4 cleanup (`docs/superpowers/specs/2026-05-05-phase-4-cleanup.md`) deletes stubs / 第四阶段清理。
-
-> **本规格说明书采用中英双语写作（English + 中文）**: 每个大节先英文叙述设计意图，再用中文总结要点。
->
-> **This spec is bilingual (English + Chinese)**: each major section presents the design in English, then summarizes the key points in Chinese.
+**Date:** 2026-05-05
+**Status:** Draft for user review.
+**Predecessor:** Phase 2 (`docs/superpowers/specs/2026-05-05-slash-cli-repl-elixir-native.md`) establishes the slash/CLI/REPL contract this phase consumes.
+**Successor:** Phase 4 cleanup (`docs/superpowers/specs/2026-05-05-phase-4-cleanup.md`) deletes stubs.
 
 ---
 
-## 一、Why this phase exists / 为什么需要这个阶段
-
-> **中文要点**:
-> 第一阶段 PR-180 (2026-05-04) 已经搭好 plugin **机制**（Loader / Manifest / FragmentMerger / 5 个 admin 命令 / 三个 stub manifest）。stub 只是**声明**模块和 python sidecar 归属哪个 plugin，模块本身仍在 `runtime/lib/esr/entity/` 和 `py/src/`。本阶段把模块**物理移动**到各自 plugin 目录。
->
-> 完成后：feishu plugin 目录包含 FAA / FCP / FAP 全部 Elixir + python feishu_adapter_runner + agents.yaml fragment + slash routes；claude_code plugin 目录包含 CCProcess / CCProxy + python cc_adapter_runner（或其继任者，见 §三 Channel 抽象）+ agents.yaml fragment。core 不再引用 `Esr.Entity.FCP` / `Esr.Entity.CCProcess` 等名字。
->
-> 6 个目标：(1) feishu/cc 物理 extracted，core 在 `enabled_plugins: []` 时 boot 干净；(2) cc agent 的 agents.yaml 不再硬编码 feishu_chat_proxy（platform-specific 入站 proxy 由 Scope.Router/AgentSpawner 在 session_new 时注入）；(3) `CCProcess` 不再硬编码字符串"feishu"（改用 proxy_ctx 字段）；(4) cc_mcp 与 claude/tmux 生命周期解耦（issue 02）；(5) Channel 抽象作为 BEAM 监督的 per-session 一等 peer；(6) core/plugin 边界清晰且文档化。
-
+## 一、Why this phase exists
 
 PR-180 (Phase 1, 2026-05-04) shipped the plugin **mechanism**: Loader, Manifest parser, FragmentMerger, plugins.yaml runtime config, 5 admin commands, three stub manifests for `voice` / `feishu` / `claude_code`. The stubs **declare** modules and python sidecars but the modules themselves still live under `runtime/lib/esr/entity/` and `py/src/`.
 
@@ -50,20 +37,7 @@ Voice deletion already happens in Phase 2 PR-2.0; we never used voice and the in
 
 ---
 
-## 二、Architecture after Phase 3 / 第三阶段后的架构
-
-> **中文要点**:
-> **模块分布**：core 保留 PtyProcess（多消费者，符合 True-Resource 准则）/ Channel（新增，per-session 接管 esr-channel transport）/ Agent metamodel / SlashHandler / Scope / Resource registries / Plugin Loader。**Plugins 目录** `runtime/lib/esr/plugins/feishu/{lib,priv,python,test}/` 与 `runtime/lib/esr/plugins/claude_code/{lib,priv,python,test}/` 各自包含完整代码 + python sidecar + agents fragment。
->
-> **Channel 抽象**: 每个 session 多一个 BEAM 监督的 `Esr.Entity.Channel` peer，独占订阅 `cli:channel/<sid>`；plugin 的 MCP server peer (cc_mcp 等) 通过 HTTP 与 Channel 通信；Channel 独立于 claude/tmux 生命周期，claude 死了 cc_mcp 死了 Channel 还活着，下一条入站不会丢。
->
-> **CCProcess 解耦 = 多模块手术**（review 修正）：不只一处硬编码"feishu"，至少 4+3 处（cc_process.ex 第 131/374/385/450 + Scope.Router + ChatScope + AgentSpawner.backwire_neighbors + EsrWeb.CliChannel + Notify + Topology）。修复需多文件协同：neighbor key 从 `:feishu_chat_proxy` 改为 role-based `:platform_chat_proxy`，proxy_ctx 加 adapter_type 字段。PR-3.2 包多模块 diff。
->
-> **agents.yaml 解耦的真正落点**: 不在 Scope.Router 而在 `Esr.Session.AgentSpawner.spawn_pipeline/3`（review 修正 — Router 自 R6 后不负责 pipeline 组装）。
->
-> **`Esr.Resource.PlatformProxy.Registry` 命名错误**（review 修正）: 不符合 True-Resource 标准（"≥2 Entity types 消费"，但只有 AgentSpawner 消费）。改为 `Esr.Entity.Agent.PlatformProxyRegistry`，紧邻 Agent.Registry。
->
-> **silent-fail 风险**: `String.to_existing_atom` 加 `spawn_one` 静默 swallow nil impl — 测试 fixture 写错 module 名也能编译通过、生产静默 spawn 空 pipeline。PR-3.2 加 CI guard：grep fixture yaml 的 `impl:` 字符串，每个都用 `Code.ensure_loaded?` 验证。
+## 二、Architecture after Phase 3
 
 ### Module placement
 
@@ -271,12 +245,7 @@ This is much bigger than a single-module fix. It's still a single PR (PR-3.2) bu
 
 ---
 
-## 三、Migration order (PR sequence) / 迁移顺序（PR 序列）
-
-> **中文要点**:
-> 9 个 PR：PR-3.0 PlatformProxy registry + Loader 的 register 步骤（无行为变化）→ PR-3.1 Channel core peer（**没有 plugin 用它**，仅 unit 测试）→ PR-3.2 修 CCProcess 多处"feishu"硬编码（多模块 diff，加 silent-fail CI guard）→ PR-3.3 移 feishu Elixir → PR-3.4 移 feishu Python → PR-3.5 解耦 agents.yaml → **PR-3.6 移 cc Elixir**（顺序换了，先 Elixir 后 HTTP MCP，让 HTTP server 在最终命名空间出生）→ **PR-3.7 新 CCMcpProcess HTTP**（前置：先在 docs/issues/02 落一个 1-page ADR 决定 Q1 端口/Q3 流式/Q4 鉴权）→ PR-3.8 移 cc Python → PR-3.9 删 Application.start/2 fallback。
->
-> 各 PR 测试门：scenario 01/07 必绿；PR-3.7 新增 e2e `tests/e2e/scenarios/12_cc_mcp_survives_claude_crash.sh`。
+## 三、Migration order (PR sequence)
 
 | PR | Scope | Test gate |
 |---|---|---|
@@ -295,16 +264,7 @@ PRs are mostly sequential. PR-3.0 / 3.1 / 3.2 are independent and can ship befor
 
 ---
 
-## 四、Risks & mitigations / 风险与缓解
-
-> **中文要点**:
-> 关键风险:
-> - **模块重命名 blast radius**：feishu/cc 重命名涉及 6+ 集成测试 + 3 fixture yaml + 跨命名空间调用者（`EsrWeb.CliChannel` / `Notify` / `Topology`）+ doc。fixture yaml 的 `impl:` 是 `String.to_existing_atom` 加 `spawn_one` 静默 swallow，**fixture 写错也通过测试**。每个重命名 PR 都加 CI guard。
-> - **CCMcpProcess HTTP transport correctness**：claude `--mcp-config` 的 HTTP 模式与 stdio 模式的功能矩阵需要预先验证（streaming 是否一致）。PR-3.7 之前先做兼容性 smoke。
-> - **Operator-facing slash 命令重命名**：slash-routes.yaml 的 `command_module:` 字段升级即可，operator slash 文本不变。
-> - **`.mcp.json` 端口 lifecycle**：CCMcpProcess.init/1 必须**先于** PtyProcess.os_env 调用就绪。在 agent pipeline 声明顺序里 CCMcpProcess 排前 + Entity.Factory 顺序保证。
-> - **Auth-less localhost binding**：cc_mcp HTTP server 绑 127.0.0.1:<port>，需要 per-session token 防同主机其他进程偷调。token 通过 env / fd-pass，不要走 argv（避免进程列表泄露）。
-> - **回滚计划**：每个 PR 独立 `git revert`，PR-3.7 因 stdio path 注释保留到 PR-3.9，可单独回滚。
+## 四、Risks & mitigations
 
 ### Module rename blast radius
 
@@ -347,9 +307,7 @@ Each PR is independently reverted via `git revert`. PR-3.6 (HTTP MCP) is the onl
 
 ---
 
-## 五、Out of scope / 不在本阶段范围
-
-> **中文要点**: 第二阶段交付物（slash/CLI/REPL 统一）/ plugin 热加载 / 新 plugin 类型 (telegram/codex/...) / 发行打包 / issue 02 的 session_ids.yaml 写侧（claude --resume，正交）— 都不在第三阶段范围。
+## 五、Out of scope
 
 - Phase 2 deliverables (slash/CLI/REPL unification) — separate spec.
 - Hot-load of plugins.
@@ -359,9 +317,7 @@ Each PR is independently reverted via `git revert`. PR-3.6 (HTTP MCP) is the onl
 
 ---
 
-## 六、Open questions / 待决问题
-
-> **中文要点**: PlatformProxy registry 的 home（review 已建议改名 `Esr.Entity.Agent.PlatformProxyRegistry`）/ CCMcpProcess 端口分配策略（建议 ephemeral）/ PtyProcess 留 core（已确认）/ Channel peer 命名（保留 `Esr.Entity.Channel`）/ bootstrap_voice_pools 已在第二阶段 PR-2.0 删除，本阶段仅验证。
+## 六、Open questions
 
 1. **`platform_proxy` placement** — is a top-level Resource (`Esr.Resource.PlatformProxy.Registry`) the right home, or should it live under `Esr.Scope.Router` since only Router consumes it? Recommend Resource (matches Sidecar.Registry pattern, allows future consumers).
 2. **CCMcpProcess port allocation strategy** — bind ephemeral (let kernel pick, capture from getsockname) vs deterministic (hash session_id mod 10000+). Recommend ephemeral; simpler and avoids collisions.

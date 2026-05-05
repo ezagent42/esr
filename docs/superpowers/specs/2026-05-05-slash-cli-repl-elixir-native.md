@@ -1,26 +1,13 @@
 # Phase 2 — slash / CLI / REPL / admin unification (Elixir-native)
-# 第二阶段 — slash / CLI / REPL / admin 四路统一（Elixir 原生化）
 
-**Date / 日期:** 2026-05-05
-**Status / 状态:** Draft for user review / 草案，待用户评审。
-**Predecessor / 前序:** PR-180/181/182/183/184/185/186/187 (Phase 1 plugin foundation, 2026-05-04 / 第一阶段 plugin 基础设施)。
-**Successor / 后继:** Phase 3 (`docs/superpowers/specs/2026-05-05-plugin-physical-migration.md`) consumes this contract / 第三阶段 plugin 物理迁移消费本阶段确立的契约。
-
-> **本规格说明书采用中英双语写作（English + 中文）**: 每个大节先英文叙述设计意图，再用中文总结要点。代码块、文件路径、模块名保持英文以避免歧义。
->
-> **This spec is bilingual (English + Chinese)**: each major section presents the design in English, then summarizes the key points in Chinese. Code blocks, file paths, and module names stay in English to avoid ambiguity.
+**Date:** 2026-05-05
+**Status:** Draft for user review.
+**Predecessor:** PR-180/181/182/183/184/185/186/187 (Phase 1 plugin foundation, 2026-05-04).
+**Successor:** Phase 3 (`docs/superpowers/specs/2026-05-05-plugin-physical-migration.md`) consumes this contract.
 
 ---
 
-## 一、Why this phase exists / 为什么需要这个阶段
-
-> **中文要点**:
-> 今天有四条独立的"按 kind+args 执行"代码路径：(1) chat slash 入站、(2) admin queue 文件、(3) Python click CLI 共 ~2872 LOC、(4) 还没有 REPL。PR-21κ (2026-04-30) 已经把 Elixir 侧的 dispatch 表合并到单一 yaml schema，本阶段完成最后一步：把 dispatch *模块* 也统一，把 Python 手写 click 替换为 schema-驱动的 Elixir 原生 CLI，并新增 REPL 作为操作员默认入口。
->
-> **目标**: 单一 dispatch 路径（删 `Esr.Admin.Dispatcher`，但其独占的 cleanup_signal rendezvous + secret redaction + 文件状态机迁移到新模块 `Esr.Slash.CleanupRendezvous` + `Esr.Slash.QueueResult`）；schema 驱动的 CLI；REPL；plugin 贡献 schema 片段后自动出现在 chat / CLI / REPL 三处。
->
-> **价值不在删代码而在契约统一** — 实际净删约 100 LOC（之前误估 ~2500 是错的；review 发现 `main.py` 大部分命令不在 slash schema 范围内）。
-
+## 一、Why this phase exists
 
 Today, four separate code paths "execute a kind with args":
 
@@ -47,16 +34,7 @@ PR-21κ (2026-04-30) collapsed the Elixir-side dispatch tables into a single yam
 
 ---
 
-## 二、Architecture / 架构
-
-> **中文要点**:
-> **单一 dispatch 路径**：任意来源（chat / file / escript / REPL / HTTP）→ 生成 `SlashEnvelope { slash_text, principal_id, reply_to }` → `Esr.Entity.SlashHandler.dispatch/3` 是唯一入口 → 查 `SlashRoute.Registry` → 检查 capability → 调 `command_module.execute/2` → 通过 `reply_to` 把结果送回。
->
-> **`reply_to` 抽象成 behaviour**：`Esr.Slash.ReplyTarget` 接口，4 个实现 — `ChatPid`（chat 出站）/ `QueueFile`（写 yaml 文件）/ `IO`（escript 单次执行打印 stdout）/ `WS`（REPL 通过 Phoenix.Channel 推送）。
->
-> **`Admin.Dispatcher` 不是简单 duplicate**：它独占 3 个职责（cleanup_signal rendezvous、result 时的 secret 脱敏、pending→processing→completed 的文件状态机），需要拆分迁移到新的 `Esr.Slash.CleanupRendezvous` + `Esr.Slash.QueueResult` 模块。
->
-> **`internal_kinds:` 不能扁平合并到 `slashes:`**：会改变安全边界（grant/revoke 等 operator-only 命令将变成 chat 可调用，凡是有 cap.manage 的人能在 chat 里给自己授权，提权风险）。保留 internal_kinds 作为独立子命名空间。
+## 二、Architecture
 
 ### Single dispatch path
 
@@ -200,12 +178,7 @@ Implementation: Elixir-native using `IO.gets/1` + ANSI escape codes for autocomp
 
 ---
 
-## 三、Migration order (PR sequence) / 迁移顺序（PR 序列）
-
-> **中文要点**:
-> 10 个独立可合并的 PR：PR-2.0 删 voice → PR-2.1 schema dump endpoint → PR-2.2 ReplyTarget behaviour → PR-2.3a 新模块 `CleanupRendezvous` + `QueueResult`（Dispatcher 仍存在，并行路径）→ PR-2.3b 删 Dispatcher，watcher 重写 → PR-2.4 重命名 `Esr.Admin.Commands.*` → `Esr.Commands.*` → PR-2.5 escript 骨架 → PR-2.6 daemon lifecycle → PR-2.7 e2e 脚本逐一迁移（**不是 sed 而是手工语义重映射**，约 22 个调用点）→ PR-2.8 REPL → PR-2.9 删 Python CLI 子集（约 1100 LOC，不是 2200 — review 修正）。
->
-> **PR-2.3 必须拆 a/b**：原方案 PR-2.3 不能独立 green，因为 10+ 测试文件 `Process.whereis(Esr.Admin.Dispatcher)` 引用它。a 引入新模块（与旧并行），b 删旧模块（同步更新测试）。
+## 三、Migration order (PR sequence)
 
 Each PR is independently mergeable. dev → main promotion happens after the chain.
 
@@ -237,16 +210,7 @@ New code: ~400 LOC `Esr.Cli` escript + ~200 LOC REPL + ~80 LOC `CleanupRendezvou
 
 ---
 
-## 四、Risks & mitigations / 风险与缓解
-
-> **中文要点**:
-> 关键风险:
-> - **YAML 注释保留**：`esr cap grant` 当前用 ruamel 保留 capabilities.yaml 的 11 行说明性注释 header；Elixir yaml_elixir 不保留。**对策**: 头部模板重新发出（kubectl 用同样模式）。
-> - **escript 启动开销**：约 200-500ms 冷启动；shell 循环里跑 `esr exec` 会有感。建议 REPL 作为默认操作员入口避免冷启动反复。
-> - **REPL line editing**: edlin vs rlwrap，先尝试 edlin 风格，必要时回退 rlwrap。
-> - **operator 肌肉记忆**：旧命令名（`esr cap list`, `esr admin submit foo`, `esr notify`）保留为 alias，零关学习。
-> - **预编译脚本兼容**：现有 `esr admin submit foo --arg bar=baz` 通过 escript 内 alias 直通，无需脚本改动。
-> - **回滚计划**：每个 PR 独立 git revert；只有 PR-2.9（Python 删除）需要走 git restore，标准流程。
+## 四、Risks & mitigations
 
 ### YAML comment preservation
 
@@ -286,10 +250,7 @@ Each PR independently rollback-able via `git revert` until PR-2.9 (Python deleti
 
 ---
 
-## 五、Plugin contract for Phase 3 / 给第三阶段提供的 plugin 契约
-
-> **中文要点**:
-> 第三阶段的 plugins 通过 3 个机制消费第二阶段的契约：(1) plugin manifest 的 `slash_routes:` 片段被 FragmentMerger 合进 `SlashRoute.Registry`；(2) plugin 的 `Esr.Commands.<Plugin>.<Cmd>` 模块被 Loader 加进 dispatch 表；(3) 因为 schema 是单一来源，plugin 的命令**自动**出现在 `esr help` / `esr describe-slashes --json` / REPL 自动补全 / `esr exec /<plugin-cmd>`，**零额外代码**。这就是为什么"plugin → 自动 slash + CLI + REPL"不是 over-engineering — 就是 schema 单一来源的自然推论。
+## 五、Plugin contract for Phase 3
 
 Phase 3 plugins consume the Phase 2 contract by:
 
@@ -301,9 +262,7 @@ This is what makes "plugin → automatic CLI + REPL + slash" not over-kill: the 
 
 ---
 
-## 六、Out of scope / 不在本阶段范围
-
-> **中文要点**: plugin 物理迁移（第三阶段）/ Channel 抽象（第三阶段 PR-3.7）/ 鉴权模型变更（独立 brainstorm）/ HTTP 同步 slash exec（第三阶段 channel 落地后再考虑）/ 发行打包 mix release vs escript（第四阶段清理时决定）— 都不在第二阶段范围。
+## 六、Out of scope
 
 Listed so reviewers can confirm the scope:
 
@@ -315,9 +274,7 @@ Listed so reviewers can confirm the scope:
 
 ---
 
-## 七、Open questions / 待决问题
-
-> **中文要点**: REPL line editing (edlin/rlwrap) 实施时定 / `esr admin submit` alias 永久保留还是后期 deprecate（建议永久）/ schema dump endpoint 鉴权（include_internal=1 需 token）/ 文件状态机 ownership（已在前文解决：归 `Esr.Slash.QueueResult`）。
+## 七、Open questions
 
 1. **REPL line editing**: edlin vs rlwrap — start with edlin, fall back to rlwrap if friction high. Decision deferred to PR-2.8 implementation.
 2. **`esr admin submit` alias retention**: keep forever for backwards-compat OR deprecate after 1 release? Recommend keep forever — it's free and operators have it in scripts/wikis.
