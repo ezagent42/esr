@@ -100,25 +100,8 @@ defmodule EsrWeb.CliChannel do
   # migrated to Esr.Commands.Deadletter.{List,Flush}. Bodies deleted —
   # see docs/notes/2026-05-05-cli-channel-migration.md.
 
-  def dispatch("cli:adapter/start/" <> adapter_type, payload) when is_binary(adapter_type) do
-    instance_id = Map.get(payload, "instance_id")
-    config = Map.get(payload, "config") || %{}
-
-    if is_binary(instance_id) and instance_id != "" do
-      url =
-        "ws://127.0.0.1:" <>
-          Integer.to_string(phoenix_port()) <>
-          "/adapter_hub/socket/websocket?vsn=2.0.0"
-
-      case Esr.WorkerSupervisor.ensure_adapter(adapter_type, instance_id, config, url) do
-        :ok -> %{"data" => %{"ok" => true, "spawned" => true}}
-        :already_running -> %{"data" => %{"ok" => true, "spawned" => false}}
-        {:error, reason} -> %{"data" => %{"ok" => false, "reason" => inspect(reason)}}
-      end
-    else
-      %{"data" => %{"ok" => false, "reason" => "instance_id missing"}}
-    end
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:adapter/start/<type>
+  # migrated to Esr.Commands.Adapter.Start.
 
   # 2026-05-05 cli-channel→slash migration: cli:trace migrated to
   # Esr.Commands.Trace.
@@ -153,129 +136,10 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing arg: workspace_name"}}
   end
 
-  # PR-K 2026-04-28 / fixed in PR-L: re-run the boot-time adapters
-  # bootstrap without an esrd restart so `esr adapter add` can spawn
-  # both halves of a feishu instance — the Python adapter sidecar
-  # (via WorkerSupervisor.ensure_adapter) AND the FAA peer (via
-  # Scope.Admin.bootstrap_feishu_app_adapters). PR-K shipped only
-  # the FAA half; the missing Python subprocess made
-  # ESR开发助手's first add appear partial. Both calls are idempotent.
-  def dispatch("cli:adapters/refresh", _payload) do
-    # PR-M: don't pattern-match `:ok =` — restore_adapters_from_disk
-    # returns the list of for-loop results when adapters.yaml has
-    # entries, not the atom `:ok`. Drop the return value entirely.
-    _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-    _ = Esr.Plugins.Feishu.Bootstrap.bootstrap()
-    %{"data" => %{"ok" => true}}
-  end
-
-  # PR-L 2026-04-28: counterpart to cli:adapters/refresh — operator
-  # wants to remove an adapter. Three steps in this order:
-  #   1. Terminate the Python sidecar (WorkerSupervisor.terminate_adapter)
-  #   2. Terminate the Elixir FAA peer (Scope.Admin.terminate_feishu_app_adapter)
-  #   3. Remove the entry from adapters.yaml (so a future esrd boot
-  #      doesn't respawn it from disk)
-  # Fails clearly if the entry is missing — caller can decide how to
-  # surface that. Only `feishu` adapters are supported in v1; other
-  # types skip the FAA-peer step.
-  def dispatch("cli:adapters/remove", %{"instance_id" => instance_id})
-      when is_binary(instance_id) and instance_id != "" do
-    path = Esr.Paths.adapters_yaml()
-
-    case read_adapters_yaml(path, instance_id) do
-      {:ok, doc, instance} ->
-        type = instance["type"] || "unknown"
-
-        _ = Esr.WorkerSupervisor.terminate_adapter(type, instance_id)
-
-        if type == "feishu" do
-          _ = Esr.Scope.Admin.terminate_feishu_app_adapter(instance_id)
-        end
-
-        new_doc = update_in(doc, ["instances"], &Map.delete(&1 || %{}, instance_id))
-        :ok = Esr.Yaml.Writer.write(path, new_doc)
-
-        %{"data" => %{"ok" => true, "instance_id" => instance_id, "type" => type}}
-
-      {:error, :not_found} ->
-        %{"data" => %{"ok" => false, "error" => "unknown_instance: #{instance_id}"}}
-
-      {:error, reason} ->
-        %{"data" => %{"ok" => false, "error" => "yaml_read_failed: #{inspect(reason)}"}}
-    end
-  end
-
-  def dispatch("cli:adapters/remove", _payload) do
-    %{"data" => %{"ok" => false, "error" => "missing instance_id"}}
-  end
-
-  # PR-O 2026-04-28: rename an adapter instance from `old` to `new`.
-  # Same blast radius as remove + add: terminate the running peer +
-  # subprocess under the old name, rewrite adapters.yaml with the new
-  # key, then refresh to spawn under the new name. New name is
-  # validated server-side too so a misconfigured CLI can't smuggle
-  # bad bytes into the runtime.
-  def dispatch("cli:adapters/rename", %{"old_instance_id" => old, "new_instance_id" => new})
-      when is_binary(old) and old != "" and is_binary(new) and new != "" do
-    cond do
-      not Regex.match?(~r/^[A-Za-z][A-Za-z0-9_-]{0,62}$/, new) ->
-        %{"data" => %{"ok" => false, "error" => "invalid_new_name: #{new}"}}
-
-      old == new ->
-        %{"data" => %{"ok" => false, "error" => "old_and_new_match"}}
-
-      true ->
-        path = Esr.Paths.adapters_yaml()
-
-        case read_adapters_yaml(path, old) do
-          {:ok, doc, instance} ->
-            instances = doc["instances"] || %{}
-
-            if Map.has_key?(instances, new) do
-              %{"data" => %{"ok" => false, "error" => "new_name_already_exists: #{new}"}}
-            else
-              type = instance["type"] || "unknown"
-
-              # 1. Terminate old running children (if any).
-              _ = Esr.WorkerSupervisor.terminate_adapter(type, old)
-
-              if type == "feishu" do
-                _ = Esr.Scope.Admin.terminate_feishu_app_adapter(old)
-              end
-
-              # 2. Rewrite adapters.yaml with the new key.
-              new_instances =
-                instances
-                |> Map.delete(old)
-                |> Map.put(new, instance)
-
-              new_doc = Map.put(doc, "instances", new_instances)
-              :ok = Esr.Yaml.Writer.write(path, new_doc)
-
-              # 3. Refresh to spawn under the new name.
-              _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-              _ = Esr.Plugins.Feishu.Bootstrap.bootstrap()
-
-              %{"data" => %{
-                "ok" => true,
-                "old_instance_id" => old,
-                "new_instance_id" => new,
-                "type" => type
-              }}
-            end
-
-          {:error, :not_found} ->
-            %{"data" => %{"ok" => false, "error" => "unknown_instance: #{old}"}}
-
-          {:error, reason} ->
-            %{"data" => %{"ok" => false, "error" => "yaml_read_failed: #{inspect(reason)}"}}
-        end
-    end
-  end
-
-  def dispatch("cli:adapters/rename", _payload) do
-    %{"data" => %{"ok" => false, "error" => "missing old_instance_id and/or new_instance_id"}}
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:adapters/{refresh,remove,
+  # rename} migrated to Esr.Commands.Adapter.{Refresh,Remove,Rename}.
+  # The `read_adapters_yaml` private helper that backed remove+rename is
+  # now inlined in each command module.
 
   def dispatch("cli:workspace/register", payload) do
     alias Esr.Resource.Workspace.Registry, as: WorkspacesReg
@@ -316,34 +180,6 @@ defmodule EsrWeb.CliChannel do
     # matches every other dispatch ({"data" => ...}) so the CLI helpers
     # surface the error string via their existing data.get("error") paths.
     %{"data" => %{"error" => "unknown_topic: #{topic}"}}
-  end
-
-  # PR-L 2026-04-28: helper for cli:adapters/remove — reads adapters.yaml
-  # and returns either {:ok, doc, instance_map} when the named instance
-  # exists, {:error, :not_found} when it doesn't, or {:error, reason}
-  # when the file is missing/malformed. Pure I/O wrapper; no side effects.
-  defp read_adapters_yaml(path, instance_id) do
-    cond do
-      not File.exists?(path) ->
-        {:error, :not_found}
-
-      true ->
-        case YamlElixir.read_from_file(path) do
-          {:ok, doc} when is_map(doc) ->
-            instances = doc["instances"] || %{}
-
-            case Map.get(instances, instance_id) do
-              nil -> {:error, :not_found}
-              instance when is_map(instance) -> {:ok, doc, instance}
-            end
-
-          {:ok, _} ->
-            {:error, :malformed_yaml}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-    end
   end
 
   # PR-F 2026-04-28: workspace-for-LLM filter. Allowlist top-level
@@ -391,10 +227,4 @@ defmodule EsrWeb.CliChannel do
     end)
   end
 
-  defp phoenix_port do
-    case EsrWeb.Endpoint.config(:http) do
-      opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
-      _ -> 4001
-    end
-  end
 end

@@ -349,6 +349,24 @@ internal_kinds:
     permission: null
     command_module: "Esr.Commands.Trace"
 
+  # 2026-05-05 cli-channel→slash migration step 7: adapter family
+  # (start / refresh / remove / rename) gated by `adapter.manage`.
+  adapter_start:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Start"
+
+  adapter_refresh:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Refresh"
+
+  adapter_remove:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Remove"
+
+  adapter_rename:
+    permission: "adapter.manage"
+    command_module: "Esr.Commands.Adapter.Rename"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"
