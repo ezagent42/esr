@@ -1,7 +1,9 @@
-# e2e CLI dual-rail (Phase A — 2026-05-05)
+# e2e CLI rail history (Phase A → C — 2026-05-05)
 
-**Status:** infrastructure landed. Escript rail is **expected to be red**
-on most assertions today — that's the migration progress gate.
+**Status:** Phase C deleted the Python rail. `runtime/esr` (Elixir
+escript) is the canonical operator CLI; `esr_cli` in common.sh is now
+escript-only. The dual-rail history below is preserved as the record
+of how the migration was verified.
 
 ## Why this exists
 
@@ -93,15 +95,19 @@ section), the predicted red set:
 The point of the PR isn't to fix these. The point is to make them
 **measurable**. Phase B PRs each turn one assertion green.
 
-## What this PR does not do
+## Phase progression (2026-05-05 autonomous run)
 
-- **Does not auto-discover** the esrd port from the port file in
-  the escript itself — the helper does it, but `esr` binary still
-  reads `ESR_HOST` only. Phase B follow-up.
-- **Does not align output format** between Python and escript.
-  Phase B-1.
-- **Does not add new slash routes.** That's Phase B-1 through B-4.
-- **Does not delete any Python CLI code.** That's Phase C.
+| Phase | PR | Outcome |
+|---|---|---|
+| A   | #211 | dual-rail switch + `RUN_VIA={python,escript}` toggle |
+| B-1 | #212 | escript `render_result/1` aligned to Python YAML envelope; `/actors` slash route |
+| D-1 | #213 | deleted hardcoded `StatefulRegistry.register/1` fallbacks; Loader is canonical |
+| B-2 | #214 | escript click-style flag parser + `/cap {list,show,who-can,grant,revoke}` |
+| B-3 | #215 | `/users {list,add,remove,bind-feishu,unbind-feishu}` + `user.manage` permission |
+| C   | #216 | **deleted `py/src/esr/cli/`** + `[project.scripts] esr` entry; e2e default rail flipped to escript-only |
+
+After Phase C `esr_cli` rejects `RUN_VIA=python` with a hard error so
+a stale CI config can't silently degrade.
 
 ## Files touched
 
