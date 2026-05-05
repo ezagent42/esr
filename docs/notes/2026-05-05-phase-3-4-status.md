@@ -25,17 +25,27 @@ as standalone follow-ups.
 
 ### Why PR-3.5 was cut
 
-The spec motivated PR-3.5 as "decouple cc_mcp lifecycle from claude
-tmux." That motivation came from pre-PR-22/PR-24 ghost-session pain.
-Post PR-22/PR-24:
-- claude runs under `Esr.Entity.PtyProcess` (BEAM-managed PTY).
-- attach link is binary WebSocket (Phoenix.Channel reconnects).
+**Correction (post-review):** an earlier draft of this note claimed
+PR-22/PR-24 made HTTP MCP "mostly obsolete." That was wrong.
+PR-22/PR-24 fixed PTY *attach* lifecycle (BEAM-managed PTY +
+binary-WS reconnects); they did **not** address cc_mcp lifecycle.
 
-The lifecycle pain HTTP MCP would address is now mostly obsolete.
-Replacing stdio MCP with HTTP would introduce a new transport layer
-(server, retry, auth, idempotency) for a problem that no longer
-materially harms operators. Treat as a separate optimization
-project if/when it resurfaces.
+The accurate status: cc_mcp is still a stdio child of `claude`,
+spawned per `.mcp.json` `command: "python -m esr_cc_mcp.channel"`.
+It dies with claude, restarts on every claude relaunch, and any
+in-flight notification mid-restart is dropped — exactly the
+coupling PR-3.5 was meant to break.
+
+Per Claude Code channel docs (`docs/notes/claude-code-channels-reference.md`),
+`.mcp.json` does support `url:` for remote HTTP/SSE MCP servers,
+so the migration is technically feasible: esrd would host an MCP
+server endpoint, claude would connect to it as a remote channel
+instead of spawning a local stdio child.
+
+PR-3.5 was cut **for scope reasons**, not because the underlying
+problem is solved. Treat as live debt — promote when cc_mcp
+lifecycle pain resurfaces or when a feature wants channel state
+to survive claude relaunch.
 
 ### Why PR-3.4 was deferred
 
@@ -55,7 +65,7 @@ is a single-point coupling, not an architectural problem.
 
 | PR | # | Subject | Status |
 |---|---|---|---|
-| PR-4.1 | — | `Esr.Application.start/2` plugin-specific bootstraps | ✅ Mostly subsumed |
+| PR-4.1 | — | `Esr.Application.start/2` plugin-specific bootstraps | ⚠️ Partial — feishu residue remains |
 | PR-4.2 | — | Delete `dev_channels_unblock.sh` | ✅ Done in Option A (#191) |
 | PR-4.3 | #208 | Move `Esr.Admin.{Supervisor,CommandQueue.*}` → `Esr.Slash.*` | ✅ Shipped |
 | PR-4.4 | #209 | Drop `permissions_registry.json` cross-language dump | ✅ Shipped |
@@ -63,8 +73,9 @@ is a single-point coupling, not an architectural problem.
 | PR-4.6 | — | Per-command Python CLI port to escript | ⏸️ Deferred |
 | PR-4.7 | — | Delete `py/src/esr/cli/` venv | ⏸️ Depends on PR-4.6 |
 
-**4 of 7 shipped (PR-4.1 was already done by earlier work; PR-4.2
-by Option A audit cleanup). 3 deferred.**
+**3 of 7 shipped, 1 partial (PR-4.1 — feishu bootstrap residue
+remains in core), 3 deferred. PR-4.6 + PR-4.7 represent the bulk
+of Phase 4's actual work and remain entirely untouched.**
 
 ### PR-4.1 status
 
@@ -119,10 +130,11 @@ CLIs available and can migrate at their own pace.
    appear in `esr help` automatically — zero CLI changes needed.
 3. **DI at every reply boundary.** `Esr.Slash.ReplyTarget`
    (ChatPid / IO / QueueFile / WS).
-4. **Plugin module isolation.** feishu modules live in
-   `runtime/lib/esr/plugins/feishu/`; cc modules in
-   `runtime/lib/esr/plugins/claude_code/`. Core code under
-   `runtime/lib/esr/{entity,scope,resource}/` is plugin-agnostic.
+4. **Plugin *module files* live under `plugins/<name>/`.** feishu
+   modules live in `runtime/lib/esr/plugins/feishu/`; cc modules
+   in `runtime/lib/esr/plugins/claude_code/`. Core code under
+   `runtime/lib/esr/{entity,scope,resource}/` no longer holds
+   plugin module *files*.
 5. **Stateful peer registry.** `Esr.Entity.Agent.StatefulRegistry`
    replaces compile-time MapSet. Plugin manifests declare their
    stateful peers via `entities: [{module: ..., kind: stateful}]`.
@@ -130,21 +142,58 @@ CLIs available and can migrate at their own pace.
    QueueWatcher + QueueJanitor + ReplyTarget + CleanupRendezvous +
    QueueResult + HandlerBootstrap. The `Esr.Admin.*` namespace
    contains only the permissions-declaration façade module.
-7. **No Python venv dependency for core CLI surface.** The
-   `esr` escript handles all spec-defined operator commands without
-   any Python dependency.
+7. **`esr` escript covers spec-defined CORE operator surface.**
+   `exec`, `help`, `describe-slashes`, `daemon`, `admin submit`,
+   `notify` work without Python. The escript is plugin-agnostic
+   — new plugin slash routes appear automatically.
+
+## What's NOT true after this run
+
+The earlier draft of this note overstated the extent of plugin
+isolation and Phase 4 progress. The accurate gaps:
+
+1. **Feishu lifecycle still owned by core.**
+   `Esr.Scope.Admin.bootstrap_feishu_app_adapters/0` is still
+   defined in `runtime/lib/esr/scope/admin.ex` and still called
+   from `Esr.Application.start/2`. File relocation was done in
+   PR-3.3; *lifecycle ownership* migration is PR-3.4 (deferred).
+   A future developer cannot ship a feishu-only change without
+   touching core until PR-3.4 lands.
+2. **cc_mcp lifecycle still coupled to claude.** cc_mcp runs as
+   a stdio child of `claude` (per `.mcp.json` `command:`),
+   restarting on every claude relaunch. PR-3.5 (HTTP MCP
+   transport, esrd-hosted) remains the planned remediation.
+3. **Python CLI is fully intact.** `py/src/esr/cli/main.py`
+   (1618 LOC, 31 click commands) is unchanged. The Elixir
+   escript covers ~6 spec-defined core commands; the remaining
+   ~25 click commands (admin subset, cap subset, users, notify
+   variants, adapter, reload, etc.) are still Python-only.
+   PR-4.6 (per-command port) and PR-4.7 (venv removal) are the
+   bulk of Phase 4 and remain entirely untouched.
+4. **`permissions_registry.json` is gone but `cap.py` consumer
+   is stale.** PR-4.4 dropped the boot-time JSON dump; Python
+   `esr cap list` still reads any pre-existing file but data
+   ages until PR-4.6 ports the command or PR-4.7 deletes the
+   Python CLI.
 
 ## Follow-up work
 
 - **PR-3.4 / PR-4.1 residue**: feishu plugin startup hook (plugin
-  lifecycle infrastructure).
-- **PR-3.5**: HTTP MCP transport (only if cc_mcp lifecycle pain
-  resurfaces).
+  lifecycle infrastructure). Closes the "feishu still in core"
+  leak above. This is the highest-priority debt — it directly
+  contradicts the North Star ("feishu changes don't touch core").
+- **PR-3.5**: HTTP MCP transport. cc_mcp lifecycle is still
+  coupled to claude; this is *not* solved by PR-22/PR-24.
+  Promote when channel-state-survives-claude-relaunch is needed.
 - **PR-4.5**: manifest CI guard (small tooling PR).
 - **PR-4.6 + PR-4.7**: Python CLI per-command port + venv removal
-  (~14 sub-PRs of focused per-command surgery; the operator's core
-  surface is already covered by the escript).
+  (~14 sub-PRs of focused per-command surgery). The escript
+  covers ~6 of 31 click commands; ~25 commands remain Python-only.
+  Until PR-4.6/4.7 land, "no Python venv dependency" is true
+  *only* for the spec-defined core operator surface, not for the
+  full operator CLI.
 
-These remain in `docs/futures/todo.md` for future cycles. None
-block the current architecture from being used and validated by
-operators.
+These remain in `docs/futures/todo.md` for future cycles. The
+current architecture is usable by operators, but the North Star
+("future developers work on different plugins without coordination")
+is not yet achieved — PR-3.4 specifically blocks it for feishu.
