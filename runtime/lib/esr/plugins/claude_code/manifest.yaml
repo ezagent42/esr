@@ -1,12 +1,7 @@
-# Claude Code plugin manifest (Track 3, plugin extraction Phase 1).
+# Claude Code plugin manifest.
 #
-# Phase 1 (this commit): manifest declares what's already in core.
-# CCProcess + CCProxy + cc_mcp Python sidecar currently live in
-# core; they will physically move into this directory in Phase 2.
-#
-# Note on PtyProcess: per spec "Plugin → Core direction" principle,
-# PtyProcess stays in core (it's a generic mechanism). Plugin/cc
-# spawns a PtyProcess for its claude binary by calling
+# PtyProcess stays in core (generic mechanism). The cc plugin spawns
+# a PtyProcess for its claude binary by calling
 # `Esr.Entity.PtyProcess.start_link(cmd: ...)` — no plugin-specific
 # extension required.
 #
@@ -15,11 +10,14 @@
 name: claude_code
 version: 0.1.0
 description: |
-  Claude Code (CC) integration: cc_mcp adapter for the Anthropic MCP
-  protocol, CCProcess for session lifecycle, CCProxy for streaming
-  reply directives. Spawns a claude binary inside a core-provided
-  PtyProcess; the cc agent_def in agents.yaml wires the pipeline
-  (PtyProcess + CCProcess + CCProxy + cc_mcp).
+  Claude Code (CC) integration. CCProcess drives session lifecycle;
+  CCProxy streams reply directives. Spawns a claude binary inside a
+  core-provided PtyProcess; the cc agent_def in agents.yaml wires the
+  pipeline (PtyProcess + CCProcess + CCProxy). The MCP server claude
+  uses to push notifications and accept tool calls is hosted by
+  `EsrWeb.McpController` (PR-3.5, 2026-05-05) — no separate Python
+  sidecar; .mcp.json points claude at the esrd HTTP endpoint
+  directly.
 
 depends_on:
   core: ">= 0.1.0"
@@ -33,9 +31,5 @@ declares:
     - module: Esr.Entity.CCProxy
       kind: proxy
 
-  # Injection #12 — python sidecar. Phase 1 keeps the fallback
-  # registration in core's Application.start/2; Phase 2 moves source-
-  # of-truth here.
-  python_sidecars:
-    - adapter_type: cc_mcp
-      python_module: cc_adapter_runner
+  # No python_sidecars — PR-3.5 (2026-05-05) deleted adapters/cc_mcp/.
+  # The MCP server is now esrd-hosted (Elixir, EsrWeb.McpController).
