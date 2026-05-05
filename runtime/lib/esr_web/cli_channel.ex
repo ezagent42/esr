@@ -174,17 +174,8 @@ defmodule EsrWeb.CliChannel do
     }
   end
 
-  def dispatch("cli:debug/pause", %{"actor_id" => actor_id}) when is_binary(actor_id) do
-    debug_toggle(actor_id, :pause)
-  end
-
-  def dispatch("cli:debug/resume", %{"actor_id" => actor_id}) when is_binary(actor_id) do
-    debug_toggle(actor_id, :resume)
-  end
-
-  def dispatch("cli:debug/" <> _op, _payload) do
-    %{"data" => %{"error" => "missing 'actor_id' in payload"}}
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:debug/{pause,resume}
+  # migrated to Esr.Commands.Debug.{Pause,Resume}.
 
   # 2026-05-05 cli-channel→slash migration: cli:deadletter/{list,flush}
   # migrated to Esr.Commands.Deadletter.{List,Flush}. Bodies deleted —
@@ -491,24 +482,6 @@ defmodule EsrWeb.CliChannel do
           []
       end
     end)
-  end
-
-  @spec debug_toggle(String.t(), :pause | :resume) :: map()
-  defp debug_toggle(actor_id, op) do
-    case Esr.Entity.Registry.lookup(actor_id) do
-      {:ok, _pid} ->
-        :ok =
-          case op do
-            :pause -> Esr.Entity.Server.pause(actor_id)
-            :resume -> Esr.Entity.Server.resume(actor_id)
-          end
-
-        snap = Esr.Entity.Server.describe(actor_id)
-        %{"data" => %{"actor_id" => actor_id, "paused" => snap.paused}}
-
-      :error ->
-        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
-    end
   end
 
   @spec serialise_telemetry_event(TelemetryEvent.t()) :: map()

@@ -329,6 +329,14 @@ internal_kinds:
     permission: "runtime.deadletter"
     command_module: "Esr.Commands.Deadletter.Flush"
 
+  debug_pause:
+    permission: "runtime.debug"
+    command_module: "Esr.Commands.Debug.Pause"
+
+  debug_resume:
+    permission: "runtime.debug"
+    command_module: "Esr.Commands.Debug.Resume"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"

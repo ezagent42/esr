@@ -34,8 +34,10 @@ defmodule Esr.Resource.Permission.Bootstrap do
     # bind-feishu/unbind-feishu. Read-only `user_list` is permission-less.
     {"user.manage", Esr.Entity.User.Registry},
     # 2026-05-05 cli-channel→slash migration: runtime.deadletter gates
-    # deadletter_list / deadletter_flush.
-    {"runtime.deadletter", Esr.Resource.DeadLetter.Queue}
+    # deadletter_list / deadletter_flush. runtime.debug gates
+    # debug_pause / debug_resume (actor :sys.suspend toggles).
+    {"runtime.deadletter", Esr.Resource.DeadLetter.Queue},
+    {"runtime.debug", Esr.Entity.Server}
   ]
 
   @doc """
