@@ -19,7 +19,9 @@ defmodule Esr.Commands.NotifyTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Notify
-  alias Esr.Admin.Dispatcher
+  alias Esr.Entity.SlashHandler
+  alias Esr.Slash.QueueResult
+  alias Esr.Slash.ReplyTarget.QueueFile
   alias Esr.Scope
   alias Esr.Resource.Capability.Grants
 
@@ -42,13 +44,10 @@ defmodule Esr.Commands.NotifyTest do
     prior_grants = snapshot_grants()
     Grants.load_snapshot(Map.put(prior_grants, @test_principal, ["*"]))
 
-    # Esr.Admin.SupervisorTest can leave the app-level Admin.Supervisor
-    # in a terminated state (it calls Supervisor.terminate_child on it
-    # and then starts a test-local replacement that dies with the test
-    # process). When this test suite runs next, Esr.Admin.Dispatcher may
-    # no longer be registered. Restart the app-level child so the named
-    # process exists before we cast into it.
-    ensure_admin_dispatcher()
+    # PR-2.3b-2: SlashHandler is the dispatch engine. Make sure it's
+    # alive (the SupervisorTest can leave the Application's Admin tree
+    # torn down).
+    ensure_slash_handler()
 
     on_exit(fn ->
       Grants.load_snapshot(prior_grants)
@@ -71,22 +70,14 @@ defmodule Esr.Commands.NotifyTest do
     topic
   end
 
-  # If the app-level Admin.Supervisor was torn down (by the supervisor
-  # test) or never started, restart it so Esr.Admin.Dispatcher is alive
-  # and registered under its named pid before any test casts into it.
-  defp ensure_admin_dispatcher do
-    if Process.whereis(Esr.Admin.Dispatcher) == nil do
-      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Admin.Supervisor)
-      # Restart may return {:error, :running} if another test just
-      # revived it, or {:error, :not_found} if it was never a child
-      # (shouldn't happen — Application always lists it). Fall back to
-      # start_supervised!-style direct start in either odd case.
-      if Process.whereis(Esr.Admin.Dispatcher) == nil do
-        {:ok, _} = Esr.Admin.Supervisor.start_link([])
-      end
+  # PR-2.3b-2: SlashHandler is registered under :slash_handler in
+  # Scope.Admin.Process; if a previous test tore it down, re-bootstrap.
+  defp ensure_slash_handler do
+    case Esr.Scope.Admin.Process.slash_handler_ref() do
+      {:ok, _pid} -> :ok
+      :error ->
+        :ok = Esr.Scope.Admin.bootstrap_slash_handler()
     end
-
-    :ok
   end
 
   describe "Notify.execute/1 unit" do
@@ -122,22 +113,13 @@ defmodule Esr.Commands.NotifyTest do
     end
   end
 
-  describe "Dispatcher → Notify end-to-end (direct cast)" do
-    test "happy path — pending file ends up in completed/ with result", %{tmp: tmp} do
+  describe "SlashHandler → Notify end-to-end (PR-2.3b-2 unified path)" do
+    test "happy path — processing file ends up in completed/ with result", %{tmp: tmp} do
       _topic = register_fake_feishu_adapter("e2e_#{System.unique_integer([:positive])}")
 
       id = "01ARZTEST#{System.unique_integer([:positive])}"
-      pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])
+      processing = Path.join([tmp, "default/admin_queue/processing", "#{id}.yaml"])
       completed = Path.join([tmp, "default/admin_queue/completed", "#{id}.yaml"])
-
-      File.write!(pending, """
-      id: #{id}
-      kind: notify
-      submitted_by: #{@test_principal}
-      args:
-        to: ou_receiver_e2e
-        text: hello-from-queue
-      """)
 
       command = %{
         "id" => id,
@@ -146,23 +128,19 @@ defmodule Esr.Commands.NotifyTest do
         "args" => %{"to" => "ou_receiver_e2e", "text" => "hello-from-queue"}
       }
 
-      GenServer.cast(Dispatcher, {:execute, command, {:reply_to, {:file, completed}}})
+      # Mirror Watcher's flow: write pending file, move to processing,
+      # then dispatch via SlashHandler with QueueFile target.
+      File.write!(processing, "id: #{id}\nkind: notify\n")
 
-      # Directive should arrive within a reasonable window (Task.start +
-      # broadcast is effectively synchronous in the test process).
+      target = {QueueFile, %{id: id, command: command}}
+      _ = SlashHandler.dispatch_command(command, target)
+
       assert_receive {:directive,
                       %{"args" => %{"text" => "hello-from-queue"}}},
                      2_000
 
-      # The Dispatcher's handle_info may run slightly after the Task
-      # broadcasts; give it a beat and poll for the completed file.
       assert wait_for_file(completed, 2_000), "expected #{completed} to exist"
-      refute File.exists?(pending), "pending file should have been renamed away"
-
-      refute File.exists?(
-               Path.join([tmp, "default/admin_queue/processing", "#{id}.yaml"])
-             ),
-             "processing file should have been cleared"
+      refute File.exists?(processing), "processing file should have been moved"
 
       {:ok, doc} = YamlElixir.read_from_file(completed)
       assert doc["id"] == id
@@ -173,11 +151,11 @@ defmodule Esr.Commands.NotifyTest do
 
     test "unauthorized — file ends up in failed/ with the cap-check error", %{tmp: tmp} do
       id = "01ARZDENY#{System.unique_integer([:positive])}"
-      pending = Path.join([tmp, "default/admin_queue/pending", "#{id}.yaml"])
+      processing = Path.join([tmp, "default/admin_queue/processing", "#{id}.yaml"])
       completed = Path.join([tmp, "default/admin_queue/completed", "#{id}.yaml"])
       failed = Path.join([tmp, "default/admin_queue/failed", "#{id}.yaml"])
 
-      File.write!(pending, "id: #{id}\nkind: notify\n")
+      File.write!(processing, "id: #{id}\nkind: notify\n")
 
       # principal intentionally NOT in Grants — cap-check must deny.
       command = %{
@@ -187,10 +165,10 @@ defmodule Esr.Commands.NotifyTest do
         "args" => %{"to" => "ou_x", "text" => "y"}
       }
 
-      GenServer.cast(Dispatcher, {:execute, command, {:reply_to, {:file, completed}}})
+      target = {QueueFile, %{id: id, command: command}}
+      _ = SlashHandler.dispatch_command(command, target)
 
       assert wait_for_file(failed, 2_000), "expected failed file at #{failed}"
-      refute File.exists?(pending)
       refute File.exists?(completed)
 
       {:ok, doc} = YamlElixir.read_from_file(failed)
@@ -202,7 +180,6 @@ defmodule Esr.Commands.NotifyTest do
       _topic = register_fake_feishu_adapter("pid_#{System.unique_integer([:positive])}")
 
       id = "01ARZPID#{System.unique_integer([:positive])}"
-      ref = make_ref()
 
       command = %{
         "id" => id,
@@ -211,11 +188,17 @@ defmodule Esr.Commands.NotifyTest do
         "args" => %{"to" => "ou_pid", "text" => "pid-reply"}
       }
 
-      GenServer.cast(Dispatcher, {:execute, command, {:reply_to, {:pid, self(), ref}}})
+      # PID target → ChatPid wrap → reply formatted as text.
+      _ = SlashHandler.dispatch_command(command, self())
 
-      assert_receive {:command_result, ^ref, {:ok, %{"delivered_at" => _}}}, 2_000
+      assert_receive {:reply, text, _ref}, 2_000
+      assert text =~ "delivered_at"
     end
   end
+
+  # Suppress "unused" warning while QueueResult is referenced in tests
+  # that may evolve to use it explicitly.
+  _ = QueueResult
 
   # ------------------------------------------------------------------
   # helpers

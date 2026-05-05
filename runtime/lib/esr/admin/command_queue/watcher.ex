@@ -11,10 +11,16 @@ defmodule Esr.Admin.CommandQueue.Watcher do
     2. Any non-`.yaml` basename is ignored.
     3. Otherwise: debounce 50ms so the post-rename `file_created`
        event and residual writes coalesce, then read the YAML and
-       cast `{:execute, cmd, {:reply_to, {:file, completed_path}}}`
-       to `Esr.Admin.Dispatcher`. On YAML parse failure, log and
-       continue (moving the file to `failed/` is the Task 14/14b
-       Dispatcher's responsibility).
+       call `Esr.Entity.SlashHandler.dispatch_command/2` with a
+       `{Esr.Slash.ReplyTarget.QueueFile, %{id, command}}` reply
+       target. The QueueFile impl uses
+       `Esr.Slash.QueueResult.finish/3` to atomically move +
+       write the result yaml on the destination file. On YAML
+       parse failure, log and continue.
+
+  PR-2.3b-2 deleted the legacy `Esr.Admin.Dispatcher` named
+  GenServer; this module now drives the unified SlashHandler
+  dispatch path directly.
 
   On `init/1` the Watcher additionally runs two recovery sweeps
   (spec §9.3, plan DI-7b Task 14d):
@@ -37,9 +43,10 @@ defmodule Esr.Admin.CommandQueue.Watcher do
   `register_adapter` with identical args replaces the same
   adapters.yaml entry, etc.
 
-  Dispatcher is started *before* Watcher by `Esr.Admin.Supervisor`
-  (`:rest_for_one`, Dispatcher is first child), so the cast always
-  lands on a live named process.
+  SlashHandler is registered under `:slash_handler` in
+  `Esr.Scope.Admin.Process` and is started before this Watcher by
+  `Esr.Application` boot order, so the cast always lands on a live
+  named process.
   """
   use GenServer
   require Logger
@@ -62,16 +69,30 @@ defmodule Esr.Admin.CommandQueue.Watcher do
     File.mkdir_p!(Path.join(admin_dir, "completed"))
     File.mkdir_p!(Path.join(admin_dir, "failed"))
 
-    # Recovery sweeps run before arming the FileSystem watcher so that
-    # we don't race the watcher's own `:created` events for files we
-    # just renamed from `processing/` back into `pending/`.
+    # Synchronous file-rename sweep (no deps): move stale processing/
+    # entries back to pending/ so the orphan-dispatch sweep below
+    # picks them up.
     scan_stale_processing(processing_dir, pending_dir)
-    scan_pending_orphans(pending_dir)
 
     {:ok, pid} = FileSystem.start_link(dirs: [pending_dir])
     FileSystem.subscribe(pid)
     Logger.info("admin.watcher: watching #{pending_dir}")
-    {:ok, %{fs_pid: pid, pending_dir: pending_dir}}
+
+    # PR-2.3b-2: defer the dispatch-driven sweep to handle_continue so
+    # that even though Esr.Slash.HandlerBootstrap (an earlier child
+    # in Esr.Application's children list) already registered
+    # SlashHandler synchronously, we keep the dispatch off the init
+    # path. This also means tests that start Watcher directly need
+    # to call :sys.get_state/1 before asserting orphan-dispatch
+    # side-effects.
+    {:ok, %{fs_pid: pid, pending_dir: pending_dir, processing_dir: processing_dir},
+     {:continue, :scan_orphans}}
+  end
+
+  @impl true
+  def handle_continue(:scan_orphans, state) do
+    scan_pending_orphans(state.pending_dir)
+    {:noreply, state}
   end
 
   @impl true
@@ -154,22 +175,26 @@ defmodule Esr.Admin.CommandQueue.Watcher do
     end
   end
 
-  # Read a `pending/<basename>.yaml` and cast it into the Dispatcher
-  # with a reply-to pointing at the eventual `completed/<basename>`.
-  # Shared by the live fs-event path and the boot-time recovery sweep.
+  # Read a `pending/<basename>.yaml` and dispatch through SlashHandler
+  # using the QueueFile reply target. Shared by the live fs-event
+  # path and the boot-time recovery sweep.
   defp dispatch_pending_file(path, basename) do
     case YamlElixir.read_from_file(path) do
-      {:ok, cmd} ->
-        GenServer.cast(
-          Esr.Admin.Dispatcher,
-          {:execute, cmd, {:reply_to, {:file, completed_path(basename)}}}
-        )
+      {:ok, cmd} when is_map(cmd) ->
+        id = String.replace_suffix(basename, ".yaml", "")
+        # Move pending → processing first so QueueResult.finish/3
+        # finds the file in processing/ when the result lands.
+        :ok = Esr.Slash.QueueResult.start_processing(id)
+
+        target = {Esr.Slash.ReplyTarget.QueueFile, %{id: id, command: cmd}}
+        _ref = Esr.Entity.SlashHandler.dispatch_command(cmd, target)
+        :ok
+
+      {:ok, _bad} ->
+        Logger.error("admin.watcher: yaml does not parse to a map at #{path}")
 
       {:error, err} ->
         Logger.error("admin.watcher: bad yaml #{path}: #{inspect(err)}")
     end
   end
-
-  defp completed_path(basename),
-    do: Path.join([Esr.Paths.admin_queue_dir(), "completed", basename])
 end

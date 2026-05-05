@@ -159,6 +159,13 @@ defmodule Esr.Application do
       # legacy Dispatcher path until PR-2.3b deletes Dispatcher.
       Esr.Slash.CleanupRendezvous,
 
+      # 4g.1 SlashHandler bootstrap (PR-2.3b-2). One-shot init child
+      # whose `init/1` brings up SlashHandler under Scope.Admin's
+      # children sup, then returns :ignore. Placed BEFORE
+      # Esr.Admin.Supervisor so the Watcher's dispatch of pending
+      # orphans at boot lands on a live :slash_handler peer.
+      Esr.Slash.HandlerBootstrap,
+
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER
@@ -209,18 +216,10 @@ defmodule Esr.Application do
         :ok = Esr.Resource.Sidecar.Registry.register("feishu", "feishu_adapter_runner")
         :ok = Esr.Resource.Sidecar.Registry.register("cc_mcp", "cc_adapter_runner")
 
-        case Esr.Scope.Admin.bootstrap_slash_handler() do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            require Logger
-
-            Logger.warning(
-              "admin_session: bootstrap_slash_handler failed: #{inspect(reason)}; " <>
-                "slash commands will be unavailable until restart"
-            )
-        end
+        # PR-2.3b-2: SlashHandler is now bootstrapped via the
+        # Esr.Slash.HandlerBootstrap supervision child (placed before
+        # Esr.Admin.Supervisor so Watcher orphan-recovery lands on a
+        # live peer). No post-start work needed here.
 
         # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on
         # disk → no-op. Once `runtime.exs` populates `:enabled_plugins`

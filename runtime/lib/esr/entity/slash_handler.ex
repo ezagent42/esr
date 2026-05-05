@@ -35,11 +35,10 @@ defmodule Esr.Entity.SlashHandler do
   use GenServer
   require Logger
 
-  @default_dispatcher Esr.Admin.Dispatcher
-
   # PR-21κ Phase 3 (2026-04-30): adapter-agnostic dispatch path is
-  # gated by a per-call timeout. The dispatcher cast is one-shot
-  # (Task.start in the dispatcher), but a stuck command module would
+  # gated by a per-call timeout. PR-2.3b-2 moved command execution
+  # here from the deleted Esr.Admin.Dispatcher; commands run in a
+  # Task.start/1 inside SlashHandler. A stuck command module would
   # leave the original adapter waiting forever. 5s is generous for
   # everything except worktree creation; see futures/todo.md for the
   # async-worktree improvement.
@@ -53,7 +52,6 @@ defmodule Esr.Entity.SlashHandler do
     :ok = Esr.Scope.Admin.Process.register_admin_peer(:slash_handler, self())
 
     state = %{
-      dispatcher: Map.get(args, :dispatcher, @default_dispatcher),
       session_id: Map.fetch!(args, :session_id),
       # Tests override this for fast timeout-path coverage; production
       # uses the @dispatch_timeout_ms default.
@@ -162,20 +160,155 @@ defmodule Esr.Entity.SlashHandler do
             "args" => merged
           }
 
-          timer = Process.send_after(self(), {:slash_dispatch_timeout, ref}, state.dispatch_timeout_ms)
-
-          GenServer.cast(
-            state.dispatcher,
-            {:execute, cmd, {:reply_to, {:pid, self(), ref}}}
-          )
-
-          {:noreply, put_in(state.pending[ref], {:dispatch, target, timer})}
+          execute_command_async(cmd, target, ref, state)
         else
           {:error, msg} when is_binary(msg) ->
             Esr.Slash.ReplyTarget.dispatch(target, {:text, msg}, ref)
             {:noreply, state}
         end
     end
+  end
+
+  # PR-2.3b-2: Watcher entry. Accepts a pre-parsed command map (from a
+  # pending/<id>.yaml) and runs the same execute pipeline as the
+  # slash-text path: permission check + Task.start + reply via the
+  # ReplyTarget abstraction. The Watcher passes a `{QueueFile, %{id,
+  # command}}` reply target so file moves happen inside the impl.
+  @doc """
+  Dispatch a pre-parsed command map (as written by an admin queue
+  yaml file). The command must have keys `"id"`, `"kind"`,
+  `"submitted_by"`, `"args"`. Reply target receives the result via
+  `Esr.Slash.ReplyTarget.dispatch/3`.
+
+  Returns the dispatch reference; callers can ignore it (the Watcher
+  does — each admin file is independent).
+  """
+  @spec dispatch_command(map(), reply_to()) :: reference()
+  def dispatch_command(command, reply_to) when is_map(command) do
+    ref = make_ref()
+
+    case Esr.Scope.Admin.Process.slash_handler_ref() do
+      {:ok, pid} ->
+        GenServer.cast(pid, {:dispatch_command, command, reply_to, ref})
+
+      :error ->
+        Logger.warning(
+          "slash_handler.dispatch_command: no slash_handler registered (cmd dropped)"
+        )
+
+        target = Esr.Slash.ReplyTarget.normalize(reply_to)
+
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:text, "slash routing unavailable (boot incomplete)"},
+          ref
+        )
+    end
+
+    ref
+  end
+
+  def handle_cast({:dispatch_command, command, reply_to, ref}, state) do
+    target = Esr.Slash.ReplyTarget.normalize(reply_to)
+    kind = command["kind"]
+    submitted_by = command["submitted_by"] || "ou_unknown"
+
+    required =
+      case is_binary(kind) && Esr.Resource.SlashRoute.Registry.permission_for(kind) do
+        :not_found -> :unknown_kind
+        other -> other
+      end
+
+    cond do
+      is_nil(kind) or not is_binary(kind) ->
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:error, %{"type" => "invalid_kind"}},
+          ref
+        )
+
+        emit_telemetry({:error, :invalid_kind}, command, System.monotonic_time(:millisecond))
+        {:noreply, state}
+
+      required == :unknown_kind ->
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:error, %{"type" => "unknown_kind", "kind" => kind}},
+          ref
+        )
+
+        emit_telemetry({:error, :unknown_kind}, command, System.monotonic_time(:millisecond))
+        {:noreply, state}
+
+      not is_nil(required) and not Esr.Resource.Capability.has?(submitted_by, required) ->
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:error, %{"type" => "unauthorized", "kind" => kind, "required" => required}},
+          ref
+        )
+
+        emit_telemetry({:error, :unauthorized}, command, System.monotonic_time(:millisecond))
+        {:noreply, state}
+
+      true ->
+        execute_command_async(command, target, ref, state)
+    end
+  end
+
+  # PR-2.3b-2: spawn a Task to run command_module.execute/1 and send
+  # the result back via {:command_result, ref, result} which the
+  # existing handle_info clause already routes to the ReplyTarget.
+  defp execute_command_async(command, target, ref, state) do
+    self_pid = self()
+    start_time = System.monotonic_time(:millisecond)
+    kind = command["kind"]
+
+    timer = Process.send_after(self(), {:slash_dispatch_timeout, ref}, state.dispatch_timeout_ms)
+
+    _ =
+      Task.start(fn ->
+        result = run_command(kind, command)
+        send(self_pid, {:command_result, ref, result})
+        emit_telemetry(result, command, start_time)
+      end)
+
+    {:noreply, put_in(state.pending[ref], {:dispatch, target, timer})}
+  end
+
+  defp run_command(kind, command) do
+    case Esr.Resource.SlashRoute.Registry.command_module_for(kind) do
+      :not_found ->
+        {:error, %{"type" => "unknown_kind", "kind" => kind}}
+
+      mod when is_atom(mod) ->
+        try do
+          mod.execute(command)
+        rescue
+          exc ->
+            {:error,
+             %{
+               "type" => "command_crashed",
+               "kind" => kind,
+               "message" => Exception.message(exc)
+             }}
+        end
+    end
+  end
+
+  defp emit_telemetry(result, command, start_time) do
+    event =
+      case result do
+        {:ok, _} -> :command_executed
+        _ -> :command_failed
+      end
+
+    duration_ms = System.monotonic_time(:millisecond) - start_time
+
+    :telemetry.execute(
+      [:esr, :admin, event],
+      %{count: 1, duration_ms: duration_ms},
+      %{kind: command["kind"], submitted_by: command["submitted_by"]}
+    )
   end
 
   # handle_upstream/2 and handle_downstream/2 inherit the no-op

@@ -2,22 +2,25 @@ defmodule Esr.Admin.Supervisor do
   @moduledoc """
   OTP Supervisor for the Admin subsystem.
 
-  Spec §6.1. Strategy is `:rest_for_one` so that if the Dispatcher
-  (first child) dies, the CommandQueue.Watcher is also restarted —
-  otherwise the Watcher would keep casting into a transiently-missing
-  Dispatcher, losing commands in the window before restart. If only
-  the Watcher dies, the Dispatcher is unaffected.
+  PR-2.3b-2 deleted `Esr.Admin.Dispatcher`; the unified dispatch
+  path now flows through `Esr.Entity.SlashHandler` (chat) and
+  `Esr.Admin.CommandQueue.Watcher → SlashHandler.dispatch_command/2`
+  (admin queue files).
 
-  The `CommandQueue.Janitor` runs last: it has no runtime dependency
-  on the Dispatcher or Watcher, but placing it at the tail means a
-  Dispatcher crash restarts it too — that's fine, its state is just
-  a single `Process.send_after/3` timer that re-arms on init.
+  Children:
+    - `CommandQueue.Watcher` — file system watcher on
+      `<admin_queue>/pending/`. Dispatches to SlashHandler.
+    - `CommandQueue.Janitor` — periodic cleanup of stale
+      completed/failed entries.
+
+  Strategy `:rest_for_one`: if Watcher dies, Janitor restarts too
+  (cheap; janitor's state is one `Process.send_after/3` timer).
 
   Started from `Esr.Application.start/2` AFTER
-  `Esr.Resource.Capability.Supervisor` (Dispatcher checks capabilities during
-  authorization) and AFTER `Esr.Resource.Workspace.Registry` (the
-  `register_adapter` command validates workspace names at execution
-  time).
+  `Esr.Resource.Capability.Supervisor` (SlashHandler checks
+  capabilities during authorization) and AFTER
+  `Esr.Resource.Workspace.Registry` (register_adapter validates
+  workspace names at execution time).
   """
 
   @behaviour Esr.Role.OTP
@@ -29,7 +32,6 @@ defmodule Esr.Admin.Supervisor do
   @impl true
   def init(_opts) do
     children = [
-      {Esr.Admin.Dispatcher, []},
       {Esr.Admin.CommandQueue.Watcher, []},
       {Esr.Admin.CommandQueue.Janitor, []}
     ]
