@@ -1,16 +1,15 @@
 defmodule EsrWeb.CliChannelFieldInspectTest do
   @moduledoc """
-  Task H — cli:actors/inspect accepts {arg, field} and returns the
-  value at the dotted field path from the peer's describe map.
+  Regression coverage for the actor field-drill behavior previously
+  hosted at `EsrWeb.CliChannel.dispatch("cli:actors/inspect", ...)`.
+  Post-2026-05-05 cli-channel→slash migration the home is
+  `Esr.Commands.Actors.Inspect`; this test now exercises that
+  module's `execute/1` directly with the slash-arg envelope shape.
   """
   use ExUnit.Case, async: false
 
-  alias EsrWeb.CliChannel
+  alias Esr.Commands.Actors.Inspect, as: ActorsInspect
 
-  # Spin up a real Entity.Server via start_link so it registers itself
-  # under its actor_id in Esr.Entity.Registry and answers :describe via
-  # the usual via-tuple. Manual Registry.register would map the test
-  # pid instead, causing describe/1 to call itself.
   setup do
     actor_id = "test_actor_#{System.unique_integer([:positive])}"
 
@@ -32,28 +31,26 @@ defmodule EsrWeb.CliChannelFieldInspectTest do
         :exit, _ -> :ok
       end
     end)
+
     {:ok, actor_id: actor_id}
   end
 
-  test "dispatch returns value at dotted field path", %{actor_id: aid} do
-    resp =
-      CliChannel.dispatch(
-        "cli:actors/inspect",
-        %{"arg" => aid, "field" => "state.session_name"}
-      )
+  test "execute returns value at dotted field path", %{actor_id: aid} do
+    assert {:ok, %{"text" => text}} =
+             ActorsInspect.execute(%{
+               "args" => %{"actor_id" => aid, "field" => "state.session_name"}
+             })
 
-    assert resp["data"]["field"] == "state.session_name"
-    assert resp["data"]["value"] == "esr_cc_42"
+    assert text =~ "field=state.session_name"
+    assert text =~ "esr_cc_42"
   end
 
   test "missing field path returns structured error", %{actor_id: aid} do
-    resp =
-      CliChannel.dispatch(
-        "cli:actors/inspect",
-        %{"arg" => aid, "field" => "state.does_not_exist"}
-      )
+    assert {:error, %{"type" => "field_not_present", "message" => msg}} =
+             ActorsInspect.execute(%{
+               "args" => %{"actor_id" => aid, "field" => "state.does_not_exist"}
+             })
 
-    assert resp["data"]["error"] == "field not present"
-    assert resp["data"]["field"] == "state.does_not_exist"
+    assert msg =~ "state.does_not_exist"
   end
 end
