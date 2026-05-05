@@ -317,6 +317,18 @@ internal_kinds:
     permission: "user.manage"
     command_module: "Esr.Commands.User.UnbindFeishu"
 
+  # 2026-05-05 cli-channel→slash migration:
+  # `cli:deadletter/{list,flush}` migrated from EsrWeb.CliChannel into
+  # `Esr.Commands.Deadletter.{List,Flush}`. Permission `runtime.deadletter`
+  # registered in Esr.Resource.Permission.Bootstrap.
+  deadletter_list:
+    permission: "runtime.deadletter"
+    command_module: "Esr.Commands.Deadletter.List"
+
+  deadletter_flush:
+    permission: "runtime.deadletter"
+    command_module: "Esr.Commands.Deadletter.Flush"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"

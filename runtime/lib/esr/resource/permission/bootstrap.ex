@@ -32,7 +32,10 @@ defmodule Esr.Resource.Permission.Bootstrap do
     {"plugin/manage", Esr.Plugin.Loader},
     # Phase B-3 (2026-05-05): `user.manage` gates user_add/remove/
     # bind-feishu/unbind-feishu. Read-only `user_list` is permission-less.
-    {"user.manage", Esr.Entity.User.Registry}
+    {"user.manage", Esr.Entity.User.Registry},
+    # 2026-05-05 cli-channel→slash migration: runtime.deadletter gates
+    # deadletter_list / deadletter_flush.
+    {"runtime.deadletter", Esr.Resource.DeadLetter.Queue}
   ]
 
   @doc """

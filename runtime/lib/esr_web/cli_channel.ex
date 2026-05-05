@@ -12,7 +12,6 @@ defmodule EsrWeb.CliChannel do
 
   use Phoenix.Channel
 
-  alias Esr.Resource.DeadLetter.Queue.Entry, as: DeadLetterEntry
   alias Esr.Telemetry.Buffer
   alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
 
@@ -187,20 +186,9 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing 'actor_id' in payload"}}
   end
 
-  def dispatch("cli:deadletter/list", _payload) do
-    data =
-      Esr.Resource.DeadLetter.Queue
-      |> Esr.Resource.DeadLetter.Queue.list()
-      |> Enum.map(&serialise_dl_entry/1)
-
-    %{"data" => data}
-  end
-
-  def dispatch("cli:deadletter/flush", _payload) do
-    flushed = length(Esr.Resource.DeadLetter.Queue.list(Esr.Resource.DeadLetter.Queue))
-    :ok = Esr.Resource.DeadLetter.Queue.clear(Esr.Resource.DeadLetter.Queue)
-    %{"data" => %{"flushed" => flushed}}
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:deadletter/{list,flush}
+  # migrated to Esr.Commands.Deadletter.{List,Flush}. Bodies deleted —
+  # see docs/notes/2026-05-05-cli-channel-migration.md.
 
   def dispatch("cli:adapter/start/" <> adapter_type, payload) when is_binary(adapter_type) do
     instance_id = Map.get(payload, "instance_id")
@@ -577,19 +565,6 @@ defmodule EsrWeb.CliChannel do
       opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
       _ -> 4001
     end
-  end
-
-  @spec serialise_dl_entry(DeadLetterEntry.t()) :: map()
-  defp serialise_dl_entry(%DeadLetterEntry{} = entry) do
-    %{
-      "id" => entry.id,
-      "ts_unix_ms" => entry.ts_unix_ms,
-      "reason" => to_string(entry.reason),
-      "target" => entry.target,
-      "source" => entry.source,
-      "msg" => inspect(entry.msg),
-      "metadata" => entry.metadata
-    }
   end
 
   defp actor_id_strip_prefix(actor_id) do
