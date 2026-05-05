@@ -184,3 +184,36 @@ caller, deleted in this same PR).
 12. Open PR; subagent code-reviewer pass before merge.
 
 Each numbered step is one commit. ~12 commits, one PR.
+
+## Actual scope shipped (2026-05-05)
+
+The work landed in 8 functional commits on
+`feature/cli-channel-to-slash-migration`. Two scope reductions vs.
+the original plan:
+
+1. **escript file-readers limited to `adapters list`** — `handler list`,
+   `cmd list/show/compile` were dropped. Each targets a P3-13-dead
+   concept (Python plugin model deprecated by Phase-2 Elixir plugins;
+   topology registry deleted 6 months ago). The Python implementations
+   vanish with the rest of `py/src/esr/cli/` whenever step 10 lands.
+
+2. **Python CLI deletion (step 10) deferred to a follow-up PR.** All
+   runtime-coupled commands now hit `unknown_topic` because
+   cli_channel.ex's dispatch table is empty — the CLI is functionally
+   neutered already. Outstanding before deletion:
+   (a) port `esr scenario run` to escript or shell — final_gate.sh:56
+       depends on it as the e2e harness;
+   (b) decide on `esr cmd stop` calls in final_gate.sh L5/L6 — they
+       were P3-13 dead before this migration started;
+   (c) audit `py/src/esr/` (non-CLI) for cross-module deps that
+       survive deletion.
+
+   Tracked in `docs/futures/todo.md` under "Pending — concrete next
+   PRs".
+
+What did ship: 12 cli_channel handlers migrated, 3 dead clauses
+deleted, 2 merged into existing slashes, 1 file-reader added,
+final_gate.sh swapped to escript, cli_channel.ex shrunk to a
+30-line protocol shell. Net change: ~700 LOC deleted from
+runtime/, 2 new cmd modules created, 1 single-source-of-truth
+extraction (`Esr.Resource.Workspace.Describe`).
