@@ -1,5 +1,30 @@
 # ESR v0.2 Developer Guide
 
+## CLI installation (Phase 2, post-PR-2.5/2.6)
+
+The `esr` CLI is now an Elixir-native escript built from `runtime/`.
+
+```sh
+cd runtime
+mix escript.build
+# Produces ./esr — copy to a directory on $PATH:
+cp esr ~/.local/bin/esr     # or wherever your $PATH points
+```
+
+Or install system-wide via:
+```sh
+mix escript.install path/to/runtime
+```
+
+The escript talks to a running `esrd` over HTTP (`/admin/slash_schema.json`)
+and through the admin queue files. No Python dependency required for the
+core CLI surface: `esr exec`, `esr help`, `esr describe-slashes`,
+`esr daemon`, `esr admin submit`, `esr notify`.
+
+Migration note: previously these commands ran via `uv run --project py esr`.
+The remaining Python CLI surface (`adapter add/install`, `workspace add`,
+etc.) stays for now and is removed in Phase 4.
+
 ## Getting started
 
 1. Ensure a Feishu app exists and its bot is a member of the chat(s) you
