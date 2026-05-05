@@ -120,6 +120,11 @@ defmodule Esr.Entity.CCProcess do
     workspace_name = Map.get(ctx, :workspace_name) || Map.get(ctx, "workspace_name")
     chat_id = Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id")
     app_id = Map.get(ctx, :app_id) || Map.get(ctx, "app_id")
+    # PR-3.7: AgentSpawner sets `channel_adapter` from the inbound
+    # proxy's family name (e.g. "feishu" when FeishuChatProxy is in
+    # the pipeline). cc plugin no longer hardcodes "feishu".
+    adapter_family =
+      Map.get(ctx, :channel_adapter) || Map.get(ctx, "channel_adapter")
 
     chat_uri =
       if is_binary(workspace_name) and is_binary(chat_id) and chat_id != "" do
@@ -127,8 +132,8 @@ defmodule Esr.Entity.CCProcess do
       end
 
     adapter_uri =
-      if is_binary(app_id) and app_id != "" do
-        Esr.Topology.adapter_uri("feishu", app_id)
+      if is_binary(adapter_family) and is_binary(app_id) and app_id != "" do
+        Esr.Topology.adapter_uri(adapter_family, app_id)
       end
 
     cond do
@@ -366,15 +371,13 @@ defmodule Esr.Entity.CCProcess do
           {:reply, text}
       end
 
-    # Prefer the feishu_chat_proxy neighbor when it's available — that's
-    # the production upstream-reply target in PR-9 T5's topology (the
-    # proxy converts :reply into `{:outbound, ...}` to feishu_app_proxy).
+    # PR-3.7: prefer any `*_chat_proxy` neighbor (the production
+    # upstream-reply target — converts :reply into `{:outbound, ...}`).
     # Fall back to cc_proxy for unit tests that inject a raw test pid.
+    # Plugin-agnostic via name suffix instead of hardcoded "feishu".
     target_pid =
-      case Keyword.get(state.neighbors, :feishu_chat_proxy) do
-        pid when is_pid(pid) -> pid
-        _ -> Keyword.get(state.neighbors, :cc_proxy)
-      end
+      find_chat_proxy_neighbor(state.neighbors) ||
+        Keyword.get(state.neighbors, :cc_proxy)
 
     case target_pid do
       pid when is_pid(pid) ->
@@ -382,7 +385,7 @@ defmodule Esr.Entity.CCProcess do
 
       _ ->
         Logger.warning(
-          "cc_process: :reply with no feishu_chat_proxy or cc_proxy neighbor " <>
+          "cc_process: :reply with no *_chat_proxy or cc_proxy neighbor " <>
             "session_id=#{state.session_id}"
         )
     end
@@ -397,6 +400,22 @@ defmodule Esr.Entity.CCProcess do
     })
 
     state
+  end
+
+  # PR-3.7: find any neighbor whose key looks like `<family>_chat_proxy`.
+  # Plugin-agnostic by suffix matching: feishu_chat_proxy works in
+  # production today; a future tlg_chat_proxy or slack_chat_proxy works
+  # automatically. Returns the first matching pid or nil.
+  defp find_chat_proxy_neighbor(neighbors) do
+    Enum.find_value(neighbors, fn
+      {key, pid} when is_pid(pid) ->
+        if String.ends_with?(Atom.to_string(key), "_chat_proxy"),
+          do: pid,
+          else: false
+
+      _ ->
+        false
+    end)
   end
 
   # `{:notification, envelope}` matches the existing admin-side
@@ -447,13 +466,19 @@ defmodule Esr.Entity.CCProcess do
 
     base = %{
       "kind" => "notification",
-      "source" => Map.get(ctx, "channel_adapter") || "feishu",
+      # PR-3.7: source is the inbound channel's adapter family (set by
+      # AgentSpawner from agents.yaml's pipeline). No hardcoded
+      # "feishu" fallback — empty string communicates "unknown" to
+      # downstream cc_mcp, which can render the <channel> tag accordingly.
+      "source" => Map.get(ctx, "channel_adapter") || Map.get(ctx, :channel_adapter) || "",
       # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
       # authoritative for this specific inbound. Fall back to proxy_ctx
       # only for legacy callers that hadn't threaded it through yet.
       "chat_id" => chat_id,
-      # T-PR-A T2: surface the originating Feishu app_id so cc_mcp can
-      # render it on the <channel> tag and claude can echo it on reply.
+      # PR-3.7: app_id surfaces the originating channel's app_id so
+      # cc_mcp renders it on the <channel> tag and claude echoes it
+      # on reply (the source family — feishu, telegram, etc — comes
+      # via "source" above).
       "app_id" => app_id,
       "thread_id" =>
         Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
