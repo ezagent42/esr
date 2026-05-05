@@ -43,8 +43,7 @@ start_esrd
 # end-to-end (CommandQueue.Watcher → Dispatcher → SlashRoute.Registry).
 # A core-only boot has zero plugin-contributed routes — only the
 # default-shipped ones — so /help should still render successfully.
-HELP_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit help \
+HELP_OUT=$(esr_cli admin submit help \
   --wait --timeout 15)
 echo "$HELP_OUT"
 assert_contains "$HELP_OUT" "ok: true" "core-only: /help returned ok"
@@ -52,8 +51,7 @@ assert_contains "$HELP_OUT" "ok: true" "core-only: /help returned ok"
 # `/plugin list` must report each known plugin as disabled (since
 # enabled: [] above). The plugin subsystem itself is core, so this
 # command is always available regardless of plugin enable state.
-PLUGIN_LIST_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_list \
+PLUGIN_LIST_OUT=$(esr_cli admin submit plugin_list \
   --wait --timeout 10)
 echo "$PLUGIN_LIST_OUT"
 assert_contains "$PLUGIN_LIST_OUT" "ok: true" "core-only: /plugin list returned ok"

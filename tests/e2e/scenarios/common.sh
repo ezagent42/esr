@@ -41,6 +41,40 @@ mkdir -p "${ESR_E2E_BARRIER_DIR}" "${ESRD_HOME}" "$(dirname "${ESR_E2E_TMUX_SOCK
 _E2E_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 export _E2E_REPO_ROOT
 
+# --- CLI dual-rail (Phase A 2026-05-05) ------------------------------
+# Run esr via either Python click-CLI (default) or Elixir-native escript.
+# Toggle with `RUN_VIA=escript` to exercise the migration target.
+#
+# Why dual-rail: pre-Phase-A every e2e exercised only the Python rail,
+# so the "escript replaces Python CLI" Phase 2 claim was never verified.
+# A failing escript rail IS the honest signal of which commands need
+# porting before PR-4.6 / PR-4.7 can land. See
+# `docs/notes/2026-05-05-cli-dual-rail.md`.
+#
+# Both rails read the same `${ESRD_HOME}/${ESR_INSTANCE}/esrd.port` file
+# for endpoint discovery; escript needs ESR_HOST exported (it does not
+# yet auto-discover from the port file — Phase B follow-up).
+esr_cli() {
+  if [[ "${RUN_VIA:-python}" == "escript" ]]; then
+    local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
+    local host="127.0.0.1:4001"
+    if [[ -r "${port_file}" ]]; then
+      host="127.0.0.1:$(cat "${port_file}")"
+    fi
+    ESR_HOST="${host}" \
+    ESR_INSTANCE="${ESR_INSTANCE}" \
+    ESRD_HOME="${ESRD_HOME}" \
+    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
+      "${_E2E_REPO_ROOT}/runtime/esr" "$@"
+  else
+    ESR_INSTANCE="${ESR_INSTANCE}" \
+    ESRD_HOME="${ESRD_HOME}" \
+    ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
+      uv run --project "${_E2E_REPO_ROOT}/py" esr "$@"
+  fi
+}
+export -f esr_cli
+
 # --- traps ------------------------------------------------------------
 trap '_on_err $? $LINENO' ERR
 trap '_on_exit' EXIT
@@ -198,14 +232,14 @@ barrier_wait() {
 assert_actors_list_has() {
   local substr=$1 ctx=${2:-"assert_actors_list_has"}
   local out
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   assert_contains "$out" "$substr" "${ctx} [actors list]"
 }
 
 assert_actors_list_lacks() {
   local substr=$1 ctx=${2:-"assert_actors_list_lacks"}
   local out
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   assert_not_contains "$out" "$substr" "${ctx} [actors list]"
 }
 
@@ -461,8 +495,7 @@ register_feishu_adapter() {
   # this helper). If a future test needs `base_url=http://127.0.0.1:…`
   # wired into the adapter config, add it via `esr adapter add` here
   # and drop this shell comment.
-  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit register_adapter \
+  esr_cli admin submit register_adapter \
       --arg type=feishu \
       --arg name=feishu_app_e2e-mock \
       --arg app_id=e2e-mock \

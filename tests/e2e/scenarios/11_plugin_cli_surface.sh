@@ -33,8 +33,7 @@ YAML
 start_esrd
 
 # --- 1) /plugin list on empty system ---------------------------------
-LIST_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_list \
+LIST_OUT=$(esr_cli admin submit plugin_list \
   --wait --timeout 10)
 echo "$LIST_OUT"
 assert_contains "$LIST_OUT" "ok: true" "plugin_list returned ok"
@@ -42,32 +41,28 @@ assert_contains "$LIST_OUT" "ok: true" "plugin_list returned ok"
 assert_contains "$LIST_OUT" "[disabled]" "list reports plugins as disabled"
 
 # --- 2) /plugin info <unknown> ---------------------------------------
-INFO_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_info \
+INFO_OUT=$(esr_cli admin submit plugin_info \
   --arg name=ghost --wait --timeout 10)
 echo "$INFO_OUT"
 assert_contains "$INFO_OUT" "ok: true" "plugin_info returns ok envelope even on miss"
 assert_contains "$INFO_OUT" "plugin not found: ghost" "info reports missing plugin"
 
 # --- 3) /plugin install <bad-source> ---------------------------------
-INSTALL_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_install \
+INSTALL_OUT=$(esr_cli admin submit plugin_install \
   --arg source=/nonexistent/path --wait --timeout 10)
 echo "$INSTALL_OUT"
 assert_contains "$INSTALL_OUT" "ok: true" "plugin_install ok envelope"
 assert_contains "$INSTALL_OUT" "source not found" "install rejects nonexistent path"
 
 # --- 4) /plugin enable <ghost> — non-installed rejected --------------
-ENABLE_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_enable \
+ENABLE_OUT=$(esr_cli admin submit plugin_enable \
   --arg name=ghost --wait --timeout 10)
 echo "$ENABLE_OUT"
 assert_contains "$ENABLE_OUT" "ok: true" "plugin_enable ok envelope"
 assert_contains "$ENABLE_OUT" "plugin not installed: ghost" "enable rejects unknown plugin"
 
 # --- 5) /plugin disable <name> on empty list — idempotent ------------
-DISABLE_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit plugin_disable \
+DISABLE_OUT=$(esr_cli admin submit plugin_disable \
   --arg name=ghost --wait --timeout 10)
 echo "$DISABLE_OUT"
 assert_contains "$DISABLE_OUT" "ok: true" "plugin_disable ok envelope"
