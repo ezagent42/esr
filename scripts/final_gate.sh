@@ -412,13 +412,17 @@ fi
 echo "  L2 ack message_id  : $l2_ack_id"
 echo "  L2 tool_invoke log : $(echo "$l2_tool_log" | head -c 140)"
 
-# -------------------- L5: esr cmd stop → session_killed --------------------
-section "11/13 live L5 — esr cmd stop feishu-thread-session thread_id=$tag"
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=$tag" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=$tag" \
+# -------------------- L5: /end-session → session_killed --------------------
+# 2026-05-06: was `uv run --project py esr cmd stop feishu-thread-session ...`
+# — that Python CLI sub-command was P3-13-dead since Esr.Topology was
+# deleted, and the click CLI itself was deleted in this PR. Replaced
+# with the live `/end-session` slash command via the Elixir escript;
+# /end-session triggers the same Esr.Scope.End teardown path that the
+# old `cmd stop` was supposed to drive once it stopped being a stub.
+section "11/13 live L5 — /end-session $tag (esrd-side teardown)"
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="$tag" \
     >/tmp/fg.live.l5.log 2>&1 || {
-  echo "FAIL — L5 esr cmd stop returned non-zero"
+  echo "FAIL — L5 /end-session returned non-zero"
   cat /tmp/fg.live.l5.log; exit 1; }
 
 deadline=$(( $(date +%s) + 10 ))
@@ -508,13 +512,10 @@ echo "  L6a log contains   : $only_a_nonce (ok)"
 echo "  L6b log excludes   : $only_a_nonce (ok)"
 
 # Best-effort cleanup of the L6 sessions (EXIT trap stops esrd either way).
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=${tag}-a" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=${tag}-a" \
+# 2026-05-06: Python CLI deleted; using /end-session via the escript.
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="${tag}-a" \
     >/dev/null 2>&1 || true
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=${tag}-b" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=${tag}-b" \
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="${tag}-b" \
     >/dev/null 2>&1 || true
 # Kill mock_cc_workers
 kill "$(cat "/tmp/mock_cc.${tag}-a.pid" 2>/dev/null)" 2>/dev/null || true

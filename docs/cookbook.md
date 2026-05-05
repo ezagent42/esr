@@ -1,5 +1,26 @@
 # ESR v0.2 Cookbook
 
+> **2026-05-06 deprecation:** Python click CLI deleted. Operator
+> commands now run via the Elixir escript at `runtime/esr` (or
+> `./esr.sh` wrapper) → admin queue → slash dispatch. Recipes below
+> still mention the old `esr cmd run/stop feishu-thread-session`
+> pattern — that pattern was P3-13-dead anyway (`Esr.Topology`
+> deleted). Equivalents:
+>
+>   - **session lifecycle**: `/new-session <workspace> name=<tag>` /
+>     `/end-session <tag>` (slash command from chat, OR
+>     `runtime/esr exec /new-session ...` from a shell).
+>   - **actors / trace / deadletter / debug**: `runtime/esr actors
+>     list`, `runtime/esr trace`, `runtime/esr deadletter list`,
+>     `runtime/esr debug pause <actor_id>` etc.
+>   - **adapter add**: `runtime/esr exec adapter_start type=feishu
+>     instance_id=<name> app_id=... app_secret=... base_url=...`
+>     (admin-queue path, after PR-222's slash route).
+>
+> A full rewrite of this cookbook is tracked separately; the recipes
+> below preserve the conceptual flow even where the literal command
+> wording is stale.
+
 ## Recipe: Reply to a Feishu message from CC
 
 In your CC session, given an inbound `<channel source="feishu"
