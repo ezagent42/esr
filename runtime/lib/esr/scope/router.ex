@@ -3,8 +3,8 @@ defmodule Esr.Scope.Router do
   Control-plane coordinator for Session lifecycle.
 
   Accepts only control-plane events:
-    * `:create_session_sync`   — from `Esr.Admin.Commands.Scope.New`
-    * `:end_session_sync`      — from `Esr.Admin.Commands.Scope.End`
+    * `:create_session_sync`   — from `Esr.Commands.Scope.New`
+    * `:end_session_sync`      — from `Esr.Commands.Scope.End`
     * `:new_chat_thread`       — PubSub broadcast from `FeishuAppAdapter`
                                  on `lookup_by_chat_thread → :not_found`.
                                  Topic `"session_router"`, tuple shape

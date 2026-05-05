@@ -13,7 +13,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       Esr.Admin.Dispatcher    — cap-checks (D18) + Tasks the command
               |
               v
-      Esr.Admin.Commands.Scope.New       — validates args (D11/D13),
+      Esr.Commands.Scope.New       — validates args (D11/D13),
               |                              re-checks agent_def caps,
               |                              calls Scope.Supervisor
               v

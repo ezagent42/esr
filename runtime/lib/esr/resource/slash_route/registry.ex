@@ -161,14 +161,14 @@ defmodule Esr.Resource.SlashRoute.Registry do
           "requires_user_binding" => false,
           # only when include_internal: true
           "permission" => "session.create",
-          "command_module" => "Esr.Admin.Commands.Scope.New"
+          "command_module" => "Esr.Commands.Scope.New"
         }, ...],
         "internal_kinds" => [%{
           "kind" => "grant",
           "description" => "...",
           # only when include_internal: true
           "permission" => "cap.manage",
-          "command_module" => "Esr.Admin.Commands.Cap.Grant"
+          "command_module" => "Esr.Commands.Cap.Grant"
         }, ...]
       }
 

@@ -29,7 +29,7 @@ defmodule Esr.Scope.Admin.Process do
 
   @doc """
   Return `[{name, pid}, ...]` for all currently registered admin peers.
-  Used by legacy callers (e.g. `Esr.Admin.Commands.Notify`) that need
+  Used by legacy callers (e.g. `Esr.Commands.Notify`) that need
   to iterate to find a matching peer — post-P2-16 replacement for
   `Esr.AdapterHub.Registry.list/0`.
   """
