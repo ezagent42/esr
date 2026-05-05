@@ -159,7 +159,7 @@ defmodule EsrWeb.CliChannelTest do
       %{refresh_socket: socket}
     end
 
-    test "returns ok=true (idempotent — wraps bootstrap_feishu_app_adapters)",
+    test "returns ok=true (idempotent — wraps Esr.Plugins.Feishu.Bootstrap.bootstrap)",
          %{refresh_socket: socket} do
       ref = push(socket, "cli_call", %{})
       assert_reply ref, :ok, response

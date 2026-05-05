@@ -269,13 +269,15 @@ defmodule Esr.Application do
 
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
 
-      # PR-9 T10: spawn one FeishuAppAdapter (Elixir admin peer) per
-      # `type: feishu` instance in adapters.yaml. Must come AFTER
-      # restore_adapters_from_disk so the Python sidecar and the Elixir
-      # consumer are both up by the time anything pushes inbound. Without
-      # this, adapter_channel logs "no FeishuAppAdapter for app_id=..."
-      # and every inbound frame is silently dropped.
-      _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
+      # PR-3.4 (2026-05-05): plugin startup callbacks. Each enabled
+      # plugin's manifest `startup:` block runs here in plugin-enable
+      # order. feishu's startup spawns one FeishuAppAdapter per
+      # `type: feishu` row in adapters.yaml — see
+      # `Esr.Plugins.Feishu.Bootstrap.bootstrap/0`. No try/rescue
+      # by design: a startup failure crashes esrd boot loudly rather
+      # than degrading silently (the bootstrap-miss → silent-dropped-
+      # frames anti-pattern PR-K/L chased).
+      :ok = Esr.Plugin.Loader.run_startup()
 
       # PR-9 T11a: spawn a Python handler_worker for every handler
       # module referenced by any agents.yaml `capabilities_required`

@@ -316,7 +316,7 @@ defmodule EsrWeb.CliChannel do
     # returns the list of for-loop results when adapters.yaml has
     # entries, not the atom `:ok`. Drop the return value entirely.
     _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-    _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
+    _ = Esr.Plugins.Feishu.Bootstrap.bootstrap()
     %{"data" => %{"ok" => true}}
   end
 
@@ -405,7 +405,7 @@ defmodule EsrWeb.CliChannel do
 
               # 3. Refresh to spawn under the new name.
               _ = Esr.Application.restore_adapters_from_disk(Esr.Paths.esrd_home())
-              _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
+              _ = Esr.Plugins.Feishu.Bootstrap.bootstrap()
 
               %{"data" => %{
                 "ok" => true,

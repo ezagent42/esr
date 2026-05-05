@@ -1,6 +1,6 @@
-defmodule Esr.ScopeAdminBootstrapFeishuTest do
+defmodule Esr.Plugins.Feishu.BootstrapTest do
   @moduledoc """
-  PR-9 T10: `Esr.Scope.Admin.bootstrap_feishu_app_adapters/1` reads
+  PR-9 T10: `Esr.Plugins.Feishu.Bootstrap.bootstrap/1` reads
   `adapters.yaml` and spawns a `FeishuAppAdapter` peer per `type: feishu`
   instance, registered under `:feishu_app_adapter_<instance_id>` in
   Scope.Admin.Process so `EsrWeb.AdapterChannel.forward_to_new_chain/2`
@@ -61,7 +61,7 @@ defmodule Esr.ScopeAdminBootstrapFeishuTest do
         config: {}
     """)
 
-    assert :ok = Esr.Scope.Admin.bootstrap_feishu_app_adapters(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
 
     {:ok, main_pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
     {:ok, secondary_pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_secondary)
@@ -87,10 +87,10 @@ defmodule Esr.ScopeAdminBootstrapFeishuTest do
           app_id: cli_idempotent
     """)
 
-    assert :ok = Esr.Scope.Admin.bootstrap_feishu_app_adapters(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
     {:ok, pid1} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
-    assert :ok = Esr.Scope.Admin.bootstrap_feishu_app_adapters(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
     {:ok, pid2} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
     assert pid1 == pid2, "second call must not spawn a duplicate peer"
@@ -100,6 +100,6 @@ defmodule Esr.ScopeAdminBootstrapFeishuTest do
        %{tmp: tmp} do
     # File intentionally not created.
     refute File.exists?(tmp)
-    assert :ok = Esr.Scope.Admin.bootstrap_feishu_app_adapters(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
   end
 end

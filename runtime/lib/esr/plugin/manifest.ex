@@ -181,4 +181,62 @@ defmodule Esr.Plugin.Manifest do
   defp entity_module_name(%{"module" => name}), do: name
   defp entity_module_name(%{module: name}), do: name
   defp entity_module_name(other), do: inspect(other)
+
+  # PR-3.4 (2026-05-05): startup-hook validation. Required fields:
+  # `module:` and `function:`. No defaults — missing field triggers an
+  # explicit error so the operator sees the typo at boot rather than a
+  # silent no-op.
+  @doc """
+  Read + validate the `startup:` block of `manifest`. Returns
+  `{:ok, {module, function_atom}}` for the configured startup callback,
+  `:none` when no `startup:` block is declared, or `{:error, reason}`
+  on a malformed block.
+
+  Used by `Esr.Plugin.Loader.register_startup/1`.
+  """
+  @spec startup_callback(t()) ::
+          {:ok, {module(), atom()}} | :none | {:error, term()}
+  def startup_callback(%__MODULE__{name: plugin_name, declares: declares}) do
+    case Map.get(declares, :startup) do
+      nil ->
+        :none
+
+      block when is_map(block) ->
+        with {:ok, module_str} <- fetch_startup_field(block, "module", plugin_name),
+             {:ok, function_str} <- fetch_startup_field(block, "function", plugin_name),
+             {:ok, module} <- resolve_module(module_str, plugin_name),
+             function_atom <- String.to_atom(function_str),
+             :ok <- ensure_exported(module, function_atom, plugin_name) do
+          {:ok, {module, function_atom}}
+        end
+
+      other ->
+        {:error, {:invalid_startup_block, plugin_name, other}}
+    end
+  end
+
+  defp fetch_startup_field(block, key, plugin_name) do
+    case Map.get(block, key) do
+      v when is_binary(v) and v != "" -> {:ok, v}
+      _ -> {:error, {:startup_field_missing, plugin_name, key}}
+    end
+  end
+
+  defp resolve_module(module_str, plugin_name) do
+    module = Module.concat([module_str])
+
+    if Code.ensure_loaded?(module) do
+      {:ok, module}
+    else
+      {:error, {:startup_module_not_loadable, plugin_name, module_str}}
+    end
+  end
+
+  defp ensure_exported(module, function_atom, plugin_name) do
+    if function_exported?(module, function_atom, 0) do
+      :ok
+    else
+      {:error, {:startup_function_not_exported, plugin_name, module, function_atom}}
+    end
+  end
 end
