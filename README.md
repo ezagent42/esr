@@ -75,8 +75,7 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 | `adapters/cc_mcp/` | Python MCP bridge for Claude Code; renders inbound as `<channel>` tags |
 | `adapters/feishu/` | Per-channel sidecar |
 | `handlers/` | Pure-function `(state, event) → (state, actions)` handlers |
-| `patterns/` | Declarative command patterns (DSL → yaml) |
-| `py/` | `esr` CLI + shared Python helpers |
+| `py/` | Adapter / handler SDK + IPC sidecar helpers (no operator CLI — see `runtime/esr` escript) |
 | `scripts/` | `esrd.sh`, scenario spawners, daemoniser |
 | `tests/e2e/scenarios/` | End-to-end shell scenarios (mock_feishu driven) |
 | `roles/{dev,diagnostic}/CLAUDE.md` | Per-role CC session prompt prelude |
@@ -219,8 +218,7 @@ bash scripts/esrd.sh start --instance=default
 | `adapters/cc_mcp/` | Claude Code 的 Python MCP 桥；inbound 渲染成 `<channel>` 标签 |
 | `adapters/feishu/` | channel sidecar |
 | `handlers/` | 纯函数 `(state, event) → (state, actions)` |
-| `patterns/` | 声明式命令模板（DSL → yaml） |
-| `py/` | `esr` CLI + Python 共享 helper |
+| `py/` | adapter / handler SDK + IPC sidecar helpers（操作员 CLI 见 `runtime/esr` escript） |
 | `scripts/` | `esrd.sh`、scenario spawner、daemoniser |
 | `tests/e2e/scenarios/` | 端到端 shell scenario（基于 mock_feishu 驱动） |
 | `roles/{dev,diagnostic}/CLAUDE.md` | 每个 role 的 CC 会话起手 prompt |

@@ -1,9 +1,15 @@
-"""ESR v0.1 — Python SDK and CLI.
+"""ESR Python SDK — adapter / handler decorators + IPC primitives.
 
-Public entry points (PRD 02 F19). Users should import from ``esr``
-directly rather than from the submodules::
+2026-05-06: the topology DSL (`command`, `node`, `port`, `compose`,
+`compile_topology`, `compile_to_yaml`) was removed alongside the
+P3-13-deleted `Esr.Topology` runtime. Sessions / topologies are
+spawned via slash commands (`/new-session`) now; declarative
+patterns are no longer the user-authoring surface.
 
-    from esr import handler, adapter, command, node, port, compose, Emit
+Public surface narrowed to the handler/adapter SDK + the message
+shapes (`Emit`, `Route`, etc.) that adapter sidecars produce::
+
+    from esr import handler, adapter, Emit, Route, InvokeCommand
 
 Submodules exist for internal organisation — they are not a stable
 surface and may move between versions.
@@ -11,7 +17,6 @@ surface and may move between versions.
 
 from esr.actions import Action, Emit, InvokeCommand, Reply, Route, SendInput
 from esr.adapter import AdapterConfig, adapter
-from esr.command import command, compile_to_yaml, compile_topology, compose, node, port
 from esr.events import Directive, Event
 from esr.handler import handler, handler_state
 from esr.uri import EsrURI
@@ -31,12 +36,6 @@ __all__ = [
     "SendInput",
     "__version__",
     "adapter",
-    "command",
-    "compile_to_yaml",
-    "compile_topology",
-    "compose",
     "handler",
     "handler_state",
-    "node",
-    "port",
 ]
