@@ -51,15 +51,30 @@ defmodule Esr.Cli.Main do
       ["describe-slashes" | rest] ->
         cmd_describe_slashes(rest)
 
-      ["exec", slash_text | _] ->
-        cmd_exec(slash_text)
+      ["exec" | rest] ->
+        cmd_exec_argv(rest)
 
-      ["exec"] ->
-        IO.puts(:stderr, "esr exec: missing slash text. usage: esr exec /<slash>")
+      # PR-2.6: backward-compat alias. `esr admin submit foo --bar=baz`
+      # is the legacy operator habit; equivalent to `esr exec foo
+      # --bar=baz`. Same code path; aliases that retain operator muscle
+      # memory don't add new dispatch logic.
+      ["admin", "submit" | rest] ->
+        cmd_exec_argv(rest)
+
+      # PR-2.6: convenience alias. `esr notify <to> <text>` is shorter
+      # than `esr exec notify --to=<to> --text=<text>`.
+      ["notify", to, text] ->
+        cmd_exec_argv(["notify", "to=" <> to, "text=" <> text])
+
+      ["notify" | _] ->
+        IO.puts(:stderr, "esr notify: usage: esr notify <to> <text>")
         System.halt(2)
 
+      ["daemon" | rest] ->
+        cmd_daemon(rest)
+
       ["--version"] ->
-        IO.puts("esr 0.1.0 (PR-2.5 escript skeleton)")
+        IO.puts("esr 0.1.0 (PR-2.6 escript)")
 
       [unknown | _] ->
         IO.puts(:stderr, "esr: unknown command #{inspect(unknown)}")
@@ -142,6 +157,37 @@ defmodule Esr.Cli.Main do
   # ------------------------------------------------------------------
   # exec — submit a slash command via the admin queue
   # ------------------------------------------------------------------
+
+  # PR-2.6: argv → slash translation. Accepts both forms:
+  #   esr exec /foo bar=baz arg1
+  #   esr exec foo --bar=baz arg1
+  # Both produce slash_text "/foo bar=baz arg1". Long-flag form
+  # (`--key=value`) maps to `key=value`. Bare positional tokens
+  # pass through.
+  defp cmd_exec_argv([]) do
+    IO.puts(:stderr, "esr exec: missing slash text or kind. usage: esr exec /<slash> | esr exec <kind> [--key=value...]")
+    System.halt(2)
+  end
+
+  defp cmd_exec_argv([first | rest]) do
+    slash_head =
+      cond do
+        String.starts_with?(first, "/") -> first
+        true -> "/" <> String.replace(first, "_", "-")
+      end
+
+    slash_args = Enum.map_join(rest, " ", &normalize_arg_token/1)
+
+    slash_text =
+      if slash_args == "",
+        do: slash_head,
+        else: slash_head <> " " <> slash_args
+
+    cmd_exec(slash_text)
+  end
+
+  defp normalize_arg_token("--" <> kv), do: kv
+  defp normalize_arg_token(token), do: token
 
   defp cmd_exec(slash_text) do
     # Per-Phase 2 spec: the queue-file transport is the v1 path.
@@ -333,21 +379,120 @@ defmodule Esr.Cli.Main do
        |> String.slice(0, 14))
   end
 
+  # ------------------------------------------------------------------
+  # daemon — launchctl wrapper for esrd lifecycle (PR-2.6)
+  # ------------------------------------------------------------------
+  #
+  # Replaces the deleted Python `cli/daemon.py` (Option A audit cleanup
+  # 2026-05-05). Targets the user's launchd plist, which by convention
+  # is `~/Library/LaunchAgents/com.ezagent.esrd-<instance>.plist`.
+  # ESR_INSTANCE picks which one (default = "dev").
+
+  defp cmd_daemon(["start"]), do: do_daemon(:load)
+  defp cmd_daemon(["stop"]), do: do_daemon(:unload)
+  defp cmd_daemon(["restart"]), do: do_daemon(:restart)
+  defp cmd_daemon(["status"]), do: do_daemon(:status)
+
+  defp cmd_daemon(_other) do
+    IO.puts(:stderr, "esr daemon: usage: esr daemon {start|stop|restart|status}")
+    System.halt(2)
+  end
+
+  defp do_daemon(action) do
+    instance = System.get_env("ESR_INSTANCE") || "dev"
+    label = "com.ezagent.esrd-#{instance}"
+    plist = Path.join([System.user_home!(), "Library/LaunchAgents", "#{label}.plist"])
+
+    unless File.exists?(plist) do
+      IO.puts(
+        :stderr,
+        "esr daemon: plist not found at #{plist}. " <>
+          "Install via scripts/esrd-launchd.sh first (or set ESR_INSTANCE)."
+      )
+
+      System.halt(1)
+    end
+
+    case action do
+      :load ->
+        run("launchctl", ["load", "-w", plist])
+
+      :unload ->
+        run("launchctl", ["unload", plist])
+
+      :restart ->
+        # `launchctl kickstart -k` restarts a running service in place;
+        # falls back to unload/load if the service isn't loaded yet.
+        case run("launchctl", ["kickstart", "-k", "gui/#{:os.cmd(~c"id -u") |> List.to_string() |> String.trim()}/#{label}"], halt: false) do
+          0 ->
+            :ok
+
+          _ ->
+            _ = run("launchctl", ["unload", plist], halt: false)
+            run("launchctl", ["load", "-w", plist])
+        end
+
+      :status ->
+        case System.cmd("launchctl", ["list"], stderr_to_stdout: true) do
+          {output, 0} ->
+            line =
+              output
+              |> String.split("\n")
+              |> Enum.find(fn l -> String.contains?(l, label) end)
+
+            if line do
+              IO.puts(line)
+            else
+              IO.puts("#{label}: not loaded")
+              System.halt(1)
+            end
+
+          {output, code} ->
+            IO.puts(:stderr, output)
+            System.halt(code)
+        end
+    end
+  end
+
+  defp run(cmd, args, opts \\ []) do
+    halt? = Keyword.get(opts, :halt, true)
+
+    case System.cmd(cmd, args, stderr_to_stdout: true) do
+      {output, 0} ->
+        if output != "", do: IO.puts(output)
+        0
+
+      {output, code} ->
+        if halt? do
+          IO.puts(:stderr, output)
+          System.halt(code)
+        else
+          code
+        end
+    end
+  end
+
   defp print_help do
     IO.puts("""
     esr — Elixir-native CLI for esrd (Phase 2)
 
     USAGE:
-      esr help [kind]              show slash route help
+      esr help [kind]               show slash route help
       esr describe-slashes [--json] [--include-internal]
                                     dump schema (text or JSON)
-      esr exec /<slash> [args...]  submit a slash command via the admin
-                                    queue and print the result
+      esr exec /<slash> [args...]   submit a slash via admin queue
+      esr exec <kind> [--key=value...]
+                                    same, with argv→slash translation
+      esr admin submit <kind>       alias for `esr exec <kind>`
+      esr notify <to> <text>        alias for `esr exec notify to=<to> text=<text>`
+      esr daemon {start|stop|restart|status}
+                                    launchctl wrapper for esrd
 
     ENV:
       ESR_HOST                      esrd host:port (default 127.0.0.1:4001)
       ESRD_HOME                     esrd state root (default ~/.esrd-dev)
-      ESR_INSTANCE                  instance name (default `default`)
+      ESR_INSTANCE                  instance name (default `dev` for daemon,
+                                    `default` for queue path)
       ESR_OPERATOR_PRINCIPAL_ID     submitted_by for exec'd commands
     """)
   end
