@@ -135,49 +135,12 @@ defmodule EsrWeb.CliChannel do
     %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
   end
 
-  def dispatch("cli:run/" <> name, payload) when is_binary(name) do
-    # P3-13: Topology module deleted — no more artifact instantiation
-    # via Elixir. Session creation now flows through Scope.Router via
-    # the /new-session slash command.
-    params = Map.get(payload, "params") || %{}
-
-    %{
-      "data" => %{
-        "error" => @topology_removed_error,
-        "name" => name,
-        "params" => params,
-        "peer_ids" => []
-      }
-    }
-  end
-
-  def dispatch("cli:stop/" <> name, payload) when is_binary(name) do
-    # P3-13: Topology module deleted — session teardown now flows
-    # through Scope.Router via the /end-session slash command.
-    params = Map.get(payload, "params") || %{}
-
-    %{
-      "data" => %{
-        "error" => @topology_removed_error,
-        "name" => name,
-        "params" => params,
-        "stopped_peer_ids" => []
-      }
-    }
-  end
-
-  def dispatch("cli:drain", _payload) do
-    # P3-13: Topology module deleted — drain semantics folded into
-    # Scope.Router (`/list-sessions` + `/end-session` per row).
-    %{
-      "data" => %{
-        "error" => @topology_removed_error,
-        "drained" => [],
-        "stopped_peer_ids" => [],
-        "timeouts" => []
-      }
-    }
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:run/<name>,
+  # cli:stop/<name>, cli:drain dispatch clauses deleted. They had been
+  # P3-13 placeholder error returners (the old Esr.Topology registry
+  # was deleted then); operators have used /new-session + /end-session
+  # for ~6 months. Python CLI's `esr cmd run/stop/drain` are also
+  # deleted in this same PR. See docs/notes/2026-05-05-cli-channel-migration.md.
 
   # PR-21β 2026-04-30: cli:daemon/cleanup_orphans removed — erlexec owns
   # subprocess lifecycle so orphan accumulation is no longer possible.
