@@ -28,12 +28,11 @@ DEFAULT_MANIFEST: list[tuple[str, list[str]]] = [
     # fall outside the AST-walker's "is this a stub?" check. The real
     # bodies they delegate to (build_main, runner_core.run) are already
     # in this manifest, which is sufficient.
-    ("py/src/esr/cli/main.py", [
-        "_submit_cmd_run", "_submit_cmd_stop", "_submit_actors",
-        "_submit_trace", "_stream_telemetry", "_submit_debug",
-        "_submit_deadletter", "_submit_drain",
-    ]),
-    ("py/src/esr/cli/runtime_bridge.py", ["call_runtime"]),
+    # 2026-05-06: `py/src/esr/cli/` deleted along with the Python click
+    # CLI — operator surface is the Elixir escript at `runtime/esr` now.
+    # The `_submit_*` + `call_runtime` checks that lived here are gone
+    # with the source files. The escript's entry bodies are checked by
+    # the Elixir compiler + slash-routes load test, not this AST sweep.
 ]
 
 STUB_ERROR_SENTINELS = {"not yet wired", "not implemented", "stub", "deferred"}
