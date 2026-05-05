@@ -64,11 +64,21 @@ tool calls in parallel.
 ### URL shape
 
 ```
-http://127.0.0.1:<esrd_port>/mcp/<session_id>
+<scheme>://<host>:<port>/mcp/<session_id>
 ```
 
+`<scheme>://<host>:<port>` derives from the existing `ESR_ESRD_URL`
+env var (already used by `scripts/esr-cc.sh` for the ws_client URL
+— `ws://127.0.0.1:4001` is just the fallback when the env var is
+unset). The HTTP form is the same authority with `ws://` → `http://`.
+
+Operator overrides via `ESR_PUBLIC_HOST` (Tailscale, remote claude,
+etc.) flow through transparently — `runtime/config/runtime.exs`
+already wires `ESR_PUBLIC_HOST` into `EsrWeb.Endpoint`'s `url:`
+config, so the same hostname round-trips.
+
 Per-session URL keeps routing trivial: the path identifies the
-target session, no auth header needed for localhost binding.
+target session, no auth header needed.
 
 `esr-cc.sh` writes `.mcp.json` as:
 
@@ -77,13 +87,25 @@ target session, no auth header needed for localhost binding.
   "mcpServers": {
     "esr-channel": {
       "type": "http",
-      "url": "http://127.0.0.1:4001/mcp/<session_id>"
+      "url": "${ESR_ESRD_HTTP_URL}/mcp/${ESR_SESSION_ID}"
     }
   }
 }
 ```
 
-(Replaces today's `command:`/`args:`/`env:` block.)
+The bash side computes `ESR_ESRD_HTTP_URL` as:
+
+```bash
+# Single source of truth: ESR_ESRD_URL (ws form). Flip scheme.
+: "${ESR_ESRD_URL:=ws://127.0.0.1:4001}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_URL/ws:/http:}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_HTTP_URL/wss:/https:}"
+```
+
+— sed-substitution on the existing env var, no second source of
+truth. Tailscale-IP / remote-claude scenarios just set
+`ESR_ESRD_URL=ws://100.64.0.27:4001` and the HTTP MCP URL
+follows automatically.
 
 ### Phoenix routes
 

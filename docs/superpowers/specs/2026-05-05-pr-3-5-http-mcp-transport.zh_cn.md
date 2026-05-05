@@ -60,11 +60,18 @@ POST 和 GET 在同一 URL。Claude Code 的 MCP client 在 session 期间
 ### URL 形式
 
 ```
-http://127.0.0.1:<esrd_port>/mcp/<session_id>
+<scheme>://<host>:<port>/mcp/<session_id>
 ```
 
-Per-session URL 让路由琐碎：path 自带目标 session，localhost 绑定
-不需要 auth header。
+`<scheme>://<host>:<port>` 从现有 `ESR_ESRD_URL` env var 派生
+（`scripts/esr-cc.sh` 今天已经用它给 ws_client URL —— `ws://127.0.0.1:4001`
+只是 fallback）。HTTP 形式是同样 authority，把 `ws://` 翻成 `http://`。
+
+运维通过 `ESR_PUBLIC_HOST` override（Tailscale、远程 claude 等）
+透明流通 —— `runtime/config/runtime.exs` 已经把 `ESR_PUBLIC_HOST`
+连进 `EsrWeb.Endpoint` 的 `url:` config，同一 hostname round-trip。
+
+Per-session URL 让路由琐碎：path 自带目标 session，不需要 auth header。
 
 `esr-cc.sh` 写 `.mcp.json`：
 
@@ -73,13 +80,24 @@ Per-session URL 让路由琐碎：path 自带目标 session，localhost 绑定
   "mcpServers": {
     "esr-channel": {
       "type": "http",
-      "url": "http://127.0.0.1:4001/mcp/<session_id>"
+      "url": "${ESR_ESRD_HTTP_URL}/mcp/${ESR_SESSION_ID}"
     }
   }
 }
 ```
 
-（替换今天的 `command:`/`args:`/`env:` 块。）
+bash 侧算 `ESR_ESRD_HTTP_URL`：
+
+```bash
+# 单一源：ESR_ESRD_URL（ws 形式）。换 scheme。
+: "${ESR_ESRD_URL:=ws://127.0.0.1:4001}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_URL/ws:/http:}"
+ESR_ESRD_HTTP_URL="${ESR_ESRD_HTTP_URL/wss:/https:}"
+```
+
+—— sed 替换现有 env var，没有第二个真相源。Tailscale-IP / 远程
+claude 场景只需 `ESR_ESRD_URL=ws://100.64.0.27:4001`，HTTP MCP URL
+自动跟上。
 
 ### Phoenix 路由
 
