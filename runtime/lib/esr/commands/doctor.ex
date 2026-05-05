@@ -1,14 +1,19 @@
 defmodule Esr.Commands.Doctor do
   @moduledoc """
-  `/doctor` slash command — full state diagnostic + bootstrap walk-through
-  tailored to whichever blocker the operator is hitting (PR-21κ, 2026-04-30).
+  `/doctor` slash command — two modes:
+
+    * default (`mode=chat`, the original) — per-chat operator help:
+      user-binding + chat-binding status with bootstrap walk-through.
+    * `mode=system` — runtime health snapshot (esrd_pid, users_loaded,
+      workspaces_loaded, workers_tracked + workers list). Migrated from
+      `EsrWeb.CliChannel.dispatch("cli:daemon/doctor", ...)`.
 
   Reads from args:
-    * `principal_id` (Feishu open_id from envelope)
-    * `chat_id`
-    * `app_id`
+    * `mode` (optional, "chat" | "system" — default "chat")
+    * `principal_id` (Feishu open_id from envelope; chat mode only)
+    * `chat_id` / `app_id` (chat mode only)
 
-  Pre-PR-21κ this was `Esr.Entity.FeishuAppAdapter.doctor_text/3`.
+  Pre-PR-21κ the chat-mode body lived in `Esr.Entity.FeishuAppAdapter.doctor_text/3`.
   """
 
   @behaviour Esr.Role.Control
@@ -16,6 +21,8 @@ defmodule Esr.Commands.Doctor do
   @type result :: {:ok, map()}
 
   @spec execute(map()) :: result()
+  def execute(%{"args" => %{"mode" => "system"}} = _cmd), do: {:ok, %{"text" => system_snapshot_text(), "data" => system_snapshot_data()}}
+
   def execute(%{"args" => args} = _cmd) do
     principal_id = Map.get(args, "principal_id", "(unknown)")
     chat_id = Map.get(args, "chat_id", "(unknown)")
@@ -40,6 +47,49 @@ defmodule Esr.Commands.Doctor do
   end
 
   def execute(_cmd), do: {:ok, %{"text" => "🩺 (no args)"}}
+
+  defp system_snapshot_data do
+    workers = Esr.WorkerSupervisor.list()
+    user_count = length(Esr.Entity.User.Registry.list())
+
+    workspace_count =
+      try do
+        length(Esr.Resource.Workspace.Registry.list())
+      rescue
+        _ -> 0
+      end
+
+    %{
+      "esrd_pid" => System.pid() |> to_string(),
+      "users_loaded" => user_count,
+      "workspaces_loaded" => workspace_count,
+      "workers_tracked" => length(workers),
+      "workers" =>
+        Enum.map(workers, fn {kind, name, id, pid} ->
+          %{"kind" => to_string(kind), "name" => name, "id" => id, "pid" => pid}
+        end)
+    }
+  end
+
+  defp system_snapshot_text do
+    data = system_snapshot_data()
+
+    workers_lines =
+      data["workers"]
+      |> Enum.map(fn w -> "    - #{w["kind"]}/#{w["name"]} (#{w["id"]}) #{w["pid"]}" end)
+      |> Enum.join("\n")
+
+    """
+    🩺 esrd runtime snapshot
+
+      esrd_pid:           #{data["esrd_pid"]}
+      users_loaded:       #{data["users_loaded"]}
+      workspaces_loaded:  #{data["workspaces_loaded"]}
+      workers_tracked:    #{data["workers_tracked"]}
+    #{if workers_lines == "", do: "    (no workers)", else: workers_lines}
+    """
+    |> String.trim_trailing()
+  end
 
   defp check_user(principal_id) do
     if Process.whereis(Esr.Entity.User.Registry) do
