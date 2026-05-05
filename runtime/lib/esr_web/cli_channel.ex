@@ -12,14 +12,11 @@ defmodule EsrWeb.CliChannel do
 
   use Phoenix.Channel
 
-  alias Esr.Telemetry.Buffer
-  alias Esr.Telemetry.Buffer.Event, as: TelemetryEvent
 
   # Error shape returned by every cli:topology/* / cli:run/* / cli:stop/*
   # / cli:drain op now that Esr.Topology has been deleted (P3-13).
   # Maps to the CLI's data.get("error") path — user sees the migration
   # message and can follow the `/new-session` + `/list-sessions` flow.
-  @topology_removed_error "topology module removed — use /new-session + /list-sessions"
 
   @impl Phoenix.Channel
   def join("cli:" <> _op = topic, _payload, socket) do
@@ -51,88 +48,10 @@ defmodule EsrWeb.CliChannel do
     %{"data" => data}
   end
 
-  def dispatch("cli:actors/tree", _payload) do
-    # P3-13: Topology module deleted. The "tree" view used to group
-    # Entity.Registry entries by their Topology handle; without that
-    # registry we can still surface the raw actor list so the CLI
-    # remains useful, and return an empty topologies list.
-    %{"data" => %{"topologies" => [], "error" => @topology_removed_error}}
-  end
-
-  def dispatch(
-        "cli:actors/inspect",
-        %{"arg" => actor_id, "field" => field}
-      )
-      when is_binary(actor_id) and is_binary(field) do
-    case Esr.Entity.Registry.lookup(actor_id) do
-      {:ok, _pid} ->
-        snap = Esr.Entity.Server.describe(actor_id)
-        data = %{"actor_id" => snap.actor_id, "state" => stringify_keys(snap.state)}
-        path = String.split(field, ".")
-
-        case get_in_nested(data, path) do
-          nil ->
-            %{
-              "data" => %{
-                "error" => "field not present",
-                "field" => field,
-                "actor_id" => actor_id
-              }
-            }
-
-          value ->
-            %{
-              "data" => %{
-                "actor_id" => actor_id,
-                "field" => field,
-                "value" => value
-              }
-            }
-        end
-
-      :error ->
-        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
-    end
-  end
-
-  def dispatch("cli:actors/inspect", %{"arg" => actor_id}) when is_binary(actor_id) do
-    case Esr.Entity.Registry.lookup(actor_id) do
-      {:ok, _pid} ->
-        snap = Esr.Entity.Server.describe(actor_id)
-
-        data = %{
-          "actor_id" => snap.actor_id,
-          "actor_type" => snap.actor_type,
-          "handler_module" => snap.handler_module,
-          "paused" => snap.paused,
-          "state" => stringify_keys(snap.state)
-        }
-
-        # Augment with chat_ids from AdapterSocketRegistry if this actor is a
-        # cc_proxy / feishu_thread_proxy etc tracked there.
-        session_ctx =
-          case Esr.Resource.AdapterSocket.Registry.lookup(actor_id_strip_prefix(snap.actor_id)) do
-            {:ok, row} ->
-              %{
-                "chat_ids" => row.chat_ids,
-                "default_chat_id" => List.first(row.chat_ids) || ""
-              }
-
-            :error ->
-              %{}
-          end
-
-        data = Map.merge(data, session_ctx)
-        %{"data" => data}
-
-      :error ->
-        %{"data" => %{"error" => "actor not found", "actor_id" => actor_id}}
-    end
-  end
-
-  def dispatch("cli:actors/inspect", _payload) do
-    %{"data" => %{"error" => "missing 'arg' (actor_id)"}}
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:actors/tree and
+  # cli:actors/inspect migrated to Esr.Commands.Actors.{Tree,Inspect}.
+  # actors/tree got a real implementation (groups by session_id parsed
+  # from actor_id; replaces the P3-13 stub that returned empty topologies).
 
   # 2026-05-05 cli-channel→slash migration: cli:run/<name>,
   # cli:stop/<name>, cli:drain dispatch clauses deleted. They had been
@@ -201,20 +120,8 @@ defmodule EsrWeb.CliChannel do
     end
   end
 
-  def dispatch("cli:trace", payload) do
-    duration_s =
-      case Map.get(payload, "duration_seconds") do
-        n when is_integer(n) -> n
-        _ -> 900
-      end
-
-    entries =
-      :default
-      |> Buffer.query(duration_seconds: duration_s)
-      |> Enum.map(&serialise_telemetry_event/1)
-
-    %{"entries" => entries}
-  end
+  # 2026-05-05 cli-channel→slash migration: cli:trace migrated to
+  # Esr.Commands.Trace.
 
   # PR-F 2026-04-28: business-topology MCP tool reads via this dispatch.
   # Returns the current workspace's filtered metadata (allowlist:
@@ -484,66 +391,10 @@ defmodule EsrWeb.CliChannel do
     end)
   end
 
-  @spec serialise_telemetry_event(TelemetryEvent.t()) :: map()
-  defp serialise_telemetry_event(%TelemetryEvent{} = event) do
-    %{
-      "ts_unix_ms" => event.ts_unix_ms,
-      "event" => Enum.map(event.event, &to_string/1),
-      "measurements" => stringify_keys(event.measurements),
-      "metadata" => stringify_keys(event.metadata)
-    }
-  end
-
-  @spec stringify_keys(map()) :: map()
-  defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} -> {stringify_key(k), v} end)
-  end
-
-  # Task H — read dotted path from a nested map, tolerating atom or
-  # string keys at any level.
-  defp get_in_nested(map, [key]) when is_map(map) do
-    atomic =
-      try do
-        String.to_existing_atom(key)
-      rescue
-        ArgumentError -> nil
-      end
-
-    Map.get(map, key) || (atomic && Map.get(map, atomic))
-  end
-
-  defp get_in_nested(map, [key | rest]) when is_map(map) do
-    atomic =
-      try do
-        String.to_existing_atom(key)
-      rescue
-        ArgumentError -> nil
-      end
-
-    case Map.get(map, key) || (atomic && Map.get(map, atomic)) do
-      nil -> nil
-      nested when is_map(nested) -> get_in_nested(nested, rest)
-      _ -> nil
-    end
-  end
-
-  defp get_in_nested(_, _), do: nil
-
-  @spec stringify_key(term()) :: String.t()
-  defp stringify_key(k) when is_binary(k), do: k
-  defp stringify_key(k), do: to_string(k)
-
   defp phoenix_port do
     case EsrWeb.Endpoint.config(:http) do
       opts when is_list(opts) -> Keyword.get(opts, :port, 4001)
       _ -> 4001
-    end
-  end
-
-  defp actor_id_strip_prefix(actor_id) do
-    case String.split(actor_id, ":", parts: 2) do
-      [_prefix, suffix] -> suffix
-      _ -> actor_id
     end
   end
 end
