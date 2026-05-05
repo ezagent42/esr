@@ -892,12 +892,14 @@ defmodule Esr.Entity.Server do
   end
 
   defp build_emit_for_tool("session.signal_cleanup", args, _state) do
-    if pid = Process.whereis(Esr.Admin.Dispatcher) do
-      send(
-        pid,
-        {:cleanup_signal, args["session_id"], args["status"], args["details"] || %{}}
+    # PR-2.3a: forward to Esr.Slash.CleanupRendezvous instead of the
+    # legacy Esr.Admin.Dispatcher named-process rendezvous.
+    :ok =
+      Esr.Slash.CleanupRendezvous.signal_cleanup(
+        args["session_id"],
+        args["status"],
+        args["details"] || %{}
       )
-    end
 
     {:ok, :direct_ack, %{"acknowledged" => true}}
   end

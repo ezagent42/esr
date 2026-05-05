@@ -163,7 +163,7 @@ defmodule Esr.Admin.Commands.Scope.BranchEnd do
         default_cleanup_sender(sid, wpath, cc_session_id, branch)
       end)
 
-    :ok = Esr.Admin.Dispatcher.register_cleanup(session_id, self())
+    :ok = Esr.Slash.CleanupRendezvous.register_cleanup(session_id, self())
 
     try do
       _ = sender_fn.(session_id, worktree_path)
@@ -207,7 +207,7 @@ defmodule Esr.Admin.Commands.Scope.BranchEnd do
     after
       # Deregister whether we got a signal, a timeout, or a crash — no
       # stale session_id → pid entries in the Dispatcher.
-      :ok = Esr.Admin.Dispatcher.deregister_cleanup(session_id)
+      :ok = Esr.Slash.CleanupRendezvous.deregister_cleanup(session_id)
     end
   end
 
