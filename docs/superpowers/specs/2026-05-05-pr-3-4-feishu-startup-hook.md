@@ -1,9 +1,23 @@
 # PR-3.4 — Feishu Plugin Startup Hook
 
 **Date:** 2026-05-05
-**Status:** Draft (subagent review pending; user review pending)
+**Status:** Rev 2 (subagent review applied; user review pending)
 **Closes:** Phase 3 PR-3.4 (deferred from 2026-05-05 autonomous run);
 North Star "feishu changes don't touch core" final gap.
+
+**Rev 2 changes (subagent review):**
+
+1. Line number in `application.ex` corrected from 280 → **278**.
+2. **Three additional callers** of `bootstrap_feishu_app_adapters/0`
+   surfaced — see "Additional call sites" below. The "just delete
+   the function" plan needed reshaping into a thin core shim.
+3. ETS owner for the startup-callbacks store specified — the
+   Loader is module-functions-only with no GenServer, so we use
+   `:persistent_term` with a stable key.
+4. Plugin-isolation invariant test changed from "comment-stripping"
+   (brittle — too many legitimate `lookup_by_feishu_id` /
+   `feishu_id` schema references in core) to **pattern-based**:
+   it targets two specific anti-patterns only.
 
 ## Goal
 
@@ -86,7 +100,7 @@ load_enabled_plugins()
 load_workspaces_from_disk(...)
 load_agents_from_disk()
 restore_adapters_from_disk(...)
-# 280 — feishu adapter bootstrap (THE LINE THIS PR MOVES)
+# 278 — feishu adapter bootstrap (THE LINE THIS PR MOVES)
 _ = Esr.Scope.Admin.bootstrap_feishu_app_adapters()
 ```
 
@@ -116,20 +130,103 @@ follows the existing plugin-module convention (lives under
 `runtime/lib/esr/plugins/feishu/`, no compile-time alias from
 core).
 
+### Additional call sites (rev 2 finding)
+
+`bootstrap_feishu_app_adapters/1` (note the path-arg form too) is
+called from **three production sites beyond `Esr.Application`**:
+
+| File | Line | Caller | Purpose |
+|---|---|---|---|
+| `runtime/lib/esr_web/cli_channel.ex` | 319 | `cli:adapters/refresh` | Re-bootstrap after `esr adapter add` |
+| `runtime/lib/esr_web/cli_channel.ex` | 408 | `cli:adapters/rename` | Re-spawn under new name |
+| `runtime/test/esr/scope_admin_bootstrap_feishu_test.exs` | 64,90,93,103 | bootstrap-with-path test | Direct unit test of the function |
+
+Plus `runtime/test/esr_web/cli_channel_test.exs:162` covers the
+refresh dispatcher.
+
+**Implication for the plan:** `Esr.Scope.Admin.bootstrap_feishu_app_adapters/1`
+cannot be deleted as a one-liner cleanup — `cli_channel.ex`'s two
+callers would break. The choices are:
+
+- **(A) Migrate cli_channel callers to invoke
+  `Esr.Plugins.Feishu.Bootstrap.bootstrap/1` directly.** Cleanest
+  but bakes a plugin-module reference into a core file
+  (`cli_channel.ex`). Defeats "no plugin names in core" (the
+  plugin-isolation invariant test would fail).
+- **(B) Leave a thin shim in `Esr.Scope.Admin` that delegates to
+  `Esr.Plugins.Feishu.Bootstrap.bootstrap/1`.** Application boot
+  still calls into the plugin (via Loader's startup-callback
+  runner, NOT via the shim). The shim is for the channel
+  callers only — they're cli-channel-specific transport, not
+  generic app boot. The "feishu changes don't touch core" goal
+  is functionally met (a new feishu manifest entry is enough),
+  the shim is an explicit transition wrapper. Pragmatic.
+- **(C) Move `cli:adapters/refresh` and `cli:adapters/rename`
+  dispatch logic into a feishu-plugin-owned channel.** Bigger
+  refactor; out of scope for PR-3.4 (would block on Phase 3.5
+  HTTP MCP transport spec).
+
+**Spec choice: (B).** Rationale:
+
+- The plugin-isolation invariant test should target the **runtime
+  boot path** (Application, Scope, Entity, Resource), not the
+  cli-channel transport which is its own subsystem. Whitelist the
+  `cli_channel.ex` shim call.
+- The shim is one line per caller (`Esr.Plugins.Feishu.Bootstrap.bootstrap/1`);
+  total 3 LOC of thin wrapping.
+- Phase D-3 (or later) can do option (C) once HTTP MCP transport
+  spec stabilizes — the cli_channel WS path may change shape
+  anyway.
+
 ### `Esr.Scope.Admin` cleanup
 
 After this PR:
 
-- `Esr.Scope.Admin.bootstrap_feishu_app_adapters/0` deleted.
-- `Esr.Scope.Admin.terminate_feishu_app_adapter/1` STAYS — it's
-  used by `/end-session` cleanup logic, not by boot. Renaming /
-  relocating this is a separate concern (could be Phase D-3).
-- `Esr.Scope.Admin.spawn_feishu_app_adapter/3` (private helper)
-  moves to `Esr.Plugins.Feishu.Bootstrap` along with the public
-  function.
+- `Esr.Scope.Admin.bootstrap_feishu_app_adapters/0` and `/1`
+  collapsed into a single thin shim:
 
-`Esr.Application.start/2` line 280 deleted. Comment block
-274-279 trimmed to point operators at the new plugin location.
+  ```elixir
+  @deprecated "Call Esr.Plugins.Feishu.Bootstrap.bootstrap/1 directly. Shim retained for cli_channel.ex callers; remove in Phase D-3."
+  def bootstrap_feishu_app_adapters(adapters_yaml_path \\ nil) do
+    Esr.Plugins.Feishu.Bootstrap.bootstrap(adapters_yaml_path)
+  end
+  ```
+
+- `Esr.Scope.Admin.terminate_feishu_app_adapter/1` STAYS unchanged
+  — used by `/end-session` cleanup logic, not by boot. Phase D-3
+  separate concern.
+- `Esr.Scope.Admin.spawn_feishu_app_adapter/3` (private helper)
+  moves to `Esr.Plugins.Feishu.Bootstrap` (it's pure-feishu logic).
+
+`Esr.Application.start/2` line **278** deleted (the call). The
+shim is no longer invoked from app boot — only from cli_channel.
+
+### Loader's startup-callback store
+
+The Loader is module-functions-only — no GenServer, no ETS owner
+process. **Use `:persistent_term`** with key
+`{Esr.Plugin.Loader, :startup_callbacks}` storing a list of
+`{plugin_name, module, function}` tuples in plugin-enable order.
+
+```elixir
+def register_startup(plugin_name, manifest) do
+  entries = manifest |> Map.get("declares", %{}) |> Map.get("startup", [])
+  cb_list = Enum.flat_map(entries, fn entry -> ... end)
+  current = :persistent_term.get({__MODULE__, :startup_callbacks}, [])
+  :persistent_term.put({__MODULE__, :startup_callbacks}, current ++ cb_list)
+end
+
+def run_startup do
+  :persistent_term.get({__MODULE__, :startup_callbacks}, [])
+  |> Enum.each(fn {plugin, mod, fun} -> ... end)
+end
+```
+
+`:persistent_term` is appropriate here because:
+- Write is rare (boot-time only, one write per plugin enable).
+- Read is rare (one bulk read at end of boot).
+- The "GC penalty on update" concern of `:persistent_term` doesn't
+  apply when updates are at boot only.
 
 ## Failure modes
 
@@ -147,7 +244,7 @@ After this PR:
 | Unit | `Esr.Plugin.LoaderTest.register_startup` | Manifest's startup entry is stashed, retrievable. |
 | Unit | `Esr.Plugin.LoaderTest.run_startup` | Callbacks run in `enabled_plugins` order; failures don't cascade. |
 | Integration | `Esr.Plugins.Feishu.BootstrapTest` | bootstrap/0 with a fixture adapters.yaml spawns the right FAA peer. |
-| **Invariant (new)** | `Esr.Plugins.IsolationTest` (NEW) | grep `runtime/lib/esr/{application,scope,entity,resource}.ex*` for `feishu`/`Feishu` — must be empty (or whitelist the few comment references that make sense). **This is the test that fails today; passing it is what "PR-3.4 done" means.** |
+| **Invariant (new)** | `Esr.Plugins.IsolationTest` (NEW) | **Pattern-based** (rev 2): asserts (a) `Esr.Plugins.Feishu.*` is not referenced from `runtime/lib/esr/{application,scope,entity,resource,interface}/**/*.ex`, except in `cli_channel.ex` where the cli-channel transport shim is whitelisted; (b) `Esr.Scope.Admin.bootstrap_feishu_app_adapters` is called only from the shim (delegating to `Esr.Plugins.Feishu.Bootstrap.bootstrap/1`), nowhere else. The original "comment-stripping" approach was rejected as brittle — `lookup_by_feishu_id` / `feishu_id` schema field references in `entity/user/registry.ex`, `entity/cap_guard.ex`, etc. are deeper coupling that PR-3.4 explicitly doesn't address; pattern-based avoids that noise. **Test fails today; passing is what "PR-3.4 done" means.** |
 | Manifest validation | Phase F's test (already shipping) | The new startup entry's module is loadable. |
 
 The invariant test is the non-negotiable completion gate per the
@@ -203,16 +300,31 @@ startup) and an invariant test.
 
 ## Open questions for user review
 
-1. **Should `function:` default to `bootstrap`** when manifest
-   omits it? (Spec assumes yes.)
-2. **Should startup-failure logs be at `:warning` (current behavior)
-   or `:error`** (more visible to operators tailing the log)?
-3. **Should the plugin-isolation invariant test allow `Feishu` /
-   `feishu` in COMMENTS** (currently 145+ matches in core, mostly
-   docs) or only in code? Spec proposes "code only" via comment-
-   stripping regex. Could become brittle.
-4. **Do we want `Esr.Plugins.IsolationTest` to whitelist
-   `Esr.Entity.FeishuAppProxy`** (still referenced in
-   `interface/boundary.ex` example)? Or delete those references
-   too? (Probably whitelist for now; eliminate when boundary
-   spec is rewritten.)
+The four open questions from rev 1 were resolved in subagent review:
+
+1. **`function:` defaults to `bootstrap`** — yes (convention-over-
+   config matches existing Loader style).
+2. **Startup-failure logs at `:error`** (was `:warning`) — operators
+   tail at `:error+`; bootstrap miss = silent dropped frames is
+   exactly the prod incident PR-K/L chased.
+3. **Pattern-based isolation test, NOT comment-stripping** — see
+   "Test strategy" invariant row above. Comment-stripping was
+   rejected as brittle.
+4. **Whitelist `Esr.Entity.FeishuAppAdapter` reference in
+   `interface/boundary.ex`** — yes, but pair with TODO to rewrite
+   that `@moduledoc` example after Phase D is done so the
+   whitelist doesn't become permanent.
+
+**Remaining for user (林懿伦) to confirm before plan stage:**
+
+- The shim approach (option B in "Additional call sites" above) is
+  the trade-off that keeps `cli_channel.ex` callers working without
+  baking a plugin-module reference into the cli-channel transport
+  layer. The plugin-isolation invariant test whitelists that one
+  shim call. Does this pragmatic compromise sit right? Alternative
+  is option C — relocate `cli:adapters/{refresh,rename}` dispatch
+  into the feishu plugin too — but that's a larger Phase D-3 task.
+- The `:persistent_term`-based startup-callbacks store is per-BEAM
+  global. If we ever want runtime plugin disable to undo startup
+  effects, we'd need a different store. Today plugin enable/disable
+  requires restart anyway, so this isn't a concern for PR-3.4.

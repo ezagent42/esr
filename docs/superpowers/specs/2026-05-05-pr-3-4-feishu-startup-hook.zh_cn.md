@@ -1,9 +1,40 @@
 # PR-3.4 — feishu 插件启动钩子
 
 **日期：** 2026-05-05
-**状态：** 草稿（subagent review 待做；用户 review 待做）
+**状态：** Rev 2（subagent review 已应用；用户 review 待做）
 **关闭：** Phase 3 PR-3.4（2026-05-05 自主跑推迟的）；
 North Star "feishu 改动不触及 core" 最后一个漏洞。
+
+## Rev 2 修订（subagent review 之后）
+
+1. `application.ex` 行号从 280 → **278**（之前算错了）。
+2. **多发现 3 处 `bootstrap_feishu_app_adapters/0` 的调用方**：
+   - `runtime/lib/esr_web/cli_channel.ex:319` — `cli:adapters/refresh`
+   - `runtime/lib/esr_web/cli_channel.ex:408` — `cli:adapters/rename`
+   - `runtime/test/esr/scope_admin_bootstrap_feishu_test.exs` 多处
+   原 spec "直接删函数"的计划要改：在 `Esr.Scope.Admin` 留一个
+   thin shim 委托给 `Esr.Plugins.Feishu.Bootstrap.bootstrap/1`，
+   shim 仅给 cli-channel 调用方用；app boot 路径走 Loader 的
+   `run_startup/0`，跟 shim 无关。**插件隔离不变量测试**
+   whitelist 这一处 shim 调用。
+3. **Loader 的 startup-callbacks 存储**：Loader 是纯模块函数（没
+   GenServer 没 ETS owner），用 `:persistent_term` 存 boot-time
+   一次写多次读的 callback 列表。
+4. **插件隔离不变量测试改为 pattern-based**（不是注释剥离）：只
+   断言两个具体反模式 ——
+   - `Esr.Plugins.Feishu.*` 不被 `runtime/lib/esr/{application,
+     scope,entity,resource,interface}/**/*.ex` 引用（除 cli_channel
+     shim 白名单）
+   - `Esr.Scope.Admin.bootstrap_feishu_app_adapters` 只被 shim
+     自己调用，其他位置零调用
+   理由：原"剥离注释看代码"会被 `lookup_by_feishu_id` / `feishu_id`
+   这种合法 schema 引用噪声化，PR-3.4 不解决那些更深的耦合。
+
+完整 v2 内容（含 "Additional call sites" + Loader `:persistent_term`
+设计 + Open questions 解答）请看英文版本：
+[2026-05-05-pr-3-4-feishu-startup-hook.md](./2026-05-05-pr-3-4-feishu-startup-hook.md)。
+下面 Rev 1 的中文翻译保留作为整体设计参考；上面 4 条是 Rev 2 的
+关键修订。
 
 ## 目标
 
