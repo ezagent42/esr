@@ -36,11 +36,16 @@ defmodule Esr.Resource.Sidecar.RegistryTest do
     assert :ok == Registry.unregister("never_registered_#{System.unique_integer([:positive])}")
   end
 
-  test "Application boot registers feishu and cc_mcp fallbacks" do
-    # Phase-1 fallbacks live in Esr.Application.start/2; verify they survive
-    # boot so existing WorkerSupervisor.sidecar_module/1 callers still resolve.
+  test "Application boot registers feishu sidecar from plugin manifest" do
+    # The feishu plugin's manifest declares `python_sidecars: [{adapter_type:
+    # feishu, python_module: feishu_adapter_runner}]`; Esr.Plugin.Loader
+    # registers it during plugin start at Application boot.
+    #
+    # The cc_mcp adapter_type registration was deleted in PR-3.5
+    # (2026-05-05) — the MCP server is now esrd-hosted via
+    # EsrWeb.McpController; no Python sidecar.
     assert {:ok, "feishu_adapter_runner"} == Registry.lookup("feishu")
-    assert {:ok, "cc_adapter_runner"} == Registry.lookup("cc_mcp")
+    assert :error == Registry.lookup("cc_mcp")
   end
 
   test "WorkerSupervisor.sidecar_module/1 falls back to generic_adapter_runner" do

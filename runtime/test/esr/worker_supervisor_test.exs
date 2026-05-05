@@ -28,7 +28,12 @@ defmodule Esr.WorkerSupervisorTest do
   describe "sidecar_module/1" do
     test "known adapters dispatch to dedicated sidecars" do
       assert WorkerSupervisor.sidecar_module("feishu") == "feishu_adapter_runner"
-      assert WorkerSupervisor.sidecar_module("cc_mcp") == "cc_adapter_runner"
+
+      # PR-3.5 (2026-05-05): cc_mcp Python sidecar deleted; the MCP
+      # server is esrd-hosted via EsrWeb.McpController. The cc_mcp
+      # adapter_type now falls back to the generic runner (no manifest
+      # registers it).
+      assert WorkerSupervisor.sidecar_module("cc_mcp") == "generic_adapter_runner"
     end
 
     test "unknown adapter names fall back to generic_adapter_runner" do
