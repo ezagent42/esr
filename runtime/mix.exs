@@ -10,7 +10,17 @@ defmodule Esr.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      # Phase 2 PR-2.5: Elixir-native CLI escript. Built via
+      # `mix escript.build`; produces a self-contained `esr` binary
+      # that talks to a running esrd via the schema dump endpoint
+      # (PR-2.1) and the admin queue (PR-2.3b).
+      escript: [
+        main_module: Esr.Cli.Main,
+        name: "esr",
+        path: "esr",
+        app: nil
+      ]
     ]
   end
 

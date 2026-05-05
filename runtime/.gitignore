@@ -33,3 +33,6 @@ esr-*.tar
 /priv/static/assets/app.js.map
 /priv/static/assets/app.css.map
 
+# PR-2.5: escript build artefact (built via `mix escript.build`)
+/esr
+
