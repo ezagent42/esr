@@ -76,10 +76,16 @@ defmodule Esr.Cli.Main do
       ["--version"] ->
         IO.puts("esr 0.1.0 (PR-2.6 escript)")
 
-      [unknown | _] ->
-        IO.puts(:stderr, "esr: unknown command #{inspect(unknown)}")
-        print_help()
-        System.halt(2)
+      # Phase B-2 (2026-05-05): catch-all routes through cmd_exec_argv so
+      # operators can invoke any registered slash kind directly:
+      # `esr cap list`, `esr user add ...`, `esr actors list`. Sub-action
+      # token concatenation in `parse_admin_flags/4` produces the right
+      # `<head>_<sub>` kind. Pre-Phase-B-2 this branch printed an error;
+      # the explicit list above stays for the meta-commands (help,
+      # describe-slashes, exec, admin, notify, daemon) so their hand-
+      # written argument shapes still work.
+      argv when is_list(argv) and argv != [] ->
+        cmd_exec_argv(argv)
     end
   end
 
@@ -158,40 +164,101 @@ defmodule Esr.Cli.Main do
   # exec — submit a slash command via the admin queue
   # ------------------------------------------------------------------
 
-  # PR-2.6: argv → slash translation. Accepts both forms:
-  #   esr exec /foo bar=baz arg1
-  #   esr exec foo --bar=baz arg1
-  # Both produce slash_text "/foo bar=baz arg1". Long-flag form
-  # (`--key=value`) maps to `key=value`. Bare positional tokens
-  # pass through.
+  # Phase B-2 (2026-05-05): explicit click-style flag parser. Pre-fix
+  # `cmd_exec_argv/1` joined argv into a slash-text and let `parse_slash`
+  # tokenise — but `--wait` / `--timeout VAL` (escript-side wait flags
+  # carried over from Python's `esr admin submit`) leaked through as
+  # phantom positionals, breaking sub-action detection. The parser
+  # below recognises:
+  #
+  #   * `--wait`                — escript already polls; consumed.
+  #   * `--timeout <secs>`      — sets poll budget; consumed.
+  #   * `--arg key=value`       — Python-click form, splits into args.
+  #   * `--key=value`           — generic kv flag.
+  #   * `key=value`             — bare kv form.
+  #   * `<bare-alphanumeric>`   — sub-action; concatenated into kind
+  #                               (`cap list` → kind `cap_list`).
   defp cmd_exec_argv([]) do
     IO.puts(:stderr, "esr exec: missing slash text or kind. usage: esr exec /<slash> | esr exec <kind> [--key=value...]")
     System.halt(2)
   end
 
   defp cmd_exec_argv([first | rest]) do
-    slash_head =
-      cond do
-        String.starts_with?(first, "/") -> first
-        true -> "/" <> String.replace(first, "_", "-")
-      end
+    head_kind =
+      first
+      |> String.trim_leading("/")
+      |> String.replace("-", "_")
 
-    slash_args = Enum.map_join(rest, " ", &normalize_arg_token/1)
+    {sub_actions, args, timeout_ms} = parse_admin_flags(rest, [], %{}, 60_000)
 
-    slash_text =
-      if slash_args == "",
-        do: slash_head,
-        else: slash_head <> " " <> slash_args
+    full_kind =
+      [head_kind | sub_actions]
+      |> Enum.join("_")
+      |> String.replace("-", "_")
 
-    cmd_exec(slash_text)
+    cmd_exec_kind(full_kind, args, timeout_ms)
   end
 
-  defp normalize_arg_token("--" <> kv), do: kv
-  defp normalize_arg_token(token), do: token
+  defp parse_admin_flags([], subs, args, timeout) do
+    {Enum.reverse(subs), args, timeout}
+  end
 
-  defp cmd_exec(slash_text) do
-    # Per-Phase 2 spec: the queue-file transport is the v1 path.
-    # Write to admin_queue/pending/<id>.yaml; poll completed/<id>.yaml.
+  defp parse_admin_flags(["--wait" | rest], subs, args, timeout) do
+    parse_admin_flags(rest, subs, args, timeout)
+  end
+
+  defp parse_admin_flags(["--timeout", t | rest], subs, args, _timeout) do
+    new_timeout =
+      case Integer.parse(t) do
+        {n, ""} -> n * 1000
+        _ -> 60_000
+      end
+
+    parse_admin_flags(rest, subs, args, new_timeout)
+  end
+
+  defp parse_admin_flags(["--arg", spec | rest], subs, args, timeout) do
+    args = merge_kv(args, spec)
+    parse_admin_flags(rest, subs, args, timeout)
+  end
+
+  defp parse_admin_flags(["--" <> rest_of_token | rest], subs, args, timeout) do
+    args =
+      case String.split(rest_of_token, "=", parts: 2) do
+        [k, v] -> Map.put(args, k, v)
+        _ -> args
+      end
+
+    parse_admin_flags(rest, subs, args, timeout)
+  end
+
+  defp parse_admin_flags([token | rest], subs, args, timeout) do
+    cond do
+      String.contains?(token, "=") ->
+        parse_admin_flags(rest, subs, merge_kv(args, token), timeout)
+
+      Regex.match?(~r/^[A-Za-z_][A-Za-z0-9_\-]*$/, token) and subs == [] ->
+        parse_admin_flags(rest, [token | subs], args, timeout)
+
+      true ->
+        parse_admin_flags(rest, subs, args, timeout)
+    end
+  end
+
+  defp merge_kv(args, spec) do
+    case String.split(spec, "=", parts: 2) do
+      [k, v] -> Map.put(args, k, v)
+      _ -> args
+    end
+  end
+
+  # Phase B-2 (2026-05-05): cmd_exec_kind/3 — kind + args + timeout
+  # come pre-parsed from `parse_admin_flags/4`. Pre-Phase-B-2 the
+  # entry point was `cmd_exec/1` taking a slash-text that the now-
+  # unused `parse_slash/1` re-tokenised; merging via slash-text was
+  # lossy (`--wait` / `--timeout VAL` couldn't round-trip).
+  defp cmd_exec_kind(kind, args, timeout_ms)
+       when is_binary(kind) and is_map(args) and is_integer(timeout_ms) do
     home = System.get_env("ESRD_HOME") || Path.join(System.user_home!(), ".esrd-dev")
     instance = System.get_env("ESR_INSTANCE") || "default"
     queue_dir = Path.join([home, instance, "admin_queue"])
@@ -204,8 +271,6 @@ defmodule Esr.Cli.Main do
     id = ulid()
     pending_path = Path.join(pending_dir, "#{id}.yaml")
 
-    {kind, args} = parse_slash(slash_text)
-
     submitted_by = System.get_env("ESR_OPERATOR_PRINCIPAL_ID") || "ou_unknown"
 
     yaml = """
@@ -216,13 +281,11 @@ defmodule Esr.Cli.Main do
     #{format_args_yaml(args)}
     """
 
-    # Atomic write: tmp + rename so the Watcher's filter rule (skips
-    # `.tmp`) doesn't fire on partial content.
     tmp = pending_path <> ".tmp"
     File.write!(tmp, yaml)
     File.rename!(tmp, pending_path)
 
-    case poll_for_result(id, completed_dir, failed_dir, 60_000) do
+    case poll_for_result(id, completed_dir, failed_dir, timeout_ms) do
       {:ok, dir, doc} ->
         result = doc["result"] || %{}
         text = render_result(result)
@@ -230,7 +293,7 @@ defmodule Esr.Cli.Main do
         if dir == "failed", do: System.halt(1)
 
       :timeout ->
-        IO.puts(:stderr, "esr exec: timed out after 60s waiting for #{id}")
+        IO.puts(:stderr, "esr exec: timed out after #{div(timeout_ms, 1000)}s waiting for #{id}")
         System.halt(1)
     end
   end
@@ -322,37 +385,15 @@ defmodule Esr.Cli.Main do
   defp render_yaml_scalar(v), do: Jason.encode!(v)
 
   # Parse "/foo arg=val arg2=val2" → {"foo", %{"arg" => "val", ...}}.
-  # Stripped down version of SlashHandler's parser — escript can't
-  # call into the real registry, so we just split on whitespace
-  # and `=`. Quoted strings not supported; if the user needs them
-  # they should fall back to writing the yaml directly.
-  defp parse_slash(text) do
-    trimmed = String.trim(text)
-
-    {head, rest} =
-      case String.split(trimmed, ~r/\s+/, parts: 2) do
-        [h] -> {h, ""}
-        [h, r] -> {h, r}
-      end
-
-    kind =
-      head
-      |> String.trim_leading("/")
-      |> String.replace("-", "_")
-
-    args =
-      rest
-      |> String.split(~r/\s+/, trim: true)
-      |> Enum.reduce(%{}, fn token, acc ->
-        case String.split(token, "=", parts: 2) do
-          [k, v] -> Map.put(acc, k, v)
-          _ -> acc
-        end
-      end)
-
-    {kind, args}
-  end
-
+  # Phase B-2 (2026-05-05): the parser now recognises a "sub-action"
+  # token immediately after the slash head, mirroring Python click's
+  # subgroup convention. So `esr cap list` produces kind=`cap_list`,
+  # `esr plugin enable name=ghost` produces kind=`plugin_enable` +
+  # args=`{name: ghost}`. The first non-`/`-prefixed positional that
+  # contains no `=` is treated as a sub-action; subsequent tokens are
+  # parsed as `key=value` args. This lets the escript dispatch any
+  # `<head>_<sub>` slash route registered as an internal_kind without
+  # the operator typing the underscore form by hand.
   defp format_args_yaml(args) when args == %{}, do: "  {}"
 
   defp format_args_yaml(args) do

@@ -267,6 +267,31 @@ internal_kinds:
     permission: "cap.manage"
     command_module: "Esr.Commands.Cap.Revoke"
 
+  # Phase B-2 (2026-05-05): cap_* aliases for the escript dispatch
+  # path. The escript's parse_slash now produces kind=`cap_grant`
+  # from `esr cap grant ...` (sub-action concatenation); these
+  # entries route the cap_* names to the same modules as the bare
+  # grant/revoke kinds above. Read-only list/show/who-can are new.
+  cap_list:
+    permission: "cap.read"
+    command_module: "Esr.Commands.Cap.List"
+
+  cap_show:
+    permission: "cap.read"
+    command_module: "Esr.Commands.Cap.Show"
+
+  cap_who_can:
+    permission: "cap.read"
+    command_module: "Esr.Commands.Cap.WhoCan"
+
+  cap_grant:
+    permission: "cap.manage"
+    command_module: "Esr.Commands.Cap.Grant"
+
+  cap_revoke:
+    permission: "cap.manage"
+    command_module: "Esr.Commands.Cap.Revoke"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"
