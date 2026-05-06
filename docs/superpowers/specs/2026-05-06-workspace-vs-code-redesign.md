@@ -2,7 +2,7 @@
 
 **Status**: design (2026-05-06)
 **Brainstorm**: in-conversation 2026-05-06
-**Estimated implementation**: ~1100-1500 LOC across 1 main PR + docs sweep (revs: + bind-chat/unbind-chat + migrator subcommand from review; + `default` workspace auto-create + `/workspace use` chat-default + immutable session→workspace binding from rev-2 user feedback)
+**Estimated implementation**: ~1300-1700 LOC across 1 main PR + docs sweep (rev-3: + UUID identity + name↔id index + cap UUID translation layer + hybrid storage discovery + registered_repos.yaml + 2 new slashes `/workspace import-repo` & `forget-repo`; − migrator entirely; − file watcher entirely)
 **Related**: deferred from `esr daemon init` PR (see `docs/futures/todo.md`)
 
 ## Goal
@@ -25,10 +25,11 @@ its data form, file layout, and CLI surface.
   by name. (`/new-session <ws_name>` etc.)
 - Backwards compatibility with the old `workspaces.yaml` format
   beyond a one-shot migrator (see Migration).
-- **Capability-string grammar changes.** The current
-  `session:<ws_name>/create` form is preserved verbatim. Existing
-  `capabilities.yaml` grants continue to work without rewrite. Per-
-  workspace cap scoping stays a v1 feature.
+- **Manual-edit-friendly capabilities.yaml.** Caps are stored
+  internally by workspace UUID (`session:<uuid>/create`) and
+  rendered to operators by name through CLI translation. Hand-
+  editing capabilities.yaml is not the supported workflow.
+  Operators use `/cap grant`, `/cap revoke`, etc. exclusively.
 - **Reassigning a session to a different workspace.** A session's
   workspace binding is **immutable after spawn**. There is no
   `/session switch-workspace` command. Operators who want a
@@ -59,21 +60,110 @@ Three issues drove this redesign:
 
 ## Design
 
-### Directory layout
+### Hybrid storage: workspace.json can live in two places
+
+A workspace's `workspace.json` lives in **one of two locations**.
+The runtime treats both forms uniformly — same code path, same
+`Workspace` Resource, only the discovery layer differs.
+
+**(A) Repo-bound** — workspace travels with a git repo:
+
+```
+<repo>/.esr/                       # in user's git repo (committed)
+  workspace.json                   # workspace identity + config
+  topology.yaml                    # project-shareable metadata (also committed)
+```
+
+When teammate clones the repo, they get the workspace too. This is
+the **default mode** for project workspaces.
+
+**(B) ESR-bound** — workspace lives only in ESRD_HOME:
 
 ```
 $ESRD_HOME/<instance>/workspaces/
-  <name>/                         # workspace = a directory under $ESRD_HOME
-    workspace.json                # primary config (this spec's main artefact)
-    sessions/                     # ESR-managed transient state
-      <sid>/
-        ... (session-scoped files; format defined elsewhere)
-    caps.yaml                     # optional: per-workspace cap overrides (v2+)
+  <name>/                          # ESR-managed; no git repo
+    workspace.json                 # workspace identity + config
 ```
 
-Workspace identity is the directory name. There is no central
-registry file; `workspace list` walks the `workspaces/` directory
-and reads each `workspace.json`. The directory IS the registry.
+Reserved for system workspaces that have no project repo:
+- `default` — auto-created by `esr daemon init`, fallback for
+  `/new-session name=<sid>` when no workspace is implied
+- transient workspaces (created with `transient: true`)
+- ad-hoc scratch workspaces operators want without registering a
+  repo
+
+### Session state always lives in ESRD_HOME
+
+Session runtime state — pid, port, transient logs, scope-internal
+files — stays under ESRD_HOME regardless of whether the workspace
+is repo-bound or ESR-bound:
+
+```
+$ESRD_HOME/<instance>/sessions/<sid>/
+  ... (session-scoped files; format defined elsewhere)
+```
+
+This keeps the user's git repo clean (no `.esr/sessions/<sid>/`
+churn polluting their working tree) and means a `git status` on
+the repo never shows ESR runtime state as untracked.
+
+### Workspace identity: UUID
+
+Every workspace gets a **UUID v4** at creation time, stored as
+`workspace.json.id`. This UUID is the canonical identity for all
+internal references:
+
+- `capabilities.yaml` stores cap grants by UUID
+  (`session:<uuid>/create`, `workspace:<uuid>/manage`)
+- session→workspace binding is stored by UUID
+- chat-current-slot's "default workspace for this chat" is stored
+  by UUID
+
+**Operator-visible names are looked up via name↔id index.** When an
+operator types `/cap grant linyilun session:esr-dev/create`, the
+runtime resolves `esr-dev` → UUID and persists the UUID form. When
+`/cap list` renders output, UUIDs are translated back to names.
+
+This decoupling makes `/workspace rename` essentially **free** —
+update `workspace.json.name` and the in-memory name↔id index, no
+cap-yaml rewrite, no session migration. References never go stale.
+
+If a workspace is removed, lingering caps that reference its UUID
+are rendered as `workspace:<UNKNOWN-7b9f...>/manage` so operators
+can clean them up via `/cap revoke`.
+
+### Discovery and registration
+
+ESR discovers workspaces from three sources, all on boot and on
+explicit operator action:
+
+1. **ESR-bound**: walk `$ESRD_HOME/<inst>/workspaces/`, read each
+   subdirectory's `workspace.json`. Always discovered.
+2. **Repo-bound**: walk a list of registered repo paths, read each
+   `<repo>/.esr/workspace.json`. The list lives at
+   `$ESRD_HOME/<inst>/registered_repos.yaml` (created on demand;
+   contains absolute paths and optional human-friendly names).
+3. **Auto-detect on `/new-session ... cwd=<path>`**: when a slash
+   command supplies an explicit `cwd=<path>` and ESR finds
+   `<path>/.esr/workspace.json` but the path is not yet in
+   `registered_repos.yaml`, the path is auto-registered (added to
+   the list, workspace loaded into the registry).
+
+**Repo registration is per-machine.** Operator B who clones a repo
+must either run `/workspace import-repo <path>` once or rely on
+auto-detect when they invoke `/new-session ... cwd=<path>`. The
+registered-repos list is not synced across machines.
+
+### After the registry is built
+
+Once both sources are merged into the in-memory registry, the
+runtime treats all workspaces uniformly. Slash commands reference
+workspaces by name; the lookup translates to UUID and reads the
+backing `workspace.json` regardless of where it lives.
+
+If the same UUID appears in both sources (operator copy-pasted a
+workspace.json), boot fails loudly with a duplicate-id error
+naming both files. Operators must resolve before esrd starts.
 
 ### workspace.json schema (v1)
 
@@ -82,6 +172,7 @@ and reads each `workspace.json`. The directory IS the registry.
   "$schema": "file:///path/to/runtime/priv/schemas/workspace.v1.json",
   "schema_version": 1,
 
+  "id": "7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71",
   "name": "esr-dev",
   "owner": "linyilun",
 
@@ -113,28 +204,35 @@ and reads each `workspace.json`. The directory IS the registry.
 |---|---|---|---|
 | `$schema` | recommended | URL | editor autocomplete + JSON Schema validation |
 | `schema_version` | required | integer | migration anchor; v1 must be `1` |
-| `name` | required | string | identity; must equal directory basename. Loader rejects the workspace if `workspace.json.name != basename(parent_dir)`. The only legal way to change `name` is `/workspace rename`; manual `mv` of the directory will produce a load-time error with operator instructions to either `mv` back or run `/workspace rename`. |
+| `id` | required | UUID v4 string | canonical identity. Generated at `/new-workspace` time. All internal references use this. **Never changes**. Storage shape is `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` (RFC 4122 §4.4). |
+| `name` | required | string | display name. Operator-visible. Translated to/from `id` via in-memory name↔id index. May be renamed (`/workspace rename`); the `id` stays put. Two workspaces in the same registry must have unique names; uniqueness check on registration. |
 | `owner` | required | string | esr-username; must exist in `users.yaml` |
 | `folders` | optional | array of `{path, name?}` | external repo bindings; cwd resolution per below |
 | `agent` | optional (default `"cc"`) | string | which `agents.yaml` entry to use |
 | `settings` | optional | flat dot-namespaced map | per-workspace agent/runtime overrides |
 | `env` | optional | string→string map | env vars threaded into spawned sessions |
 | `chats` | optional | array of `{chat_id, app_id, kind?}` | which chats default-route to this workspace |
-| `transient` | optional (default `false`) | bool | when `true`, last-session-end auto-removes the whole directory |
+| `transient` | optional (default `false`) | bool | when `true`, last-session-end auto-removes the workspace's storage. **Only valid for ESR-bound workspaces**; setting `transient: true` on a repo-bound workspace is rejected at write time (because we won't `rm -rf` a user's git repo). |
 
 ### Cwd resolution (folders → session.cwd)
 
-| `folders.length` | Resolved cwd |
-|---|---|
-| 0 | `$ESRD_HOME/<inst>/workspaces/<name>/` (self-contained scratch) |
-| 1 | `folders[0].path` (single-repo) |
-| >1 | `$ESRD_HOME/<inst>/workspaces/<name>/`; agent gets `--add-dir <each>` per folder |
+The cwd that a session inherits depends on `folders.length` and on
+whether the workspace is repo-bound or ESR-bound:
 
-For multi-folder workspaces the agent (cc) receives every folder
-via its native `--add-dir` mechanism so the LLM can read across
-them. Cwd staying inside ESRD_HOME avoids picking an arbitrary
-"primary" repo. A `primary_folder: <i>` field can be added in v2 if
-operators want explicit cwd selection.
+| `folders.length` | Repo-bound workspace | ESR-bound workspace |
+|---|---|---|
+| 0 | (impossible — repo-bound implies at least one folder, which is the repo itself; `folders[0]` is auto-populated to the repo path on `/workspace import-repo`) | `$ESRD_HOME/<inst>/workspaces/<name>/` (self-contained scratch) |
+| 1 | `folders[0].path` (the repo) | `folders[0].path` |
+| >1 | `folders[0].path`; agent gets `--add-dir <each>` for `folders[1..N]` | `$ESRD_HOME/<inst>/workspaces/<name>/`; agent gets `--add-dir <each>` for all folders |
+
+For multi-folder workspaces the agent (cc) receives every
+non-cwd folder via its native `--add-dir` mechanism so the LLM can
+read across them. A `primary_folder: <i>` field can be added in v2
+if operators want explicit cwd selection.
+
+For repo-bound workspaces the repo path is always `folders[0]` —
+the `.esr/workspace.json` file is inside it. Adding additional
+folders puts them in `folders[1..N]`.
 
 ### settings dot-namespace convention
 
@@ -232,19 +330,21 @@ expected workflow; the CLI is the canonical interface.
 
 | Slash | Status | Behavior |
 |---|---|---|
-| `/new-workspace <name> [folder=<path>] [owner=<user>] [transient=true]` | refactor | Creates `<workspaces>/<name>/workspace.json` with the supplied folder (if any) added to `folders[]`. Auto-binds the current chat. `transient=true` flips the same-named field at creation time. |
-| `/workspace list` | **new** | Walks `<workspaces>/`, reads each `workspace.json`, sorts by name. Output: name, owner, folder count, chat count. |
+| `/new-workspace <name> [folder=<path>] [owner=<user>] [transient=true]` | refactor | Creates a new workspace. **Storage location depends on `folder=`**: if `folder=<path>` is supplied and `<path>` is a git repo, creates `<path>/.esr/workspace.json` (repo-bound); auto-registers the path in `registered_repos.yaml`. Without `folder=`, creates `$ESRD_HOME/<inst>/workspaces/<name>/workspace.json` (ESR-bound). Generates a fresh UUID for `id`. Auto-binds the current chat. `transient=true` rejected for repo-bound workspaces. |
+| `/workspace list` | **new** | Reads the in-memory registry (merged from ESR-bound walk + registered_repos.yaml). Output: name, owner, folder count, chat count, location (`repo:<path>` or `esr:<dir>`). |
 | `/workspace info <name>` | refactor | Reads `workspace.json` + overlays `<folders[0]>/.esr/topology.yaml` if present. Full unfiltered view. |
 | `/workspace describe <name>` | refactor | Same as `info` but with security-filtered allowlist (matches `Esr.Resource.Workspace.Describe` from PR-222). LLM-safe. |
-| `/workspace sessions <name>` | refactor | Reads `<workspaces>/<name>/sessions/` directory entries. |
+| `/workspace sessions <name>` | refactor | Lists sessions whose `workspace_id` matches this workspace's `id`. (Sessions are stored under `$ESRD_HOME/<inst>/sessions/`, indexed by their workspace UUID, not under each workspace's directory.) |
 | `/workspace edit <name> --set <key>=<value>` | **new** | Updates a single scalar field of workspace.json. `--set settings.cc.model=...` for nested. **Not used for list-valued fields** (`folders[]`, `chats[]`); see dedicated slashes below. |
 | `/workspace add-folder <name> --path=<path> [--alias=<name>]` | **new** | Appends `{path, name?}` to `folders[]`. Validates path exists + is a git repo. |
-| `/workspace remove-folder <name> --path=<path>` | **new** | Removes the folders entry matching path. Errors if the workspace has live sessions whose cwd resolves there. |
+| `/workspace remove-folder <name> --path=<path>` | **new** | Removes the folders entry matching path. Errors if the workspace has live sessions whose cwd resolves there. For repo-bound workspaces, removing `folders[0]` (the repo itself) is rejected; use `/workspace remove` to delete the workspace entirely. |
 | `/workspace bind-chat <name> <chat_id> [--app=<app_id>] [--kind=<dm\|group>]` | **new** | Appends to `chats[]`. `--app` defaults to the inbound envelope's app_id when invoked from a chat; required when invoked via escript / admin queue. `--kind` defaults to `dm`. |
 | `/workspace unbind-chat <name> <chat_id> [--app=<app_id>]` | **new** | Removes the matching `chats[]` entry. Without `--app` removes all chat_id matches across apps; with `--app` scopes to a single (chat_id, app_id) pair. |
-| `/workspace remove <name> [--force]` | **new** | Deletes the entire workspace directory + sessions. Without `--force` errors if any session is live. |
-| `/workspace rename <old> <new>` | **new** | Atomic: rename directory + update `workspace.json.name` + update any references (sessions/index files). |
-| `/workspace use <name>` | **new** | Sets the **current chat's default workspace**. Stored at chat-level (next to chat-current-slot index). Subsequent `/new-session name=<sid>` calls in this chat (no explicit `<ws>` arg) default to `<name>`. Per-chat preference; does not affect other chats. |
+| `/workspace remove <name> [--force]` | **new** | Removes a workspace from the registry. **For ESR-bound**: deletes the directory + sessions. **For repo-bound**: deletes `<repo>/.esr/workspace.json` + `<repo>/.esr/topology.yaml` + un-registers from `registered_repos.yaml`; the `<repo>` itself is **never touched**. Without `--force` errors if any session is live. |
+| `/workspace rename <name> <new_name>` | **new** | Updates `workspace.json.name` + the in-memory name↔id index. Caps + sessions reference by UUID and do not change. **Cheap operation**. (For ESR-bound also `mv`'s the directory; for repo-bound `<repo>/.esr/` directory keeps the same path because it lives in the repo.) |
+| `/workspace use <name>` | **new** | Sets the **current chat's default workspace**. Stored at chat-level (next to chat-current-slot index, by UUID). Subsequent `/new-session name=<sid>` calls in this chat (no explicit `<ws>` arg) default to `<name>`. Per-chat preference; does not affect other chats. |
+| `/workspace import-repo <path> [--name=<name>]` | **new** | Adds `<path>` to `registered_repos.yaml` and loads `<path>/.esr/workspace.json` into the registry. Errors if `<path>/.esr/workspace.json` does not exist. `--name` is optional override (unused except for renaming on import). |
+| `/workspace forget-repo <path>` | **new** | Removes `<path>` from `registered_repos.yaml`. The repo's `.esr/workspace.json` is not touched. The workspace disappears from `/workspace list` until re-imported or auto-detected. |
 
 `/workspace list` output format (matches escript YAML envelope per
 PR-211 conventions):
@@ -254,15 +354,19 @@ ok: true
 data:
   workspaces:
     - name: esr-dev
+      id: 7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71
       owner: linyilun
       folders: 2
       chats: 1
+      location: repo:/Users/h2oslabs/Workspace/esr
       transient: false
-    - name: scratch
+    - name: default
+      id: 11111111-2222-4333-8444-555555555555
       owner: linyilun
       folders: 0
       chats: 0
-      transient: true
+      location: esr:/Users/h2oslabs/.esrd-dev/default/workspaces/default
+      transient: false
 ```
 
 All commands write to the workspace directory atomically (write to
@@ -342,154 +446,211 @@ The security boundary stays at `Esr.Resource.Workspace.Describe`
 `chats` (sub-allowlisted), `neighbors_declared`, `metadata`. Owner
 / env / settings stay excluded.
 
-## Migration
+## Capabilities + UUID translation
 
-Existing operators have `~/.esrd/<inst>/workspaces.yaml` with N
-entries. The redesign is not backwards-compatible with the old
-yaml format.
+This section spells out the cap storage / translation that the
+"Workspace identity: UUID" section in Design references.
 
-Migration is exposed as a **CLI subcommand**, not a boot-shim:
+### Storage form (capabilities.yaml)
 
-```
-runtime/esr daemon migrate-workspaces [--instance=<name>] [--dry-run]
-```
+Caps are persisted by UUID. operators never read this file
+directly:
 
-Properties:
+```yaml
+schema_version: 1
 
-- **Idempotent per-entry**, not per-run. The migrator iterates yaml
-  rows; for each row it skips when `workspaces/<row.name>/workspace.json`
-  already exists, otherwise translates and writes. This handles the
-  partial-crash case (some entries migrated, then crash) by safely
-  resuming on the next invocation.
-- **Always runnable.** Operators can re-run after a manual yaml
-  edit. No "delete migrator after N months" planned obsolescence;
-  the subcommand stays.
-- **Dry-run mode** prints the planned writes without touching the
-  filesystem. Useful for ops review.
-- **Auto-invoked once at boot** for backwards-compatibility with
-  current operator workflow (esrd starts, migration just happens).
-  Boot-time invocation is exactly the same code path; if all rows
-  are already translated, it's a no-op log line.
-
-**Per-entry translation:**
-
-| Old yaml field | New location | Notes |
-|---|---|---|
-| `name` | `workspace.json.name` (= directory basename) | unchanged |
-| `owner` | `workspace.json.owner` | unchanged |
-| `start_cmd` | dropped | lives on `agents.yaml.cc.start_cmd` now |
-| `role` | dropped — see MIGRATION_NOTES.md | semantic label moves to `<dir>/.esr/topology.yaml` if operator wants it |
-| `chats` | `workspace.json.chats` | unchanged (`kind` retained) |
-| `env` | `workspace.json.env` | unchanged |
-| `metadata` | dropped — written verbatim to MIGRATION_NOTES.md | belongs in `<dir>/.esr/topology.yaml`; operator must manually relocate to keep `describe_topology` populated |
-| `neighbors` | dropped — written verbatim to MIGRATION_NOTES.md | same reasoning |
-| `root` | `workspace.json.folders: [{path: <root>}]` | only present in pre-PR-22 yaml |
-
-**Visibility of dropped fields** (per reviewer I3):
-
-For each migrated workspace, the migrator writes
-`<workspaces>/<name>/MIGRATION_NOTES.md` containing:
-
-```markdown
-# Migration notes for workspace `<name>`
-
-Migrated <unix-ts> from `~/.esrd/<inst>/workspaces.yaml`.
-
-## Fields dropped during migration (operator action recommended)
-
-The following fields were not preserved in `workspace.json` because
-they belong in `<dir>/.esr/topology.yaml` (per the
-2026-05-06-workspace-vs-code-redesign spec). To keep these visible
-to LLM via `describe_topology`, copy them by hand into
-`<your_repo>/.esr/topology.yaml` and commit.
-
-- `metadata`: <verbatim original yaml>
-- `neighbors`: <verbatim original yaml>
-- `role`: <verbatim original value>
+principals:
+  - id: linyilun
+    capabilities:
+      - "session:7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71/create"
+      - "session:7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71/end"
+      - "workspace:7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71/manage"
+      - "user.manage"          # global perms have no UUID; unchanged
+      - "adapter.manage"       # same
 ```
 
-This file is checked by `/workspace info <name>` which surfaces a
-"⚠️ migration-pending" indicator if `MIGRATION_NOTES.md` exists.
-Operators delete the file (or the migrator self-deletes when
-`<dir>/.esr/topology.yaml` exists) when relocation is done.
+Resource-scoped caps (`<resource>:<scope>/<perm>`) where the scope
+is a workspace use the workspace's UUID. Non-workspace-scoped caps
+(`user.manage`, `adapter.manage`, `runtime.deadletter`, etc.) are
+unchanged from today.
 
-Per-workspace migration also emits one `WARN` log line per
-affected workspace (not summarised at INFO):
+### Read path (CLI output translation)
 
+When `/cap list` or `/cap show <principal>` runs, the rendering
+layer translates UUIDs back to names:
+
+```bash
+$ runtime/esr exec /cap list
+ok: true
+data:
+  - principal: linyilun
+    capabilities:
+      - "session:esr-dev/create"          # 7b9f3c1a-... → "esr-dev"
+      - "session:esr-dev/end"
+      - "workspace:esr-dev/manage"
+      - "user.manage"
+      - "adapter.manage"
 ```
-warning: workspace 'esr-dev' migrated; metadata/neighbors/role
-  fields dropped — see ~/.esrd-dev/default/workspaces/esr-dev/MIGRATION_NOTES.md
-```
 
-**After-migration archival:**
+If a UUID in the persisted form does not match any registered
+workspace (e.g. workspace was removed but caps lingered), the
+rendered string is `<resource>:<UNKNOWN-7b9f3c1a-...>/<perm>` so
+operators can see + clean it up via `/cap revoke`.
 
-After migration completes (all rows accounted for), the migrator
-archives the original yaml:
+### Write path (CLI input translation)
 
-```
-~/.esrd/<inst>/workspaces.yaml → workspaces.yaml.bak.<unix-ts>
-```
+When `/cap grant <principal> session:<name>/create` runs:
 
-If migration is interrupted (crash mid-run), the original is
-preserved unchanged and the next run resumes from the per-entry
-check.
+1. Resolve `<name>` → UUID via the in-memory registry. Error if
+   `<name>` doesn't exist.
+2. Persist as `session:<uuid>/create`.
+
+`/cap revoke` similarly translates name → UUID before matching.
+
+### Cap matching during runtime checks
+
+When ESR checks "does principal P have cap `session:<uuid>/create`",
+the matching happens entirely in UUID-land — no name involved. The
+`Esr.Resource.Capability.Grants` matcher is unchanged from today
+except its inputs are UUID strings instead of name strings.
+
+### Why this works for free rename
+
+After `/workspace rename esr-dev esr-prod`:
+
+1. `workspace.json.name` flips from `"esr-dev"` to `"esr-prod"`.
+2. The in-memory name↔id index is rebuilt (`esr-dev` row removed,
+   `esr-prod` row added; `id` is the same UUID).
+3. capabilities.yaml is **not touched**. The persisted UUIDs
+   continue to reference the same workspace — its name just
+   happens to display differently now.
+4. Subsequent `/cap list` shows `session:esr-prod/create` (because
+   the renderer translates UUID → "esr-prod" via the new index).
+
+No file rewrites. No atomic transactions. No lock coordination.
+The whole rename is two writes (workspace.json + index) and the
+cap layer doesn't notice.
+
+### Other UUID-using subsystems
+
+- **session→workspace binding**: stored at session creation. Format
+  is `session.workspace_id = "<uuid>"`. Sessions never carry the
+  workspace name.
+- **chat-current-slot's "default workspace"**: stored by UUID per
+  (chat_id, app_id). `/workspace use <name>` resolves name → UUID
+  before persisting.
+- **Slash-command admin queue payloads**: arguments use the operator-
+  facing name. The name → UUID resolution happens at the slash
+  dispatch layer, before the command module sees the args.
+
+## Removal of old `workspaces.yaml`
+
+There is **no migrator**. The old single-file `workspaces.yaml`
+format is incompatible with the new layout, and translating its
+contents is not worth the engineering / surface-area cost.
+
+On first esrd boot under the new code:
+
+1. Detect `$ESRD_HOME/<inst>/workspaces.yaml` (legacy file).
+2. **Delete it** (`rm`). Log `WARN` with the deleted path so
+   operator has audit trail.
+3. Create `$ESRD_HOME/<inst>/workspaces/default/workspace.json`
+   (the system `default` workspace, ESR-bound, owner = bootstrap
+   admin).
+4. Operator must re-create their previous workspaces:
+   - For each project repo: `cd <repo> && /workspace import-repo .`
+     (or use `/new-workspace <name> folder=<path>` from a chat)
+   - For each chat-binding: `/workspace bind-chat <name> <chat_id>`
+   - For each non-trivial setting (env, settings.cc.*): re-set
+     via `/workspace edit`
+
+This is more work for the operator than a migrator would have
+been, but:
+
+- The current operator base is small (the user's two instances:
+  `~/.esrd-dev` and `~/.esrd`).
+- Each instance has a handful of workspaces (the user's `dev` env
+  has 2: `default` and `esr-dev`; same scale on prod).
+- A migrator would need separate code paths for every legacy yaml
+  shape (pre-PR-22 with `root:`, pre-PR-21θ with `cwd:`, current
+  shape) — easily 200+ LOC of code that runs once.
+- The "delete + re-create" approach forces operators through the
+  new CLI, which is exactly the workflow we want to validate.
+
+Before merging the implementation PR, the operator must take note
+of any non-default settings on existing workspaces (run
+`runtime/esr exec /workspace info <name>` for each, copy values
+into a notepad). Post-merge, recreate those settings via the new
+CLI.
+
+The implementation PR adds a one-time `WARN`-level log line at
+boot listing the deleted yaml's path so an operator who somehow
+missed the heads-up has a paper trail.
 
 ## Out of scope
 
-- Per-workspace cap scoping. Caps flatten to `session:create` etc.
-  Per-workspace policy can return as `caps.yaml` per-workspace
-  override file in v2.
 - Auto-discovery of workspace from cwd (e.g. `/new-session` with
   no name resolving to "the workspace whose folders contain $PWD").
-  YAGNI for now; explicit name avoids ambiguity.
-- Multi-root cwd selection (always cwd = workspace dir or
-  folders[0]). Add `primary_folder` field in v2 if needed.
-- Rich `caps.yaml` per-workspace overrides. v1 leaves caps strictly
-  flat at `~/.esrd/<inst>/capabilities.yaml`.
+  YAGNI for now; explicit name avoids ambiguity. (Note: a different
+  kind of auto-detect is in scope — `/new-session ... cwd=<path>`
+  silently registers `<path>/.esr/workspace.json` if present. That's
+  registration, not workspace identity inference.)
+- Multi-root cwd selection (always cwd = workspace's `folders[0]`
+  for repo-bound, ESRD_HOME dir for ESR-bound multi-folder). Add
+  `primary_folder` field in v2 if needed.
 - Project-level `<dir>/.esr/agents.yaml` overrides. v2+.
+- Cross-machine syncing of registered_repos.yaml. Each machine
+  registers repos independently.
+- Filesystem watcher / hot-reload of workspace.json. **All workspace
+  mutations go through CLI**; the CLI invalidates the in-memory
+  registry inline. Hand-editing workspace.json is allowed for
+  emergency recovery, but operators must run `runtime/esr daemon
+  restart` (or `/workspace reload <name>` in v2) to pick up the
+  change.
 
 ## Risks and open questions
 
-1. **migrator robustness across very old yaml versions.** If
-   operators have workspaces.yaml from before PR-22 (`root`
-   present) or PR-21θ (`cwd` present), the migrator must handle
-   them gracefully. Implementation should grep all known
-   workspaces.yaml shapes ever shipped and translate accordingly.
-2. **transient workspace cleanup race.** When `transient: true` and
-   the last session ends, the cleanup hook needs to coordinate
-   with any concurrent `/new-session` arriving for that workspace.
-   Use a registry-level lock during cleanup.
-3. **`workspace rename` atomicity.** Renaming touches: directory,
-   workspace.json.name, possibly capabilities.yaml grants
-   referencing the old name (because cap strings have form
-   `session:<ws>/create`), possibly chat-current-slot index. v1
-   should validate no live sessions exist before rename, then do
-   the directory + json update atomically; defer cap/index
-   migration to operator (CLI prints commands to run, including
-   the literal `cap revoke / cap grant` lines for the renamed
-   workspace).
-4. **`<dir>/.esr/topology.yaml` discovery on shared repos.** When
-   a teammate clones the repo, ESR sees `.esr/topology.yaml` but
-   has no associated workspace.json (different ESRD_HOME). v1
-   tolerates this — workspace.json is per-machine, topology.yaml is
-   per-repo. The teammate creates their own `/new-workspace` and
-   the topology.yaml gets picked up automatically.
-5. **Shared-FS multi-host is unsupported.** `$ESRD_HOME` is
+1. **First-boot data loss.** The new code unconditionally deletes
+   `~/.esrd/<inst>/workspaces.yaml` on first boot. Operators must
+   note their workspace settings (run `/workspace info <name>` for
+   each, or `cat workspaces.yaml`) **before** upgrading. The PR
+   description must call this out prominently. Sample operator
+   pre-upgrade procedure is in the implementation plan.
+2. **`transient: true` + concurrent `/new-session` race.** When
+   the last session under a transient workspace ends, the cleanup
+   hook must coordinate with any concurrent `/new-session` arriving
+   for that workspace. Use the `Esr.Resource.Workspace.Registry`
+   GenServer's serialised state machine — cleanup and registration
+   are both `handle_call`s, so they're naturally serialised on the
+   same process.
+3. **`/workspace remove` of a repo-bound workspace.** Spec says we
+   delete `<repo>/.esr/workspace.json` + `topology.yaml` and
+   un-register from `registered_repos.yaml`, but never touch the
+   `<repo>` itself. Edge case: what if `<repo>/.esr/` was already
+   gitignored or had other ESR-related files (future v2: agents.yaml
+   override)? The implementation should `rm <repo>/.esr/workspace.json`
+   and `rm <repo>/.esr/topology.yaml` specifically, not `rm -rf
+   <repo>/.esr/`. Verify with implementation tests.
+4. **Shared-FS multi-host is unsupported.** `$ESRD_HOME` is
    per-host. Symlinking / NFS-mounting / Dropbox-syncing
-   `~/.esrd-dev/` between hosts has always been undefined behavior
-   (atomic-rename + fsync semantics differ across filesystems;
-   process-name registries assume one BEAM owns the directory).
-   This redesign does not change that posture. Operators sharing
-   one repo across multiple hosts MUST run separate ESRD_HOMEs per
-   host. `<dir>/.esr/topology.yaml` is the only file in this design
-   that's intentionally repo-shared and version-control-tracked.
-6. **Watcher implementation.** The current `Esr.Resource.Workspace.Watcher`
-   watches a single yaml file. Post-redesign it must watch the
-   workspaces top-level directory recursively (file events at
-   depth 2: `<workspaces>/<name>/workspace.json`). FileSystem on
-   macOS supports recursive watching natively; on Linux watchers
-   may need explicit per-subdirectory subscription. Implementation
-   plan must specify which mode is used and verify on both OSes.
+   `~/.esrd-dev/` between hosts is undefined behavior (atomic-rename
+   + fsync semantics differ across filesystems; process-name
+   registries assume one BEAM owns the directory). This redesign
+   does not change that posture. Repo-bound workspace.json + the
+   project's `.esr/topology.yaml` ARE intentionally repo-shared
+   and version-control-tracked, but `registered_repos.yaml` and
+   the in-memory registry remain per-host.
+5. **UUID collision.** UUID v4 has a ~5×10⁻³⁶ collision probability
+   per pair. With our scale (single-digit workspaces per machine)
+   collisions are statistically impossible, but the registry merge
+   step still validates: if two `workspace.json` files load with
+   the same UUID, esrd boot fails loudly with both file paths in
+   the error. Operators resolve by editing one file's `id`.
+6. **Repo-bound workspace.json on a remote (non-local) repo.** If
+   operator opens an ESR-managed repo over a shared filesystem
+   (sshfs, etc.), file-locking semantics may not survive. v1
+   recommends only local repos; remote scenarios fall under
+   risk #4 (shared-FS).
 
 ## Docs sweep
 
