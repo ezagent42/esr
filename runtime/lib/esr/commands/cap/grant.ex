@@ -37,6 +37,33 @@ defmodule Esr.Commands.Cap.Grant do
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
+    case Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
+      {:ok, translated_perm} ->
+        do_grant(pid, translated_perm)
+
+      {:error, :unknown_workspace} ->
+        {:error,
+         %{
+           "type" => "unknown_workspace",
+           "message" => "no workspace found in capability scope: #{perm}"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "grant requires args.principal_id and args.permission (non-empty strings)"
+     }}
+  end
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  defp do_grant(pid, perm) do
     path = Esr.Paths.capabilities_yaml()
 
     doc = read_or_empty(path)
@@ -59,19 +86,6 @@ defmodule Esr.Commands.Cap.Grant do
         {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
     end
   end
-
-  def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "grant requires args.principal_id and args.permission (non-empty strings)"
-     }}
-  end
-
-  # ------------------------------------------------------------------
-  # Internals
-  # ------------------------------------------------------------------
 
   # Missing / unreadable file → canonical empty skeleton. Matches the
   # spec §5 schema shape so later writes stay valid YAML.

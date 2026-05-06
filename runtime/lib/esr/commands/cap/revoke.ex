@@ -36,6 +36,33 @@ defmodule Esr.Commands.Cap.Revoke do
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
+    case Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
+      {:ok, translated_perm} ->
+        do_revoke(pid, translated_perm)
+
+      {:error, :unknown_workspace} ->
+        {:error,
+         %{
+           "type" => "unknown_workspace",
+           "message" => "no workspace found in capability scope: #{perm}"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "revoke requires args.principal_id and args.permission (non-empty strings)"
+     }}
+  end
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  defp do_revoke(pid, perm) do
     path = Esr.Paths.capabilities_yaml()
 
     with {:ok, %{} = doc} <- read_yaml(path),
@@ -63,19 +90,6 @@ defmodule Esr.Commands.Cap.Revoke do
         {:error, %{"type" => "no_matching_capability"}}
     end
   end
-
-  def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "revoke requires args.principal_id and args.permission (non-empty strings)"
-     }}
-  end
-
-  # ------------------------------------------------------------------
-  # Internals
-  # ------------------------------------------------------------------
 
   # Missing / unreadable file → treat as "no matching cap" so the
   # operator sees one error type regardless of how the mismatch arose.
