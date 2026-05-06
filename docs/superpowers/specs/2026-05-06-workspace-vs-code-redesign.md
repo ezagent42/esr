@@ -2,7 +2,7 @@
 
 **Status**: design (2026-05-06)
 **Brainstorm**: in-conversation 2026-05-06
-**Estimated implementation**: ~800-1200 LOC across 1 main PR + docs sweep
+**Estimated implementation**: ~1000-1400 LOC across 1 main PR + docs sweep (rev: added bind-chat/unbind-chat slashes + migrator subcommand after spec review)
 **Related**: deferred from `esr daemon init` PR (see `docs/futures/todo.md`)
 
 ## Goal
@@ -21,13 +21,14 @@ its data form, file layout, and CLI surface.
 - Removing the `workspace` concept entirely (we discussed and
   rejected; it still serves identity, cap scoping, multi-app
   routing, and metadata anchoring).
-- Per-workspace cap scoping (`session:<ws>/create` style strings).
-  V1 flattens to `session:create`; per-workspace policy can return
-  later as a follow-up if real demand surfaces.
 - Auto-detecting workspace from cwd. Workspace must be referenced
   by name. (`/new-session <ws_name>` etc.)
 - Backwards compatibility with the old `workspaces.yaml` format
   beyond a one-shot migrator (see Migration).
+- **Capability-string grammar changes.** The current
+  `session:<ws_name>/create` form is preserved verbatim. Existing
+  `capabilities.yaml` grants continue to work without rewrite. Per-
+  workspace cap scoping stays a v1 feature.
 
 ## Problem
 
@@ -70,7 +71,7 @@ and reads each `workspace.json`. The directory IS the registry.
 
 ```json
 {
-  "$schema": "https://esr.local/schema/workspace.v1.json",
+  "$schema": "file:///path/to/runtime/priv/schemas/workspace.v1.json",
   "schema_version": 1,
 
   "name": "esr-dev",
@@ -104,7 +105,7 @@ and reads each `workspace.json`. The directory IS the registry.
 |---|---|---|---|
 | `$schema` | recommended | URL | editor autocomplete + JSON Schema validation |
 | `schema_version` | required | integer | migration anchor; v1 must be `1` |
-| `name` | required | string | identity; must equal directory basename |
+| `name` | required | string | identity; must equal directory basename. Loader rejects the workspace if `workspace.json.name != basename(parent_dir)`. The only legal way to change `name` is `/workspace rename`; manual `mv` of the directory will produce a load-time error with operator instructions to either `mv` back or run `/workspace rename`. |
 | `owner` | required | string | esr-username; must exist in `users.yaml` |
 | `folders` | optional | array of `{path, name?}` | external repo bindings; cwd resolution per below |
 | `agent` | optional (default `"cc"`) | string | which `agents.yaml` entry to use |
@@ -139,7 +140,6 @@ Reserved scopes:
   `cc.model`, `cc.allowed_tools`, `cc.system_prompt_extra`.
 - `<future-agent>.*` — per-agent namespace as new agent_defs land.
 - `logging.*` — per-workspace logger level / format overrides.
-- `routing.*` — reserved for future routing-policy overrides.
 
 `settings` keys are flat dot-strings (matching VS Code) rather than
 nested objects. This makes JSON Schema validation more direct and
@@ -224,16 +224,37 @@ expected workflow; the CLI is the canonical interface.
 
 | Slash | Status | Behavior |
 |---|---|---|
-| `/new-workspace <name> [folder=<path>] [owner=<user>]` | refactor | Creates `<workspaces>/<name>/workspace.json` with the supplied folder (if any) added to `folders[]`. Auto-binds the current chat. |
+| `/new-workspace <name> [folder=<path>] [owner=<user>] [transient=true]` | refactor | Creates `<workspaces>/<name>/workspace.json` with the supplied folder (if any) added to `folders[]`. Auto-binds the current chat. `transient=true` flips the same-named field at creation time. |
 | `/workspace list` | **new** | Walks `<workspaces>/`, reads each `workspace.json`, sorts by name. Output: name, owner, folder count, chat count. |
 | `/workspace info <name>` | refactor | Reads `workspace.json` + overlays `<folders[0]>/.esr/topology.yaml` if present. Full unfiltered view. |
 | `/workspace describe <name>` | refactor | Same as `info` but with security-filtered allowlist (matches `Esr.Resource.Workspace.Describe` from PR-222). LLM-safe. |
 | `/workspace sessions <name>` | refactor | Reads `<workspaces>/<name>/sessions/` directory entries. |
-| `/workspace edit <name> --set <key>=<value>` | **new** | Updates a workspace.json field. `--set settings.cc.model=...` for nested. |
+| `/workspace edit <name> --set <key>=<value>` | **new** | Updates a single scalar field of workspace.json. `--set settings.cc.model=...` for nested. **Not used for list-valued fields** (`folders[]`, `chats[]`); see dedicated slashes below. |
 | `/workspace add-folder <name> --path=<path> [--alias=<name>]` | **new** | Appends `{path, name?}` to `folders[]`. Validates path exists + is a git repo. |
 | `/workspace remove-folder <name> --path=<path>` | **new** | Removes the folders entry matching path. Errors if the workspace has live sessions whose cwd resolves there. |
+| `/workspace bind-chat <name> <chat_id> [--app=<app_id>] [--kind=<dm\|group>]` | **new** | Appends to `chats[]`. `--app` defaults to the inbound envelope's app_id when invoked from a chat; required when invoked via escript / admin queue. `--kind` defaults to `dm`. |
+| `/workspace unbind-chat <name> <chat_id> [--app=<app_id>]` | **new** | Removes the matching `chats[]` entry. Without `--app` removes all chat_id matches across apps; with `--app` scopes to a single (chat_id, app_id) pair. |
 | `/workspace remove <name> [--force]` | **new** | Deletes the entire workspace directory + sessions. Without `--force` errors if any session is live. |
 | `/workspace rename <old> <new>` | **new** | Atomic: rename directory + update `workspace.json.name` + update any references (sessions/index files). |
+
+`/workspace list` output format (matches escript YAML envelope per
+PR-211 conventions):
+
+```
+ok: true
+data:
+  workspaces:
+    - name: esr-dev
+      owner: linyilun
+      folders: 2
+      chats: 1
+      transient: false
+    - name: scratch
+      owner: linyilun
+      folders: 0
+      chats: 0
+      transient: true
+```
 
 All commands write to the workspace directory atomically (write to
 `workspace.json.tmp`, fsync, rename). `FileSystem` watcher on the
@@ -266,9 +287,25 @@ in this order, then applies the security-filtered allowlist
    neighbors (if folders[0] exists and the file is present)
 3. **chats** — workspace.json.chats[] mapped to LLM-readable form
 
-For multi-folder workspaces v1 reads only `folders[0]/.esr/topology.yaml`.
-Multi-folder merge can return as a v2 enhancement if real demand
-appears.
+**Multi-folder behavior**: `folders[0]` is the **canonical primary
+folder** for project metadata. `describe_topology` reads only
+`folders[0]/.esr/topology.yaml`. If operators want different
+metadata per folder, they should structure their workspace so the
+canonical metadata lives in the first-listed folder.
+
+Why folders[0] specifically (not multi-folder merge):
+
+- Merging across folders introduces last-write-wins ambiguity that
+  operators must reason about. v1 picks "first" deterministically
+  to avoid surprise.
+- Multi-folder merge can land as a v2 enhancement if real demand
+  surfaces (`primary_folder: <i>` field + per-folder merge order).
+
+This is intentionally asymmetric with `chats[]` (which exposes
+all entries to LLM): `chats` are operator-routing data with
+no merge semantics ("here are the chats that route here"), while
+topology files are layered metadata where conflicts have to be
+resolved.
 
 The security boundary stays at `Esr.Resource.Workspace.Describe`
 (introduced PR-222). The allowlist is unchanged: `name`, `role`,
@@ -279,39 +316,93 @@ The security boundary stays at `Esr.Resource.Workspace.Describe`
 
 Existing operators have `~/.esrd/<inst>/workspaces.yaml` with N
 entries. The redesign is not backwards-compatible with the old
-yaml format. Migration is one-shot, automatic on first esrd start
-under the new code:
+yaml format.
 
-1. On boot, if `<inst>/workspaces.yaml` exists AND
-   `<inst>/workspaces/` directory does not, run the migrator.
-2. For each entry in workspaces.yaml: create
-   `<inst>/workspaces/<name>/workspace.json` with translated
-   fields:
-   - `name` → unchanged
-   - `owner` → unchanged
-   - `start_cmd` → drop (lives on `agents.yaml.cc.start_cmd` now)
-   - `role` → drop (semantic label moves to topology.yaml; not
-     auto-populated by migrator since target file lives in user
-     repo)
-   - `chats` → unchanged (with `kind` retained)
-   - `env` → unchanged
-   - `metadata` / `neighbors` → drop (these belong in
-     `<dir>/.esr/topology.yaml`; emit a warning so operator
-     manually copies if they want them preserved)
-   - `root` → translates to `folders: [{path: <root>}]` if
-     present (PR-22 had already removed `workspace.root`, so this
-     branch only matters for very old yaml).
-3. After successful translation, archive `workspaces.yaml` →
-   `workspaces.yaml.bak.<unix-ts>`.
-4. Log migration summary at `INFO`.
+Migration is exposed as a **CLI subcommand**, not a boot-shim:
 
-Migrator is run unconditionally (no operator opt-in needed). It is
-idempotent: if `workspaces/` already has a directory matching a
-yaml entry, that entry is skipped.
+```
+runtime/esr daemon migrate-workspaces [--instance=<name>] [--dry-run]
+```
 
-The migrator is delete-able once all known operators have run it
-once. We can target removal in a follow-up PR ~3 months after this
-redesign lands.
+Properties:
+
+- **Idempotent per-entry**, not per-run. The migrator iterates yaml
+  rows; for each row it skips when `workspaces/<row.name>/workspace.json`
+  already exists, otherwise translates and writes. This handles the
+  partial-crash case (some entries migrated, then crash) by safely
+  resuming on the next invocation.
+- **Always runnable.** Operators can re-run after a manual yaml
+  edit. No "delete migrator after N months" planned obsolescence;
+  the subcommand stays.
+- **Dry-run mode** prints the planned writes without touching the
+  filesystem. Useful for ops review.
+- **Auto-invoked once at boot** for backwards-compatibility with
+  current operator workflow (esrd starts, migration just happens).
+  Boot-time invocation is exactly the same code path; if all rows
+  are already translated, it's a no-op log line.
+
+**Per-entry translation:**
+
+| Old yaml field | New location | Notes |
+|---|---|---|
+| `name` | `workspace.json.name` (= directory basename) | unchanged |
+| `owner` | `workspace.json.owner` | unchanged |
+| `start_cmd` | dropped | lives on `agents.yaml.cc.start_cmd` now |
+| `role` | dropped — see MIGRATION_NOTES.md | semantic label moves to `<dir>/.esr/topology.yaml` if operator wants it |
+| `chats` | `workspace.json.chats` | unchanged (`kind` retained) |
+| `env` | `workspace.json.env` | unchanged |
+| `metadata` | dropped — written verbatim to MIGRATION_NOTES.md | belongs in `<dir>/.esr/topology.yaml`; operator must manually relocate to keep `describe_topology` populated |
+| `neighbors` | dropped — written verbatim to MIGRATION_NOTES.md | same reasoning |
+| `root` | `workspace.json.folders: [{path: <root>}]` | only present in pre-PR-22 yaml |
+
+**Visibility of dropped fields** (per reviewer I3):
+
+For each migrated workspace, the migrator writes
+`<workspaces>/<name>/MIGRATION_NOTES.md` containing:
+
+```markdown
+# Migration notes for workspace `<name>`
+
+Migrated <unix-ts> from `~/.esrd/<inst>/workspaces.yaml`.
+
+## Fields dropped during migration (operator action recommended)
+
+The following fields were not preserved in `workspace.json` because
+they belong in `<dir>/.esr/topology.yaml` (per the
+2026-05-06-workspace-vs-code-redesign spec). To keep these visible
+to LLM via `describe_topology`, copy them by hand into
+`<your_repo>/.esr/topology.yaml` and commit.
+
+- `metadata`: <verbatim original yaml>
+- `neighbors`: <verbatim original yaml>
+- `role`: <verbatim original value>
+```
+
+This file is checked by `/workspace info <name>` which surfaces a
+"⚠️ migration-pending" indicator if `MIGRATION_NOTES.md` exists.
+Operators delete the file (or the migrator self-deletes when
+`<dir>/.esr/topology.yaml` exists) when relocation is done.
+
+Per-workspace migration also emits one `WARN` log line per
+affected workspace (not summarised at INFO):
+
+```
+warning: workspace 'esr-dev' migrated; metadata/neighbors/role
+  fields dropped — see ~/.esrd-dev/default/workspaces/esr-dev/MIGRATION_NOTES.md
+```
+
+**After-migration archival:**
+
+After migration completes (all rows accounted for), the migrator
+archives the original yaml:
+
+```
+~/.esrd/<inst>/workspaces.yaml → workspaces.yaml.bak.<unix-ts>
+```
+
+If migration is interrupted (crash mid-run), the original is
+preserved unchanged and the next run resumes from the per-entry
+check.
 
 ## Out of scope
 
@@ -340,16 +431,35 @@ redesign lands.
    Use a registry-level lock during cleanup.
 3. **`workspace rename` atomicity.** Renaming touches: directory,
    workspace.json.name, possibly capabilities.yaml grants
-   referencing the old name, possibly chat-current-slot index. v1
+   referencing the old name (because cap strings have form
+   `session:<ws>/create`), possibly chat-current-slot index. v1
    should validate no live sessions exist before rename, then do
    the directory + json update atomically; defer cap/index
-   migration to operator (CLI prints commands to run).
+   migration to operator (CLI prints commands to run, including
+   the literal `cap revoke / cap grant` lines for the renamed
+   workspace).
 4. **`<dir>/.esr/topology.yaml` discovery on shared repos.** When
    a teammate clones the repo, ESR sees `.esr/topology.yaml` but
    has no associated workspace.json (different ESRD_HOME). v1
    tolerates this — workspace.json is per-machine, topology.yaml is
    per-repo. The teammate creates their own `/new-workspace` and
    the topology.yaml gets picked up automatically.
+5. **Shared-FS multi-host is unsupported.** `$ESRD_HOME` is
+   per-host. Symlinking / NFS-mounting / Dropbox-syncing
+   `~/.esrd-dev/` between hosts has always been undefined behavior
+   (atomic-rename + fsync semantics differ across filesystems;
+   process-name registries assume one BEAM owns the directory).
+   This redesign does not change that posture. Operators sharing
+   one repo across multiple hosts MUST run separate ESRD_HOMEs per
+   host. `<dir>/.esr/topology.yaml` is the only file in this design
+   that's intentionally repo-shared and version-control-tracked.
+6. **Watcher implementation.** The current `Esr.Resource.Workspace.Watcher`
+   watches a single yaml file. Post-redesign it must watch the
+   workspaces top-level directory recursively (file events at
+   depth 2: `<workspaces>/<name>/workspace.json`). FileSystem on
+   macOS supports recursive watching natively; on Linux watchers
+   may need explicit per-subdirectory subscription. Implementation
+   plan must specify which mode is used and verify on both OSes.
 
 ## Docs sweep
 
