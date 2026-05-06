@@ -64,52 +64,71 @@ defmodule Esr.Commands.Scope.New do
   def execute(cmd), do: execute(cmd, [])
 
   @spec execute(map(), keyword()) :: result()
-  def execute(%{"submitted_by" => submitter, "args" => args}, opts)
-      when is_binary(submitter) and is_map(args) and is_list(opts) do
-    # PR-21g grammar accommodation: `cwd` (PR-21d slash) is accepted as
-    # alias for `dir` (legacy / admin-CLI). When `workspace` is provided
-    # without an explicit `agent`, default to "cc" — the only agent
-    # currently registered in agents.yaml.
-    agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
-    dir = args["dir"] || args["cwd"]
-    # PR-8 T2 / PR-21λ: thread the originating Feishu chat through so the
-    # session is registered under the chat-current `(chat_id, app_id)`
-    # slot. Falls back to "pending" when args don't carry chat_id (direct
-    # admin CLI submits) — those bypass Scope.Router and so never touch
-    # the registry's chat slot. `thread_id` is still propagated downstream
-    # for Feishu reply rendering, but is no longer part of the routing key.
-    #
-    # PR-21λ-fix 2026-05-01: `app_id` was previously dropped on the floor
-    # here — Session.New extracted only chat_id + thread_id, then the
-    # Scope.Router `register/3` fallback pinned every chat-bound session
-    # to `app_id = "default"`. Inbound messages (which carry the real
-    # adapter instance id, e.g. `"esr_dev_helper"`) then lookup
-    # `(chat_id, "esr_dev_helper")` and miss every time. Read app_id
-    # explicitly so the registration key matches the lookup key.
-    chat_id = Map.get(args, "chat_id", "pending")
-    thread_id = Map.get(args, "thread_id", "")
-    app_id = Map.get(args, "app_id", "pending")
-    create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
-    start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
+  def execute(%{"submitted_by" => submitter, "args" => raw_args}, opts)
+      when is_binary(submitter) and is_map(raw_args) and is_list(opts) do
+    # Phase 5.1/5.3: resolve workspace via 3-step fallback chain before
+    # downstream processing. Short-circuits when:
+    #   (a) workspace is already explicit in args, OR
+    #   (b) agent is explicitly given (legacy "no workspace, agent-only" mode)
+    # so existing admin-CLI tests that provide an agent without a workspace
+    # continue to work unchanged.
+    case resolve_workspace_if_needed(raw_args) do
+      {:error, err} ->
+        {:error, err}
 
-    with :ok <- validate_args(agent, dir),
-         {:ok, agent_def} <- fetch_agent(agent),
-         :ok <- verify_caps(submitter, agent_def.capabilities_required),
-         :ok <- maybe_create_worktree(args),
-         {:ok, sid} <-
-           spawn_session(
-             agent,
-             agent_def,
-             dir,
-             submitter,
-             chat_id,
-             thread_id,
-             app_id,
-             create_session_fn,
-             start_session_fn
-           ),
-         :ok <- maybe_claim_uri(args, sid) do
-      {:ok, %{"session_id" => sid, "agent" => agent}}
+      res ->
+        args =
+          case res do
+            {:ok, resolved_name} -> Map.put(raw_args, "workspace", resolved_name)
+            :no_resolution_needed -> raw_args
+          end
+
+        # PR-21g grammar accommodation: `cwd` (PR-21d slash) is accepted as
+        # alias for `dir` (legacy / admin-CLI). When `workspace` is provided
+        # without an explicit `agent`, default to "cc" — the only agent
+        # currently registered in agents.yaml.
+        agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
+        dir = args["dir"] || args["cwd"]
+
+        # PR-8 T2 / PR-21λ: thread the originating Feishu chat through so the
+        # session is registered under the chat-current `(chat_id, app_id)`
+        # slot. Falls back to "pending" when args don't carry chat_id (direct
+        # admin CLI submits) — those bypass Scope.Router and so never touch
+        # the registry's chat slot. `thread_id` is still propagated downstream
+        # for Feishu reply rendering, but is no longer part of the routing key.
+        #
+        # PR-21λ-fix 2026-05-01: `app_id` was previously dropped on the floor
+        # here — Session.New extracted only chat_id + thread_id, then the
+        # Scope.Router `register/3` fallback pinned every chat-bound session
+        # to `app_id = "default"`. Inbound messages (which carry the real
+        # adapter instance id, e.g. `"esr_dev_helper"`) then lookup
+        # `(chat_id, "esr_dev_helper")` and miss every time. Read app_id
+        # explicitly so the registration key matches the lookup key.
+        chat_id = Map.get(args, "chat_id", "pending")
+        thread_id = Map.get(args, "thread_id", "")
+        app_id = Map.get(args, "app_id", "pending")
+        create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
+        start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
+
+        with :ok <- validate_args(agent, dir),
+             {:ok, agent_def} <- fetch_agent(agent),
+             :ok <- verify_caps(submitter, agent_def.capabilities_required),
+             :ok <- maybe_create_worktree(args),
+             {:ok, sid} <-
+               spawn_session(
+                 agent,
+                 agent_def,
+                 dir,
+                 submitter,
+                 chat_id,
+                 thread_id,
+                 app_id,
+                 create_session_fn,
+                 start_session_fn
+               ),
+             :ok <- maybe_claim_uri(args, sid) do
+          {:ok, %{"session_id" => sid, "agent" => agent}}
+        end
     end
   end
 
@@ -218,6 +237,80 @@ defmodule Esr.Commands.Scope.New do
     do:
       {:error,
        %{"type" => "invalid_args", "message" => "submitted_by + args required"}}
+
+  # ---------------------------------------------------------------------------
+  # Phase 5.1 + 5.3 — workspace resolution chain
+  #
+  # Exposed as a public function (@doc false) so tests can exercise the
+  # resolution logic directly without setting up the full session machinery.
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  def resolve_workspace_if_needed(args) do
+    cond do
+      # (a) workspace explicitly given — nothing to do
+      is_binary(args["workspace"]) and args["workspace"] != "" ->
+        :no_resolution_needed
+
+      # (b) agent explicitly given — legacy "no workspace, agent-only" mode
+      #     (admin-CLI tests, direct agent spawns without a workspace context)
+      is_binary(args["agent"]) and args["agent"] != "" ->
+        :no_resolution_needed
+
+      # (c) neither: run the 3-step fallback chain
+      true ->
+        case resolve_workspace(args) do
+          {:explicit, name} -> {:ok, name}
+          {:chat_default, name} -> {:ok, name}
+          {:fallback, name} -> {:ok, name}
+
+          :no_match ->
+            {:error,
+             %{
+               "type" => "no_workspace_resolvable",
+               "message" =>
+                 "no workspace specified, no chat default set, and no \"default\" workspace exists"
+             }}
+        end
+    end
+  end
+
+  defp resolve_workspace(args) do
+    cond do
+      is_binary(args["workspace"]) and args["workspace"] != "" ->
+        {:explicit, args["workspace"]}
+
+      (chat_default = lookup_chat_default(args)) != nil ->
+        {:chat_default, chat_default}
+
+      workspace_exists?("default") ->
+        {:fallback, "default"}
+
+      true ->
+        :no_match
+    end
+  end
+
+  defp lookup_chat_default(args) do
+    with chat_id when is_binary(chat_id) and chat_id != "" <- args["chat_id"],
+         app_id when is_binary(app_id) and app_id != "" <- args["app_id"],
+         {:ok, ws_uuid} <-
+           Esr.Resource.ChatScope.Registry.get_default_workspace(chat_id, app_id),
+         {:ok, ws} <- Esr.Resource.Workspace.Registry.get_by_id(ws_uuid) do
+      ws.name
+    else
+      _ -> nil
+    end
+  end
+
+  defp workspace_exists?(name) do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, _} -> true
+      :not_found -> false
+    end
+  rescue
+    ArgumentError -> false
+  end
 
   defp validate_args(nil, _),
     do: {:error, %{"type" => "invalid_args", "message" => "agent required"}}

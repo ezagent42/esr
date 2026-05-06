@@ -72,10 +72,14 @@ defmodule Esr.Commands.Scope.NewTest do
   end
 
   describe "execute/1 arg validation" do
-    test "missing agent → invalid_args" do
+    test "missing agent → no_workspace_resolvable when no workspace set (Phase 5.1)" do
+      # Phase 5.1 behavior change: when neither agent nor workspace is given,
+      # the 3-step resolution chain runs first and returns no_workspace_resolvable
+      # (no default workspace in the test env). The old "agent required" error
+      # from validate_args is now only reachable via the :no_resolution_needed
+      # short-circuit path (i.e., when agent IS supplied — but then it's not nil).
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
-      assert {:error, %{"type" => "invalid_args", "message" => msg}} = SessionNew.execute(cmd)
-      assert msg =~ "agent"
+      assert {:error, %{"type" => "no_workspace_resolvable"}} = SessionNew.execute(cmd)
     end
 
     test "missing dir → invalid_args" do
