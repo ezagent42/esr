@@ -118,15 +118,15 @@ defmodule Esr.Commands.Doctor do
 
     在终端跑：
 
-      ./esr.sh --env=#{env_hint(app_id)} user list
-      ./esr.sh --env=#{env_hint(app_id)} user bind-feishu <esr_user> #{principal_id}
+      esr --env=#{env_hint(app_id)} user list
+      esr --env=#{env_hint(app_id)} user bind-feishu <esr_user> #{principal_id}
 
     这会顺带 grant `workspace.create` / `session:default/create` 等 4 个
     基础 cap，你之后就能在 chat 里直接发 slash 命令。
 
     需要全权限（admin）的话：
 
-      ./esr.sh --env=#{env_hint(app_id)} cap grant #{principal_id} admin
+      esr --env=#{env_hint(app_id)} cap grant #{principal_id} admin
     """
   end
 

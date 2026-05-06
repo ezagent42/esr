@@ -4,7 +4,7 @@ defmodule Esr.Commands.DoctorTest do
 
   Doctor branches on (user_bound?, chat_bound?). We exercise the
   unbound-user branch (the most common bootstrap case) and verify the
-  rendered guidance text mentions the correct esr.sh commands. The
+  rendered guidance text mentions the correct esr escript commands. The
   bound-but-no-workspace and healthy branches are covered indirectly
   via the next_steps_text/5 dispatch — we focus on verifying that
   Doctor returns text rather than reproducing the full bootstrap
