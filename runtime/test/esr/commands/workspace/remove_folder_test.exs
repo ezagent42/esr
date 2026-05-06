@@ -38,7 +38,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
   end
 
   # Helper: put an ESR-bound workspace with given folders
-  defp put_esr_ws(name, id, tmp, folders \\ []) do
+  defp put_esr_ws(name, id, tmp, folders) do
     dir = Path.join([tmp, "default", "workspaces", name])
     File.mkdir_p!(dir)
 
