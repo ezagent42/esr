@@ -1,7 +1,7 @@
 # Bootstrap-flow audit — 2026-05-06
 
 **Operator-proposed journey** (12 steps) vs **shipped surface** as of
-`origin/dev` `854f1f2`.
+`origin/dev` `18c774c` (PR #229, #230 have landed since the initial audit was written).
 
 > **Companion file:** Chinese version lives at
 > [`2026-05-06-bootstrap-flow-audit.zh_cn.md`](2026-05-06-bootstrap-flow-audit.zh_cn.md).
@@ -171,7 +171,7 @@ update the hint text to `esr user add`.
 | | |
 |---|---|
 | **I** | ✅ Session creation. |
-| **F** | ✅ `Esr.Commands.Session.New` wired via `slash-routes.default.yaml`. Forks a git worktree from `origin/main` per workspace's `root:` field. |
+| **F** | ✅ `Esr.Commands.Scope.New` wired via `slash-routes.default.yaml`. Worktree forking is per-session — `args["root"]` + `args["worktree"]` are passed to `Esr.Worktree.add/3` (post PR-22 / PR-230, root is no longer a workspace field; workspaces have `folders[]`). |
 | **G** | ❌ Shipped: `/new-session` (dash) + alias `/session new` (space). The colon-namespace `/session:new` doesn't parse. |
 
 **Cross-cutting:** ESR's slash grammar today mixes dash, space, and
@@ -271,6 +271,8 @@ operator-set surface. Tightly coupled to the plugin/agent boundary
 discussion.
 
 ### 3. Mental-model alignment around `add` (steps 9, 10)
+
+**Update 2026-05-07:** PR #230's workspace VS-Code-style redesign added `/workspace add-folder`, `/workspace use`, `/workspace bind-chat`, narrowing this gap from the workspace direction. The session direction remains workspace-first — sessions still spawn against a pre-existing workspace; there's no `/session add-folder` that mutates the running session's workspace. Tracked in `docs/futures/todo.md` as "Migrate to session-first model" (audit task 5).
 
 Project ships **declarative** flow (yaml files for workspaces / agents
 / adapter instances; `/plugin enable` + restart for plugin set);

@@ -1,6 +1,6 @@
 # Bootstrap-flow audit — 2026-05-06
 
-**操作员设想的 12 步流程** vs **`origin/dev` `854f1f2` 实际承载的能力**。
+**操作员设想的 12 步流程** vs **`origin/dev` `18c774c` 实际承载的能力**（PR #229、#230 已合，自初版审计后到现在）。
 
 > **配套文件：** 英文原版位于
 > [`2026-05-06-bootstrap-flow-audit.md`](2026-05-06-bootstrap-flow-audit.md)。
@@ -158,7 +158,7 @@ escript），要么把提示文改成 `esr user add`。
 | | |
 |---|---|
 | **I** | ✅ Session 创建在。 |
-| **F** | ✅ `Esr.Commands.Session.New` 经 `slash-routes.default.yaml` 接通；按 workspace `root:` 字段从 `origin/main` fork 一个 git worktree。 |
+| **F** | ✅ `Esr.Commands.Scope.New` 经 `slash-routes.default.yaml` 接通；Worktree fork 按 session 粒度做——`args["root"]` + `args["worktree"]` 传入 `Esr.Worktree.add/3`（自 PR-22 / PR-230，root 不再是 workspace 字段；workspace 改用 `folders[]`）。 |
 | **G** | ❌ 实际：`/new-session`（dash）+ alias `/session new`（空格）。冒号命名 `/session:new` 不被解析。 |
 
 **横切关注：** ESR 的 slash 语法今天混用 dash、space、无分隔
@@ -249,6 +249,8 @@ startup config first-class"。Plugin manifest 的 `required_env:` 声明
 *需要什么*，但没暴露 *操作员怎么设*。与 plugin/agent 边界紧耦合。
 
 ### 3. `add` 周边的心智对齐（步骤 9/10）
+
+**2026-05-07 更新：** PR #230 的 workspace VS-Code-style 重设计引入了 `/workspace add-folder`、`/workspace use`、`/workspace bind-chat`，从 workspace 维度收窄了这个缺口。但 session 维度仍是 workspace-first —— session 还是只能针对预先存在的 workspace 派生，没有 `/session add-folder` 在运行中的 session 上动态加路径。已记入 `docs/futures/todo.md` 作为「Migrate to session-first model」（audit 任务 5）。
 
 项目走**声明式**（workspace / agent / adapter 实例都是 yaml；plugin
 集合靠 `/plugin enable` + restart）；操作员设想**祈使式**
