@@ -1,1 +1,0 @@
-../vendor/claude-plugins-official/plugins/claude-md-management/commands/revise-claude-md.md
