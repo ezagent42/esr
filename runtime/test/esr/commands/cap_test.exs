@@ -65,13 +65,13 @@ defmodule Esr.Commands.CapTest do
       assert {:ok,
               %{
                 "principal_id" => "ou_new_user",
-                "permission" => "workspace:proj-a/session.create",
+                "permission" => "user.manage",
                 "action" => "granted"
               }} =
                Grant.execute(%{
                  "args" => %{
                    "principal_id" => "ou_new_user",
-                   "permission" => "workspace:proj-a/session.create"
+                   "permission" => "user.manage"
                  }
                })
 
@@ -82,7 +82,7 @@ defmodule Esr.Commands.CapTest do
                  %{
                    "id" => "ou_new_user",
                    "kind" => "feishu_user",
-                   "capabilities" => ["workspace:proj-a/session.create"]
+                   "capabilities" => ["user.manage"]
                  }
                ]
              } = doc
@@ -95,18 +95,18 @@ defmodule Esr.Commands.CapTest do
         - id: ou_alice
           kind: feishu_user
           capabilities:
-            - "workspace:proj-a/session.create"
+            - "user.manage"
         - id: ou_bob
           kind: feishu_user
           capabilities:
-            - "workspace:proj-b/session.end"
+            - "adapter.manage"
       """)
 
       assert {:ok, %{"action" => "granted"}} =
                Grant.execute(%{
                  "args" => %{
                    "principal_id" => "ou_alice",
-                   "permission" => "workspace:proj-a/session.end"
+                   "permission" => "runtime.deadletter"
                  }
                })
 
@@ -117,9 +117,9 @@ defmodule Esr.Commands.CapTest do
       alice = Enum.find(principals, &(&1["id"] == "ou_alice"))
       bob = Enum.find(principals, &(&1["id"] == "ou_bob"))
 
-      assert "workspace:proj-a/session.create" in alice["capabilities"]
-      assert "workspace:proj-a/session.end" in alice["capabilities"]
-      assert bob["capabilities"] == ["workspace:proj-b/session.end"]
+      assert "user.manage" in alice["capabilities"]
+      assert "runtime.deadletter" in alice["capabilities"]
+      assert bob["capabilities"] == ["adapter.manage"]
     end
 
     test "is idempotent — granting an already-held permission is a no-op on the list",
@@ -129,21 +129,21 @@ defmodule Esr.Commands.CapTest do
         - id: ou_alice
           kind: feishu_user
           capabilities:
-            - "workspace:proj-a/session.create"
+            - "user.manage"
       """)
 
       assert {:ok, %{"action" => "granted"}} =
                Grant.execute(%{
                  "args" => %{
                    "principal_id" => "ou_alice",
-                   "permission" => "workspace:proj-a/session.create"
+                   "permission" => "user.manage"
                  }
                })
 
       {:ok, doc} = YamlElixir.read_from_file(path)
       alice = Enum.find(doc["principals"], &(&1["id"] == "ou_alice"))
       # Permission appears exactly once (not doubled by idempotent re-grant).
-      assert alice["capabilities"] == ["workspace:proj-a/session.create"]
+      assert alice["capabilities"] == ["user.manage"]
     end
 
     test "persists through an explicit FileLoader reload (Watcher contract)",
@@ -152,7 +152,7 @@ defmodule Esr.Commands.CapTest do
                Grant.execute(%{
                  "args" => %{
                    "principal_id" => "ou_loader_test",
-                   "permission" => "workspace:proj-loader/session.create"
+                   "permission" => "adapter.manage"
                  }
                })
 
@@ -162,7 +162,7 @@ defmodule Esr.Commands.CapTest do
       # would return {:error, _} and keep the old snapshot.
       assert :ok = FileLoader.load(path)
 
-      assert Grants.has?("ou_loader_test", "workspace:proj-loader/session.create")
+      assert Grants.has?("ou_loader_test", "adapter.manage")
     end
 
     test "invalid args — missing permission returns invalid_args" do
@@ -184,26 +184,26 @@ defmodule Esr.Commands.CapTest do
         - id: ou_alice
           kind: feishu_user
           capabilities:
-            - "workspace:proj-a/session.create"
-            - "workspace:proj-a/session.end"
+            - "user.manage"
+            - "adapter.manage"
       """)
 
       assert {:ok,
               %{
                 "principal_id" => "ou_alice",
-                "permission" => "workspace:proj-a/session.end",
+                "permission" => "adapter.manage",
                 "action" => "revoked"
               }} =
                Revoke.execute(%{
                  "args" => %{
                    "principal_id" => "ou_alice",
-                   "permission" => "workspace:proj-a/session.end"
+                   "permission" => "adapter.manage"
                  }
                })
 
       {:ok, doc} = YamlElixir.read_from_file(path)
       alice = Enum.find(doc["principals"], &(&1["id"] == "ou_alice"))
-      assert alice["capabilities"] == ["workspace:proj-a/session.create"]
+      assert alice["capabilities"] == ["user.manage"]
     end
 
     test "not held — returns no_matching_capability without touching file",
@@ -213,7 +213,7 @@ defmodule Esr.Commands.CapTest do
         - id: ou_alice
           kind: feishu_user
           capabilities:
-            - "workspace:proj-a/session.create"
+            - "user.manage"
       """)
 
       before = File.read!(path)
@@ -222,7 +222,7 @@ defmodule Esr.Commands.CapTest do
                Revoke.execute(%{
                  "args" => %{
                    "principal_id" => "ou_alice",
-                   "permission" => "workspace:proj-other/session.end"
+                   "permission" => "runtime.deadletter"
                  }
                })
 
@@ -235,14 +235,14 @@ defmodule Esr.Commands.CapTest do
         - id: ou_alice
           kind: feishu_user
           capabilities:
-            - "workspace:proj-a/session.create"
+            - "user.manage"
       """)
 
       assert {:error, %{"type" => "no_matching_capability"}} =
                Revoke.execute(%{
                  "args" => %{
                    "principal_id" => "ou_nobody",
-                   "permission" => "workspace:proj-a/session.create"
+                   "permission" => "user.manage"
                  }
                })
     end
@@ -254,7 +254,7 @@ defmodule Esr.Commands.CapTest do
                Revoke.execute(%{
                  "args" => %{
                    "principal_id" => "ou_alice",
-                   "permission" => "workspace:proj-a/session.create"
+                   "permission" => "user.manage"
                  }
                })
 

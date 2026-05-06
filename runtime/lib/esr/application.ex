@@ -106,16 +106,16 @@ defmodule Esr.Application do
       # fail with :noproc even though tests pass via start_supervised.
       Esr.Scope.Router,
 
+      # 4d.5 Workspace name↔id index — must come before Workspace.Registry
+      # since Registry calls into NameIndex on every put/rename/delete.
+      {Esr.Resource.Workspace.NameIndex, []},
+
       # 4e. Workspaces registry (PRD v0.2 §3.6).
       Esr.Resource.Workspace.Registry,
 
-      # 4e.1 Workspaces fs watcher (PR-C 2026-04-27 actor-topology-routing
-      # §6.1 + §7). Loads workspaces.yaml on init + reloads on file_event,
-      # broadcasting `{:topology_neighbour_added, ws, uri}` via
-      # `EsrWeb.PubSub` so active CC peers can grow their reachable_set
-      # without restarting. Must sit AFTER Workspaces.Registry; the
-      # watcher reuses Registry's ETS table.
-      {Esr.Resource.Workspace.Watcher, path: Esr.Paths.workspaces_yaml()},
+      # 4e.1 First-boot tasks: delete legacy workspaces.yaml + ensure
+      # default workspace. restart=:transient — Task exits :ok on success.
+      Esr.Resource.Workspace.Bootstrap,
 
       # 4e.2 SlashRouteRegistry subsystem (PR-21κ 2026-04-30) — yaml-driven
       # slash command routing + dispatcher kind→{permission, command_module}

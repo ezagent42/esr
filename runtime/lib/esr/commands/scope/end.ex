@@ -106,6 +106,8 @@ defmodule Esr.Commands.Scope.End do
 
     case Esr.Scope.Router.end_session(sid) do
       :ok ->
+        safe_unbind_session(sid)
+        maybe_cleanup_transient_workspace(sid, args)
         worktree_removed = maybe_remove_worktree(session_root, cwd)
 
         {:ok,
@@ -122,6 +124,57 @@ defmodule Esr.Commands.Scope.End do
         {:error, %{"type" => "end_failed", "details" => inspect(reason)}}
     end
   end
+
+  # Safe wrapper: no-op when Workspace.Registry is not running (tests that
+  # don't boot the workspace subsystem).
+  defp safe_unbind_session(sid) do
+    case Process.whereis(Esr.Resource.Workspace.Registry) do
+      nil -> :ok
+      _pid -> Esr.Resource.Workspace.Registry.unbind_session(sid)
+    end
+  end
+
+  # Transient workspace cleanup — called after router teardown + unbind.
+  # Silent no-op when Workspace.Registry or NameIndex isn't running
+  # (e.g. tests that don't boot the workspace subsystem).
+  defp maybe_cleanup_transient_workspace(_sid, args) do
+    case lookup_workspace_id(args["workspace"]) do
+      {:ok, ws_id} ->
+        case Esr.Resource.Workspace.Registry.delete_if_no_sessions(ws_id) do
+          {:ok, :deleted} ->
+            require Logger
+
+            Logger.info(
+              "session_end: transient workspace #{args["workspace"]} (#{ws_id}) deleted (last session ended)"
+            )
+
+            :ok
+
+          {:ok, _} ->
+            :ok
+
+          {:error, _} ->
+            :ok
+        end
+
+      :not_found ->
+        :ok
+
+      :unavailable ->
+        :ok
+    end
+  end
+
+  defp lookup_workspace_id(name) when is_binary(name) and name != "" do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, id} -> {:ok, id}
+      :not_found -> :not_found
+    end
+  rescue
+    ArgumentError -> :unavailable
+  end
+
+  defp lookup_workspace_id(_), do: :not_found
 
   # PR-21g: D12 default — prune iff clean. Dirty worktrees are kept
   # on disk + a warning is logged; operator can prune manually with

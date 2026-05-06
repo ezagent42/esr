@@ -31,7 +31,7 @@ defmodule Esr.Resource.ChatScope.Registry do
 
   ## ETS layout
 
-  Three named, protected `:set` tables, owned by this GenServer.
+  Four named, protected `:set` tables, owned by this GenServer.
   Reads run directly from the caller process, bypassing the GenServer
   mailbox; writes route through the owner (handle_call) so consistency
   with the in-memory `sessions` map is preserved. Mirrors the pattern in
@@ -63,6 +63,10 @@ defmodule Esr.Resource.ChatScope.Registry do
   #   {env, username, workspace, worktree_branch} → session_id
   @ets_name_index :esr_chat_scope_name_index
   @ets_worktree_index :esr_chat_scope_worktree_index
+
+  # T4.8: default workspace index — (chat_id, app_id) → workspace_uuid
+  # Future /new-session resolution reads this to pick the default workspace.
+  @ets_default_workspace :esr_chat_scope_default_workspace_index
 
   # Public API
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -144,14 +148,48 @@ defmodule Esr.Resource.ChatScope.Registry do
   def unregister_session(session_id),
     do: GenServer.call(__MODULE__, {:unregister_session, session_id})
 
+  @doc """
+  Set the default workspace UUID for a `(chat_id, app_id)` slot. New
+  sessions originating from this chat will resolve to this workspace
+  unless overridden at /new-session time.
+  """
+  @spec set_default_workspace(String.t(), String.t(), String.t()) :: :ok
+  def set_default_workspace(chat_id, app_id, workspace_id)
+      when is_binary(chat_id) and is_binary(app_id) and is_binary(workspace_id) do
+    GenServer.call(__MODULE__, {:set_default_workspace, chat_id, app_id, workspace_id})
+  end
+
+  @doc """
+  Direct ETS read — runs in caller process. Returns `{:ok, uuid}` or `:not_found`.
+  """
+  @spec get_default_workspace(String.t(), String.t()) :: {:ok, String.t()} | :not_found
+  def get_default_workspace(chat_id, app_id) do
+    case :ets.lookup(@ets_default_workspace, {chat_id, app_id}) do
+      [{_k, uuid}] -> {:ok, uuid}
+      [] -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Clear the default workspace for a `(chat_id, app_id)` slot. Idempotent.
+  """
+  @spec clear_default_workspace(String.t(), String.t()) :: :ok
+  def clear_default_workspace(chat_id, app_id)
+      when is_binary(chat_id) and is_binary(app_id) do
+    GenServer.call(__MODULE__, {:clear_default_workspace, chat_id, app_id})
+  end
+
   # GenServer callbacks
   @impl true
   def init(_opts) do
     :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
     :ets.new(@ets_name_index, [:named_table, :set, :protected, read_concurrency: true])
     :ets.new(@ets_worktree_index, [:named_table, :set, :protected, read_concurrency: true])
+    :ets.new(@ets_default_workspace, [:named_table, :set, :protected, read_concurrency: true])
 
-    {:ok, %{sessions: %{}, chat_to_session: %{}}}
+    {:ok, %{sessions: %{}, chat_to_session: %{}, chat_to_default_workspace_id: %{}}}
   end
 
   @impl true
@@ -244,6 +282,18 @@ defmodule Esr.Resource.ChatScope.Registry do
       {:reply,
        {:error, {:invalid_args, "claim_uri requires env/username/workspace/name/worktree_branch"}},
        state}
+
+  def handle_call({:set_default_workspace, c, a, uuid}, _from, state) do
+    :ets.insert(@ets_default_workspace, {{c, a}, uuid})
+    state = put_in(state, [:chat_to_default_workspace_id, {c, a}], uuid)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:clear_default_workspace, c, a}, _from, state) do
+    :ets.delete(@ets_default_workspace, {c, a})
+    state = update_in(state, [:chat_to_default_workspace_id], &Map.delete(&1, {c, a}))
+    {:reply, :ok, state}
+  end
 
   defp drop_uri_rows_for(sid) do
     drop_matching(@ets_name_index, sid)

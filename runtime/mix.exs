@@ -70,6 +70,7 @@ defmodule Esr.MixProject do
       # bidirectional stdin/stdout + BEAM-exit cleanup, all in one.
       # Migration history: docs/notes/erlexec-migration.md.
       {:erlexec, "~> 2.2"},
+      {:elixir_uuid, "~> 1.2", hex: :uuid_utils},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]

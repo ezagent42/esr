@@ -26,6 +26,7 @@ defmodule Esr.EntityServerDescribeTopologyTest do
 
   alias Esr.Entity
   alias Esr.Resource.Workspace.Registry, as: WsReg
+  alias Esr.Resource.Workspace.Struct
 
   # WsReg has no `delete/1` API — cleanup is by uniqueness of test
   # workspace names (the `ws_audit_*` prefix). The boot tree's
@@ -71,12 +72,16 @@ defmodule Esr.EntityServerDescribeTopologyTest do
     current = data["current_workspace"]
     keys = Map.keys(current) |> Enum.sort()
 
+    # Phase 7.1 adds "topology_overlay" (boolean) to the allowlist.
+    # "description" is only present when topology.yaml provides it, so it
+    # does NOT appear here (ws_audit_1 has no folders → no topology.yaml).
     assert keys == [
              "chats",
              "metadata",
              "name",
              "neighbors_declared",
-             "role"
+             "role",
+             "topology_overlay"
            ]
   end
 
@@ -186,6 +191,177 @@ defmodule Esr.EntityServerDescribeTopologyTest do
 
     refute serialize(data) =~ "ou_secret_open_id_xyz"
     refute serialize(data) =~ "feishu_id"
+  end
+
+  ## Phase 7.1 — topology.yaml overlay tests --------------------------------
+
+  describe "topology.yaml overlay (Phase 7.1)" do
+    # Helper: build a %Struct{} pointing at a given tmp dir.
+    defp struct_with_folder(name, folder_path, extra_settings \\ %{}) do
+      %Struct{
+        id: UUID.uuid4(),
+        name: name,
+        owner: "test-owner",
+        folders: [%{path: folder_path, name: "main"}],
+        agent: "cc",
+        settings:
+          Map.merge(
+            %{
+              "_legacy.role" => "dev",
+              "_legacy.neighbors" => [],
+              "_legacy.metadata" => %{}
+            },
+            extra_settings
+          ),
+        env: %{},
+        chats: [],
+        transient: false,
+        location: {:esr_bound, "/tmp/esr-test/#{name}"}
+      }
+    end
+
+    defp write_topology(folder_path, content) do
+      esr_dir = Path.join(folder_path, ".esr")
+      File.mkdir_p!(esr_dir)
+      File.write!(Path.join(esr_dir, "topology.yaml"), content)
+    end
+
+    test "description from topology.yaml is merged into response" do
+      dir = System.tmp_dir!() |> Path.join("esr-overlay-desc-#{:os.getpid()}")
+      File.mkdir_p!(dir)
+
+      write_topology(dir, """
+      description: "test desc from topology"
+      """)
+
+      ws = struct_with_folder("ws_overlay_desc", dir)
+      :ok = WsReg.put(ws)
+
+      {:ok, :direct_ack, %{"data" => data}} =
+        Entity.Server.build_emit_for_tool_for_test(
+          "describe_topology",
+          %{"workspace_name" => "ws_overlay_desc"},
+          peer_state()
+        )
+
+      current = data["current_workspace"]
+      assert current["description"] == "test desc from topology"
+      assert current["topology_overlay"] == true
+    after
+      File.rm_rf(System.tmp_dir!() |> Path.join("esr-overlay-desc-#{:os.getpid()}"))
+    end
+
+    test "metadata from topology.yaml is unioned; overlay takes precedence on conflicts" do
+      dir = System.tmp_dir!() |> Path.join("esr-overlay-meta-#{:os.getpid()}")
+      File.mkdir_p!(dir)
+
+      write_topology(dir, """
+      metadata:
+        b: from_overlay
+        c: from_overlay
+      """)
+
+      ws =
+        struct_with_folder("ws_overlay_meta", dir, %{
+          "_legacy.metadata" => %{"a" => "from_struct", "b" => "from_struct"}
+        })
+
+      :ok = WsReg.put(ws)
+
+      {:ok, :direct_ack, %{"data" => data}} =
+        Entity.Server.build_emit_for_tool_for_test(
+          "describe_topology",
+          %{"workspace_name" => "ws_overlay_meta"},
+          peer_state()
+        )
+
+      meta = data["current_workspace"]["metadata"]
+      assert meta["a"] == "from_struct"
+      assert meta["b"] == "from_overlay"
+      assert meta["c"] == "from_overlay"
+      assert data["current_workspace"]["topology_overlay"] == true
+    after
+      File.rm_rf(System.tmp_dir!() |> Path.join("esr-overlay-meta-#{:os.getpid()}"))
+    end
+
+    test "neighbors from topology.yaml are unioned and deduplicated" do
+      dir = System.tmp_dir!() |> Path.join("esr-overlay-nbrs-#{:os.getpid()}")
+      File.mkdir_p!(dir)
+
+      write_topology(dir, """
+      neighbors:
+        - workspace:ws-other-2
+        - workspace:ws-other-1
+      """)
+
+      ws =
+        struct_with_folder("ws_overlay_nbrs", dir, %{
+          "_legacy.neighbors" => ["workspace:ws-other-1"]
+        })
+
+      :ok = WsReg.put(ws)
+
+      {:ok, :direct_ack, %{"data" => data}} =
+        Entity.Server.build_emit_for_tool_for_test(
+          "describe_topology",
+          %{"workspace_name" => "ws_overlay_nbrs"},
+          peer_state()
+        )
+
+      declared = data["current_workspace"]["neighbors_declared"]
+      assert "workspace:ws-other-1" in declared
+      assert "workspace:ws-other-2" in declared
+      # Dedup: ws-other-1 appears in both struct and overlay — only once
+      assert Enum.count(declared, &(&1 == "workspace:ws-other-1")) == 1
+      assert data["current_workspace"]["topology_overlay"] == true
+    after
+      File.rm_rf(System.tmp_dir!() |> Path.join("esr-overlay-nbrs-#{:os.getpid()}"))
+    end
+
+    test "topology.yaml absent → topology_overlay=false, no description key" do
+      dir = System.tmp_dir!() |> Path.join("esr-overlay-absent-#{:os.getpid()}")
+      File.mkdir_p!(dir)
+      # No .esr/topology.yaml written
+
+      ws = struct_with_folder("ws_overlay_absent", dir)
+      :ok = WsReg.put(ws)
+
+      {:ok, :direct_ack, %{"data" => data}} =
+        Entity.Server.build_emit_for_tool_for_test(
+          "describe_topology",
+          %{"workspace_name" => "ws_overlay_absent"},
+          peer_state()
+        )
+
+      current = data["current_workspace"]
+      assert current["topology_overlay"] == false
+      refute Map.has_key?(current, "description")
+    after
+      File.rm_rf(System.tmp_dir!() |> Path.join("esr-overlay-absent-#{:os.getpid()}"))
+    end
+
+    test "malformed topology.yaml → silent fallback, topology_overlay=false" do
+      dir = System.tmp_dir!() |> Path.join("esr-overlay-bad-#{:os.getpid()}")
+      File.mkdir_p!(dir)
+      write_topology(dir, ":::this is not valid yaml:::\n\t\tbad: [unclosed")
+
+      ws = struct_with_folder("ws_overlay_bad", dir)
+      :ok = WsReg.put(ws)
+
+      # Must not raise or return error
+      result =
+        Entity.Server.build_emit_for_tool_for_test(
+          "describe_topology",
+          %{"workspace_name" => "ws_overlay_bad"},
+          peer_state()
+        )
+
+      assert {:ok, :direct_ack, %{"data" => data}} = result
+      assert data["current_workspace"]["topology_overlay"] == false
+      refute Map.has_key?(data["current_workspace"], "description")
+    after
+      File.rm_rf(System.tmp_dir!() |> Path.join("esr-overlay-bad-#{:os.getpid()}"))
+    end
   end
 
   defp serialize(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)

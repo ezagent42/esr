@@ -45,4 +45,19 @@ defmodule Esr.PathsTest do
   test "admin_queue_dir" do
     assert Esr.Paths.admin_queue_dir() == "/tmp/pth-test/default/admin_queue"
   end
+
+  test "workspace_json_esr/1 builds correct path under ESRD_HOME" do
+    assert Esr.Paths.workspace_json_esr("esr-dev") ==
+             "/tmp/pth-test/default/workspaces/esr-dev/workspace.json"
+  end
+
+  test "workspace_json_repo/1 puts .esr/workspace.json in the repo" do
+    assert Esr.Paths.workspace_json_repo("/tmp/myrepo") ==
+             "/tmp/myrepo/.esr/workspace.json"
+  end
+
+  test "registered_repos_yaml lives at runtime_home root" do
+    assert Esr.Paths.registered_repos_yaml() ==
+             "/tmp/pth-test/default/registered_repos.yaml"
+  end
 end

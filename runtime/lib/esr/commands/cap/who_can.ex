@@ -13,12 +13,34 @@ defmodule Esr.Commands.Cap.WhoCan do
 
   @behaviour Esr.Role.Control
 
-  alias Esr.Resource.Capability.Grants
+  alias Esr.Resource.Capability.UuidTranslator
 
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"permission" => perm}}) when is_binary(perm) and perm != "" do
+    case UuidTranslator.name_to_uuid(perm) do
+      {:ok, translated_perm} ->
+        do_who_can(translated_perm)
+
+      {:error, :unknown_workspace} ->
+        {:error,
+         %{
+           "type" => "unknown_workspace",
+           "message" => "no workspace named in capability: #{perm}"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" => "cap_who_can requires args.permission (non-empty string)"
+     }}
+  end
+
+  defp do_who_can(translated_perm) do
     path = Esr.Paths.capabilities_yaml()
 
     matches =
@@ -26,7 +48,7 @@ defmodule Esr.Commands.Cap.WhoCan do
         {:ok, %{"principals" => principals}} when is_list(principals) ->
           principals
           |> Enum.filter(fn p ->
-            is_map(p) and any_cap_grants?(p["capabilities"] || [], perm)
+            is_map(p) and any_cap_grants?(p["capabilities"] || [], translated_perm)
           end)
           |> Enum.map(fn p -> p["id"] end)
           |> Enum.reject(&is_nil/1)
@@ -38,24 +60,45 @@ defmodule Esr.Commands.Cap.WhoCan do
 
     body =
       case matches do
-        [] -> "no principals can do '#{perm}'"
+        [] -> "no principals can do '#{translated_perm}'"
         ids -> Enum.join(ids, "\n")
       end
 
     {:ok, %{"text" => body}}
   end
 
-  def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "cap_who_can requires args.permission (non-empty string)"
-     }}
-  end
-
   defp any_cap_grants?(caps, perm) when is_list(caps) do
-    Enum.any?(caps, fn held -> is_binary(held) and Grants.matches?(held, perm) end)
+    Enum.any?(caps, fn held -> is_binary(held) and cap_matches?(held, perm) end)
   end
 
   defp any_cap_grants?(_, _), do: false
+
+  # Mirrors Esr.Resource.Capability.Grants matching rules (that function is
+  # private; we duplicate the small predicate here since WhoCan reads YAML
+  # directly rather than querying ETS via Grants.has?/2).
+  defp cap_matches?("*", _required), do: true
+  defp cap_matches?(held, required) when held == required, do: true
+
+  defp cap_matches?(held, required) do
+    with {:ok, {h_prefix, h_name, h_perm}} <- split_cap(held),
+         {:ok, {r_prefix, r_name, r_perm}} <- split_cap(required),
+         true <- h_prefix == r_prefix do
+      segment_match?(h_name, r_name) and segment_match?(h_perm, r_perm)
+    else
+      _ -> false
+    end
+  end
+
+  defp split_cap(str) do
+    with [scope, perm] <- String.split(str, "/", parts: 2),
+         [prefix, name] <- String.split(scope, ":", parts: 2) do
+      {:ok, {prefix, name, perm}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp segment_match?("*", _), do: true
+  defp segment_match?(a, a), do: true
+  defp segment_match?(_, _), do: false
 end
