@@ -1,42 +1,43 @@
 defmodule Esr.Commands.Workspace.New do
   @moduledoc """
-  `Esr.Commands.Workspace.New` — create a workspace from inside
-  Feishu (PR-21k). Dispatcher kind `workspace_new`.
+  `/new-workspace` slash — creates a workspace with hybrid storage:
 
-  Writes the new entry to `workspaces.yaml` (FSEvents will reload),
-  then proactively `put`s into `Esr.Resource.Workspace.Registry` so the
-  current chat doesn't have to wait for the watcher tick.
+    * `folder=<path>` → repo-bound (`<path>/.esr/workspace.json`)
+    * no `folder=` → ESR-bound (`$ESRD_HOME/<inst>/workspaces/<name>/workspace.json`)
 
-  ## Args (PR-22: `root` removed)
+  Generates a fresh UUID v4 for the workspace's identity. Auto-binds the
+  current chat to chats[] when `chat_id` + `app_id` are present.
+
+  ## Args
 
       args: %{
-        "name" => "esr-dev",                  # required
-        # optional — defaults below
-        "owner" => "linyilun",                # default: args.username (slash threading)
-        "role" => "dev",                      # default
-        "start_cmd" => "scripts/esr-cc.sh",   # default
-        "chat_id" => "oc_xxx",                # auto-bind this chat to the new workspace
-        "app_id"  => "cli_xxx",
-        "username" => "linyilun"              # SlashHandler-resolved esr user
+        "name"      => "esr-dev",         # required
+        "folder"    => "/abs/path/repo",  # optional; must be a git repo if given
+        "owner"     => "linyilun",        # default: args.username (slash threading)
+        "transient" => false,             # optional; only valid for ESR-bound
+        "chat_id"   => "oc_xxx",          # auto-injected from envelope
+        "app_id"    => "cli_xxx",
+        "username"  => "linyilun"         # SlashHandler-resolved esr user
       }
-
-  ## Validation
-
-  - `name` must match ASCII `[A-Za-z0-9][A-Za-z0-9_-]*` (PR-M / D13)
-  - `owner` must be a registered esr user (in `users.yaml`)
-  - workspace name must NOT already exist
 
   ## Result
 
-      {:ok, %{"name" => name, "owner" => owner, "chats" => […]}}
-      {:error, %{"type" => "name_exists" | "invalid_name" | "unknown_owner" | "invalid_args", ...}}
+      {:ok,  %{"name" => name, "id" => uuid, "owner" => owner, "folders" => [...],
+               "chats" => [...], "location" => "esr:<dir>"|"repo:<path>",
+               "action" => "created" | "already_bound" | "added_chat"}}
+      {:error, %{"type" => "invalid_name" | "unknown_owner" | "invalid_args" |
+                            "folder_not_dir" | "folder_not_git_repo" |
+                            "transient_repo_bound_forbidden" | "name_exists" |
+                            "registry_put_failed", ...}}
   """
 
   @behaviour Esr.Role.Control
 
-  @type result :: {:ok, map()} | {:error, map()}
-
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
+
+  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
+
+  @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
   def execute(cmd)
@@ -44,8 +45,8 @@ defmodule Esr.Commands.Workspace.New do
   def execute(%{"args" => %{"name" => name} = args})
       when is_binary(name) and name != "" do
     owner = args["owner"] || args["username"] || ""
-    role = args["role"] || "dev"
-    start_cmd = args["start_cmd"] || "scripts/esr-cc.sh"
+    folder = args["folder"]
+    transient = parse_bool(args["transient"])
     chat_id = args["chat_id"]
     app_id = args["app_id"]
 
@@ -75,66 +76,21 @@ defmodule Esr.Commands.Workspace.New do
              "owner #{inspect(owner)} not registered in users.yaml; run `esr user add #{owner}` first"
          }}
 
+      folder != nil and not File.dir?(folder) ->
+        {:error, %{"type" => "folder_not_dir", "folder" => folder}}
+
+      folder != nil and not File.exists?(Path.join(folder, ".git")) ->
+        {:error, %{"type" => "folder_not_git_repo", "folder" => folder}}
+
+      folder != nil and transient ->
+        {:error,
+         %{
+           "type" => "transient_repo_bound_forbidden",
+           "message" => "transient: true is not valid for repo-bound workspaces"
+         }}
+
       true ->
-        new_chat = build_chat(chat_id, app_id)
-
-        path = Esr.Paths.workspaces_yaml()
-        {:ok, doc} = read_or_empty(path)
-        ws_map = doc["workspaces"] || %{}
-
-        case Map.fetch(ws_map, name) do
-          {:ok, existing} ->
-            # PR-21η 2026-04-30: idempotent path. Pre-PR-21η this was a
-            # `name_exists` error, which made sense before slash auto-
-            # binding existed. Now that `/new-workspace <existing>` from
-            # an unbound chat is a legitimate "please add my chat to
-            # this workspace" gesture (the alternative is asking
-            # operators to hand-edit workspaces.yaml), we treat it as
-            # add-chat-if-missing and return :ok with `action: "added_chat"`.
-            handle_existing_workspace(name, existing, new_chat, ws_map, doc, path)
-
-          :error ->
-            new_entry = %{
-              "owner" => owner,
-              "role" => role,
-              "start_cmd" => start_cmd,
-              "chats" => new_chat |> List.wrap(),
-              "env" => %{}
-            }
-
-            updated_doc =
-              doc
-              |> Map.put("schema_version", doc["schema_version"] || 1)
-              |> Map.put("workspaces", Map.put(ws_map, name, new_entry))
-
-            case Esr.Yaml.Writer.write(path, updated_doc) do
-              :ok ->
-                # Proactively populate the in-memory Registry so this very
-                # request's chat finds the workspace bound — without
-                # waiting for the FSEvents watcher tick.
-                :ok =
-                  Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-                    name: name,
-                    owner: owner,
-                    role: role,
-                    start_cmd: start_cmd,
-                    chats: List.wrap(new_chat),
-                    env: %{}
-                  })
-
-                {:ok,
-                 %{
-                   "name" => name,
-                   "owner" => owner,
-                   "role" => role,
-                   "chats" => List.wrap(new_chat),
-                   "action" => "created"
-                 }}
-
-              {:error, reason} ->
-                {:error, %{"type" => "write_failed", "details" => inspect(reason)}}
-            end
-        end
+        do_create_or_bind(name, owner, folder, transient, chat_id, app_id)
     end
   end
 
@@ -146,15 +102,72 @@ defmodule Esr.Commands.Workspace.New do
      }}
   end
 
-  # PR-21η: when /new-workspace targets an existing workspace, decide
-  # what to do based on whether the current chat is already in chats:
-  #
+  ## Internals ---------------------------------------------------------------
+
+  defp do_create_or_bind(name, owner, folder, transient, chat_id, app_id) do
+    case lookup_struct_by_name(name) do
+      {:ok, existing} -> handle_existing(name, existing, chat_id, app_id)
+      :not_found -> create_new(name, owner, folder, transient, chat_id, app_id)
+    end
+  end
+
+  defp create_new(name, owner, folder, transient, chat_id, app_id) do
+    chats = build_chats(chat_id, app_id)
+
+    location =
+      case folder do
+        nil -> {:esr_bound, Esr.Paths.workspace_dir(name)}
+        path -> {:repo_bound, path}
+      end
+
+    folders =
+      case folder do
+        nil -> []
+        path -> [%{path: path, name: Path.basename(path)}]
+      end
+
+    ws = %Struct{
+      id: UUID.uuid4(),
+      name: name,
+      owner: owner,
+      folders: folders,
+      agent: "cc",
+      settings: %{},
+      env: %{},
+      chats: chats,
+      transient: transient && folder == nil,
+      location: location
+    }
+
+    case Registry.put(ws) do
+      :ok ->
+        # Repo-bound: also register the path in registered_repos.yaml
+        if folder do
+          RepoRegistry.register(Esr.Paths.registered_repos_yaml(), folder)
+        end
+
+        {:ok,
+         %{
+           "name" => name,
+           "id" => ws.id,
+           "owner" => owner,
+           "folders" => serialise_folders(folders),
+           "chats" => serialise_chats(chats),
+           "location" => format_location(ws.location),
+           "action" => "created"
+         }}
+
+      {:error, reason} ->
+        {:error, %{"type" => "registry_put_failed", "detail" => inspect(reason)}}
+    end
+  end
+
+  # Idempotent path (PR-21η behaviour preserved):
+  #   - no chat context (CLI invocation) → name_exists error
   #   - chat already bound → :ok, action="already_bound" (no write)
-  #   - chat not yet bound + we know the chat → append to chats: + write
-  #   - no chat known (CLI invocation, no slash context) → :error
-  #     (preserves the pre-PR-21η name_exists behavior for that path)
-  defp handle_existing_workspace(name, existing, new_chat, ws_map, doc, path) do
-    existing_chats = existing["chats"] || []
+  #   - chat not yet bound → append chat and write
+  defp handle_existing(name, %Struct{} = existing, chat_id, app_id) do
+    new_chat = build_single_chat(chat_id, app_id)
 
     cond do
       new_chat == nil ->
@@ -166,63 +179,70 @@ defmodule Esr.Commands.Workspace.New do
              "workspace #{inspect(name)} already exists; pick another name or delete the old one (`esr workspace remove #{name}`)"
          }}
 
-      chat_already_bound?(existing_chats, new_chat) ->
+      Enum.any?(existing.chats, fn c ->
+        c.chat_id == new_chat.chat_id and c.app_id == new_chat.app_id
+      end) ->
         {:ok,
          %{
            "name" => name,
-           "owner" => existing["owner"],
-           "role" => existing["role"],
-           "chats" => existing_chats,
+           "id" => existing.id,
+           "chats" => serialise_chats(existing.chats),
            "action" => "already_bound"
          }}
 
       true ->
-        updated_chats = existing_chats ++ [new_chat]
-        updated_entry = Map.put(existing, "chats", updated_chats)
+        updated_chats = existing.chats ++ [new_chat]
+        updated = %{existing | chats: updated_chats}
 
-        updated_doc =
-          doc
-          |> Map.put("schema_version", doc["schema_version"] || 1)
-          |> Map.put("workspaces", Map.put(ws_map, name, updated_entry))
-
-        case Esr.Yaml.Writer.write(path, updated_doc) do
+        case Registry.put(updated) do
           :ok ->
-            :ok =
-              Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-                name: name,
-                owner: existing["owner"],
-                role: existing["role"],
-                start_cmd: existing["start_cmd"],
-                chats: updated_chats,
-                env: existing["env"] || %{}
-              })
-
             {:ok,
              %{
                "name" => name,
-               "owner" => existing["owner"],
-               "role" => existing["role"],
-               "chats" => updated_chats,
+               "id" => existing.id,
+               "chats" => serialise_chats(updated_chats),
                "action" => "added_chat"
              }}
 
           {:error, reason} ->
-            {:error, %{"type" => "write_failed", "details" => inspect(reason)}}
+            {:error, %{"type" => "registry_put_failed", "detail" => inspect(reason)}}
         end
     end
   end
 
-  defp chat_already_bound?(chats, %{"chat_id" => cid, "app_id" => aid}) do
-    Enum.any?(chats, fn c ->
-      is_map(c) and c["chat_id"] == cid and c["app_id"] == aid
-    end)
+  defp lookup_struct_by_name(name) do
+    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, id} -> Registry.get_by_id(id)
+      :not_found -> :not_found
+    end
   end
 
-  defp chat_already_bound?(_chats, _new_chat), do: false
+  defp build_chats(chat_id, app_id) do
+    case build_single_chat(chat_id, app_id) do
+      nil -> []
+      chat -> [chat]
+    end
+  end
 
-  # ------------------------------------------------------------------
-  # Internals
-  # ------------------------------------------------------------------
+  defp build_single_chat(chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "",
+       do: %{chat_id: chat_id, app_id: app_id, kind: "dm"}
+
+  defp build_single_chat(_, _), do: nil
+
+  defp format_location({:esr_bound, dir}), do: "esr:#{dir}"
+  defp format_location({:repo_bound, repo}), do: "repo:#{repo}"
+
+  # Serialise atom-keyed chat structs to string-keyed maps for the result.
+  defp serialise_chats(chats),
+    do: Enum.map(chats, fn c -> %{"chat_id" => c.chat_id, "app_id" => c.app_id, "kind" => Map.get(c, :kind, "dm")} end)
+
+  defp serialise_folders(folders),
+    do: Enum.map(folders, fn f -> %{"path" => f.path, "name" => Map.get(f, :name)} end)
+
+  defp parse_bool("true"), do: true
+  defp parse_bool(true), do: true
+  defp parse_bool(_), do: false
 
   defp owner_exists?(username) do
     if Process.whereis(Esr.Entity.User.Registry) do
@@ -233,23 +253,6 @@ defmodule Esr.Commands.Workspace.New do
     else
       # Tests that don't bring up Users.Registry shouldn't crash here.
       true
-    end
-  end
-
-  # PR-21η: returns a single chat map or nil (instead of a list). nil
-  # signals "no slash context" — used by handle_existing_workspace/6 to
-  # distinguish CLI invocations from slash invocations.
-  defp build_chat(chat_id, app_id)
-       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
-    %{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}
-  end
-
-  defp build_chat(_chat_id, _app_id), do: nil
-
-  defp read_or_empty(path) do
-    case YamlElixir.read_from_file(path) do
-      {:ok, %{} = m} -> {:ok, m}
-      _ -> {:ok, %{"schema_version" => 1, "workspaces" => %{}}}
     end
   end
 end
