@@ -126,7 +126,8 @@ defmodule Esr.Commands.Scope.New do
                  create_session_fn,
                  start_session_fn
                ),
-             :ok <- maybe_claim_uri(args, sid) do
+             :ok <- maybe_claim_uri(args, sid),
+             :ok <- bind_session_to_workspace(args, sid) do
           {:ok, %{"session_id" => sid, "agent" => agent}}
         end
     end
@@ -232,6 +233,35 @@ defmodule Esr.Commands.Scope.New do
     _ = Esr.Scope.Router.end_session(sid)
     :ok
   end
+
+  defp bind_session_to_workspace(%{"workspace" => ws_name}, sid)
+       when is_binary(ws_name) and ws_name != "" do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+      {:ok, ws_id} ->
+        case Esr.Resource.Workspace.Registry.bind_session(ws_id, sid) do
+          :ok ->
+            :ok
+
+          {:error, :workspace_gone} ->
+            rollback_spawn(sid)
+
+            {:error,
+             %{
+               "type" => "workspace_gone",
+               "message" => "workspace was deleted while session was being created"
+             }}
+        end
+
+      :not_found ->
+        # NameIndex doesn't know the workspace — likely test env without
+        # a Workspace.Registry running. Skip silently.
+        :ok
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp bind_session_to_workspace(_args, _sid), do: :ok
 
   def execute(_, _opts),
     do:

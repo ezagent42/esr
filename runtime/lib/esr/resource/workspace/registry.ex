@@ -92,6 +92,36 @@ defmodule Esr.Resource.Workspace.Registry do
   @spec refresh() :: :ok | {:error, term()}
   def refresh, do: GenServer.call(__MODULE__, :refresh)
 
+  @spec bind_session(String.t(), String.t()) :: :ok | {:error, :workspace_gone}
+  def bind_session(workspace_id, session_id)
+      when is_binary(workspace_id) and is_binary(session_id),
+    do: GenServer.call(__MODULE__, {:bind_session, workspace_id, session_id})
+
+  @spec unbind_session(String.t()) :: :ok
+  def unbind_session(session_id) when is_binary(session_id),
+    do: GenServer.call(__MODULE__, {:unbind_session, session_id})
+
+  @spec sessions_for(String.t()) :: [String.t()]
+  def sessions_for(workspace_id) when is_binary(workspace_id),
+    do: GenServer.call(__MODULE__, {:sessions_for, workspace_id})
+
+  @doc """
+  Atomically delete the workspace if and only if:
+    - It exists
+    - Its `transient` field is true
+    - Its session_index entry is empty (or absent)
+
+  Returns:
+    {:ok, :deleted}        - workspace was deleted
+    {:ok, :not_transient}  - workspace exists but transient=false
+    {:ok, :has_sessions}   - workspace exists, transient=true, but has live sessions
+    {:error, :not_found}   - workspace doesn't exist
+  """
+  @spec delete_if_no_sessions(String.t()) ::
+          {:ok, :deleted | :not_transient | :has_sessions} | {:error, :not_found}
+  def delete_if_no_sessions(workspace_id) when is_binary(workspace_id),
+    do: GenServer.call(__MODULE__, {:delete_if_no_sessions, workspace_id})
+
   ## LEGACY public API (still used by callers; deprecated post-Phase-8) --
 
   @spec get(String.t()) :: {:ok, Workspace.t()} | :error
@@ -216,14 +246,14 @@ defmodule Esr.Resource.Workspace.Registry do
 
     case do_refresh() do
       :ok ->
-        {:ok, %{}}
+        {:ok, %{session_index: %{}}}
 
       {:error, reason} ->
         Logger.warning(
           "workspace.registry: boot refresh failed (#{inspect(reason)}); starting empty"
         )
 
-        {:ok, %{}}
+        {:ok, %{session_index: %{}}}
     end
   end
 
@@ -243,17 +273,59 @@ defmodule Esr.Resource.Workspace.Registry do
   end
 
   def handle_call({:delete_by_id, id}, _from, state) do
-    case :ets.lookup(@uuid_table, id) do
-      [{^id, ws}] ->
-        :ets.delete(@legacy_table, ws.name)
-        NameIndex.delete_by_id(@name_index_table, id)
-        :ets.delete(@uuid_table, id)
+    new_state =
+      case :ets.lookup(@uuid_table, id) do
+        [{^id, ws}] -> do_delete_workspace(ws, state)
+        [] -> state
+      end
+
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call({:bind_session, ws_id, sid}, _from, state) do
+    case :ets.lookup(@uuid_table, ws_id) do
+      [{_, _ws}] ->
+        sids = Map.get(state.session_index, ws_id, MapSet.new())
+        session_index = Map.put(state.session_index, ws_id, MapSet.put(sids, sid))
+        {:reply, :ok, %{state | session_index: session_index}}
 
       [] ->
-        :ok
+        {:reply, {:error, :workspace_gone}, state}
     end
+  end
 
-    {:reply, :ok, state}
+  def handle_call({:unbind_session, sid}, _from, state) do
+    session_index =
+      state.session_index
+      |> Enum.map(fn {ws_id, sids} -> {ws_id, MapSet.delete(sids, sid)} end)
+      |> Enum.into(%{})
+
+    {:reply, :ok, %{state | session_index: session_index}}
+  end
+
+  def handle_call({:sessions_for, ws_id}, _from, state) do
+    sids = Map.get(state.session_index, ws_id, MapSet.new()) |> MapSet.to_list()
+    {:reply, sids, state}
+  end
+
+  def handle_call({:delete_if_no_sessions, ws_id}, _from, state) do
+    case :ets.lookup(@uuid_table, ws_id) do
+      [{_, ws}] ->
+        cond do
+          not ws.transient ->
+            {:reply, {:ok, :not_transient}, state}
+
+          sessions_left?(state.session_index, ws_id) ->
+            {:reply, {:ok, :has_sessions}, state}
+
+          true ->
+            new_state = do_delete_workspace(ws, state)
+            {:reply, {:ok, :deleted}, new_state}
+        end
+
+      [] ->
+        {:reply, {:error, :not_found}, state}
+    end
   end
 
   def handle_call({:rename, old, new_name}, _from, state) do
@@ -265,6 +337,21 @@ defmodule Esr.Resource.Workspace.Registry do
     do: {:reply, do_refresh(), state}
 
   ## Internals -----------------------------------------------------------
+
+  defp do_delete_workspace(%{id: id, name: name} = _ws, state) do
+    :ets.delete(@legacy_table, name)
+    NameIndex.delete_by_id(@name_index_table, id)
+    :ets.delete(@uuid_table, id)
+    session_index = Map.delete(state.session_index, id)
+    %{state | session_index: session_index}
+  end
+
+  defp sessions_left?(session_index, ws_id) do
+    case Map.get(session_index, ws_id) do
+      nil -> false
+      %MapSet{} = ms -> MapSet.size(ms) > 0
+    end
+  end
 
   defp do_refresh do
     :ets.delete_all_objects(@legacy_table)
