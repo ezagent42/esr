@@ -72,14 +72,14 @@ defmodule Esr.Commands.Scope.NewTest do
   end
 
   describe "execute/1 arg validation" do
-    test "missing agent → no_workspace_resolvable when no workspace set (Phase 5.1)" do
-      # Phase 5.1 behavior change: when neither agent nor workspace is given,
-      # the 3-step resolution chain runs first and returns no_workspace_resolvable
-      # (no default workspace in the test env). The old "agent required" error
-      # from validate_args is now only reachable via the :no_resolution_needed
-      # short-circuit path (i.e., when agent IS supplied — but then it's not nil).
+    test "missing workspace + agent → resolution falls back to \"default\" workspace (Phase 5.1 + 6.1)" do
+      # Phase 5.1 introduced the 3-step resolution chain; Phase 6.1's
+      # Bootstrap guarantees a "default" workspace exists at boot time, so
+      # the chain always resolves and execution proceeds to capability check.
+      # ou_alice is unprivileged → fails at capability gate, not resolution.
+      Grants.load_snapshot(%{"ou_alice" => []})
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
-      assert {:error, %{"type" => "no_workspace_resolvable"}} = SessionNew.execute(cmd)
+      assert {:error, %{"type" => "missing_capabilities"}} = SessionNew.execute(cmd)
     end
 
     test "missing dir → invalid_args" do
@@ -147,8 +147,8 @@ defmodule Esr.Commands.Scope.NewTest do
       # simple.yaml's cc agent declares the full canonical set.
       assert Enum.sort(missing) == [
                "handler:cc_adapter_runner/invoke",
-               "session:default/create",
-               "pty:default/spawn"
+               "pty:default/spawn",
+               "session:default/create"
              ]
 
       after_count = DynamicSupervisor.count_children(Esr.Scope.Supervisor).active
