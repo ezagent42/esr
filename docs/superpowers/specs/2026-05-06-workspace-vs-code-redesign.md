@@ -2,7 +2,7 @@
 
 **Status**: design (2026-05-06)
 **Brainstorm**: in-conversation 2026-05-06
-**Estimated implementation**: ~1000-1400 LOC across 1 main PR + docs sweep (rev: added bind-chat/unbind-chat slashes + migrator subcommand after spec review)
+**Estimated implementation**: ~1100-1500 LOC across 1 main PR + docs sweep (revs: + bind-chat/unbind-chat + migrator subcommand from review; + `default` workspace auto-create + `/workspace use` chat-default + immutable session→workspace binding from rev-2 user feedback)
 **Related**: deferred from `esr daemon init` PR (see `docs/futures/todo.md`)
 
 ## Goal
@@ -29,6 +29,14 @@ its data form, file layout, and CLI surface.
   `session:<ws_name>/create` form is preserved verbatim. Existing
   `capabilities.yaml` grants continue to work without rewrite. Per-
   workspace cap scoping stays a v1 feature.
+- **Reassigning a session to a different workspace.** A session's
+  workspace binding is **immutable after spawn**. There is no
+  `/session switch-workspace` command. Operators who want a
+  different workspace must `/end-session <sid>` then
+  `/new-session <new_ws> name=<sid>` (`claude --resume` recovers
+  conversation context across the respawn). This avoids mid-session
+  cwd / env / settings divergence between the cc process state and
+  the workspace's current config.
 
 ## Problem
 
@@ -236,6 +244,7 @@ expected workflow; the CLI is the canonical interface.
 | `/workspace unbind-chat <name> <chat_id> [--app=<app_id>]` | **new** | Removes the matching `chats[]` entry. Without `--app` removes all chat_id matches across apps; with `--app` scopes to a single (chat_id, app_id) pair. |
 | `/workspace remove <name> [--force]` | **new** | Deletes the entire workspace directory + sessions. Without `--force` errors if any session is live. |
 | `/workspace rename <old> <new>` | **new** | Atomic: rename directory + update `workspace.json.name` + update any references (sessions/index files). |
+| `/workspace use <name>` | **new** | Sets the **current chat's default workspace**. Stored at chat-level (next to chat-current-slot index). Subsequent `/new-session name=<sid>` calls in this chat (no explicit `<ws>` arg) default to `<name>`. Per-chat preference; does not affect other chats. |
 
 `/workspace list` output format (matches escript YAML envelope per
 PR-211 conventions):
@@ -263,14 +272,35 @@ view (similar to the slash-routes hot-reload in PR-21κ).
 
 ## Session integration
 
-When `/new-session <ws_name> name=<sid>` runs:
+### Workspace resolution order for `/new-session`
 
-1. Resolve workspace: `$ESRD_HOME/<inst>/workspaces/<ws_name>/workspace.json`. Error if missing.
+`/new-session [<ws_name>] name=<sid>` resolves the workspace in
+this order (first match wins):
+
+1. **Explicit argument**: `/new-session esr-dev name=<sid>` — uses
+   `esr-dev` workspace.
+2. **Chat default**: if the inbound chat has had `/workspace use
+   <ws>` set, use that workspace.
+3. **Global default**: fall back to the `default` workspace.
+
+The `default` workspace is auto-created by `esr daemon init` (and
+by the migrator if no workspace named `default` was present in old
+yaml). It's a self-contained workspace with empty `folders[]`,
+empty `chats[]`, owner = the bootstrap admin user. Operators can
+configure it via `/workspace edit default --set ...` or remove
+folders / use a different workspace as their preferred default via
+`/workspace use <other>`.
+
+### Spawn sequence
+
+Once workspace is resolved, `/new-session` runs:
+
+1. Read `$ESRD_HOME/<inst>/workspaces/<ws_name>/workspace.json`. Error if missing or `name` ≠ basename.
 2. Resolve cwd per the folders rule above.
 3. Build env: merge `agents.yaml.cc.env` + `workspace.json.env` (workspace wins on conflict).
 4. Build settings: merge `agents.yaml.cc.*` defaults + `workspace.json.settings.cc.*` (workspace wins).
 5. Build agent invocation: cc's `start_cmd` + `--add-dir <folder>` for each `folders[i]` (skip first if cwd already points there).
-6. Spawn session under `Scope.Supervisor`; record session state at `$ESRD_HOME/.../workspaces/<ws_name>/sessions/<sid>/`.
+6. Spawn session under `Scope.Supervisor`; record session state at `$ESRD_HOME/.../workspaces/<ws_name>/sessions/<sid>/`. **The session's workspace binding is recorded at this point and is immutable** (per Non-goals — no `/session switch-workspace`).
 7. If `transient: true`, attach a watch so the workspace directory is removed when its last session ends.
 
 `/end-session <sid>` runs the inverse — terminate scope, archive
