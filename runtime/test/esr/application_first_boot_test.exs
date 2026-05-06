@@ -1,24 +1,25 @@
 defmodule Esr.ApplicationFirstBootTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Resource.Workspace.{Bootstrap, Registry, NameIndex}
+  alias Esr.Resource.Workspace.{Bootstrap, Registry}
+
+  # NameIndex + Registry are started by Esr.Application; do not double-start.
+  # The legacy-yaml path is driven by $ESRD_HOME, which we override per-test.
+  # The default-workspace assertions run against the live application Registry —
+  # the application's own Bootstrap already created "default" at boot, so the
+  # tests verify idempotency + survival across re-invocations.
 
   setup do
-    # tmp is used as ESRD_HOME; runtime_home = tmp/default (ESR_INSTANCE defaults to "default")
     tmp = Path.join(System.tmp_dir!(), "esr-firstboot-#{:erlang.unique_integer([:positive])}")
     runtime_home = Path.join(tmp, "default")
     File.mkdir_p!(runtime_home)
 
-    # Snapshot + restore ESRD_HOME env
     prev_esrd_home = System.get_env("ESRD_HOME")
     System.put_env("ESRD_HOME", tmp)
 
-    # Start fresh NameIndex + Registry
-    {:ok, _} = start_supervised({NameIndex, []})
-    {:ok, _} = start_supervised(Registry)
-
     on_exit(fn ->
       File.rm_rf!(tmp)
+
       if prev_esrd_home,
         do: System.put_env("ESRD_HOME", prev_esrd_home),
         else: System.delete_env("ESRD_HOME")
@@ -49,25 +50,29 @@ defmodule Esr.ApplicationFirstBootTest do
   end
 
   describe "ensure_default_workspace" do
-    test "creates default workspace if missing", %{tmp: _tmp} do
-      assert :error = Registry.get("default")
+    test "default workspace exists after Bootstrap" do
+      # The application's Bootstrap ran at boot, so "default" should already
+      # be in the Registry. Confirm it survives explicit re-invocation.
       assert :ok = Bootstrap.run()
       assert {:ok, ws} = Registry.get("default")
       assert ws.name == "default"
     end
 
-    test "is idempotent — running twice doesn't error or duplicate", %{tmp: _tmp} do
+    test "is idempotent — running twice doesn't error or duplicate" do
       assert :ok = Bootstrap.run()
-      assert {:ok, ws1} = Registry.get("default")
+      {:ok, id1} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
 
       assert :ok = Bootstrap.run()
-      assert {:ok, ws2} = Registry.get("default")
+      {:ok, id2} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
 
-      # Same name — second run was a no-op
-      assert ws1.name == ws2.name
+      # Same UUID — second run was a no-op
+      assert id1 == id2
     end
 
-    test "both: deletes legacy + creates default in one run", %{runtime_home: runtime_home} do
+    test "both: deletes legacy yaml + leaves default workspace intact",
+         %{runtime_home: runtime_home} do
       File.write!(Path.join(runtime_home, "workspaces.yaml"), "stale: yes")
 
       assert :ok = Bootstrap.run()
