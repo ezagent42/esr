@@ -33,6 +33,7 @@ defmodule Esr.Commands.Workspace.NewTest do
       Esr.Entity.User.Registry.load_snapshot(%{})
       :ets.delete_all_objects(:esr_workspaces)
       :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Resource.Workspace.Bootstrap.run()
     end)
 
     {:ok, tmp: tmp}

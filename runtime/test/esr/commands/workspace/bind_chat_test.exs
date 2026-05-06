@@ -23,6 +23,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
       File.rm_rf!(tmp)
       :ets.delete_all_objects(:esr_workspaces)
       :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Resource.Workspace.Bootstrap.run()
     end)
 
     {:ok, tmp: tmp}

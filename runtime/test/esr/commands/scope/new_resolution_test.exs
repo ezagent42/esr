@@ -51,6 +51,24 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
     end
   end
 
+  # Phase 6.1's Bootstrap creates "default" at app boot. Tests that need
+  # to verify "default doesn't exist" must temporarily delete it; this
+  # helper schedules its recreation on_exit so siblings see post-Bootstrap
+  # state.
+  defp temporarily_delete_default do
+    case NameIndex.id_for_name(@name_index_table, "default") do
+      {:ok, id} ->
+        Registry.delete_by_id(id)
+
+        ExUnit.Callbacks.on_exit(fn ->
+          Registry.put(%Struct{id: id, name: "default", owner: "admin", location: nil})
+        end)
+
+      :not_found ->
+        :ok
+    end
+  end
+
   setup do
     # Ensure the relevant GenServers are running (started by Esr.Application).
     assert is_pid(Process.whereis(Registry))
@@ -116,15 +134,15 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
     test "chat default is ignored when chat_id is absent" do
       uuid = register_workspace("ws-chatdef-no-chatid")
       :ok = ChatReg.set_default_workspace("oc_orphan", "cli_orphan", uuid)
+      temporarily_delete_default()
 
       on_exit(fn ->
         ChatReg.clear_default_workspace("oc_orphan", "cli_orphan")
         clean_workspace("ws-chatdef-no-chatid")
-        clean_workspace("default")
       end)
 
       # No chat_id in args → lookup_chat_default returns nil → falls through.
-      # No "default" workspace registered → :no_match.
+      # No "default" workspace (just deleted) → :no_match.
       args = %{"dir" => "/tmp/x"}
 
       assert {:error, %{"type" => "no_workspace_resolvable"}} =
@@ -138,10 +156,7 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
 
   describe "fallback to 'default' workspace" do
     test "resolves to 'default' when no workspace or chat default is set" do
-      _uuid = register_workspace("default")
-
-      on_exit(fn -> clean_workspace("default") end)
-
+      # Phase 6.1's Bootstrap already created "default" — just rely on it.
       args = %{"dir" => "/tmp/x"}
 
       assert {:ok, "default"} = SessionNew.resolve_workspace_if_needed(args)
@@ -155,9 +170,9 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
 
   describe "no_workspace_resolvable error" do
     test "returns structured error when none of the three steps match" do
-      # Ensure no "default" workspace is registered for this test.
-      # (clean_workspace is safe when not present)
-      clean_workspace("default")
+      # Phase 6.1's Bootstrap creates "default" at boot — temporarily
+      # remove it so the fallback can't fire; restored on_exit.
+      temporarily_delete_default()
 
       args = %{"dir" => "/tmp/x"}
 

@@ -23,6 +23,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
       File.rm_rf!(tmp)
       :ets.delete_all_objects(:esr_workspaces)
       :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Resource.Workspace.Bootstrap.run()
       :ets.delete_all_objects(:esr_workspace_name_index_name_to_id)
       :ets.delete_all_objects(:esr_workspace_name_index_id_to_name)
     end)

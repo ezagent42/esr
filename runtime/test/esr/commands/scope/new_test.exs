@@ -78,8 +78,17 @@ defmodule Esr.Commands.Scope.NewTest do
       # the chain always resolves and execution proceeds to capability check.
       # ou_alice is unprivileged → fails at capability gate, not resolution.
       Grants.load_snapshot(%{"ou_alice" => []})
+
+      # Self-heal in case a sibling resolution test deleted "default" and
+      # didn't restore it cleanly (the on_exit ordering is sensitive).
+      ensure_default_workspace()
+
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
       assert {:error, %{"type" => "missing_capabilities"}} = SessionNew.execute(cmd)
+    end
+
+    defp ensure_default_workspace do
+      Esr.Resource.Workspace.Bootstrap.run()
     end
 
     test "missing dir → invalid_args" do
