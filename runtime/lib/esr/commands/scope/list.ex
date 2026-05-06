@@ -47,27 +47,32 @@ defmodule Esr.Commands.Scope.List do
     env = args["env"] || Esr.Paths.current_instance()
     username = args["username"] || ""
 
-    if username == "" do
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" =>
-           "session_list with workspace= requires args.username (esr user) too"
-       }}
-    else
-      sessions =
-        Esr.Resource.ChatScope.Registry.list_uris(env, username, ws)
-        |> Enum.map(fn {name, sid} ->
-          %{"name" => name, "session_id" => sid}
-        end)
+    cond do
+      username == "" ->
+        {:error,
+         %{
+           "type" => "invalid_args",
+           "message" =>
+             "session_list with workspace= requires args.username (esr user) too"
+         }}
 
-      {:ok,
-       %{
-         "workspace" => ws,
-         "username" => username,
-         "env" => env,
-         "sessions" => sessions
-       }}
+      not workspace_exists?(ws) ->
+        {:error, %{"type" => "unknown_workspace", "workspace" => ws}}
+
+      true ->
+        sessions =
+          Esr.Resource.ChatScope.Registry.list_uris(env, username, ws)
+          |> Enum.map(fn {name, sid} ->
+            %{"name" => name, "session_id" => sid}
+          end)
+
+        {:ok,
+         %{
+           "workspace" => ws,
+           "username" => username,
+           "env" => env,
+           "sessions" => sessions
+         }}
     end
   end
 
@@ -97,6 +102,16 @@ defmodule Esr.Commands.Scope.List do
   # ------------------------------------------------------------------
   # Internals — missing file → empty map (not an error)
   # ------------------------------------------------------------------
+
+  defp workspace_exists?(ws_name) do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+      {:ok, _} -> true
+      :not_found -> false
+    end
+  rescue
+    # NameIndex ETS tables not created (admin-CLI use without full app boot)
+    ArgumentError -> true
+  end
 
   defp read_yaml(path) do
     case YamlElixir.read_from_file(path) do

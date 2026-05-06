@@ -134,16 +134,34 @@ defmodule Esr.Commands.Scope.ListTest do
   describe "execute/1 PR-21j workspace-scoped path" do
     test "returns sessions filtered by (env, username, workspace) URI tuple" do
       assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-      env = "test-list-#{System.unique_integer([:positive])}"
+      assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
-      sid_a = "sid-listA-#{System.unique_integer([:positive])}"
-      sid_b = "sid-listB-#{System.unique_integer([:positive])}"
+      unique = System.unique_integer([:positive])
+      ws_name = "esr-dev-scope-list-#{unique}"
+      env = "test-list-#{unique}"
+
+      # Workspace must exist in registry for the existence check to pass.
+      :ok =
+        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
+          name: ws_name,
+          owner: "linyilun",
+          role: "dev",
+          chats: [],
+          env: %{},
+          neighbors: [],
+          metadata: %{}
+        })
+
+      on_exit(fn -> :ets.delete(:esr_workspaces, ws_name) end)
+
+      sid_a = "sid-listA-#{unique}"
+      sid_b = "sid-listB-#{unique}"
 
       :ok =
         Esr.Resource.ChatScope.Registry.claim_uri(sid_a, %{
           env: env,
           username: "linyilun",
-          workspace: "esr-dev",
+          workspace: ws_name,
           name: "alpha",
           worktree_branch: "alpha-br"
         })
@@ -152,19 +170,19 @@ defmodule Esr.Commands.Scope.ListTest do
         Esr.Resource.ChatScope.Registry.claim_uri(sid_b, %{
           env: env,
           username: "linyilun",
-          workspace: "esr-dev",
+          workspace: ws_name,
           name: "beta",
           worktree_branch: "beta-br"
         })
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"workspace" => "esr-dev", "username" => "linyilun", "env" => env}
+        "args" => %{"workspace" => ws_name, "username" => "linyilun", "env" => env}
       }
 
       assert {:ok,
               %{
-                "workspace" => "esr-dev",
+                "workspace" => ^ws_name,
                 "username" => "linyilun",
                 "env" => ^env,
                 "sessions" => sessions
@@ -190,12 +208,42 @@ defmodule Esr.Commands.Scope.ListTest do
       assert msg =~ "username"
     end
 
-    test "no matching sessions → empty list" do
+    test "unknown workspace → unknown_workspace error" do
       env = "empty-#{System.unique_integer([:positive])}"
 
       cmd = %{
         "submitted_by" => "ou_alice",
         "args" => %{"workspace" => "ghost-ws", "username" => "linyilun", "env" => env}
+      }
+
+      assert {:error, %{"type" => "unknown_workspace", "workspace" => "ghost-ws"}} =
+               SessionList.execute(cmd)
+    end
+
+    test "no matching sessions → empty list (workspace must exist)" do
+      assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+
+      ws_name = "scope-list-test-ws-#{System.unique_integer([:positive])}"
+      env = "empty-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
+          name: ws_name,
+          owner: "linyilun",
+          role: "dev",
+          chats: [],
+          env: %{},
+          neighbors: [],
+          metadata: %{}
+        })
+
+      on_exit(fn ->
+        :ets.delete(:esr_workspaces, ws_name)
+      end)
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"workspace" => ws_name, "username" => "linyilun", "env" => env}
       }
 
       assert {:ok, %{"sessions" => []}} = SessionList.execute(cmd)
