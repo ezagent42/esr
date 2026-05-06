@@ -10,16 +10,18 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md` (rev 3, user-approved 2026-05-06).
 
-**Estimated:** ~1300-1700 LOC across 8 phases. Each phase shipped as one commit (or sequence of commits within phase). Plan targets a single PR with ~25 commits.
+**Estimated:** ~1400-1800 LOC across 8 phases (rev-2: subagent code-reviewer found Phase 4.11 slash count was wrong [10 new not 8]; added explicit Watcher deletion task; added concurrent-race test for Risk #2; added agents.yaml-survives test for Risk #3; added Phase 0.0 for UUID dependency). Each phase shipped as one commit (or sequence of commits within phase). Plan targets a single PR with ~28 commits.
 
 ---
 
 ## Phase 0 — Scaffolding
 
-### Task 0.1: Branch + JSON Schema file
+### Task 0.0: UUID dependency
 
 **Files:**
-- Create: `runtime/priv/schemas/workspace.v1.json`
+- Modify: `runtime/mix.exs`
+
+The codebase has no UUID library today (verified via `grep -E "uuid|UUID" runtime/mix.exs runtime/mix.lock`). All later tasks call `UUID.uuid4()`, so the dependency must land **first**, before Phase 0.1 compiles anything that uses it.
 
 - [ ] **Step 1: Branch off dev**
 
@@ -29,7 +31,37 @@ git pull origin dev
 git checkout -b feature/workspace-vs-code-redesign-impl
 ```
 
-- [ ] **Step 2: Write JSON Schema for workspace.json v1**
+- [ ] **Step 2: Add `:elixir_uuid` to mix.exs deps**
+
+Edit `runtime/mix.exs`, in the `deps/0` function, add:
+
+```elixir
+{:elixir_uuid, "~> 1.2", hex: :uuid_utils}
+```
+
+(`elixir_uuid` is the de-facto module name `UUID`; `:uuid_utils` is the actively-maintained Hex package since `:elixir_uuid` proper hasn't shipped in years.)
+
+- [ ] **Step 3: Fetch deps + smoke test**
+
+```bash
+cd runtime && mix deps.get && mix compile && elixir -e "IO.puts(UUID.uuid4())"
+```
+
+Expected: a UUID string like `7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add runtime/mix.exs runtime/mix.lock
+git commit -m "deps: add :uuid_utils for workspace UUID identity (Phase 0)"
+```
+
+### Task 0.1: JSON Schema file
+
+**Files:**
+- Create: `runtime/priv/schemas/workspace.v1.json`
+
+- [ ] **Step 1: Write JSON Schema for workspace.json v1**
 
 Create `runtime/priv/schemas/workspace.v1.json`:
 
@@ -86,7 +118,7 @@ Create `runtime/priv/schemas/workspace.v1.json`:
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
 git add runtime/priv/schemas/workspace.v1.json
@@ -1033,6 +1065,48 @@ git commit -m "workspace.name_index: bidirectional ETS-backed name↔id (Phase 1
 
 ## Phase 2 — Registry rewrite
 
+### Task 2.0: Delete legacy Workspace.Watcher module
+
+**Files:**
+- Delete: `runtime/lib/esr/resource/workspace/watcher.ex`
+- Delete: `runtime/test/esr/resource/workspace/watcher_test.exs` (if exists)
+- Modify: `runtime/lib/esr/application.ex` (remove watcher child)
+- Modify: any supervisor referencing `Esr.Resource.Workspace.Watcher`
+
+Spec rev-3 explicitly drops the filesystem watcher ("− file watcher entirely"). The existing `Esr.Resource.Workspace.Watcher` watches `workspaces.yaml`; that yaml is being deleted in Phase 6. After Phase 6 the watcher would crash-loop pointing at a missing file. Delete the module **before** the new Registry takes over so the supervisor tree never has a dangling reference.
+
+- [ ] **Step 1: Find all references**
+
+```bash
+grep -rn "Esr\.Resource\.Workspace\.Watcher\|Workspace.Watcher" runtime/ 2>&1 | grep -v "_build"
+```
+
+- [ ] **Step 2: Remove watcher child from supervisor**
+
+Open the file containing `{Esr.Resource.Workspace.Watcher, ...}` (likely `runtime/lib/esr/application.ex` or the Workspace supervisor). Delete that child entry.
+
+- [ ] **Step 3: Delete the module + test**
+
+```bash
+git rm runtime/lib/esr/resource/workspace/watcher.ex
+git rm runtime/test/esr/resource/workspace/watcher_test.exs 2>/dev/null || true
+```
+
+- [ ] **Step 4: Compile clean**
+
+```bash
+cd runtime && mix compile 2>&1 | grep -E "warning|error" | head
+```
+
+Expected: no references-to-Watcher errors. Pre-existing warnings unrelated to this task may remain.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "workspace.watcher: delete (replaced by inline CLI invalidate; Phase 2)"
+```
+
 ### Task 2.1: Esr.Resource.Workspace.Registry GenServer
 
 **Files:**
@@ -1753,7 +1827,38 @@ Implementation: walk `Registry.list_all/0`, format per spec output (name, id, ow
 - Create: `runtime/lib/esr/commands/workspace/edit.ex`
 - Test: `runtime/test/esr/commands/workspace/edit_test.exs`
 
-Implementation: parse `--set key=value` into nested-map merge into `workspace.json`. Reject `--set chats=...` and `--set folders=...` (use dedicated slashes). Reject `--set id=...` (immutable). Reject `--set name=...` (use rename). Reject `--set transient=true` for repo-bound.
+**Parsing semantics (concrete):**
+
+The `set` argument is a single `key=value` string. The key uses dot-namespacing for **top-level structure only**, NOT for the dot-string keys inside `settings`:
+
+| Input | Maps to |
+|---|---|
+| `--set agent=claude` | `workspace.json.agent = "claude"` |
+| `--set env.PROJECT_ENV=dev` | `workspace.json.env["PROJECT_ENV"] = "dev"` |
+| `--set settings.cc.model=opus` | `workspace.json.settings["cc.model"] = "opus"` (flat dot-string per spec) |
+| `--set settings.cc.allowed_tools=Bash,Edit,Read` | `workspace.json.settings["cc.allowed_tools"] = ["Bash","Edit","Read"]` (CSV-split) |
+| `--set settings.logging.level=debug` | `workspace.json.settings["logging.level"] = "debug"` |
+
+**Parsing rule**: split key on first dot. The prefix (before first `.`) is the top-level field. The suffix (after first `.`) is:
+- For `settings`: kept as a flat dot-string key (preserves spec's "settings keys are flat dot-strings" rule)
+- For `env`: a single env var name (no further dots expected; reject if found)
+- For other top-level fields: error — only `settings` and `env` accept dotted suffixes
+
+**Rejected fields** (error with `{:error, %{"type" => "field_locked"}}`):
+- `id` (immutable; UUID is canonical identity)
+- `name` (use `/workspace rename`)
+- `chats` (use `/workspace bind-chat` / `unbind-chat`)
+- `folders` (use `/workspace add-folder` / `remove-folder`)
+- `location` (internal; not user-settable)
+- `transient` on repo-bound workspaces (rejected at write time, surfaced as `{:error, %{"type" => "transient_repo_bound_forbidden"}}`)
+
+**Value parsing**:
+- `true` / `false` → boolean
+- bare integer → integer
+- comma-separated string with no `=` inside → list (split on `,`, strip whitespace)
+- otherwise → string
+
+**Tests** (the file should cover all rows in the table above + each rejected-field case + the value-parsing rules).
 
 ### Task 4.4: New `/workspace add-folder` + `/workspace remove-folder`
 
@@ -1777,13 +1882,51 @@ Implementation: append/remove `{chat_id, app_id, kind}` from `workspace.json.cha
 
 **Files:**
 - Create: `runtime/lib/esr/commands/workspace/remove.ex`
-- Test: same
+- Test: `runtime/test/esr/commands/workspace/remove_test.exs`
 
 Implementation:
 - Validate no live sessions reference the workspace's UUID (call `Esr.Scope.Registry.list_for_workspace/1`).
 - ESR-bound: `File.rm_rf!(workspace_dir)`.
-- Repo-bound: `File.rm!(<repo>/.esr/workspace.json)` + `File.rm!(<repo>/.esr/topology.yaml)` IF EXISTS. Never `rm -rf <repo>/.esr/`. Then `RepoRegistry.unregister/2`.
+- Repo-bound: `File.rm!(<repo>/.esr/workspace.json)` + `File.rm!(<repo>/.esr/topology.yaml)` IF EXISTS. **Never `rm -rf <repo>/.esr/`**. Then `RepoRegistry.unregister/2`.
 - `Registry.delete_by_id/1`.
+
+**Required tests** (Risk #3 from spec — falsifiable):
+
+```elixir
+test "repo-bound /workspace remove preserves other files in <repo>/.esr/" do
+  # Create a repo-bound workspace
+  repo = Path.join(tmp, "myrepo")
+  esr_dir = Path.join(repo, ".esr")
+  File.mkdir_p!(esr_dir)
+
+  # workspace.json + topology.yaml — both should be removed by /workspace remove
+  File.write!(Path.join(esr_dir, "workspace.json"), Jason.encode!(workspace_json))
+  File.write!(Path.join(esr_dir, "topology.yaml"), "schema_version: 1\ndescription: x")
+
+  # SENTINEL file that must survive — agents.yaml is a v2+ feature today,
+  # but a paranoid operator might have pre-created it; /workspace remove
+  # must NOT rm -rf the .esr/ directory wholesale.
+  File.write!(Path.join(esr_dir, "agents.yaml"), "DO_NOT_DELETE")
+
+  # Register + remove
+  RepoRegistry.register(yaml, repo)
+  Registry.refresh()
+  {:ok, _} = Esr.Commands.Workspace.Remove.execute(%{"args" => %{"name" => "myrepo", "force" => "true"}})
+
+  refute File.exists?(Path.join(esr_dir, "workspace.json"))
+  refute File.exists?(Path.join(esr_dir, "topology.yaml"))
+  assert File.read!(Path.join(esr_dir, "agents.yaml")) == "DO_NOT_DELETE"
+  refute File.exists?(repo) |> elem(0) == false  # repo itself untouched
+end
+
+test "ESR-bound /workspace remove deletes the whole workspace dir" do
+  # ... straightforward File.rm_rf assertion
+end
+
+test "/workspace remove fails if live sessions exist (without --force)" do
+  # ... mock Scope.Registry.list_for_workspace to return [<sid>]
+end
+```
 
 ### Task 4.7: New `/workspace rename`
 
@@ -1797,9 +1940,18 @@ Implementation: just calls `Registry.rename/2` (which handles ETS index + filesy
 
 **Files:**
 - Create: `runtime/lib/esr/commands/workspace/use.ex`
-- Test: same
+- Modify: `runtime/lib/esr/resource/chat_scope/registry.ex`
+- Test: `runtime/test/esr/commands/workspace/use_test.exs` (new) + `runtime/test/esr/resource/chat_scope/registry_test.exs` (extend)
 
-Implementation: store the chat's default workspace UUID into the chat-current-slot ETS table (extend the existing slot module to carry a `default_workspace_id` field).
+The chat-current-slot today lives in `Esr.Resource.ChatScope.Registry` (state map `chat_to_session: %{{chat_id, app_id} => session_id}`). Verified by grep for `chat_thread_key` and `chat_to_session` 2026-05-06.
+
+Implementation:
+
+1. Extend `Esr.Resource.ChatScope.Registry` state with a parallel map `chat_to_default_workspace_id :: %{{chat_id, app_id} => uuid_string}` plus public functions `set_default_workspace(chat_id, app_id, workspace_id)` and `get_default_workspace(chat_id, app_id) :: {:ok, uuid} | :not_found`.
+
+2. `Esr.Commands.Workspace.Use.execute/1` reads `args.chat_id` + `args.app_id` from the slash envelope, resolves `<name>` → UUID via `Esr.Resource.Workspace.Registry.get/1`, then calls `Esr.Resource.ChatScope.Registry.set_default_workspace/3`.
+
+3. Add cap requirement `workspace.create` (same as `/new-workspace` — operator must be allowed to set workspace defaults).
 
 ### Task 4.9: New `/workspace import-repo` + `/workspace forget-repo`
 
@@ -1821,27 +1973,151 @@ Implementation:
 
 Each refactored to read from new Registry shape. `info` overlays `<folders[0]>/.esr/topology.yaml` if present. `describe` keeps PR-222 security boundary unchanged. `sessions` reads `Esr.Scope.Registry.list_for_workspace/1`.
 
-### Task 4.11: Add 8 new slashes to `runtime/priv/slash-routes.default.yaml`
+### Task 4.11: Update `runtime/priv/slash-routes.default.yaml`
 
-Add entries (fields per existing pattern):
+**10 new entries** + **4 modify-existing** = 14 total `/workspace*` entries. (Reviewer caught: original plan said "8 new" but actual count is 10 new + 4 modify.)
+
+**4 existing entries to modify** (refresh `description` + `category` if drift; otherwise structural fields stay):
+
+- `/new-workspace` — args list: keep `name` required + add `folder` optional + `transient` optional + `owner` optional
+- `/workspace info` — unchanged structure
+- `/workspace describe` — unchanged structure
+- `/workspace sessions` — unchanged structure
+
+**10 new entries:**
 
 ```yaml
 "/workspace list":
   kind: workspace_list
   permission: "session.list"
   command_module: "Esr.Commands.Workspace.List"
-  ...
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "列所有已注册 workspace（ESR-bound + repo-bound）"
+  args: []
 
 "/workspace edit":
   kind: workspace_edit
   permission: "workspace.create"
   command_module: "Esr.Commands.Workspace.Edit"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "改 workspace.json 单个标量字段（不能改 chats[]/folders[]，用专门的 slash）"
   args:
     - { name: name, required: true }
-    - { name: set, required: true }   # parsed by command module
+    - { name: set, required: true }
 
-# ... same pattern for add-folder, remove-folder, bind-chat,
-# unbind-chat, remove, rename, use, import-repo, forget-repo
+"/workspace add-folder":
+  kind: workspace_add_folder
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.AddFolder"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "追加一个 folder 到 workspace.folders[]"
+  args:
+    - { name: name, required: true }
+    - { name: path, required: true }
+    - { name: alias, required: false }
+
+"/workspace remove-folder":
+  kind: workspace_remove_folder
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.RemoveFolder"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "从 workspace.folders[] 删一项"
+  args:
+    - { name: name, required: true }
+    - { name: path, required: true }
+
+"/workspace bind-chat":
+  kind: workspace_bind_chat
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.BindChat"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "把 chat 加进 workspace.chats[]"
+  args:
+    - { name: name, required: true }
+    - { name: chat_id, required: true }
+    - { name: app, required: false }
+    - { name: kind, required: false, default: "dm" }
+
+"/workspace unbind-chat":
+  kind: workspace_unbind_chat
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.UnbindChat"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "从 workspace.chats[] 删 chat"
+  args:
+    - { name: name, required: true }
+    - { name: chat_id, required: true }
+    - { name: app, required: false }
+
+"/workspace remove":
+  kind: workspace_remove
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.Remove"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，不动 repo）"
+  args:
+    - { name: name, required: true }
+    - { name: force, required: false, default: "false" }
+
+"/workspace rename":
+  kind: workspace_rename
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.Rename"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "改 workspace.name（id 不变；caps + sessions 引用按 UUID 不动）"
+  args:
+    - { name: name, required: true }
+    - { name: new_name, required: true }
+
+"/workspace use":
+  kind: workspace_use
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.Use"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "设当前 chat 的 default workspace（per-chat 偏好）"
+  args:
+    - { name: name, required: true }
+
+"/workspace import-repo":
+  kind: workspace_import_repo
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.ImportRepo"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "把一个 git repo（带 .esr/workspace.json）加进 registered_repos.yaml"
+  args:
+    - { name: path, required: true }
+    - { name: name, required: false }
+
+"/workspace forget-repo":
+  kind: workspace_forget_repo
+  permission: "workspace.create"
+  command_module: "Esr.Commands.Workspace.ForgetRepo"
+  requires_workspace_binding: false
+  requires_user_binding: true
+  category: "Workspace"
+  description: "从 registered_repos.yaml 移除 path（repo 内的 .esr/ 不动）"
+  args:
+    - { name: path, required: true }
 ```
 
 (Each task in this phase ends with `mix compile && mix test test/esr/commands/workspace/<the_test>.exs && git commit`.)
@@ -1898,23 +2174,104 @@ When session is registered, `session.workspace_id = workspace.id` (UUID).
 - Modify: `runtime/lib/esr/commands/scope/end.ex`
 - Test: `runtime/test/esr/commands/scope/end_transient_cleanup_test.exs`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Write failing test (happy path)**
 
 Spawn 1 session under a `transient: true` workspace, end it, assert workspace is removed.
 
-- [ ] **Step 2: Implement hook**
+- [ ] **Step 2: Write failing test (concurrent race — Risk #2)**
 
-After session teardown, if the workspace's `transient` is true and `Esr.Scope.Registry.list_for_workspace(ws_id)` returns empty, call `Workspace.Registry.delete_by_id(ws_id)` (which handles file cleanup).
+Spec Risk #2 demands serialised cleanup vs concurrent `/new-session`. Test:
 
-- [ ] **Step 3: Run tests + commit**
+```elixir
+test "transient cleanup races serialise via Workspace.Registry GenServer (Risk #2)" do
+  # Setup: a transient workspace with one live session
+  ws = make_transient_workspace("racy-ws")
+  sid = "session-1"
+  Scope.Registry.register_session(sid, ws.id, ...)
 
-### Task 5.3: chat-current-slot extension for `default_workspace_id`
+  # Race: launch two operations concurrently:
+  #  (a) end_session(sid) — last session, triggers transient cleanup
+  #  (b) new_session(workspace=racy-ws, name=session-2) — would prevent cleanup
+  task_a = Task.async(fn -> Esr.Commands.Scope.End.execute(%{"args" => %{"name" => sid}}) end)
+  task_b = Task.async(fn -> Esr.Commands.Scope.New.execute(%{"args" => %{"workspace" => "racy-ws", "name" => "session-2"}}) end)
+
+  result_a = Task.await(task_a, 5000)
+  result_b = Task.await(task_b, 5000)
+
+  # Determinism check: exactly ONE outcome happens
+  cleanup_happened = match?(:not_found, Workspace.Registry.get("racy-ws"))
+  new_session_happened = match?({:ok, _}, Scope.Registry.lookup_by_session_id("session-2"))
+
+  # XOR — one wins, the other gets a structured error
+  assert (cleanup_happened and not new_session_happened and match?({:error, _}, result_b)) or
+         (new_session_happened and not cleanup_happened and match?({:ok, _}, result_a))
+end
+```
+
+- [ ] **Step 3: Implement hook with Workspace.Registry serialisation**
+
+After session teardown, the End command makes a single `GenServer.call` to `Workspace.Registry`:
+
+```elixir
+# In Esr.Commands.Scope.End.execute/1, after session is removed from Scope.Registry:
+case Workspace.Registry.get_by_id(ended_session.workspace_id) do
+  {:ok, %{transient: true} = ws} ->
+    # GenServer.call serialises this against any concurrent put / new_session
+    Workspace.Registry.delete_if_no_sessions(ws.id)
+
+  _ -> :ok
+end
+```
+
+The `delete_if_no_sessions/1` GenServer call inside Workspace.Registry checks `Scope.Registry.list_for_workspace(ws_id)` atomically before deleting. Since Workspace.Registry serialises all `handle_call`s, a concurrent `Scope.New` registering a new session against the same workspace must wait for the cleanup-or-skip decision to complete.
+
+- [ ] **Step 4: Run tests + commit**
+
+Expected: both happy-path and race tests pass deterministically.
+
+### Task 5.3: ChatScope.Registry consumed by Scope.New
 
 **Files:**
-- Modify: existing chat-current-slot module (find via `grep -rn "chat_current_slot\|ChatCurrentSlot" runtime/lib`)
-- Test: existing test file
+- Modify: `runtime/lib/esr/commands/scope/new.ex`
 
-Add a `default_workspace_id` field to the slot ETS row. `/workspace use` writes it; `Esr.Commands.Scope.New` reads it during workspace resolution.
+The `Esr.Resource.ChatScope.Registry.set_default_workspace/3` + `get_default_workspace/2` API was added in Task 4.8. This task wires Scope.New's resolution chain to call `get_default_workspace/2` between the explicit-arg check and the `default` fallback (per Phase 5.1's resolve_workspace function).
+
+- [ ] **Step 1: Update `resolve_workspace/2` from Task 5.1 to use ChatScope.Registry.get_default_workspace**
+
+```elixir
+defp resolve_workspace(args, envelope) do
+  cond do
+    args["workspace"] not in [nil, ""] ->
+      {:explicit, args["workspace"]}
+
+    chat_default = chat_default_workspace(envelope) ->
+      {:chat_default, chat_default}
+
+    Esr.Resource.Workspace.Registry.get("default") != :not_found ->
+      {:fallback, "default"}
+
+    true ->
+      {:error, :no_workspace_resolvable}
+  end
+end
+
+defp chat_default_workspace(envelope) do
+  with chat_id when is_binary(chat_id) <- envelope["chat_id"],
+       app_id when is_binary(app_id) <- envelope["app_id"],
+       {:ok, ws_id} <- Esr.Resource.ChatScope.Registry.get_default_workspace(chat_id, app_id),
+       {:ok, ws} <- Esr.Resource.Workspace.Registry.get_by_id(ws_id) do
+    ws.name
+  else
+    _ -> nil
+  end
+end
+```
+
+- [ ] **Step 2: Test the chat-default branch**
+
+Add to `runtime/test/esr/commands/scope/new_resolution_test.exs`: spawn a workspace, set chat default via `ChatScope.Registry.set_default_workspace/3`, run `/new-session name=<sid>` (no workspace arg), assert it picked up the chat default.
+
+- [ ] **Step 3: Run tests + commit**
 
 ---
 
@@ -2126,6 +2483,7 @@ EOF
 - [ ] **Type consistency**: `Esr.Resource.Workspace.Struct` field names used consistently across phases (id, name, owner, folders, agent, settings, env, chats, transient, location)
 - [ ] **Docs sweep**: Phase 8.1 lists all known doc paths from spec
 - [ ] **Self-review final**: re-read this plan top-to-bottom in one sitting
+- [ ] **Spec-rev parity**: confirm spec's HEAD commit matches what the plan was written against (currently `354d8a8` for spec rev-3 EN; `14dd8d3` for zh translation; `cc23a17` for plan v1; this rev — plan v2 — written against same spec rev). Before any implementation subagent dispatch, re-check spec hasn't been silently revised.
 
 ---
 
