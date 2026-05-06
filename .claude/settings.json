@@ -3,7 +3,8 @@
   "channelsEnabled": true,
   "enabledPlugins": {
     "agent-setup@agent-setup": true,
-    "dev-loop-skills@ezagent42": true
+    "dev-loop-skills@ezagent42": true,
+    "claude-md-management@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "ezagent42": {
