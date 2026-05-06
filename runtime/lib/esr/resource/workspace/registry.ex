@@ -477,13 +477,18 @@ defmodule Esr.Resource.Workspace.Registry do
         :ok
     end
 
-    :ets.delete(@legacy_table, ws.name)
-    :ets.insert(@uuid_table, {ws.id, ws})
-    :ets.insert(@legacy_table, {ws.name, to_legacy(ws)})
-
+    # Reviewer I-3: NameIndex.put is the only operation that can fail
+    # validation (id_exists). Run it first so a failure leaves the ETS
+    # tables untouched; only commit ETS rows on :ok.
     case NameIndex.put(@name_index_table, ws.name, ws.id) do
-      :ok -> write_to_disk(ws)
-      {:error, _} = err -> err
+      :ok ->
+        :ets.delete(@legacy_table, ws.name)
+        :ets.insert(@uuid_table, {ws.id, ws})
+        :ets.insert(@legacy_table, {ws.name, to_legacy(ws)})
+        write_to_disk(ws)
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -500,12 +505,18 @@ defmodule Esr.Resource.Workspace.Registry do
         :ok
     end
 
-    # Store legacy struct as-is in the legacy table (preserves all fields).
-    :ets.insert(@legacy_table, {legacy.name, legacy})
-    :ets.insert(@uuid_table, {new_struct.id, new_struct})
-    NameIndex.put(@name_index_table, legacy.name, new_struct.id)
+    # Reviewer I-3: same ordering invariant as the %Struct{} clause —
+    # NameIndex.put runs first so an :id_exists failure leaves ETS
+    # untouched.
+    case NameIndex.put(@name_index_table, legacy.name, new_struct.id) do
+      :ok ->
+        :ets.insert(@legacy_table, {legacy.name, legacy})
+        :ets.insert(@uuid_table, {new_struct.id, new_struct})
+        :ok
 
-    :ok
+      {:error, _} = err ->
+        err
+    end
   end
 
   defp do_rename(old_name, new_name) do

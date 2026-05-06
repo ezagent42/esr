@@ -253,9 +253,26 @@ defmodule Esr.Commands.Scope.New do
         end
 
       :not_found ->
-        # NameIndex doesn't know the workspace — likely test env without
-        # a Workspace.Registry running. Skip silently.
-        :ok
+        # Distinguish two cases:
+        #   (a) Registry not running → test env; silent skip is correct.
+        #   (b) Registry running but workspace was deleted between
+        #       resolve_workspace_if_needed/1 and here (race window with
+        #       a concurrent transient cleanup). Roll back the spawn and
+        #       surface the structured error so the operator's intent
+        #       isn't silently lost.
+        if Process.whereis(Esr.Resource.Workspace.Registry) == nil do
+          :ok
+        else
+          rollback_spawn(sid)
+
+          {:error,
+           %{
+             "type" => "workspace_gone",
+             "name" => ws_name,
+             "message" =>
+               "workspace was deleted between resolution and session bind (race with transient cleanup)"
+           }}
+        end
     end
   rescue
     ArgumentError -> :ok
