@@ -73,7 +73,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 1: agent=claude → top-level agent field updated
   test "agent=claude happy path → ok, agent updated, persisted", %{tmp: tmp} do
-    id = "aaaaaaaa-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     put_esr_ws("ws-agent", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-agent", "set" => "agent=claude"}})
@@ -90,7 +90,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 2: env.PROJECT_ENV=dev → env map entry
   test "env.PROJECT_ENV=dev → ok, env map gets the entry", %{tmp: tmp} do
-    id = "aaaaaaaa-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
     put_esr_ws("ws-env", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-env", "set" => "env.PROJECT_ENV=dev"}})
@@ -104,7 +104,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 3: settings.cc.model=opus → flat dot-string key
   test "settings.cc.model=opus → ok, settings flat dot-string key", %{tmp: tmp} do
-    id = "aaaaaaaa-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     put_esr_ws("ws-settings", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-settings", "set" => "settings.cc.model=opus"}})
@@ -118,7 +118,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 4: settings.cc.allowed_tools=Bash,Edit,Read → list value parsed
   test "settings.cc.allowed_tools=Bash,Edit,Read → list value parsed", %{tmp: tmp} do
-    id = "aaaaaaaa-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
     put_esr_ws("ws-list", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-list", "set" => "settings.cc.allowed_tools=Bash,Edit,Read"}})
@@ -131,7 +131,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 5: settings.cc.timeout=42 → integer parsed
   test "settings.cc.timeout=42 → integer parsed", %{tmp: tmp} do
-    id = "aaaaaaaa-0005-4000-8000-000000000005"
+    id = UUID.uuid4()
     put_esr_ws("ws-int", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-int", "set" => "settings.cc.timeout=42"}})
@@ -144,7 +144,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 6: settings.logging.enabled=true → boolean true
   test "settings.logging.enabled=true → boolean true", %{tmp: tmp} do
-    id = "aaaaaaaa-0006-4000-8000-000000000006"
+    id = UUID.uuid4()
     put_esr_ws("ws-bool-t", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-bool-t", "set" => "settings.logging.enabled=true"}})
@@ -157,7 +157,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 7: settings.logging.enabled=false → boolean false
   test "settings.logging.enabled=false → boolean false", %{tmp: tmp} do
-    id = "aaaaaaaa-0007-4000-8000-000000000007"
+    id = UUID.uuid4()
     put_esr_ws("ws-bool-f", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-bool-f", "set" => "settings.logging.enabled=false"}})
@@ -170,7 +170,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 21: transient=true on ESR-bound → ok, becomes transient
   test "transient=true on ESR-bound → ok, becomes transient", %{tmp: tmp} do
-    id = "aaaaaaaa-0021-4000-8000-000000000021"
+    id = UUID.uuid4()
     put_esr_ws("ws-transient-esr", id, tmp)
 
     assert {:ok, result} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-transient-esr", "set" => "transient=true"}})
@@ -186,7 +186,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 8: name=other → field_locked
   test "name=other → field_locked error", %{tmp: tmp} do
-    id = "aaaaaaaa-0008-4000-8000-000000000008"
+    id = UUID.uuid4()
     put_esr_ws("ws-locked", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked", "set" => "name=other"}})
@@ -196,7 +196,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 9: id=... → field_locked
   test "id=... → field_locked", %{tmp: tmp} do
-    id = "aaaaaaaa-0009-4000-8000-000000000009"
+    id = UUID.uuid4()
     put_esr_ws("ws-locked2", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked2", "set" => "id=newid"}})
@@ -206,7 +206,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 10: chats=... → field_locked
   test "chats=... → field_locked", %{tmp: tmp} do
-    id = "aaaaaaaa-0010-4000-8000-000000000010"
+    id = UUID.uuid4()
     put_esr_ws("ws-locked3", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked3", "set" => "chats=something"}})
@@ -216,7 +216,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 11: folders=... → field_locked
   test "folders=... → field_locked", %{tmp: tmp} do
-    id = "aaaaaaaa-0011-4000-8000-000000000011"
+    id = UUID.uuid4()
     put_esr_ws("ws-locked4", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked4", "set" => "folders=something"}})
@@ -226,7 +226,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 12: location=... → field_locked
   test "location=... → field_locked", %{tmp: tmp} do
-    id = "aaaaaaaa-0012-4000-8000-000000000012"
+    id = UUID.uuid4()
     put_esr_ws("ws-locked5", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked5", "set" => "location=something"}})
@@ -238,7 +238,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 13: unknown_top=x → unknown_field error
   test "unknown_top=x → unknown_field error", %{tmp: tmp} do
-    id = "aaaaaaaa-0013-4000-8000-000000000013"
+    id = UUID.uuid4()
     put_esr_ws("ws-unknown", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-unknown", "set" => "unknown_top=x"}})
@@ -248,7 +248,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 14: agent.nested=x → invalid_field (agent does not accept dotted suffix)
   test "agent.nested=x → invalid_field (agent does not accept dotted suffix)", %{tmp: tmp} do
-    id = "aaaaaaaa-0014-4000-8000-000000000014"
+    id = UUID.uuid4()
     put_esr_ws("ws-agent-dot", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-agent-dot", "set" => "agent.nested=x"}})
@@ -258,7 +258,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 15: env=x (no .) → invalid_env_key
   test "env=x (no dot) → invalid_env_key", %{tmp: tmp} do
-    id = "aaaaaaaa-0015-4000-8000-000000000015"
+    id = UUID.uuid4()
     put_esr_ws("ws-env-nodot", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-env-nodot", "set" => "env=x"}})
@@ -268,7 +268,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 16: env.A.B=x (env with dot in key) → invalid_env_key
   test "env.A.B=x (env key with dot) → invalid_env_key", %{tmp: tmp} do
-    id = "aaaaaaaa-0016-4000-8000-000000000016"
+    id = UUID.uuid4()
     put_esr_ws("ws-env-dot", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-env-dot", "set" => "env.A.B=x"}})
@@ -280,7 +280,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 17: set missing = → invalid_set error
   test "set missing = → invalid_set error", %{tmp: tmp} do
-    id = "aaaaaaaa-0017-4000-8000-000000000017"
+    id = UUID.uuid4()
     put_esr_ws("ws-noequal", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-noequal", "set" => "agentclaude"}})
@@ -329,7 +329,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 20: transient=true on repo-bound → transient_repo_bound_forbidden
   test "transient=true on repo-bound workspace → transient_repo_bound_forbidden", %{tmp: tmp} do
-    id = "aaaaaaaa-0020-4000-8000-000000000020"
+    id = UUID.uuid4()
     repo_path = Path.join(tmp, "fake-repo")
     put_repo_ws("ws-repo-transient", id, repo_path)
 
@@ -339,7 +339,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
   # Test 22: transient=foo → invalid_value (must be boolean)
   test "transient=foo → invalid_value", %{tmp: tmp} do
-    id = "aaaaaaaa-0022-4000-8000-000000000022"
+    id = UUID.uuid4()
     put_esr_ws("ws-transient-bad", id, tmp)
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-transient-bad", "set" => "transient=foo"}})

@@ -54,7 +54,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
 
   test "ESR-bound workspace with no chats, valid args → ok, action=added, chat persisted",
        %{tmp: tmp} do
-    id = "bbbbbbbb-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     put_esr_ws("ws-bind-1", id, tmp)
 
     assert {:ok, result} =
@@ -88,7 +88,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
 
   test "workspace already has a different chat → both chats present after bind",
        %{tmp: tmp} do
-    id = "bbbbbbbb-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
     existing = [%{chat_id: "oc_existing", app_id: "cli_old", kind: "dm"}]
     put_esr_ws("ws-bind-2", id, tmp, existing)
 
@@ -116,7 +116,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
 
   test "duplicate (same chat_id+app_id) → ok, action=already_bound, chats unchanged",
        %{tmp: tmp} do
-    id = "bbbbbbbb-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     existing = [%{chat_id: "oc_dup", app_id: "cli_dup", kind: "dm"}]
     put_esr_ws("ws-bind-3", id, tmp, existing)
 
@@ -140,7 +140,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
   # ── Test 4: custom kind ("group") → kind preserved ────────────────────────────
 
   test "custom kind 'group' → kind preserved in stored chat", %{tmp: tmp} do
-    id = "bbbbbbbb-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
     put_esr_ws("ws-bind-4", id, tmp)
 
     assert {:ok, result} =
@@ -165,7 +165,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
   # ── Test 5: omitted kind → defaults to "dm" ───────────────────────────────────
 
   test "omitted kind → defaults to 'dm'", %{tmp: tmp} do
-    id = "bbbbbbbb-0005-4000-8000-000000000005"
+    id = UUID.uuid4()
     put_esr_ws("ws-bind-5", id, tmp)
 
     assert {:ok, result} =
@@ -184,7 +184,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
   # ── Test 6: missing app_id → missing_app_id error ─────────────────────────────
 
   test "missing app_id → missing_app_id error", %{tmp: tmp} do
-    id = "bbbbbbbb-0006-4000-8000-000000000006"
+    id = UUID.uuid4()
     put_esr_ws("ws-bind-6", id, tmp)
 
     assert {:error, err} =

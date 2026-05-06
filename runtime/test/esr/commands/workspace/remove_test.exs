@@ -91,7 +91,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
     esr_dir = Path.join(repo, ".esr")
     File.mkdir_p!(esr_dir)
 
-    id = "bbbbbbbb-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
 
     # workspace.json + topology.yaml — both should be removed
     File.write!(
@@ -152,7 +152,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   # ── Test 2: ESR-bound remove deletes the whole workspace dir ─────────────────
 
   test "ESR-bound /workspace remove deletes entire workspace directory", %{tmp: tmp} do
-    id = "bbbbbbbb-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
     ws = put_esr_ws("esr-ws-del", id, tmp)
 
     {:esr_bound, dir} = ws.location
@@ -175,7 +175,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   # ── Test 3: Registry cleared after remove ────────────────────────────────────
 
   test "after remove, Registry.get_by_id and NameIndex return :not_found", %{tmp: tmp} do
-    id = "bbbbbbbb-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     put_esr_ws("esr-ws-gone", id, tmp)
 
     assert {:ok, _} = WorkspaceRemove.execute(%{"args" => %{"name" => "esr-ws-gone"}})
@@ -188,7 +188,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
 
   test "repo-bound remove also unregisters from registered_repos.yaml", %{tmp: tmp} do
     repo = Path.join(tmp, "testrepo")
-    id = "bbbbbbbb-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
 
     put_repo_ws("testrepo-ws", id, repo)
 
@@ -210,7 +210,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   # ── Test 5: Active sessions blocked without force ────────────────────────────
 
   test "active sessions present without force=true → workspace_in_use error", %{tmp: tmp} do
-    id = "bbbbbbbb-0005-4000-8000-000000000005"
+    id = UUID.uuid4()
     put_esr_ws("esr-ws-busy", id, tmp)
 
     # Inject a non-empty active sessions list
@@ -233,7 +233,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   # ── Test 6: Active sessions + force=true → succeeds ─────────────────────────
 
   test "active sessions present with force=true → succeeds and removes", %{tmp: tmp} do
-    id = "bbbbbbbb-0006-4000-8000-000000000006"
+    id = UUID.uuid4()
     ws = put_esr_ws("esr-ws-forced", id, tmp)
 
     {:esr_bound, dir} = ws.location
@@ -259,7 +259,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
     tmp: tmp
   } do
     repo = Path.join(tmp, "notoporepo")
-    id = "bbbbbbbb-0007-4000-8000-000000000007"
+    id = UUID.uuid4()
 
     put_repo_ws("notopo-ws", id, repo)
     RepoRegistry.register(Esr.Paths.registered_repos_yaml(), repo)
@@ -307,7 +307,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   # ── Test 10: Result map shape ────────────────────────────────────────────────
 
   test "result map has name, id, location, deleted_files", %{tmp: tmp} do
-    id = "bbbbbbbb-0010-4000-8000-000000000010"
+    id = UUID.uuid4()
     put_esr_ws("esr-ws-shape", id, tmp)
 
     assert {:ok, result} =

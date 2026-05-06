@@ -52,7 +52,7 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
 
   # Test 1: Setup: register a repo, then forget it. Assert action="forgotten", yaml no longer contains path.
   test "registered repo forgotten → action=forgotten, removed from yaml", %{tmp: tmp} do
-    id = "aaaaaaaa-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo1", id, "myws1")
 
     # Register the repo first
@@ -94,7 +94,7 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
 
   # Test 4: After forget, Registry.refresh() does NOT include the workspace anymore
   test "after forget, workspace not found by Registry.get_by_id", %{tmp: tmp} do
-    id = "aaaaaaaa-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo4", id, "myws4")
 
     # Register and refresh

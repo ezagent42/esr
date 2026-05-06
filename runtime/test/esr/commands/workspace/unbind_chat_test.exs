@@ -54,7 +54,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
 
   test "workspace with one chat, unbind by (chat_id, app_id) → ok, action=removed, chats empty",
        %{tmp: tmp} do
-    id = "cccccccc-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     chats = [%{chat_id: "oc_abc", app_id: "cli_one", kind: "dm"}]
     put_esr_ws("ws-unbind-1", id, tmp, chats)
 
@@ -81,7 +81,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
 
   test "workspace with multiple chats, unbind one by chat_id only → ok, removes match",
        %{tmp: tmp} do
-    id = "cccccccc-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
 
     chats = [
       %{chat_id: "oc_target", app_id: "cli_a", kind: "dm"},
@@ -111,7 +111,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
   # ── Test 3: chat not present → chat_not_bound error ──────────────────────────
 
   test "unbind chat not present → chat_not_bound error", %{tmp: tmp} do
-    id = "cccccccc-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     chats = [%{chat_id: "oc_other", app_id: "cli_o", kind: "dm"}]
     put_esr_ws("ws-unbind-3", id, tmp, chats)
 
@@ -132,7 +132,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
 
   test "multiple chats with same chat_id different app_id; unbind with both args → only matching removed",
        %{tmp: tmp} do
-    id = "cccccccc-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
 
     chats = [
       %{chat_id: "oc_shared", app_id: "cli_x", kind: "dm"},
@@ -167,7 +167,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
 
   test "multiple chats with same chat_id different app_id; unbind with chat_id only → both removed",
        %{tmp: tmp} do
-    id = "cccccccc-0005-4000-8000-000000000005"
+    id = UUID.uuid4()
 
     chats = [
       %{chat_id: "oc_shared2", app_id: "cli_p", kind: "dm"},

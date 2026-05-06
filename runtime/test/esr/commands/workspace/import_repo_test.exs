@@ -52,7 +52,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
   # Test 1: Valid repo with .esr/workspace.json → ok, returns workspace name + id
   test "valid repo with .esr/workspace.json → ok, returns workspace name + id, indexed", %{tmp: tmp} do
-    id = "aaaaaaaa-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo1", id, "myws")
 
     assert {:ok, result} = ImportRepo.execute(%{"args" => %{"path" => repo_path}})
@@ -69,7 +69,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
   # Test 2: After import, the path is in registered_repos.yaml
   test "after import, path is in registered_repos.yaml", %{tmp: tmp} do
-    id = "aaaaaaaa-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo2", id, "myws2")
 
     assert {:ok, _result} = ImportRepo.execute(%{"args" => %{"path" => repo_path}})
@@ -82,7 +82,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
   # Test 3: Re-importing the same path is idempotent (no error, no duplication)
   test "re-importing the same path is idempotent", %{tmp: tmp} do
-    id = "aaaaaaaa-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo3", id, "myws3")
 
     # First import

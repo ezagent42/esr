@@ -58,7 +58,7 @@ defmodule Esr.Commands.Workspace.UseTest do
 
   # Test 1: happy path — sets default workspace and confirms via get_default_workspace/2
   test "happy path: /workspace use name=esr-dev sets default workspace for chat slot", %{tmp: tmp} do
-    id = "bbbbbbbb-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     put_ws("esr-dev", id, tmp)
 
     assert {:ok, result} =
@@ -77,8 +77,8 @@ defmodule Esr.Commands.Workspace.UseTest do
 
   # Test 2: overwrite — setting a different workspace for the same chat replaces the mapping
   test "setting a different workspace for the same chat overwrites the previous mapping", %{tmp: tmp} do
-    id1 = "bbbbbbbb-0002-4000-8000-000000000001"
-    id2 = "bbbbbbbb-0002-4000-8000-000000000002"
+    id1 = UUID.uuid4()
+    id2 = UUID.uuid4()
     put_ws("ws-first", id1, tmp)
     put_ws("ws-second", id2, tmp)
 
@@ -99,8 +99,8 @@ defmodule Esr.Commands.Workspace.UseTest do
 
   # Test 3: different chats are independent — each slot gets its own mapping
   test "different chat slots maintain independent default workspace mappings", %{tmp: tmp} do
-    id1 = "bbbbbbbb-0003-4000-8000-000000000001"
-    id2 = "bbbbbbbb-0003-4000-8000-000000000002"
+    id1 = UUID.uuid4()
+    id2 = UUID.uuid4()
     put_ws("ws-chat-a", id1, tmp)
     put_ws("ws-chat-b", id2, tmp)
 

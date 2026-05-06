@@ -74,7 +74,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 1: ESR-bound rename happy path → ok, returns %{"old_name", "new_name", "id" => uuid} ──
 
   test "ESR-bound rename happy path → ok, returns expected fields", %{tmp: tmp} do
-    id = "aaaaaaaa-0001-4000-8000-000000000001"
+    id = UUID.uuid4()
     put_esr_ws("old-name", id, tmp)
 
     assert {:ok, result} =
@@ -94,7 +94,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 2: ESR-bound rename also renames on-disk directory ──
 
   test "ESR-bound rename moves the on-disk directory", %{tmp: tmp} do
-    id = "aaaaaaaa-0002-4000-8000-000000000002"
+    id = UUID.uuid4()
     put_esr_ws("dir-old", id, tmp)
 
     old_dir = Path.join([tmp, "default", "workspaces", "dir-old"])
@@ -116,7 +116,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 3: Repo-bound rename: only updates ETS + workspace.json, no directory move ──
 
   test "repo-bound rename: updates ETS and workspace.json, no directory move", %{tmp: tmp} do
-    id = "aaaaaaaa-0003-4000-8000-000000000003"
+    id = UUID.uuid4()
     repo_path = Path.join(tmp, "fake-repo")
     File.mkdir_p!(repo_path)
 
@@ -147,7 +147,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 4: Same name (name == new_name) → same_name error ──
 
   test "same name → same_name error", %{tmp: tmp} do
-    id = "aaaaaaaa-0004-4000-8000-000000000004"
+    id = UUID.uuid4()
     put_esr_ws("same-ws", id, tmp)
 
     assert {:error, err} =
@@ -162,7 +162,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 5: New name with invalid characters → invalid_name error ──
 
   test "new name with invalid characters → invalid_name error", %{tmp: tmp} do
-    id = "aaaaaaaa-0005-4000-8000-000000000005"
+    id = UUID.uuid4()
     put_esr_ws("valid-old", id, tmp)
 
     assert {:error, err} =
@@ -176,8 +176,8 @@ defmodule Esr.Commands.Workspace.RenameTest do
   # ── Test 6: New name conflicts with existing workspace → rename_failed error ──
 
   test "new name conflicts with existing workspace → rename_failed", %{tmp: tmp} do
-    id1 = "aaaaaaaa-0006-4000-8000-000000000006"
-    id2 = "aaaaaaaa-0006-4000-8000-000000000007"
+    id1 = UUID.uuid4()
+    id2 = UUID.uuid4()
 
     put_esr_ws("ws-one", id1, tmp)
     put_esr_ws("ws-two", id2, tmp)
