@@ -156,7 +156,10 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
 
   describe "fallback to 'default' workspace" do
     test "resolves to 'default' when no workspace or chat default is set" do
-      # Phase 6.1's Bootstrap already created "default" — just rely on it.
+      # Self-heal in case sibling tests with interleaved on_exit ordering
+      # left the registry without a "default" entry. Bootstrap.run/0 is
+      # idempotent — a no-op when default is already present.
+      Esr.Resource.Workspace.Bootstrap.run()
       args = %{"dir" => "/tmp/x"}
 
       assert {:ok, "default"} = SessionNew.resolve_workspace_if_needed(args)
