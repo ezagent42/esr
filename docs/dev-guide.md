@@ -183,7 +183,7 @@ For business-topology context (purpose, pipeline position, downstream
 hand-off, expected format), CC calls
 `mcp__esr-channel__describe_topology` — parameter-less; cc_mcp injects
 `ESR_WORKSPACE` server-side. Operators populate
-`workspaces.yaml` `metadata:` to feed it. Spec
+the workspace's `metadata:` field to feed it. Spec
 `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`.
 
 ## CC session prompt prelude
@@ -200,8 +200,10 @@ ESR repo itself** (test commands, gotchas, links). Don't conflate.
 
 ## Common gotchas
 
-- `workspaces.yaml` lives at `~/.esrd/default/workspaces.yaml`; v0.2 is
-  not yet per-instance-aware in the CLI.
+- Workspace config is stored per-workspace under
+  `~/.esrd/<inst>/workspaces/<name>/workspace.json` (ESR-bound) or
+  `<repo>/.esr/workspace.json` (repo-bound). See
+  `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`.
 - `cc_tmux.new_session` start_cmd is relative to `adapter_runner` cwd
   (repo root); absolute paths are clearer.
 - MCP connection failures show as `tool_result.error.type=esrd_disconnect`
@@ -209,9 +211,9 @@ ESR repo itself** (test commands, gotchas, links). Don't conflate.
 - `claude --resume <session_id>` requires the session id to exist in
   `~/.esrd/default/session-ids.yaml` — `esr-cc.sh` writes this on first
   spawn and reads it on restart.
-- `metadata:` in `workspaces.yaml` is exposed verbatim to the LLM via
-  `describe_topology` — never put secrets there. Use `env:` (filtered
-  at the response boundary) or `cwd:` (also filtered).
+- `metadata:` in a workspace's `workspace.json` is exposed verbatim to
+  the LLM via `describe_topology` — never put secrets there. Use `env:`
+  (filtered at the response boundary) or `cwd:` (also filtered).
 - `notifications/claude/channel` only forwards attributes matching
   `[A-Za-z0-9_]+`. Nested children are silently dropped; encode list
   attrs as JSON strings (`reachable=` precedent).

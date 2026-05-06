@@ -274,7 +274,7 @@ The hook uses `HEAD@{1}` (reflog), not `last_reload.yaml`, so this fix only help
         capabilities.yaml              # who holds which permission
         adapters.yaml                  # registered adapter instances
         .env.local                     # FEISHU_APP_SECRET_* envs (0600)
-        workspaces.yaml                # chat-id → workspace-name map
+        workspaces/                    # per-workspace config (workspace.json per entry)
         routing.yaml                   # per-principal active branch + target
         branches.yaml                  # registered ephemeral esrd branches
         last_reload.yaml               # last reload sha + ts + acknowledgements

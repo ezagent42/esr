@@ -96,7 +96,7 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 **Operations**
 - [`docs/operations/dev-prod-isolation.md`](docs/operations/dev-prod-isolation.md) — running dev + prod side by side
 - [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md) — pre-existing test flakes
-- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) — operator note for topology / `workspaces.yaml`
+- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) — operator note for topology / workspace config
 
 **Specs (per PR)**
 - See [`docs/superpowers/specs/`](docs/superpowers/specs/) — every shipped feature has a `YYYY-MM-DD-<topic>.md` spec.
@@ -239,7 +239,7 @@ bash scripts/esrd.sh start --instance=default
 **运维**
 - [`docs/operations/dev-prod-isolation.md`](docs/operations/dev-prod-isolation.md) —— dev / prod 并行运行
 - [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md) —— 已知 flaky 测试
-- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) —— 拓扑 / `workspaces.yaml` 运维笔记
+- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) —— 拓扑 / workspace 配置运维笔记
 
 **Spec（按 PR）**
 - 详见 [`docs/superpowers/specs/`](docs/superpowers/specs/)。每个落地特性都有 `YYYY-MM-DD-<topic>.md`。

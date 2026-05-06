@@ -43,8 +43,7 @@ from that spec to code on disk. PRs are tracked under
 
 ### Topology + reachable_set (PR-C 2026-04-27)
 - `esr/topology.ex` — yaml-driven actor topology. `initial_seed/3` produces a CC peer's bootstrap reachable_set (own chat + adapter + symmetric closure of yaml-declared neighbours). `neighbour_set/1` exposes the closure for any workspace.
-- `esr/workspaces/registry.ex` — extended with `neighbors: [String.t()]` field per workspace + optional `chats[].name` for display-name resolution.
-- `esr/workspaces/watcher.ex` — fs_watch on `workspaces.yaml`. Eager-add: broadcasts `{:topology_neighbour_added, ws, uri}` on `topology:<ws>` PubSub for active CC peers to merge into their reachable_set. Lazy-remove: cap gate is the authoritative revocation layer.
+- `esr/workspaces/registry.ex` — extended with `neighbors: [String.t()]` field per workspace + optional `chats[].name` for display-name resolution. Workspaces are stored as `workspace.json` files (ESR-bound: `~/.esrd/<inst>/workspaces/<name>/workspace.json`; repo-bound: `<repo>/.esr/workspace.json`). `Workspace.Watcher` was removed in the 2026-05-06 redesign — the CLI invalidates the Registry inline. See `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`.
 - `esr/peers/cc_process.ex` — owns per-actor `reachable_set: MapSet`. `learn_uris_from_event/2` performs BGP-style propagation (inbound `meta.source` + `meta.principal_id` → reachable_set). `build_channel_notification/2` emits `reachable` (JSON-string per spec §8 attribute-only constraint), `workspace`, and `user_id` on the `<channel>` tag.
 - See `docs/superpowers/specs/2026-04-27-actor-topology-routing.md` and `docs/notes/actor-topology-routing.md`.
 
@@ -58,7 +57,7 @@ from that spec to code on disk. PRs are tracked under
 - Runtime endpoint: `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", …)` returns `{current_workspace, neighbor_workspaces}` filtered by an allowlist (`name`, `role`, `chats`, `neighbors_declared`, `metadata`). Operational fields (`cwd`, `env`, `start_cmd`) and secrets stay out.
 - `Workspaces.Registry.Workspace` gains a `metadata: map()` free-form sub-tree — operators populate `purpose`, `pipeline_position`, `hand_off_to`, `output_format`, `not_my_job`, … without code changes. Schema is open.
 - Tool is intended to be called when the LLM needs pipeline context (its role, downstream stages, expected output format) — not on every turn.
-- See `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`, `docs/notes/actor-topology-routing.md` §"Authoring workspaces.yaml" → `metadata:`.
+- See `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`, `docs/notes/actor-topology-routing.md` §"Authoring workspace config" → `metadata:`.
 
 ### Python subprocess supervision
 - `esr/worker_supervisor.ex` — spawns / tracks `python -m <sidecar>` processes. `sidecar_module/1` dispatch table routes adapter names to their per-type sidecar module (`feishu_adapter_runner`, `cc_adapter_runner`, generic fallback).
