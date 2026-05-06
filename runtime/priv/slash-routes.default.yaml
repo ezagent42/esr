@@ -75,12 +75,143 @@ slashes:
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Workspace"
-    description: "创建新 workspace，自动绑当前 chat"
+    description: "创建新 workspace，hybrid 存储：folder=<path> 走 repo-bound (<path>/.esr/workspace.json)；不传 folder= 走 ESR-bound ($ESRD_HOME/<inst>/workspaces/<name>/)"
     args:
       - { name: name, required: true }
-      - { name: role, required: false, default: "dev" }
-      - { name: start_cmd, required: false }
+      - { name: folder, required: false }
+      - { name: transient, required: false, default: "false" }
       - { name: owner, required: false }
+
+  "/workspace list":
+    kind: workspace_list
+    permission: "session.list"
+    command_module: "Esr.Commands.Workspace.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "列所有已注册 workspace（ESR-bound + repo-bound）"
+    args: []
+
+  "/workspace edit":
+    kind: workspace_edit
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.Edit"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "改 workspace.json 单个字段；set=<key>=<value>（settings 用扁平 dot-key；env.<NAME>=...；chats/folders 用专门 slash）"
+    args:
+      - { name: name, required: true }
+      - { name: set, required: true }
+
+  "/workspace add-folder":
+    kind: workspace_add_folder
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.AddFolder"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo）"
+    args:
+      - { name: name, required: true }
+      - { name: path, required: true }
+      - { name: folder_name, required: false }
+
+  "/workspace remove-folder":
+    kind: workspace_remove_folder
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.RemoveFolder"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "从 workspace.folders[] 删一项（repo-bound 不能删 folders[0]，请用 /workspace forget-repo）"
+    args:
+      - { name: name, required: true }
+      - { name: path, required: true }
+
+  "/workspace bind-chat":
+    kind: workspace_bind_chat
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.BindChat"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "把 chat 加进 workspace.chats[]；app_id 默认从 envelope 注入"
+    args:
+      - { name: name, required: true }
+      - { name: chat_id, required: true }
+      - { name: app_id, required: false }
+      - { name: kind, required: false, default: "dm" }
+
+  "/workspace unbind-chat":
+    kind: workspace_unbind_chat
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.UnbindChat"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "从 workspace.chats[] 删 chat；不传 app_id 则删所有该 chat_id 的项"
+    args:
+      - { name: name, required: true }
+      - { name: chat_id, required: true }
+      - { name: app_id, required: false }
+
+  "/workspace remove":
+    kind: workspace_remove
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.Remove"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）"
+    args:
+      - { name: name, required: true }
+      - { name: force, required: false, default: "false" }
+
+  "/workspace rename":
+    kind: workspace_rename
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.Rename"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "改 workspace.name（id 不变；caps + sessions 引用按 UUID 不动）"
+    args:
+      - { name: name, required: true }
+      - { name: new_name, required: true }
+
+  "/workspace use":
+    kind: workspace_use
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.Use"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "设当前 chat 的 default workspace（per-chat 偏好；/new-session 解析时使用）"
+    args:
+      - { name: name, required: true }
+
+  "/workspace import-repo":
+    kind: workspace_import_repo
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.ImportRepo"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "把一个带 .esr/workspace.json 的 git repo 加进 registered_repos.yaml；下次 esrd 启动会自动加载"
+    args:
+      - { name: path, required: true }
+
+  "/workspace forget-repo":
+    kind: workspace_forget_repo
+    permission: "workspace.create"
+    command_module: "Esr.Commands.Workspace.ForgetRepo"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Workspace"
+    description: "从 registered_repos.yaml 移除 path（repo 内的 .esr/ 不动；如要删本地文件用 /workspace remove）"
+    args:
+      - { name: path, required: true }
 
   "/workspace info":
     kind: workspace_info
@@ -89,7 +220,7 @@ slashes:
     requires_workspace_binding: true
     requires_user_binding: true
     category: "Workspace"
-    description: "显示 workspace 配置（owner/role/chats/metadata）"
+    description: "显示 workspace 完整配置（id/owner/agent/folders/settings/env/chats/transient/location，含 <folders[0]>/.esr/topology.yaml overlay）"
     args:
       - { name: workspace, required: false }
 
