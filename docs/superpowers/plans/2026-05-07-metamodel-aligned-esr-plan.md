@@ -2388,4 +2388,2168 @@ git commit -m "feat: chat→[sessions] attach/detach state (Phase 2)"
 
 ---
 
-<!-- PLAN_END_PHASE_2 — next subagent: append "## Phase 3" here -->
+## Phase 3: Multi-agent per session — instance model + name uniqueness
+
+**PR title:** `feat: multi-agent per session — instance model + name uniqueness (Phase 3)`
+**Branch:** `feat/phase-3-multi-agent`
+**Target:** `dev`
+**Est LOC:** ~700
+**Depends on:** Phase 2
+
+**Goal:** Every session can host multiple named agent instances. Names must be globally unique within a session regardless of type. `Session.Registry` persists the agents list to `session.json`. Slash commands (`/session:add-agent`, `/session:remove-agent`, `/session:set-primary`) are implemented as pure command modules here; their slash-routes entries land in Phase 6.
+
+---
+
+### Task 3.1: `Esr.Entity.Agent.Instance` struct + JSON schema
+
+**Files:**
+- Create: `runtime/lib/esr/entity/agent/instance.ex`
+- Create: `runtime/priv/schemas/agent_instance.v1.json`
+- Create: `runtime/test/esr/entity/agent/instance_test.exs`
+- Create: `runtime/test/esr/entity/agent/instance_schema_test.exs`
+
+**Reference:** `runtime/lib/esr/resource/session/struct.ex` — mirror the struct + `@type t` pattern.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/entity/agent/instance_test.exs`:
+
+```elixir
+defmodule Esr.Entity.Agent.InstanceTest do
+  use ExUnit.Case, async: true
+  alias Esr.Entity.Agent.Instance
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  test "default struct has expected keys" do
+    i = %Instance{}
+    assert Map.has_key?(i, :id)
+    assert Map.has_key?(i, :session_id)
+    assert Map.has_key?(i, :type)
+    assert Map.has_key?(i, :name)
+    assert Map.has_key?(i, :config)
+    assert Map.has_key?(i, :created_at)
+  end
+
+  test "config defaults to empty map" do
+    assert %Instance{}.config == %{}
+  end
+
+  test "can be constructed with all fields" do
+    i = %Instance{
+      id: "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6",
+      session_id: @session_uuid,
+      type: "cc",
+      name: "esr-dev",
+      config: %{"model" => "claude-opus-4"},
+      created_at: "2026-05-07T12:00:00Z"
+    }
+    assert i.type == "cc"
+    assert i.name == "esr-dev"
+    assert i.config == %{"model" => "claude-opus-4"}
+  end
+
+  test "name accepts dash-separated strings" do
+    i = %Instance{name: "my-agent-1"}
+    assert i.name == "my-agent-1"
+  end
+end
+```
+
+Create `runtime/test/esr/entity/agent/instance_schema_test.exs`:
+
+```elixir
+defmodule Esr.Entity.Agent.InstanceSchemaTest do
+  use ExUnit.Case, async: true
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+  @instance_uuid "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
+
+  @valid %{
+    "schema_version" => 1,
+    "id" => @instance_uuid,
+    "session_id" => @session_uuid,
+    "type" => "cc",
+    "name" => "esr-dev",
+    "config" => %{},
+    "created_at" => "2026-05-07T12:00:00Z"
+  }
+
+  defp schema_path do
+    Application.app_dir(:esr, "priv/schemas/agent_instance.v1.json")
+  end
+
+  defp validate(doc) do
+    schema = schema_path() |> File.read!() |> Jason.decode!() |> ExJsonSchema.Schema.resolve()
+    ExJsonSchema.Validator.validate(schema, doc)
+  end
+
+  test "schema file exists" do
+    assert File.exists?(schema_path())
+  end
+
+  test "valid document passes validation" do
+    assert :ok = validate(@valid)
+  end
+
+  test "missing required field type fails" do
+    bad = Map.delete(@valid, "type")
+    assert {:error, _} = validate(bad)
+  end
+
+  test "missing required field name fails" do
+    bad = Map.delete(@valid, "name")
+    assert {:error, _} = validate(bad)
+  end
+
+  test "missing required field session_id fails" do
+    bad = Map.delete(@valid, "session_id")
+    assert {:error, _} = validate(bad)
+  end
+
+  test "wrong schema_version fails" do
+    bad = Map.put(@valid, "schema_version", 2)
+    assert {:error, _} = validate(bad)
+  end
+
+  test "empty type string fails" do
+    bad = Map.put(@valid, "type", "")
+    assert {:error, _} = validate(bad)
+  end
+
+  test "empty name string fails" do
+    bad = Map.put(@valid, "name", "")
+    assert {:error, _} = validate(bad)
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `module Esr.Entity.Agent.Instance is not available`.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/instance_test.exs test/esr/entity/agent/instance_schema_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Implement struct.** Create `runtime/lib/esr/entity/agent/instance.ex`:
+
+```elixir
+defmodule Esr.Entity.Agent.Instance do
+  @moduledoc """
+  An agent instance within a session.
+
+  Fields:
+    * `id` — UUID v4, stable identity for this instance.
+    * `session_id` — UUID of the owning session.
+    * `type` — agent type string declared in a plugin manifest (e.g. `"cc"`).
+    * `name` — operator-chosen display name; globally unique within the session
+      regardless of type (spec §3, Q7=B).
+    * `config` — plugin-specific configuration map (validated against plugin's
+      `config_schema:` in Phase 7).
+    * `created_at` — ISO 8601 string, set at creation.
+  """
+
+  @type t :: %__MODULE__{
+          id: String.t() | nil,
+          session_id: String.t() | nil,
+          type: String.t() | nil,
+          name: String.t() | nil,
+          config: map(),
+          created_at: String.t() | nil
+        }
+
+  defstruct [
+    :id,
+    :session_id,
+    :type,
+    :name,
+    :created_at,
+    config: %{}
+  ]
+end
+```
+
+Create `runtime/priv/schemas/agent_instance.v1.json`:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esr.local/schema/agent_instance.v1.json",
+  "title": "ESR agent instance (v1)",
+  "type": "object",
+  "required": ["schema_version", "id", "session_id", "type", "name", "config", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "type": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "config": { "type": "object" },
+    "created_at": { "type": "string" }
+  }
+}
+```
+
+- [ ] **Step 4 — Run passing tests.** Confirm all assertions pass.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/instance_test.exs test/esr/entity/agent/instance_schema_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/entity/agent/instance.ex \
+        runtime/priv/schemas/agent_instance.v1.json \
+        runtime/test/esr/entity/agent/instance_test.exs \
+        runtime/test/esr/entity/agent/instance_schema_test.exs
+git commit -m "feat(agent): add Agent.Instance struct + agent_instance.v1.json schema (Phase 3.1)"
+```
+
+---
+
+### Task 3.2: `Esr.Entity.Agent.InstanceRegistry` (per-session ETS)
+
+**Files:**
+- Create: `runtime/lib/esr/entity/agent/instance_registry.ex`
+- Create: `runtime/test/esr/entity/agent/instance_registry_test.exs`
+
+**Reference:** `runtime/lib/esr/entity/agent/stateful_registry.ex` — mirror the GenServer-with-ETS pattern. Key difference: single ETS table keyed by `{session_uuid, agent_name}` for O(1) name-uniqueness checks.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/entity/agent/instance_registry_test.exs`:
+
+```elixir
+defmodule Esr.Entity.Agent.InstanceRegistryTest do
+  use ExUnit.Case, async: false
+  alias Esr.Entity.Agent.InstanceRegistry
+
+  @sess1 "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+  @sess2 "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
+
+  setup do
+    # Each test uses a fresh GenServer under a unique name to isolate ETS state.
+    name = :"ir_test_#{:erlang.unique_integer([:positive])}"
+    {:ok, _} = start_supervised({InstanceRegistry, name: name})
+    %{reg: name}
+  end
+
+  describe "add_instance/2" do
+    test "adds instance to session", %{reg: reg} do
+      assert :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "dev", config: %{}})
+      assert {:ok, inst} = InstanceRegistry.get(reg, @sess1, "dev")
+      assert inst.type == "cc"
+      assert inst.name == "dev"
+    end
+
+    test "rejects duplicate name in same session regardless of type", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "dev", config: %{}})
+      assert {:error, {:duplicate_agent_name, "dev"}} =
+               InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "codex", name: "dev", config: %{}})
+    end
+
+    test "same name in different sessions is allowed", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "dev", config: %{}})
+      assert :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess2, type: "cc", name: "dev", config: %{}})
+    end
+
+    test "sets as primary if first agent in session", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      assert {:ok, "alice"} = InstanceRegistry.primary(reg, @sess1)
+    end
+
+    test "does not change primary if not first agent", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "bob", config: %{}})
+      assert {:ok, "alice"} = InstanceRegistry.primary(reg, @sess1)
+    end
+  end
+
+  describe "remove_instance/3" do
+    test "removes instance from session", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "dev", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "reviewer", config: %{}})
+      :ok = InstanceRegistry.set_primary(reg, @sess1, "reviewer")
+
+      assert :ok = InstanceRegistry.remove_instance(reg, @sess1, "dev")
+      assert :not_found = InstanceRegistry.get(reg, @sess1, "dev")
+    end
+
+    test "cannot remove primary agent without first setting another primary", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      assert {:error, :cannot_remove_primary} = InstanceRegistry.remove_instance(reg, @sess1, "alice")
+    end
+
+    test "remove last agent clears primary", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "only", config: %{}})
+      :ok = InstanceRegistry.set_primary(reg, @sess1, "only")
+      # Must set_primary to something else first — but there is nothing else.
+      # This tests that remove guard fires correctly.
+      assert {:error, :cannot_remove_primary} = InstanceRegistry.remove_instance(reg, @sess1, "only")
+    end
+
+    test "returns :not_found for unknown agent", %{reg: reg} do
+      assert {:error, :not_found} = InstanceRegistry.remove_instance(reg, @sess1, "ghost")
+    end
+  end
+
+  describe "list/2" do
+    test "returns all instances for session", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "a", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "b", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess2, type: "cc", name: "a", config: %{}})
+
+      instances = InstanceRegistry.list(reg, @sess1)
+      names = Enum.map(instances, & &1.name) |> Enum.sort()
+      assert names == ["a", "b"]
+    end
+
+    test "returns empty list for unknown session", %{reg: reg} do
+      assert [] = InstanceRegistry.list(reg, @sess1)
+    end
+  end
+
+  describe "set_primary/3 + primary/2" do
+    test "set_primary changes the primary agent", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "bob", config: %{}})
+
+      assert :ok = InstanceRegistry.set_primary(reg, @sess1, "bob")
+      assert {:ok, "bob"} = InstanceRegistry.primary(reg, @sess1)
+    end
+
+    test "set_primary on unknown name returns error", %{reg: reg} do
+      assert {:error, :not_found} = InstanceRegistry.set_primary(reg, @sess1, "ghost")
+    end
+
+    test "primary returns :not_found for session with no agents", %{reg: reg} do
+      assert :not_found = InstanceRegistry.primary(reg, @sess1)
+    end
+  end
+
+  describe "names_for_session/2" do
+    test "returns list of agent names for session", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "x", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "y", config: %{}})
+      names = InstanceRegistry.names_for_session(reg, @sess1)
+      assert Enum.sort(names) == ["x", "y"]
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `module Esr.Entity.Agent.InstanceRegistry is not available`.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/instance_registry_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Implement InstanceRegistry.** Create `runtime/lib/esr/entity/agent/instance_registry.ex`:
+
+```elixir
+defmodule Esr.Entity.Agent.InstanceRegistry do
+  @moduledoc """
+  Per-process ETS-backed registry of agent instances within sessions.
+
+  ## ETS layout
+
+  Single table: `{session_uuid, agent_name} => %Instance{}` for O(1)
+  name-uniqueness checks and O(1) per-agent lookup.
+
+  A separate `{:primary, session_uuid} => agent_name` entry tracks the
+  primary agent for each session.
+
+  ## Name uniqueness
+
+  Names are unique within a session across all agent types (spec Q7=B).
+  `add_instance/2` rejects a second instance with the same name in the
+  same session regardless of type.
+
+  ## Primary agent
+
+  The first agent added to a session automatically becomes the primary
+  (spec §4.B `/session:new` → "Primary = first agent added").
+  `set_primary/3` changes it at any time. `remove_instance/3` is
+  guarded: the primary agent cannot be removed until another is made
+  primary first.
+
+  ## Usage
+
+  Start as a named GenServer (tests pass an atom as `name:`; production
+  code starts a single global instance named `__MODULE__`):
+
+      {:ok, _} = InstanceRegistry.start_link(name: Esr.Entity.Agent.InstanceRegistry)
+  """
+
+  use GenServer
+  alias Esr.Entity.Agent.Instance
+
+  @table :esr_agent_instances
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc """
+  Add an agent instance to `session_id`. The `attrs` map must contain at
+  minimum: `session_id`, `type`, `name`, `config`.
+
+  Returns `:ok` on success, `{:error, {:duplicate_agent_name, name}}` if the
+  name already exists in the session.
+  """
+  @spec add_instance(GenServer.server(), map()) ::
+          :ok | {:error, {:duplicate_agent_name, String.t()}}
+  def add_instance(server \\ __MODULE__, attrs) when is_map(attrs) do
+    GenServer.call(server, {:add_instance, attrs})
+  end
+
+  @doc """
+  Remove the agent named `name` from `session_id`.
+
+  Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
+  """
+  @spec remove_instance(GenServer.server(), String.t(), String.t()) ::
+          :ok | {:error, :cannot_remove_primary | :not_found}
+  def remove_instance(server \\ __MODULE__, session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    GenServer.call(server, {:remove_instance, session_id, name})
+  end
+
+  @doc "Return all instances for `session_id` as a list of `%Instance{}`."
+  @spec list(GenServer.server(), String.t()) :: [Instance.t()]
+  def list(server \\ __MODULE__, session_id) when is_binary(session_id) do
+    tab = GenServer.call(server, :table_name)
+
+    :ets.match_object(tab, {{session_id, :_}, :_})
+    |> Enum.filter(fn {{_s, k}, _} -> k != :__primary__ end)
+    |> Enum.map(fn {_key, inst} -> inst end)
+  end
+
+  @doc "Fetch a single instance by session + name. Returns `{:ok, inst}` or `:not_found`."
+  @spec get(GenServer.server(), String.t(), String.t()) ::
+          {:ok, Instance.t()} | :not_found
+  def get(server \\ __MODULE__, session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    tab = GenServer.call(server, :table_name)
+    case :ets.lookup(tab, {session_id, name}) do
+      [{_, inst}] -> {:ok, inst}
+      [] -> :not_found
+    end
+  end
+
+  @doc """
+  Set `name` as the primary agent for `session_id`.
+
+  Returns `:ok` or `{:error, :not_found}` if the name doesn't exist.
+  """
+  @spec set_primary(GenServer.server(), String.t(), String.t()) ::
+          :ok | {:error, :not_found}
+  def set_primary(server \\ __MODULE__, session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    GenServer.call(server, {:set_primary, session_id, name})
+  end
+
+  @doc """
+  Return the primary agent name for `session_id`.
+
+  Returns `{:ok, name}` or `:not_found`.
+  """
+  @spec primary(GenServer.server(), String.t()) :: {:ok, String.t()} | :not_found
+  def primary(server \\ __MODULE__, session_id) when is_binary(session_id) do
+    tab = GenServer.call(server, :table_name)
+    case :ets.lookup(tab, {session_id, :__primary__}) do
+      [{_, name}] when is_binary(name) -> {:ok, name}
+      _ -> :not_found
+    end
+  end
+
+  @doc "Return agent names for session (used by name-uniqueness check in AddAgent)."
+  @spec names_for_session(GenServer.server(), String.t()) :: [String.t()]
+  def names_for_session(server \\ __MODULE__, session_id) when is_binary(session_id) do
+    list(server, session_id) |> Enum.map(& &1.name)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    # Each named process owns its own ETS table (named by the server name so
+    # tests using unique atom names don't collide).
+    server_name = Keyword.get(opts, :name, __MODULE__)
+    table = :ets.new(server_name, [:set, :public, :named_table])
+    {:ok, %{table: table}}
+  end
+
+  @impl true
+  def handle_call(:table_name, _from, state), do: {:reply, state.table, state}
+
+  @impl true
+  def handle_call({:add_instance, attrs}, _from, state) do
+    session_id = Map.fetch!(attrs, :session_id)
+    name = Map.fetch!(attrs, :name)
+
+    case :ets.lookup(state.table, {session_id, name}) do
+      [_] ->
+        {:reply, {:error, {:duplicate_agent_name, name}}, state}
+
+      [] ->
+        inst = %Instance{
+          id: uuid_v4(),
+          session_id: session_id,
+          type: Map.fetch!(attrs, :type),
+          name: name,
+          config: Map.get(attrs, :config, %{}),
+          created_at: iso_now()
+        }
+
+        :ets.insert(state.table, {{session_id, name}, inst})
+
+        # Auto-promote to primary if this is the first agent in the session.
+        unless :ets.lookup(state.table, {session_id, :__primary__}) != [] do
+          :ets.insert(state.table, {{session_id, :__primary__}, name})
+        end
+
+        {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:remove_instance, session_id, name}, _from, state) do
+    case :ets.lookup(state.table, {session_id, name}) do
+      [] ->
+        {:reply, {:error, :not_found}, state}
+
+      [_] ->
+        primary_name =
+          case :ets.lookup(state.table, {session_id, :__primary__}) do
+            [{_, n}] -> n
+            _ -> nil
+          end
+
+        if primary_name == name do
+          {:reply, {:error, :cannot_remove_primary}, state}
+        else
+          :ets.delete(state.table, {session_id, name})
+          {:reply, :ok, state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:set_primary, session_id, name}, _from, state) do
+    case :ets.lookup(state.table, {session_id, name}) do
+      [] ->
+        {:reply, {:error, :not_found}, state}
+
+      [_] ->
+        :ets.insert(state.table, {{session_id, :__primary__}, name})
+        {:reply, :ok, state}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp uuid_v4 do
+    # Delegate to Uniq or fallback to Erlang random bytes.
+    if Code.ensure_loaded?(Uniq.UUID) do
+      Uniq.UUID.uuid4()
+    else
+      <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+      c = Bitwise.bor(Bitwise.band(c, 0x0FFF), 0x4000)
+      d = Bitwise.bor(Bitwise.band(d, 0x3FFF), 0x8000)
+      :io_lib.format(
+        "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
+        [a, b, c, d, e]
+      )
+      |> IO.iodata_to_binary()
+    end
+  end
+
+  defp iso_now do
+    DateTime.utc_now() |> DateTime.to_iso8601()
+  end
+end
+```
+
+- [ ] **Step 4 — Run passing tests.** Confirm all 14 assertions pass.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/instance_registry_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/entity/agent/instance_registry.ex \
+        runtime/test/esr/entity/agent/instance_registry_test.exs
+git commit -m "feat(agent): add Agent.InstanceRegistry per-session ETS + name-uniqueness guard (Phase 3.2)"
+```
+
+---
+
+### Task 3.3: `Session.Registry` integration — agents field + persistence
+
+**Files:**
+- Modify: `runtime/lib/esr/resource/session/registry.ex`
+- Modify: `runtime/test/esr/resource/session/registry_test.exs` (extend)
+
+**Goal:** `Session.Registry` gains `add_agent_to_session/4` and `remove_agent_from_session/3` that write through to `InstanceRegistry` and persist the updated `agents` list back to `session.json` on disk. On Registry restart, `InstanceRegistry` is re-populated from the persisted JSON.
+
+- [ ] **Step 1 — Write failing test.** Append to `runtime/test/esr/resource/session/registry_test.exs`:
+
+```elixir
+  describe "add_agent_to_session/4 + persistence round-trip" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "sess_reg_agents_#{:rand.uniform(1_000_000)}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      %{tmp: tmp}
+    end
+
+    test "add_agent persists to session.json and survives registry restart", %{tmp: tmp} do
+      {:ok, _} = Esr.Resource.Session.Registry.start_link(data_dir: tmp)
+
+      {:ok, session_id} =
+        Esr.Resource.Session.Registry.create_session(tmp, %{
+          name: "my-sess",
+          owner_user: "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6",
+          workspace_id: "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
+        })
+
+      :ok =
+        Esr.Resource.Session.Registry.add_agent_to_session(
+          tmp, session_id, "cc", "dev", %{}
+        )
+
+      # Verify persisted JSON contains the agent.
+      session_json_path = Path.join([tmp, "sessions", session_id, "session.json"])
+      persisted = File.read!(session_json_path) |> Jason.decode!()
+      assert [%{"type" => "cc", "name" => "dev"}] = persisted["agents"]
+      assert persisted["primary_agent"] == "dev"
+
+      # Simulate restart: reload session from disk.
+      {:ok, sess} = Esr.Resource.Session.Registry.get_session(session_id)
+      assert [%{type: "cc", name: "dev"}] = sess.agents
+      assert sess.primary_agent == "dev"
+    end
+
+    test "add_agent returns error on duplicate name" do
+      {:ok, session_id} =
+        Esr.Resource.Session.Registry.create_session(System.tmp_dir!(), %{
+          name: "dup-test-sess",
+          owner_user: "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6",
+          workspace_id: "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
+        })
+
+      :ok = Esr.Resource.Session.Registry.add_agent_to_session(
+        System.tmp_dir!(), session_id, "cc", "dev", %{}
+      )
+
+      assert {:error, {:duplicate_agent_name, "dev"}} =
+               Esr.Resource.Session.Registry.add_agent_to_session(
+                 System.tmp_dir!(), session_id, "codex", "dev", %{}
+               )
+    end
+  end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `add_agent_to_session/4` is undefined.
+
+```bash
+cd runtime && mix test test/esr/resource/session/registry_test.exs 2>&1 | grep -E "add_agent|undefined" | head -5
+```
+
+- [ ] **Step 3 — Add `add_agent_to_session/4` and `remove_agent_from_session/3` to `Session.Registry`.** In `runtime/lib/esr/resource/session/registry.ex`, add the following public API functions and matching `handle_call` clauses:
+
+```elixir
+  @doc """
+  Add an agent instance to the session with `session_id`.
+
+  Delegates name-uniqueness enforcement to `InstanceRegistry`.
+  On success, writes the updated agents list back to `session.json`.
+
+  Returns `:ok` or `{:error, {:duplicate_agent_name, name}}`.
+  """
+  @spec add_agent_to_session(String.t(), String.t(), String.t(), String.t(), map()) ::
+          :ok | {:error, {:duplicate_agent_name, String.t()}}
+  def add_agent_to_session(data_dir, session_id, type, name, config) do
+    GenServer.call(
+      __MODULE__,
+      {:add_agent_to_session, data_dir, session_id, type, name, config}
+    )
+  end
+
+  @doc """
+  Remove the agent named `name` from the session with `session_id`.
+
+  Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
+  """
+  @spec remove_agent_from_session(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :cannot_remove_primary | :not_found}
+  def remove_agent_from_session(session_id, name, data_dir) do
+    GenServer.call(__MODULE__, {:remove_agent_from_session, session_id, name, data_dir})
+  end
+```
+
+Add corresponding `handle_call` clauses in the GenServer implementation:
+
+```elixir
+  def handle_call({:add_agent_to_session, data_dir, session_id, type, name, config}, _from, state) do
+    case Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+           session_id: session_id,
+           type: type,
+           name: name,
+           config: config
+         }) do
+      :ok ->
+        # Re-read all instances for this session and persist to session.json.
+        case persist_agents(data_dir, session_id) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = err -> {:reply, err, state}
+        end
+
+      {:error, _} = err ->
+        {:reply, err, state}
+    end
+  end
+
+  def handle_call({:remove_agent_from_session, session_id, name, data_dir}, _from, state) do
+    case Esr.Entity.Agent.InstanceRegistry.remove_instance(session_id, name) do
+      :ok ->
+        case persist_agents(data_dir, session_id) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = err -> {:reply, err, state}
+        end
+
+      {:error, _} = err ->
+        {:reply, err, state}
+    end
+  end
+```
+
+Add the private `persist_agents/2` helper:
+
+```elixir
+  defp persist_agents(data_dir, session_id) do
+    instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
+    primary =
+      case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+        {:ok, n} -> n
+        :not_found -> nil
+      end
+
+    agents_json = Enum.map(instances, fn i -> %{"type" => i.type, "name" => i.name, "config" => i.config} end)
+
+    session_json_path =
+      Path.join([data_dir, "sessions", session_id, "session.json"])
+
+    case File.read(session_json_path) do
+      {:ok, raw} ->
+        doc =
+          raw
+          |> Jason.decode!()
+          |> Map.put("agents", agents_json)
+          |> Map.put("primary_agent", primary || "")
+
+        tmp_path = session_json_path <> ".tmp"
+        File.write!(tmp_path, Jason.encode!(doc, pretty: true))
+        File.rename!(tmp_path, session_json_path)
+        :ok
+
+      {:error, reason} ->
+        {:error, {:session_json_missing, reason}}
+    end
+  end
+```
+
+- [ ] **Step 4 — Run passing tests.** Confirm persistence round-trip tests pass.
+
+```bash
+cd runtime && mix test test/esr/resource/session/registry_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/resource/session/registry.ex \
+        runtime/test/esr/resource/session/registry_test.exs
+git commit -m "feat(session): add_agent_to_session/4 write-through to InstanceRegistry + persist (Phase 3.3)"
+```
+
+---
+
+### Task 3.4: Session-scoped agent commands (low-level API)
+
+**Files:**
+- Create: `runtime/lib/esr/commands/session/add_agent.ex`
+- Create: `runtime/lib/esr/commands/session/remove_agent.ex`
+- Create: `runtime/lib/esr/commands/session/set_primary.ex`
+- Create: `runtime/test/esr/commands/session/add_agent_test.exs`
+- Create: `runtime/test/esr/commands/session/remove_agent_test.exs`
+- Create: `runtime/test/esr/commands/session/set_primary_test.exs`
+
+**Reference:** `runtime/lib/esr/commands/cap/grant.ex` — mirror the `@behaviour Esr.Role.Control` + `execute/1` pattern.
+
+Note: Slash-routes YAML entries for `/session:add-agent`, `/session:remove-agent`, `/session:set-primary` are added in Phase 6 (colon-namespace cutover). These modules are pure `execute/1` functions callable directly from the admin dispatcher or tests.
+
+- [ ] **Step 1 — Write failing tests.**
+
+Create `runtime/test/esr/commands/session/add_agent_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Session.AddAgentTest do
+  use ExUnit.Case, async: false
+  alias Esr.Commands.Session.AddAgent
+
+  @sess "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  setup do
+    # Ensure InstanceRegistry is running for tests.
+    case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+      nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+      _ -> :ok
+    end
+    :ok
+  end
+
+  test "success: adds agent to session" do
+    cmd = %{"args" => %{"session_id" => @sess, "type" => "cc", "name" => "dev-#{:rand.uniform(9999)}", "config" => %{}}}
+    assert {:ok, result} = AddAgent.execute(cmd)
+    assert result["action"] == "added"
+    assert result["type"] == "cc"
+  end
+
+  test "error: duplicate name returns structured error" do
+    name = "dup-#{:rand.uniform(9999)}"
+    cmd = %{"args" => %{"session_id" => @sess, "type" => "cc", "name" => name, "config" => %{}}}
+    {:ok, _} = AddAgent.execute(cmd)
+    assert {:error, %{"type" => "duplicate_agent_name"}} = AddAgent.execute(cmd)
+  end
+
+  test "error: missing session_id" do
+    cmd = %{"args" => %{"type" => "cc", "name" => "dev"}}
+    assert {:error, %{"type" => "invalid_args"}} = AddAgent.execute(cmd)
+  end
+
+  test "error: missing name" do
+    cmd = %{"args" => %{"session_id" => @sess, "type" => "cc"}}
+    assert {:error, %{"type" => "invalid_args"}} = AddAgent.execute(cmd)
+  end
+
+  test "error: missing type" do
+    cmd = %{"args" => %{"session_id" => @sess, "name" => "dev"}}
+    assert {:error, %{"type" => "invalid_args"}} = AddAgent.execute(cmd)
+  end
+end
+```
+
+Create `runtime/test/esr/commands/session/remove_agent_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Session.RemoveAgentTest do
+  use ExUnit.Case, async: false
+  alias Esr.Commands.Session.{AddAgent, RemoveAgent, SetPrimary}
+
+  @sess "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
+
+  setup do
+    case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+      nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+      _ -> :ok
+    end
+    :ok
+  end
+
+  test "success: removes a non-primary agent" do
+    alice = "alice-#{:rand.uniform(9999)}"
+    bob = "bob-#{:rand.uniform(9999)}"
+    sess = "c3d4e5f6-a7b8-4c9d-0e1f-#{:rand.uniform(999_999_999_999)}"
+
+    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}})
+    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}})
+    SetPrimary.execute(%{"args" => %{"session_id" => sess, "name" => bob}})
+
+    assert {:ok, %{"action" => "removed"}} =
+             RemoveAgent.execute(%{"args" => %{"session_id" => sess, "name" => alice}})
+  end
+
+  test "error: cannot remove primary agent" do
+    name = "primary-#{:rand.uniform(9999)}"
+    sess = "d4e5f6a7-b8c9-4d0e-1f2a-#{:rand.uniform(999_999_999_999)}"
+    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => name, "config" => %{}}})
+
+    assert {:error, %{"type" => "cannot_remove_primary"}} =
+             RemoveAgent.execute(%{"args" => %{"session_id" => sess, "name" => name}})
+  end
+
+  test "error: unknown agent name" do
+    assert {:error, %{"type" => "not_found"}} =
+             RemoveAgent.execute(%{"args" => %{"session_id" => @sess, "name" => "ghost"}})
+  end
+
+  test "error: missing session_id" do
+    assert {:error, %{"type" => "invalid_args"}} =
+             RemoveAgent.execute(%{"args" => %{"name" => "dev"}})
+  end
+end
+```
+
+Create `runtime/test/esr/commands/session/set_primary_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Session.SetPrimaryTest do
+  use ExUnit.Case, async: false
+  alias Esr.Commands.Session.{AddAgent, SetPrimary}
+
+  setup do
+    case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+      nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+      _ -> :ok
+    end
+    :ok
+  end
+
+  test "success: changes primary agent and persists to session" do
+    sess = "e5f6a7b8-c9d0-4e1f-2a3b-#{:rand.uniform(999_999_999_999)}"
+    alice = "alice-#{:rand.uniform(9999)}"
+    bob = "bob-#{:rand.uniform(9999)}"
+
+    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}})
+    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}})
+
+    assert {:ok, %{"action" => "primary_set", "primary_agent" => ^bob}} =
+             SetPrimary.execute(%{"args" => %{"session_id" => sess, "name" => bob}})
+  end
+
+  test "error: unknown agent name" do
+    sess = "f6a7b8c9-d0e1-4f2a-3b4c-#{:rand.uniform(999_999_999_999)}"
+    assert {:error, %{"type" => "not_found"}} =
+             SetPrimary.execute(%{"args" => %{"session_id" => sess, "name" => "ghost"}})
+  end
+
+  test "error: missing session_id" do
+    assert {:error, %{"type" => "invalid_args"}} =
+             SetPrimary.execute(%{"args" => %{"name" => "dev"}})
+  end
+
+  test "error: missing name" do
+    assert {:error, %{"type" => "invalid_args"}} =
+             SetPrimary.execute(%{"args" => %{"session_id" => "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"}})
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm command modules are not available.
+
+```bash
+cd runtime && mix test test/esr/commands/session/add_agent_test.exs \
+                       test/esr/commands/session/remove_agent_test.exs \
+                       test/esr/commands/session/set_primary_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Implement command modules.**
+
+Create `runtime/lib/esr/commands/session/add_agent.ex`:
+
+```elixir
+defmodule Esr.Commands.Session.AddAgent do
+  @moduledoc """
+  Add an agent instance to a session (`/session:add-agent`).
+
+  Slash-routes YAML entry added in Phase 6.
+  """
+
+  @behaviour Esr.Role.Control
+
+  alias Esr.Entity.Agent.InstanceRegistry
+
+  @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  def execute(%{"args" => %{"session_id" => sid, "type" => type, "name" => name} = args})
+      when is_binary(sid) and sid != ""
+      and is_binary(type) and type != ""
+      and is_binary(name) and name != "" do
+    config = Map.get(args, "config", %{})
+
+    case InstanceRegistry.add_instance(%{session_id: sid, type: type, name: name, config: config}) do
+      :ok ->
+        {:ok,
+         %{
+           "action" => "added",
+           "session_id" => sid,
+           "type" => type,
+           "name" => name
+         }}
+
+      {:error, {:duplicate_agent_name, n}} ->
+        {:error,
+         %{
+           "type" => "duplicate_agent_name",
+           "message" =>
+             "agent name '#{n}' already exists in session '#{sid}' (pick a different name)"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "add_agent requires args.session_id, args.type, and args.name (all non-empty strings)"
+     }}
+  end
+end
+```
+
+Create `runtime/lib/esr/commands/session/remove_agent.ex`:
+
+```elixir
+defmodule Esr.Commands.Session.RemoveAgent do
+  @moduledoc """
+  Remove an agent instance from a session (`/session:remove-agent`).
+
+  Cannot remove the primary agent — the caller must set another agent as
+  primary first via `/session:set-primary`.
+
+  Slash-routes YAML entry added in Phase 6.
+  """
+
+  @behaviour Esr.Role.Control
+
+  alias Esr.Entity.Agent.InstanceRegistry
+
+  @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  def execute(%{"args" => %{"session_id" => sid, "name" => name}})
+      when is_binary(sid) and sid != "" and is_binary(name) and name != "" do
+    case InstanceRegistry.remove_instance(sid, name) do
+      :ok ->
+        {:ok, %{"action" => "removed", "session_id" => sid, "name" => name}}
+
+      {:error, :cannot_remove_primary} ->
+        {:error,
+         %{
+           "type" => "cannot_remove_primary",
+           "message" =>
+             "cannot remove primary agent '#{name}'; use /session:set-primary to promote another agent first"
+         }}
+
+      {:error, :not_found} ->
+        {:error,
+         %{
+           "type" => "not_found",
+           "message" => "no agent named '#{name}' in session '#{sid}'"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" => "remove_agent requires args.session_id and args.name (non-empty strings)"
+     }}
+  end
+end
+```
+
+Create `runtime/lib/esr/commands/session/set_primary.ex`:
+
+```elixir
+defmodule Esr.Commands.Session.SetPrimary do
+  @moduledoc """
+  Set the primary agent for a session (`/session:set-primary`).
+
+  The primary agent receives all plain-text messages that do not contain
+  an explicit `@<name>` mention (spec Q8=A).
+
+  Slash-routes YAML entry added in Phase 6.
+  """
+
+  @behaviour Esr.Role.Control
+
+  alias Esr.Entity.Agent.InstanceRegistry
+
+  @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  def execute(%{"args" => %{"session_id" => sid, "name" => name}})
+      when is_binary(sid) and sid != "" and is_binary(name) and name != "" do
+    case InstanceRegistry.set_primary(sid, name) do
+      :ok ->
+        {:ok,
+         %{
+           "action" => "primary_set",
+           "session_id" => sid,
+           "primary_agent" => name
+         }}
+
+      {:error, :not_found} ->
+        {:error,
+         %{
+           "type" => "not_found",
+           "message" => "no agent named '#{name}' in session '#{sid}'"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" => "set_primary requires args.session_id and args.name (non-empty strings)"
+     }}
+  end
+end
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/session/add_agent_test.exs \
+                       test/esr/commands/session/remove_agent_test.exs \
+                       test/esr/commands/session/set_primary_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/commands/session/add_agent.ex \
+        runtime/lib/esr/commands/session/remove_agent.ex \
+        runtime/lib/esr/commands/session/set_primary.ex \
+        runtime/test/esr/commands/session/add_agent_test.exs \
+        runtime/test/esr/commands/session/remove_agent_test.exs \
+        runtime/test/esr/commands/session/set_primary_test.exs
+git commit -m "feat(commands): add AddAgent, RemoveAgent, SetPrimary session commands (Phase 3.4)"
+```
+
+---
+
+### Task 3.5: Plugin agent-type validation in `AddAgent`
+
+**Files:**
+- Modify: `runtime/lib/esr/commands/session/add_agent.ex`
+- Modify: `runtime/test/esr/commands/session/add_agent_test.exs` (extend)
+
+**Goal:** Reject any `type` that is not declared in an enabled plugin's manifest. The `claude_code` plugin declares `type: "cc"` in its manifest; any other undeclared type returns a structured error. This uses `Esr.Entity.Agent.Registry` (the agents.yaml-based type registry introduced in PR-21κ) to enumerate known types.
+
+- [ ] **Step 1 — Write failing tests.** Append to `runtime/test/esr/commands/session/add_agent_test.exs`:
+
+```elixir
+  describe "plugin type validation" do
+    test "type declared in enabled plugin manifest is accepted" do
+      # "cc" is the claude_code plugin type — declared in agents.yaml / plugin manifest.
+      cmd = %{"args" => %{"session_id" => @sess, "type" => "cc", "name" => "valid-#{:rand.uniform(9999)}", "config" => %{}}}
+      assert {:ok, _} = AddAgent.execute(cmd)
+    end
+
+    test "type not declared in any enabled plugin is rejected" do
+      cmd = %{"args" => %{"session_id" => @sess, "type" => "nonexistent_type_xyz", "name" => "x", "config" => %{}}}
+      assert {:error, %{"type" => "unknown_agent_type"}} = AddAgent.execute(cmd)
+    end
+  end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `unknown_agent_type` error is not returned yet.
+
+```bash
+cd runtime && mix test test/esr/commands/session/add_agent_test.exs 2>&1 | grep -E "unknown_agent|FAILED" | head -5
+```
+
+- [ ] **Step 3 — Add type validation to `AddAgent.execute/1`.** Replace the guard clause in `add_agent.ex` with:
+
+```elixir
+  @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  def execute(%{"args" => %{"session_id" => sid, "type" => type, "name" => name} = args})
+      when is_binary(sid) and sid != ""
+      and is_binary(type) and type != ""
+      and is_binary(name) and name != "" do
+    config = Map.get(args, "config", %{})
+
+    with :ok <- validate_agent_type(type),
+         :ok <- Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+                  session_id: sid,
+                  type: type,
+                  name: name,
+                  config: config
+                }) do
+      {:ok,
+       %{
+         "action" => "added",
+         "session_id" => sid,
+         "type" => type,
+         "name" => name
+       }}
+    else
+      {:error, :unknown_agent_type} ->
+        known = known_agent_types()
+        {:error,
+         %{
+           "type" => "unknown_agent_type",
+           "message" =>
+             "agent type '#{type}' is not declared in any enabled plugin; known types: #{Enum.join(known, ", ")}"
+         }}
+
+      {:error, {:duplicate_agent_name, n}} ->
+        {:error,
+         %{
+           "type" => "duplicate_agent_name",
+           "message" =>
+             "agent name '#{n}' already exists in session '#{sid}' (pick a different name)"
+         }}
+    end
+  end
+```
+
+Add private helpers after `execute/1`:
+
+```elixir
+  defp validate_agent_type(type) do
+    known = known_agent_types()
+    if type in known, do: :ok, else: {:error, :unknown_agent_type}
+  end
+
+  defp known_agent_types do
+    # Enumerate agent names known to the Agent.Registry (agents.yaml cache).
+    # Each entry in agents.yaml declares an agent pipeline whose "type" key
+    # maps to its top-level name.
+    case Esr.Entity.Agent.Registry.list_agents() do
+      names when is_list(names) -> names
+      _ -> []
+    end
+  end
+```
+
+- [ ] **Step 4 — Run passing tests.** Confirm the `"cc"` type passes and `"nonexistent_type_xyz"` is rejected.
+
+```bash
+cd runtime && mix test test/esr/commands/session/add_agent_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/commands/session/add_agent.ex \
+        runtime/test/esr/commands/session/add_agent_test.exs
+git commit -m "feat(commands): AddAgent validates type against enabled plugin manifest (Phase 3.5)"
+```
+
+---
+
+### Phase 3 PR checklist
+
+Before opening the PR:
+
+- [ ] Run full test suite: `cd runtime && mix test 2>&1 | tail -20`
+- [ ] Confirm `InstanceRegistry` is added to supervision tree: `grep -r "InstanceRegistry" runtime/lib/esr/application.ex`
+- [ ] Confirm `Esr.Commands.Session.{AddAgent,RemoveAgent,SetPrimary}` are reachable from `Esr.Admin.Dispatcher`: `grep -r "AddAgent\|RemoveAgent\|SetPrimary" runtime/lib/esr/admin/`
+
+```bash
+git commit -m "feat: multi-agent per session — instance model + name uniqueness (Phase 3)"
+```
+
+---
+
+## Phase 4: Mention parser + primary-agent routing
+
+**PR title:** `feat: mention parser + primary-agent routing on plain text (Phase 4)`
+**Branch:** `feat/phase-4-mention-routing`
+**Target:** `dev`
+**Est LOC:** ~400
+**Depends on:** Phase 3
+
+**Goal:** Plain-text inbound messages containing `@<name>` are routed to the named agent. Plain text without a mention is routed to the session's primary agent. The `MentionParser` module implements the detection algorithm from spec §4 (mention parser specification). The inbound dispatch integration wires this into `SlashHandler` for non-slash plain-text messages.
+
+---
+
+### Task 4.1: `Esr.Entity.Agent.MentionParser`
+
+**Files:**
+- Create: `runtime/lib/esr/entity/agent/mention_parser.ex`
+- Create: `runtime/test/esr/entity/agent/mention_parser_test.exs`
+
+**Spec algorithm (§4):**
+1. Scan text for `@` followed by `[a-zA-Z0-9_-]+`.
+2. If found: check if the extracted name is in `agent_names` (case-sensitive).
+3. If matched: return `{:mention, name, stripped_text}` where `stripped_text` has the `@<name>` removed and leading/trailing whitespace trimmed.
+4. If not matched (name not in list): return `{:plain, text}` — route to primary.
+5. Lone `@` not followed by `[a-zA-Z0-9_-]+`: return `{:plain, text}`.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/entity/agent/mention_parser_test.exs`:
+
+```elixir
+defmodule Esr.Entity.Agent.MentionParserTest do
+  use ExUnit.Case, async: true
+  alias Esr.Entity.Agent.MentionParser
+
+  @agents ["esr-dev", "alice", "bob-reviewer"]
+
+  describe "parse/2 — mention matched" do
+    test "leading mention: '@esr-dev hello'" do
+      assert {:mention, "esr-dev", "hello"} =
+               MentionParser.parse("@esr-dev hello", @agents)
+    end
+
+    test "leading mention with no trailing text: '@alice'" do
+      assert {:mention, "alice", ""} = MentionParser.parse("@alice", @agents)
+    end
+
+    test "mid-text mention: 'hey @alice what do you think'" do
+      assert {:mention, "alice", "hey  what do you think"} =
+               MentionParser.parse("hey @alice what do you think", @agents)
+    end
+
+    test "mention with dashes in name: '@bob-reviewer please check'" do
+      assert {:mention, "bob-reviewer", "please check"} =
+               MentionParser.parse("@bob-reviewer please check", @agents)
+    end
+
+    test "leading whitespace before @: '  @alice msg'" do
+      assert {:mention, "alice", "msg"} =
+               MentionParser.parse("  @alice msg", @agents)
+    end
+  end
+
+  describe "parse/2 — no mention (plain)" do
+    test "no @ in text" do
+      assert {:plain, "just plain text"} =
+               MentionParser.parse("just plain text", @agents)
+    end
+
+    test "lone @ not followed by identifier" do
+      assert {:plain, "@ hello"} = MentionParser.parse("@ hello", @agents)
+    end
+
+    test "lone @ at end" do
+      assert {:plain, "end @"} = MentionParser.parse("end @", @agents)
+    end
+
+    test "@name not in agent list routes to plain" do
+      assert {:plain, "@unknown hello"} =
+               MentionParser.parse("@unknown hello", @agents)
+    end
+
+    test "empty text" do
+      assert {:plain, ""} = MentionParser.parse("", @agents)
+    end
+
+    test "text is just whitespace" do
+      assert {:plain, "   "} = MentionParser.parse("   ", @agents)
+    end
+  end
+
+  describe "parse/2 — multiple @ patterns" do
+    test "first matched @ wins; second is left in rest text" do
+      # @alice is matched first; @bob-reviewer stays in the remaining text.
+      assert {:mention, "alice", "cc @bob-reviewer too"} =
+               MentionParser.parse("@alice cc @bob-reviewer too", @agents)
+    end
+
+    test "@x@y — @x not in list, @y not extracted (treated as one token)" do
+      # '@x@y' — the regex captures 'x@y' or stops at '@y'? Per spec algorithm
+      # step 1: scan for '@' + '[a-zA-Z0-9_-]+'. The first match is @x (captures
+      # 'x' before '@'); 'x' is not in agent list → :plain.
+      assert {:plain, "@x@y"} = MentionParser.parse("@x@y", ["esr-dev"])
+    end
+
+    test "@alice@bob — @alice matched; stripped text is '@bob'" do
+      assert {:mention, "alice", "@bob"} =
+               MentionParser.parse("@alice@bob", ["alice", "bob"])
+    end
+  end
+
+  describe "parse/2 — empty agent list" do
+    test "any @name → plain when no agents registered" do
+      assert {:plain, "@alice hello"} = MentionParser.parse("@alice hello", [])
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `module Esr.Entity.Agent.MentionParser is not available`.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/mention_parser_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Implement `MentionParser`.** Create `runtime/lib/esr/entity/agent/mention_parser.ex`:
+
+```elixir
+defmodule Esr.Entity.Agent.MentionParser do
+  @moduledoc """
+  Parse `@<name>` mentions from inbound message text.
+
+  ## Algorithm (spec §4 — mention parser specification)
+
+  1. Scan text for the first occurrence of `@` followed by `[a-zA-Z0-9_-]+`.
+  2. If found, check the extracted name against `agent_names` (case-sensitive).
+  3. Name matched → `{:mention, name, stripped_text}` where `stripped_text` is
+     the original text with `@<name>` removed and the result trimmed.
+  4. Name NOT in list → `{:plain, text}` (route to primary agent).
+  5. No `@<identifier>` pattern found → `{:plain, text}`.
+
+  ## Return values
+
+    * `{:mention, agent_name, rest}` — `agent_name` is the matched name;
+      `rest` is the message text with the `@<name>` token removed (trimmed).
+    * `{:plain, text}` — no matched mention; route to primary agent.
+
+  ## Examples
+
+      iex> MentionParser.parse("@alice hello", ["alice", "bob"])
+      {:mention, "alice", "hello"}
+
+      iex> MentionParser.parse("@ lone at", ["alice"])
+      {:plain, "@ lone at"}
+
+      iex> MentionParser.parse("@unknown hi", ["alice"])
+      {:plain, "@unknown hi"}
+  """
+
+  @mention_pattern ~r/@([a-zA-Z0-9][a-zA-Z0-9_-]*)/
+
+  @doc """
+  Parse `text` for an `@<name>` mention.
+
+  `agent_names` is the list of known agent names for the current session.
+  Matching is case-sensitive and uses simple string equality (spec Q7=B).
+  """
+  @spec parse(String.t(), [String.t()]) ::
+          {:mention, String.t(), String.t()} | {:plain, String.t()}
+  def parse(text, agent_names) when is_binary(text) and is_list(agent_names) do
+    case Regex.run(@mention_pattern, text, return: :index) do
+      nil ->
+        {:plain, text}
+
+      [{match_start, match_len} | _] ->
+        name = binary_part(text, match_start + 1, match_len - 1)
+
+        if name in agent_names do
+          # Remove the @<name> token from the text and trim surrounding whitespace.
+          rest =
+            (binary_part(text, 0, match_start) <>
+               binary_part(text, match_start + match_len, byte_size(text) - match_start - match_len))
+            |> String.trim()
+
+          {:mention, name, rest}
+        else
+          {:plain, text}
+        end
+    end
+  end
+end
+```
+
+- [ ] **Step 4 — Run passing tests.** Confirm all assertions pass.
+
+```bash
+cd runtime && mix test test/esr/entity/agent/mention_parser_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/entity/agent/mention_parser.ex \
+        runtime/test/esr/entity/agent/mention_parser_test.exs
+git commit -m "feat(agent): add MentionParser — @<name> mention detection (Phase 4.1)"
+```
+
+---
+
+### Task 4.2: Inbound dispatch routing
+
+**Files:**
+- Modify: `runtime/lib/esr/entity/slash_handler.ex`
+- Create: `runtime/test/esr/entity/slash_handler_mention_test.exs`
+
+**Goal:** Non-slash plain-text messages flowing through `SlashHandler.dispatch/2` are inspected by `MentionParser`. If a mention is found, the stripped text is routed to the named agent's process. If no mention, route to the primary agent of the current session. Both routing paths use `GenServer.cast` to the target agent process resolved via `InstanceRegistry`.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/entity/slash_handler_mention_test.exs`:
+
+```elixir
+defmodule Esr.Entity.SlashHandler.MentionTest do
+  use ExUnit.Case, async: false
+  alias Esr.Entity.Agent.{InstanceRegistry, MentionParser}
+
+  @sess "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  setup do
+    case Process.whereis(InstanceRegistry) do
+      nil -> start_supervised!(InstanceRegistry)
+      _ -> :ok
+    end
+
+    # Add two agents; alice is primary (first added).
+    InstanceRegistry.add_instance(%{session_id: @sess, type: "cc", name: "alice", config: %{}})
+    InstanceRegistry.add_instance(%{session_id: @sess, type: "cc", name: "bob", config: %{}})
+    :ok
+  end
+
+  test "resolve_routing/2: plain text with no mention returns {:primary, primary_name}" do
+    names = InstanceRegistry.names_for_session(@sess)
+    {:ok, primary} = InstanceRegistry.primary(@sess)
+
+    result = Esr.Entity.SlashHandler.resolve_routing("just some text", @sess)
+    assert result == {:primary, primary}
+  end
+
+  test "resolve_routing/2: @alice mention returns {:mention, 'alice', stripped_text}" do
+    result = Esr.Entity.SlashHandler.resolve_routing("@alice please help", @sess)
+    assert result == {:mention, "alice", "please help"}
+  end
+
+  test "resolve_routing/2: @unknown mention falls back to primary" do
+    {:ok, primary} = InstanceRegistry.primary(@sess)
+    result = Esr.Entity.SlashHandler.resolve_routing("@unknown hello", @sess)
+    assert result == {:primary, primary}
+  end
+
+  test "resolve_routing/2: lone @ falls back to primary" do
+    {:ok, primary} = InstanceRegistry.primary(@sess)
+    result = Esr.Entity.SlashHandler.resolve_routing("@ hello", @sess)
+    assert result == {:primary, primary}
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `resolve_routing/2` is undefined.
+
+```bash
+cd runtime && mix test test/esr/entity/slash_handler_mention_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Add `resolve_routing/2` to `SlashHandler`.** In `runtime/lib/esr/entity/slash_handler.ex`, add the following public function after the existing `dispatch/2,3` functions:
+
+```elixir
+  @doc """
+  Resolve routing for a non-slash plain-text message within a session.
+
+  Returns:
+    * `{:mention, agent_name, stripped_text}` — an `@<name>` mention was
+      found and `agent_name` is registered in the session.
+    * `{:primary, primary_name}` — no matched mention; route to primary agent.
+    * `{:error, :no_primary}` — no primary agent set for this session.
+
+  Callers (FAA, future adapters) use this to decide which agent process
+  to dispatch the cleaned message to.
+  """
+  @spec resolve_routing(String.t(), String.t()) ::
+          {:mention, String.t(), String.t()}
+          | {:primary, String.t()}
+          | {:error, :no_primary}
+  def resolve_routing(text, session_id)
+      when is_binary(text) and is_binary(session_id) do
+    agent_names = Esr.Entity.Agent.InstanceRegistry.names_for_session(session_id)
+
+    case Esr.Entity.Agent.MentionParser.parse(text, agent_names) do
+      {:mention, name, rest} ->
+        {:mention, name, rest}
+
+      {:plain, _} ->
+        case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+          {:ok, primary} -> {:primary, primary}
+          :not_found -> {:error, :no_primary}
+        end
+    end
+  end
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/entity/slash_handler_mention_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/entity/slash_handler.ex \
+        runtime/test/esr/entity/slash_handler_mention_test.exs
+git commit -m "feat(slash_handler): add resolve_routing/2 — @mention + primary fallback (Phase 4.2)"
+```
+
+---
+
+### Task 4.3: `/session:set-primary` lifecycle integration
+
+**Files:**
+- Modify: `runtime/lib/esr/commands/session/set_primary.ex` (extend from Task 3.4)
+- Modify: `runtime/test/esr/commands/session/set_primary_test.exs` (extend)
+
+**Goal:** After `SetPrimary.execute/1` changes the primary in `InstanceRegistry`, the next plain-text message via `SlashHandler.resolve_routing/2` must route to the new primary. This test verifies the end-to-end wiring: `SetPrimary` → `InstanceRegistry` update → `resolve_routing` reads updated primary.
+
+- [ ] **Step 1 — Write failing test.** Append to `runtime/test/esr/commands/session/set_primary_test.exs`:
+
+```elixir
+  describe "lifecycle: set_primary → resolve_routing routes to new primary" do
+    test "next plain text routes to newly-set primary" do
+      sess = "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
+      alice = "routing-alice-#{:rand.uniform(9999)}"
+      bob = "routing-bob-#{:rand.uniform(9999)}"
+
+      Esr.Commands.Session.AddAgent.execute(%{
+        "args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}
+      })
+      Esr.Commands.Session.AddAgent.execute(%{
+        "args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}
+      })
+
+      # alice is primary (first added); plain text routes to alice.
+      assert {:primary, ^alice} = Esr.Entity.SlashHandler.resolve_routing("hello", sess)
+
+      # Promote bob.
+      {:ok, _} = Esr.Commands.Session.SetPrimary.execute(%{
+        "args" => %{"session_id" => sess, "name" => bob}
+      })
+
+      # Now plain text routes to bob.
+      assert {:primary, ^bob} = Esr.Entity.SlashHandler.resolve_routing("hello again", sess)
+    end
+  end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm the new test fails because `resolve_routing` still routes to alice.
+
+```bash
+cd runtime && mix test test/esr/commands/session/set_primary_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Verify integration is already correct.** `SetPrimary.execute/1` calls `InstanceRegistry.set_primary/3` which updates ETS immediately; `resolve_routing/2` reads from ETS on every call. No further code changes needed — this is an integration test validating the wiring. If the test fails, check that `InstanceRegistry` is in the supervision tree and started before `SlashHandler`. If needed, ensure `SetPrimary` calls `InstanceRegistry.set_primary/2` (not the GenServer by name but via the public default server API).
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/session/set_primary_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/test/esr/commands/session/set_primary_test.exs
+git commit -m "test(commands): set_primary lifecycle → resolve_routing routes to new primary (Phase 4.3)"
+```
+
+---
+
+### Phase 4 PR checklist
+
+Before opening the PR:
+
+- [ ] Run full test suite: `cd runtime && mix test 2>&1 | tail -20`
+- [ ] Confirm `MentionParser` handles `@esr-dev` (dash in name): the regex `[a-zA-Z0-9_-]+` includes `-`.
+- [ ] Verify `SlashHandler.resolve_routing/2` is reachable from FAA/adapter layer: `grep -r "resolve_routing" runtime/lib/`
+
+```bash
+git commit -m "feat: mention parser + primary-agent routing on plain text (Phase 4)"
+```
+
+---
+
+## Phase 5: Cap UUID translation — session: scheme + UUID-only contract
+
+**PR title:** `feat: session cap UUID-only contract + output rendering (Phase 5)`
+**Branch:** `feat/phase-5-session-cap-uuid`
+**Target:** `dev`
+**Est LOC:** ~300
+**Depends on:** Phase 3 (Session.Registry, InstanceRegistry)
+
+**Goal:** Enforce the D2+D5 contract: `session:<x>/...` caps accept **UUID only** at input — name input is rejected with a structured error. On the output side (rendering), UUID→name translation is added so humans see `session:<name>/<verb>` in `/cap:show`, `/cap:list`, `/cap:who-can` output.
+
+---
+
+### Task 5.1: `UuidTranslator` session: scheme — output-only
+
+**Files:**
+- Modify: `runtime/lib/esr/resource/capability/uuid_translator.ex`
+- Modify: `runtime/test/esr/resource/capability/uuid_translator_test.exs` (extend or create)
+
+**Constraint:** Do NOT add `session_name_to_uuid/1`. Session caps reject names entirely at input. Only `session_uuid_to_name/1` (output direction) is added.
+
+- [ ] **Step 1 — Write failing test.** Append to (or create) `runtime/test/esr/resource/capability/uuid_translator_test.exs`:
+
+```elixir
+defmodule Esr.Resource.Capability.UuidTranslatorTest do
+  use ExUnit.Case, async: true
+  alias Esr.Resource.Capability.UuidTranslator
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  describe "existing workspace name↔uuid — still works" do
+    test "name_to_uuid passes through non-session non-workspace cap" do
+      assert {:ok, "user.manage"} = UuidTranslator.name_to_uuid("user.manage")
+    end
+
+    test "uuid_to_name passes through non-scoped cap" do
+      assert "runtime.deadletter" = UuidTranslator.uuid_to_name("runtime.deadletter")
+    end
+  end
+
+  describe "validate_session_cap_input/1" do
+    test "session cap with UUID is accepted" do
+      cap = "session:#{@session_uuid}/attach"
+      assert :ok = UuidTranslator.validate_session_cap_input(cap)
+    end
+
+    test "session cap with name (not UUID) is rejected" do
+      assert {:error, {:session_name_in_cap, _msg}} =
+               UuidTranslator.validate_session_cap_input("session:esr-dev/attach")
+    end
+
+    test "non-session cap passes through regardless of value" do
+      assert :ok = UuidTranslator.validate_session_cap_input("workspace:my-ws/read")
+      assert :ok = UuidTranslator.validate_session_cap_input("user.manage")
+    end
+
+    test "session cap with partial UUID rejected" do
+      assert {:error, {:session_name_in_cap, _}} =
+               UuidTranslator.validate_session_cap_input("session:not-a-uuid/end")
+    end
+  end
+
+  describe "session_uuid_to_name/2 (output-only)" do
+    test "unknown UUID returns UNKNOWN sentinel" do
+      # Session.Registry not running in this unit test; :not_found expected.
+      result = UuidTranslator.session_uuid_to_name(@session_uuid, %{})
+      assert {:error, :not_found} = result
+    end
+
+    test "name_to_uuid does NOT translate session: names (no session_name_to_uuid)" do
+      # Session name input should be rejected by validate_session_cap_input,
+      # NOT silently translated. name_to_uuid leaves session: untouched.
+      assert {:ok, "session:esr-dev/attach"} =
+               UuidTranslator.name_to_uuid("session:esr-dev/attach")
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `validate_session_cap_input/1` and `session_uuid_to_name/2` are undefined.
+
+```bash
+cd runtime && mix test test/esr/resource/capability/uuid_translator_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Extend `UuidTranslator`.** Add the following to `runtime/lib/esr/resource/capability/uuid_translator.ex`:
+
+```elixir
+  @doc """
+  Validate that a cap string containing `session:<x>/...` uses a UUID v4 for
+  `<x>`. Name input is explicitly rejected for session caps (spec D2, D5).
+
+  Non-session caps pass through as `:ok`.
+  """
+  @spec validate_session_cap_input(String.t()) ::
+          :ok | {:error, {:session_name_in_cap, String.t()}}
+  def validate_session_cap_input(cap) when is_binary(cap) do
+    case Regex.run(~r{^session:([^/]+)/}, cap) do
+      [_, value] ->
+        if uuid_shape?(value) do
+          :ok
+        else
+          {:error,
+           {:session_name_in_cap,
+            "session caps require UUID; name input is not accepted (got \"#{value}\")"}}
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc """
+  Translate a session UUID to its human-readable name for **output rendering only**.
+
+  This function is intentionally NOT called at input time. Session caps reject
+  names entirely at input (use `validate_session_cap_input/1` at every entry
+  point instead).
+
+  Returns `{:ok, name}` when the session is found, or `{:error, :not_found}`
+  when the UUID is not known (orphan cap — session was deleted).
+  """
+  @spec session_uuid_to_name(String.t(), map()) ::
+          {:ok, String.t()} | {:error, :not_found}
+  def session_uuid_to_name(uuid, _context) when is_binary(uuid) do
+    case Esr.Resource.Session.Registry.get_session(uuid) do
+      {:ok, session} -> {:ok, session.name}
+      _ -> {:error, :not_found}
+    end
+  rescue
+    _ -> {:error, :not_found}
+  end
+```
+
+Also ensure `name_to_uuid/1` does NOT translate session names. Verify the existing implementation: the `@workspace_scoped_resources` list currently contains `"session"` — this was a pre-Phase-5 design that permitted name→UUID translation for sessions. **Remove `"session"` from `@workspace_scoped_resources`** so that `name_to_uuid/1` passes `session:<name>/...` through unchanged (input validation now lives in `validate_session_cap_input/1`):
+
+```elixir
+  # Only workspace caps accept name input. Session caps: UUID-only (D2, D5).
+  @workspace_scoped_resources ~w(workspace)
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/resource/capability/uuid_translator_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/resource/capability/uuid_translator.ex \
+        runtime/test/esr/resource/capability/uuid_translator_test.exs
+git commit -m "feat(cap): UuidTranslator — validate_session_cap_input + session_uuid_to_name output-only (Phase 5.1)"
+```
+
+---
+
+### Task 5.2: Cap commands reject `session:<name>/<verb>`
+
+**Files:**
+- Modify: `runtime/lib/esr/commands/cap/grant.ex`
+- Modify: `runtime/lib/esr/commands/cap/revoke.ex`
+- Modify: `runtime/test/esr/commands/cap/grant_test.exs` (extend or create)
+- Modify: `runtime/test/esr/commands/cap/revoke_test.exs` (extend or create)
+
+**Goal:** `Grant.execute/1` and `Revoke.execute/1` call `validate_session_cap_input/1` before any translation, so `session:my-session/attach` is rejected at the command boundary.
+
+- [ ] **Step 1 — Write failing tests.**
+
+Append to (or create) `runtime/test/esr/commands/cap/grant_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Cap.GrantTest do
+  use ExUnit.Case, async: true
+  alias Esr.Commands.Cap.Grant
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+  @user_id "user_linyilun"
+
+  describe "session cap UUID-only enforcement" do
+    test "grant session:<uuid>/attach succeeds (passes validation gate)" do
+      cap = "session:#{@session_uuid}/attach"
+      # Result is {:ok, _} or {:error, write_failed} depending on disk state;
+      # the important assertion is: no session_cap_requires_uuid error.
+      result = Grant.execute(%{"args" => %{"principal_id" => @user_id, "permission" => cap}})
+      assert match?({:ok, _}, result) or match?({:error, %{"type" => "write_failed"}}, result)
+      refute match?({:error, %{"type" => "session_cap_requires_uuid"}}, result)
+    end
+
+    test "grant session:<name>/attach is rejected with session_cap_requires_uuid" do
+      cap = "session:esr-dev/attach"
+      assert {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}} =
+               Grant.execute(%{"args" => %{"principal_id" => @user_id, "permission" => cap}})
+      assert msg =~ "esr-dev"
+    end
+
+    test "grant workspace:<name>/read passes through unchanged (not affected by session guard)" do
+      cap = "workspace:my-ws/read"
+      result = Grant.execute(%{"args" => %{"principal_id" => @user_id, "permission" => cap}})
+      # Either succeeds or write_failed — never session_cap_requires_uuid.
+      refute match?({:error, %{"type" => "session_cap_requires_uuid"}}, result)
+    end
+  end
+end
+```
+
+Append to (or create) `runtime/test/esr/commands/cap/revoke_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Cap.RevokeTest do
+  use ExUnit.Case, async: true
+  alias Esr.Commands.Cap.Revoke
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+  @user_id "user_linyilun"
+
+  describe "session cap UUID-only enforcement" do
+    test "revoke session:<name>/attach is rejected with session_cap_requires_uuid" do
+      cap = "session:esr-dev/attach"
+      assert {:error, %{"type" => "session_cap_requires_uuid"}} =
+               Revoke.execute(%{"args" => %{"principal_id" => @user_id, "permission" => cap}})
+    end
+
+    test "revoke session:<uuid>/attach passes UUID gate (may return no_matching_capability)" do
+      cap = "session:#{@session_uuid}/attach"
+      result = Revoke.execute(%{"args" => %{"principal_id" => @user_id, "permission" => cap}})
+      refute match?({:error, %{"type" => "session_cap_requires_uuid"}}, result)
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `session_cap_requires_uuid` error is not returned yet.
+
+```bash
+cd runtime && mix test test/esr/commands/cap/grant_test.exs \
+                       test/esr/commands/cap/revoke_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Add session validation to `Grant` and `Revoke`.** In `runtime/lib/esr/commands/cap/grant.ex`, replace the `execute/1` implementation with:
+
+```elixir
+  @spec execute(map()) :: result()
+  def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
+      when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
+    with :ok <- validate_session_cap(perm),
+         {:ok, translated_perm} <- Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
+      do_grant(pid, translated_perm)
+    else
+      {:error, {:session_name_in_cap, msg}} ->
+        {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}}
+
+      {:error, :unknown_workspace} ->
+        {:error,
+         %{
+           "type" => "unknown_workspace",
+           "message" => "no workspace found in capability scope: #{perm}"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "grant requires args.principal_id and args.permission (non-empty strings)"
+     }}
+  end
+
+  defp validate_session_cap(perm) do
+    Esr.Resource.Capability.UuidTranslator.validate_session_cap_input(perm)
+  end
+```
+
+Apply the same `with :ok <- validate_session_cap(perm)` guard to `runtime/lib/esr/commands/cap/revoke.ex` `execute/1`:
+
+```elixir
+  @spec execute(map()) :: result()
+  def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
+      when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
+    with :ok <- validate_session_cap(perm),
+         {:ok, translated_perm} <- Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
+      do_revoke(pid, translated_perm)
+    else
+      {:error, {:session_name_in_cap, msg}} ->
+        {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}}
+
+      {:error, :unknown_workspace} ->
+        {:error,
+         %{
+           "type" => "unknown_workspace",
+           "message" => "no workspace found in capability scope: #{perm}"
+         }}
+    end
+  end
+
+  def execute(_cmd) do
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" =>
+         "revoke requires args.principal_id and args.permission (non-empty strings)"
+     }}
+  end
+
+  defp validate_session_cap(perm) do
+    Esr.Resource.Capability.UuidTranslator.validate_session_cap_input(perm)
+  end
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/cap/grant_test.exs \
+                       test/esr/commands/cap/revoke_test.exs 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/commands/cap/grant.ex \
+        runtime/lib/esr/commands/cap/revoke.ex \
+        runtime/test/esr/commands/cap/grant_test.exs \
+        runtime/test/esr/commands/cap/revoke_test.exs
+git commit -m "feat(cap): grant/revoke reject session:<name>/... — UUID-only enforcement (Phase 5.2)"
+```
+
+---
+
+### Task 5.3: Cap output rendering — session UUID→name
+
+**Files:**
+- Modify: `runtime/lib/esr/commands/cap/show.ex`
+- Modify: `runtime/lib/esr/commands/cap/list.ex`
+- Modify: `runtime/lib/esr/commands/cap/who_can.ex`
+- Create: `runtime/test/esr/commands/cap/output_rendering_test.exs`
+
+**Goal:** When a cap string contains `session:<uuid>/...`, the display output shows `session:<name>/<verb> (uuid: <uuid>)` if the session is found, or `session:<UNKNOWN-<prefix>>/<verb>` if the session is gone (orphan). This is output-only — it does NOT relax the input rejection in Task 5.2.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/commands/cap/output_rendering_test.exs`:
+
+```elixir
+defmodule Esr.Commands.Cap.OutputRenderingTest do
+  use ExUnit.Case, async: true
+  alias Esr.Resource.Capability.UuidTranslator
+
+  @session_uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  describe "render_cap_for_display/1" do
+    test "workspace cap with known UUID renders as name" do
+      # Workspace name resolution is already tested in uuid_translator tests;
+      # this test only ensures the function exists.
+      cap = "workspace:#{@session_uuid}/read"
+      result = UuidTranslator.render_cap_for_display(cap)
+      assert is_binary(result)
+    end
+
+    test "session cap with unknown UUID shows UNKNOWN sentinel" do
+      cap = "session:#{@session_uuid}/attach"
+      result = UuidTranslator.render_cap_for_display(cap)
+      # Session.Registry not running → :not_found → UNKNOWN sentinel.
+      assert result =~ "UNKNOWN" or result =~ @session_uuid
+    end
+
+    test "non-scoped cap passes through unchanged" do
+      cap = "user.manage"
+      assert "user.manage" = UuidTranslator.render_cap_for_display(cap)
+    end
+
+    test "session cap with UUID renders with (uuid: ...) annotation or UNKNOWN" do
+      cap = "session:#{@session_uuid}/end"
+      result = UuidTranslator.render_cap_for_display(cap)
+      # Either "session:<name>/end (uuid: <uuid>)" or "session:<UNKNOWN-...>/end"
+      assert is_binary(result)
+      assert result =~ "session:"
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.** Confirm `render_cap_for_display/1` is undefined.
+
+```bash
+cd runtime && mix test test/esr/commands/cap/output_rendering_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Add `render_cap_for_display/1` to `UuidTranslator` and wire into Show/List/WhoCan.**
+
+Add to `runtime/lib/esr/resource/capability/uuid_translator.ex`:
+
+```elixir
+  @doc """
+  Render a cap string for human-readable output.
+
+  * `workspace:<uuid>/...` → `workspace:<name>/...` (via NameIndex; unchanged if not found)
+  * `session:<uuid>/...` → `session:<name>/... (uuid: <uuid>)` if session found,
+    else `session:<UNKNOWN-<8-char-prefix>>/...`
+  * All other caps → unchanged.
+  """
+  @spec render_cap_for_display(String.t()) :: String.t()
+  def render_cap_for_display(cap) when is_binary(cap) do
+    case parse(cap) do
+      {:scoped, "session", uuid, perm} ->
+        if uuid_shape?(uuid) do
+          case session_uuid_to_name(uuid, %{}) do
+            {:ok, name} ->
+              "session:#{name}/#{perm} (uuid: #{uuid})"
+
+            {:error, :not_found} ->
+              "session:<UNKNOWN-#{String.slice(uuid, 0, 8)}>/#{perm}"
+          end
+        else
+          cap
+        end
+
+      {:scoped, "workspace", uuid, perm} ->
+        if uuid_shape?(uuid) do
+          case NameIndex.name_for_id(uuid) do
+            {:ok, name} -> "workspace:#{name}/#{perm}"
+            :not_found -> "workspace:<UNKNOWN-#{String.slice(uuid, 0, 8)}>/#{perm}"
+          end
+        else
+          cap
+        end
+
+      _ ->
+        cap
+    end
+  end
+```
+
+Update `runtime/lib/esr/commands/cap/show.ex` — replace `uuid_to_name/1` call with `render_cap_for_display/1` in the `render_entry/1` helper:
+
+```elixir
+  defp render_entry(entry) do
+    caps =
+      (entry["capabilities"] || [])
+      |> Enum.map(&Esr.Resource.Capability.UuidTranslator.render_cap_for_display/1)
+
+    base = "id: #{entry["id"]}\nkind: #{entry["kind"] || ""}"
+    note = if entry["note"] in [nil, ""], do: "", else: "\nnote: #{inspect(entry["note"])}"
+
+    cap_lines =
+      caps
+      |> Enum.map(&"  - #{&1}")
+      |> Enum.join("\n")
+
+    cap_block = if cap_lines == "", do: "\ncapabilities: []", else: "\ncapabilities:\n#{cap_lines}"
+
+    base <> note <> cap_block
+  end
+```
+
+Update `runtime/lib/esr/commands/cap/list.ex` and `runtime/lib/esr/commands/cap/who_can.ex` — replace any calls to `UuidTranslator.uuid_to_name/1` with `UuidTranslator.render_cap_for_display/1`:
+
+```bash
+# Verify call sites before editing:
+grep -n "uuid_to_name" runtime/lib/esr/commands/cap/list.ex runtime/lib/esr/commands/cap/who_can.ex
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/cap/output_rendering_test.exs \
+                       test/esr/commands/cap/grant_test.exs \
+                       test/esr/commands/cap/ 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/resource/capability/uuid_translator.ex \
+        runtime/lib/esr/commands/cap/show.ex \
+        runtime/lib/esr/commands/cap/list.ex \
+        runtime/lib/esr/commands/cap/who_can.ex \
+        runtime/test/esr/commands/cap/output_rendering_test.exs
+git commit -m "feat(cap): render_cap_for_display — session UUID→name output rendering + UNKNOWN sentinel (Phase 5.3)"
+```
+
+---
+
+### Phase 5 PR checklist
+
+Before opening the PR:
+
+- [ ] Run full test suite: `cd runtime && mix test 2>&1 | tail -20`
+- [ ] Confirm no `session_name_to_uuid` function exists anywhere: `grep -r "session_name_to_uuid" runtime/lib/`
+- [ ] Confirm `validate_session_cap_input` is called in both `grant.ex` and `revoke.ex`: `grep -n "validate_session_cap" runtime/lib/esr/commands/cap/grant.ex runtime/lib/esr/commands/cap/revoke.ex`
+- [ ] Confirm `render_cap_for_display` is the sole rendering path in `show.ex`, `list.ex`, `who_can.ex`: `grep -n "uuid_to_name" runtime/lib/esr/commands/cap/`
+
+```bash
+git commit -m "feat: session cap UUID-only contract + output rendering (Phase 5)"
+```
+
+---
+
+<!-- PLAN_END_PHASE_5 — next subagent: append "## Phase 6" here -->
