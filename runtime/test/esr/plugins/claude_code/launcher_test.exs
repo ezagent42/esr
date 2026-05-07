@@ -126,5 +126,18 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       assert String.contains?(binary, "claude"),
              "spawn_cmd must reference the claude binary, got: #{inspect(binary)}"
     end
+
+    test "claude_binary option overrides the default binary" do
+      [binary | _] = Launcher.spawn_cmd(claude_binary: "/tmp/mock-claude.sh")
+      assert binary == "/tmp/mock-claude.sh",
+             "claude_binary opt must override default, got: #{inspect(binary)}"
+    end
+
+    test "empty string claude_binary falls back to default" do
+      [default | _] = Launcher.spawn_cmd([])
+      [via_empty | _] = Launcher.spawn_cmd(claude_binary: "")
+      assert via_empty == default,
+             "empty claude_binary must fall back to default binary"
+    end
   end
 end
