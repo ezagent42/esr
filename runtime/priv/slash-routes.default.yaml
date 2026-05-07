@@ -367,9 +367,54 @@ slashes:
     args:
       - { name: name, required: true }
 
-  # /plugin:set, /plugin:unset, /plugin:show-config, /plugin:list-config —
-  # deferred to Phase 7 (command modules Esr.Commands.Plugin.{Set,Unset,ShowConfig,ListConfig}
-  # not yet implemented)
+  "/plugin:set":
+    kind: plugin_set
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.Set"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "写 plugin config key 到指定 layer（默认 global；重启生效）"
+    args:
+      - { name: plugin, required: true }
+      - { name: key, required: true }
+      - { name: value, required: true }
+      - { name: layer, required: false }
+
+  "/plugin:unset":
+    kind: plugin_unset
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.Unset"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "删除 plugin config key（幂等；重启生效）"
+    args:
+      - { name: plugin, required: true }
+      - { name: key, required: true }
+      - { name: layer, required: false }
+
+  "/plugin:show-config":
+    kind: plugin_show_config
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.ShowConfig"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "显示 plugin config（默认 effective = 合并后；可选 layer=global|user|workspace）"
+    args:
+      - { name: plugin, required: true }
+      - { name: layer, required: false }
+
+  "/plugin:list-config":
+    kind: plugin_list_config
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.ListConfig"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "显示所有 enabled plugins 的 effective config"
+    args: []
 
   "/cap:grant":
     kind: cap_grant
