@@ -208,6 +208,48 @@ defmodule Esr.Entity.SlashHandler do
     ref
   end
 
+  # ====================================================================
+  # Phase 4: plain-text routing via MentionParser
+  # ====================================================================
+
+  @doc """
+  Resolve routing for a non-slash plain-text message within a session.
+
+  Checks `text` for an `@<name>` mention that maps to a known agent in
+  `session_id`. If one is found, returns `{:mention, agent_name,
+  stripped_text}`. Otherwise returns `{:primary, primary_name}` using
+  `InstanceRegistry.primary/1`. Returns `{:error, :no_primary}` when
+  the session has no agents.
+
+  This function is stateless (pure ETS reads) and may be called from any
+  process — no GenServer cast needed.
+
+  ## Return values
+
+    * `{:mention, agent_name, stripped_text}` — route to named agent.
+    * `{:primary, primary_name}` — route to the session's primary agent.
+    * `{:error, :no_primary}` — no primary set (session empty or new).
+  """
+  @spec resolve_routing(String.t(), String.t()) ::
+          {:mention, String.t(), String.t()}
+          | {:primary, String.t()}
+          | {:error, :no_primary}
+  def resolve_routing(text, session_id)
+      when is_binary(text) and is_binary(session_id) do
+    agent_names = Esr.Entity.Agent.InstanceRegistry.names_for_session(session_id)
+
+    case Esr.Entity.Agent.MentionParser.parse(text, agent_names) do
+      {:mention, name, rest} ->
+        {:mention, name, rest}
+
+      {:plain, _} ->
+        case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+          {:ok, primary} -> {:primary, primary}
+          :not_found -> {:error, :no_primary}
+        end
+    end
+  end
+
   def handle_cast({:dispatch_command, command, reply_to, ref}, state) do
     target = Esr.Slash.ReplyTarget.normalize(reply_to)
     kind = command["kind"]
