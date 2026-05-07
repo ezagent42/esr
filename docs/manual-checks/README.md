@@ -44,6 +44,16 @@ the narrative differs.
 
 ## Index
 
+- [`2026-05-08-post-multi-instance-audit.md`](2026-05-08-post-multi-instance-audit.md)
+  / [`.zh_cn.md`](2026-05-08-post-multi-instance-audit.zh_cn.md)
+  — same 12 operator steps re-scored against `origin/dev` `a69fd6a`
+  (post Phase 6 colon-namespace, Phase 7 plugin config, HR-1..HR-4,
+  PR #248 `/session:*`, PR #261 multi-instance routing cleanup).
+  **Findings:** 9/12 fully closed (was 7/12); colon-namespace + plugin
+  config closed; one regression (Step 12 `/attach` URL deleted in
+  cutover); five new gaps surfaced by the multi-instance work
+  (`/session:list`, attach-by-name, TUI URL returner, multi-instance
+  helpers, `@mention` e2e harness).
 - [`2026-05-06-bootstrap-flow-audit.md`](2026-05-06-bootstrap-flow-audit.md)
   / [`.zh_cn.md`](2026-05-06-bootstrap-flow-audit.zh_cn.md)
   — first-time-operator 12-step bootstrap journey vs current shipped
