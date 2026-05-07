@@ -1,8 +1,24 @@
 defmodule Esr.Commands.Session.RemoveAgentTest do
   use ExUnit.Case, async: false
-  alias Esr.Commands.Session.{AddAgent, RemoveAgent, SetPrimary}
+  alias Esr.Commands.Session.{RemoveAgent, SetPrimary}
+  alias Esr.Entity.Agent.InstanceRegistry
 
   @sess "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
+
+  # M-2.8: seed agents via the legacy add_instance/2 (metadata-only) API
+  # since AddAgent.execute now goes through add_instance_and_spawn which
+  # requires a per-session AgentSupervisor not available in this unit
+  # test. The remove/set-primary control-plane logic does not depend on
+  # the spawned subtree existing.
+  defp seed_agent(sess, name) do
+    :ok =
+      InstanceRegistry.add_instance(%{
+        session_id: sess,
+        type: "cc",
+        name: name,
+        config: %{}
+      })
+  end
 
   setup do
     case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
@@ -25,8 +41,8 @@ defmodule Esr.Commands.Session.RemoveAgentTest do
     # Use a unique session to avoid state pollution from other tests.
     sess = "c3d4e5f6-a7b8-4c9d-0e1f-#{Integer.to_string(:rand.uniform(999_999_999_999)) |> String.pad_leading(12, "0")}"
 
-    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}})
-    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}})
+    seed_agent(sess, alice)
+    seed_agent(sess, bob)
     SetPrimary.execute(%{"args" => %{"session_id" => sess, "name" => bob}})
 
     assert {:ok, %{"action" => "removed"}} =
@@ -36,7 +52,7 @@ defmodule Esr.Commands.Session.RemoveAgentTest do
   test "error: cannot remove primary agent" do
     name = "primary-#{:rand.uniform(9999)}"
     sess = "d4e5f6a7-b8c9-4d0e-1f2a-#{Integer.to_string(:rand.uniform(999_999_999_999)) |> String.pad_leading(12, "0")}"
-    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => name, "config" => %{}}})
+    seed_agent(sess, name)
 
     assert {:error, %{"type" => "cannot_remove_primary"}} =
              RemoveAgent.execute(%{"args" => %{"session_id" => sess, "name" => name}})

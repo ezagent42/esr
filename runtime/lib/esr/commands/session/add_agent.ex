@@ -25,19 +25,23 @@ defmodule Esr.Commands.Session.AddAgent do
     config = Map.get(args, "config", %{})
 
     with :ok <- validate_agent_type(type) do
-      case InstanceRegistry.add_instance(%{
+      case InstanceRegistry.add_instance_and_spawn(%{
              session_id: sid,
              type: type,
              name: name,
              config: config
            }) do
-        :ok ->
+        {:ok, %{actor_ids: actor_ids}} ->
           {:ok,
            %{
              "action" => "added",
              "session_id" => sid,
              "type" => type,
-             "name" => name
+             "name" => name,
+             "actor_ids" => %{
+               "cc" => actor_ids.cc,
+               "pty" => actor_ids.pty
+             }
            }}
 
         {:error, {:duplicate_agent_name, n}} ->
@@ -46,6 +50,14 @@ defmodule Esr.Commands.Session.AddAgent do
              "type" => "duplicate_agent_name",
              "message" =>
                "agent name '#{n}' already exists in session '#{sid}' (pick a different name)"
+           }}
+
+        {:error, {:spawn_failed, reason}} ->
+          {:error,
+           %{
+             "type" => "spawn_failed",
+             "message" =>
+               "failed to spawn agent subtree for '#{name}' in session '#{sid}': #{inspect(reason)}"
            }}
       end
     else
