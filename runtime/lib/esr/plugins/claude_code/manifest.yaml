@@ -9,6 +9,7 @@
 
 name: claude_code
 version: 0.1.0
+hot_reloadable: true
 description: |
   Claude Code (CC) integration. CCProcess drives session lifecycle;
   CCProxy streams reply directives. Spawns a claude binary inside a
