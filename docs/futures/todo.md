@@ -29,6 +29,14 @@ PR-180 series (today) = **Phase 1**: Loader + Manifest + 3 stub manifests + inte
 | **Phase 3** — plugin physical migration | `docs/superpowers/specs/2026-05-05-plugin-physical-migration.md` | Move feishu + claude_code modules from core into `runtime/lib/esr/plugins/<name>/`. Decouple cc agent_def from feishu. | ✅ shipped — PRs #203 (drop fallback Sidecar), #204 (StatefulRegistry), #205 (feishu move), #206 (cc move), #207 (cc no longer mentions "feishu"), #209 (drop permissions_registry.json), #219 (PR-3.4 feishu startup hook), #220 (PR-3.5 cc_mcp HTTP transport). |
 | **Phase 4** — cleanup | (no formal spec — covered by per-PR field notes) | Stub manifest deletion (kept until Phase 3 done — they're now real plugins), legacy bash + websocat helpers, `Esr.Admin.*` namespace, `permissions_registry.json` JSON dump. | ✅ **mostly shipped** — PR-4.3 collapsed `Esr.Admin.{Supervisor,CommandQueue.*}` → `Esr.Slash.*` (#208); PR-4.4 dropped permissions_registry.json (#209); PR-22 deleted TmuxProcess + cc_tmux adapter (#163, #157). Stub manifests are now real plugin modules — no further deletion needed. |
 
+## Pending — e2e harness gaps (post-PR-248)
+
+| Tag | What | Notes |
+|---|---|---|
+| `e2e-14-routing` | Scenario 14: @mention routing via admin submit | session_new (admin-queue) creates a "pending" session with no Feishu binding. MentionParser + resolve_routing/2 only fires on real inbound Feishu messages. Needs mock_feishu → sidecar → runtime inbound path for session_new_surface-created sessions, OR a test-mode admin verb that injects raw inbound routing. |
+| `user-name-index-population` | User.NameIndex never populated | `Esr.Entity.User.NameIndex` ETS tables (`:esr_user_name_to_id`) are never written by `user_add` or the users.yaml file watcher. `User.Registry.handle_call({:load, ...})` only populates `:esr_users_by_name` + `:esr_users_by_feishu_id`. Fix: add `NameIndex.put/3` call inside `handle_call({:load_with_uuids, ...})` so session_share_surface can resolve usernames. |
+| `e2e-15-principal-isolation` | Scenario 15: true cross-user cap rejection | All admin-queue commands run with submitted_by=ou_admin (wildcard caps). True "bob denied without grant" test needs a per-invocation principal switch (e.g. `ESR_OPERATOR_PRINCIPAL_ID=bob_15 esr_cli ...`) or an unprivileged fixture principal in capabilities.yaml. |
+
 ## Pending — concrete next PRs
 
 | What | Tracked PR | Notes |
