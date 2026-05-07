@@ -324,13 +324,18 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   defp build_pty_args(session_id, name, actor_id, config) do
-    %{
+    base = %{
       session_name: name,
       dir: resolve_workspace_dir(session_id, config),
       session_id: session_id,
       name: name,
       actor_id: actor_id
     }
+
+    case Map.get(config, "start_cmd") || Map.get(config, :start_cmd) do
+      cmd when is_binary(cmd) and cmd != "" -> Map.put(base, :start_cmd, cmd)
+      _ -> base
+    end
   end
 
   defp resolve_child_pid(instance_sup_pid, child_module) do
