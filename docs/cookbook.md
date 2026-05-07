@@ -71,7 +71,7 @@ adapter, then bind each chat to its app via workspace config:
 ```bash
 esr adapter add feishu-dev  --type feishu --app-id cli_dev  --app-secret ...
 esr adapter add feishu-prod --type feishu --app-id cli_prod --app-secret ...
-esr workspace add dev-ws --cwd ~/dev --start-cmd scripts/esr-cc.sh \
+esr workspace add dev-ws --cwd ~/dev --start-cmd claude \
     --role dev --chat oc_dev:cli_dev:dm --chat oc_prod:cli_prod:group
 ```
 
