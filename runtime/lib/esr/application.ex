@@ -40,6 +40,13 @@ defmodule Esr.Application do
       # 2. Message bus — everything else may publish/subscribe.
       {Phoenix.PubSub, name: EsrWeb.PubSub},
 
+      # 3a. (M-1) IndexWatcher owns the ETS tables backing
+      # Esr.Entity.Registry.register_attrs/2 (Index 2: `{session_id, name}`,
+      # Index 3: `{session_id, role}`). Started BEFORE the Elixir.Registry
+      # below so that any peer's init/1 — which routinely registers in
+      # Index 1 and may also call register_attrs/2 — finds the tables ready.
+      Esr.Entity.Registry.IndexWatcher,
+
       # 3. Actor registry before any Entity.Server can register itself.
       {Registry, keys: :unique, name: Esr.Entity.Registry},
 

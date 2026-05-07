@@ -37,6 +37,12 @@ defmodule Esr.Entity.CCProcess do
   use GenServer
   require Logger
 
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below so callers can resolve this peer via
+  # `Esr.ActorQuery.list_by_role(sid, :cc_process)` without grepping
+  # for a string literal.
+  @role :cc_process
+
   @default_timeout 5_000
 
   # ------------------------------------------------------------------
@@ -102,6 +108,25 @@ defmodule Esr.Entity.CCProcess do
     # until the topology yaml + workspace mapping land.
     initial_reachable = build_initial_reachable_set(proxy_ctx)
 
+    name = Map.get(args, :name) || ("cc-" <> sid)
+
+    # M-1.5: register in Index 2 (`{sid, name}`) and Index 3
+    # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+    # `list_by_role/2` resolve this peer. Best-effort guard: unit tests
+    # that bypass the application supervisor (no IndexWatcher / no ETS
+    # tables) must keep working — the rest of CCProcess does not depend
+    # on the indexes being present (those callers arrive in M-2+).
+    _ =
+      try do
+        Esr.Entity.Registry.register_attrs("cc:" <> sid, %{
+          session_id: sid,
+          name: name,
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
     {:ok,
      %{
        session_id: sid,
@@ -112,7 +137,8 @@ defmodule Esr.Entity.CCProcess do
        handler_override: nil,
        pending_notifications: [],
        cc_mcp_ready: false,
-       reachable_set: initial_reachable
+       reachable_set: initial_reachable,
+       name: name
      }}
   end
 
@@ -180,6 +206,28 @@ defmodule Esr.Entity.CCProcess do
   def handle_call({:put_handler_override, fun}, _from, state) do
     {:reply, :ok, %{state | handler_override: fun}}
   end
+
+  # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+  # IndexWatcher monitor still cleans up if we crash before this hook
+  # runs, so this is purely an optimization that closes the stale-entry
+  # window between shutdown signal and DOWN delivery.
+  @impl GenServer
+  def terminate(_reason, %{session_id: sid} = state) when is_binary(sid) and sid != "" do
+    _ =
+      try do
+        Esr.Entity.Registry.deregister_attrs("cc:" <> sid, %{
+          session_id: sid,
+          name: Map.get(state, :name) || ("cc-" <> sid),
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   @impl GenServer
   def handle_info({:text, _} = msg, state),

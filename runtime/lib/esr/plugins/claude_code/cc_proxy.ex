@@ -25,6 +25,14 @@ defmodule Esr.Entity.CCProxy do
   use Esr.Entity.Proxy
   @required_cap "peer_proxy:cc/forward"
 
+  # M-1.5: compile-time role constant. CCProxy is stateless (no
+  # `init/1` / no GenServer state), so it does not call
+  # `register_attrs/2` itself — the constant is exposed here so callers
+  # that want to filter `Esr.ActorQuery.list_by_role/2` results, or
+  # that build per-role topology snapshots, can name this proxy
+  # symbolically without grepping for a string.
+  @role :cc_proxy
+
   @impl Esr.Entity.Proxy
   def forward(msg, %{cc_process_pid: target} = _ctx) when is_pid(target) do
     if Process.alive?(target) do

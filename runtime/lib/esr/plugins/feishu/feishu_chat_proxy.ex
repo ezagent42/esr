@@ -23,6 +23,12 @@ defmodule Esr.Entity.FeishuChatProxy do
   use GenServer
   require Logger
 
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below so callers (M-2+) can resolve this peer via
+  # `Esr.ActorQuery.list_by_role(sid, :feishu_chat_proxy)` without
+  # grepping for a string literal.
+  @role :feishu_chat_proxy
+
   @default_react_emoji "EYES"
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
@@ -81,6 +87,23 @@ defmodule Esr.Entity.FeishuChatProxy do
     # can route CC's MCP tool calls (reply / react / send_file) here via
     # `Registry.lookup(Esr.Entity.Registry, "thread:" <> session_id)`.
     _ = Registry.register(Esr.Entity.Registry, "thread:" <> session_id, nil)
+
+    # M-1.5: also register in Index 2 (`{sid, name}`) and Index 3
+    # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+    # `list_by_role/2` resolve this peer (M-2+ call sites).
+    name_for_index = Map.get(args, :name) || ("fcp-" <> session_id)
+    state = Map.put(state, :name, name_for_index)
+
+    _ =
+      try do
+        Esr.Entity.Registry.register_attrs("thread:" <> session_id, %{
+          session_id: session_id,
+          name: name_for_index,
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
 
     # PR-24 step 2: PTY ↔ Feishu boot bridge. Before cc_mcp joins
     # `cli:channel/<sid>`, claude's TUI is the only window into what
@@ -367,6 +390,28 @@ defmodule Esr.Entity.FeishuChatProxy do
   end
 
   def handle_info({:pty_attach, _other}, state), do: {:noreply, state}
+
+  # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+  # IndexWatcher monitor still cleans up if we crash before this hook
+  # runs, so this is purely an optimization that closes the stale-entry
+  # window between shutdown signal and DOWN delivery.
+  @impl GenServer
+  def terminate(_reason, %{session_id: sid} = state) when is_binary(sid) and sid != "" do
+    _ =
+      try do
+        Esr.Entity.Registry.deregister_attrs("thread:" <> sid, %{
+          session_id: sid,
+          name: Map.get(state, :name) || ("fcp-" <> sid),
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   # Collapse runs of 3+ blank lines down to a single blank line so a
   # screen-clear + repaint doesn't fire 40 newlines into the chat.
