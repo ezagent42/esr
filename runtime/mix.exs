@@ -71,6 +71,7 @@ defmodule Esr.MixProject do
       # Migration history: docs/notes/erlexec-migration.md.
       {:erlexec, "~> 2.2"},
       {:elixir_uuid, "~> 1.2", hex: :uuid_utils},
+      {:ex_json_schema, "~> 0.11", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
