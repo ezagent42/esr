@@ -1826,6 +1826,9 @@ cd /Users/h2oslabs/Workspace/esr && gh pr merge --admin --squash --delete-branch
 - [x] **§9 Risk 3** (stale snapshot after restart): Addressed by design — `create_table + init` in HR-1.4 gives full-diff on first reload after restart (intentional per spec)
 - [x] **§9 Risk 4** (empty changed_keys force reload): `compute_changed_keys` returns `[]` when no diff; callback still fires; test in HR-2.1
 - [x] **§10 Test Plan**: all unit + integration test cases from §10 are covered in HR-1.2, HR-1.3, HR-2.1, HR-3.1, HR-3.2
+- [x] **§10 E2E (rev-2 MANDATORY)**: scenario 17 bash + Makefile covered in HR-4.1, HR-4.2
+- [x] **§9.5 mock proxy strategy**: Plug-based inline server documented and justified in HR-4.1
+- [x] **§9.5 assertions**: 5-step assertion table (a/b/c/d/e) covered in HR-4.1 scenario body
 
 ### No placeholders scan
 
@@ -1843,5 +1846,280 @@ All code blocks are complete and concrete. No "TBD", "TODO", or "implement later
 - HR-1 tasks depend on nothing outside the existing codebase.
 - HR-2 tasks depend on: `Esr.Plugin.ConfigSnapshot` (HR-1.3), `Manifest.hot_reloadable` field (HR-1.2), `Loader.default_root/0` (HR-1.4 adds it).
 - HR-3 tasks depend on: `Esr.Plugin.Behaviour` (HR-1.1), `/plugin:reload` slash (HR-2.2).
+- HR-4 tasks depend on: HR-3 fully merged (scenario exercises the full `/plugin:reload` path end-to-end, including `claude_code` `on_config_change/1` and yaml persistence).
+- **Total LOC updated**: ~300 LOC + ~300 LOC tests (HR-1/2/3) + ~150 LOC e2e (HR-4) = **~750 LOC total**. Previous rev-1 total was ~600 LOC (including tests).
 
 No cycles.
+
+---
+
+## Sub-phase HR-4: e2e Validation — HTTP Proxy Hot-Reload
+
+**Prerequisite:** HR-1, HR-2, and HR-3 all merged. This phase ships as a standalone PR against `dev`.
+
+**Spec reference:** `docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md` §9.5
+
+**Approx scope:** ~150 LOC bash (scenario script + Makefile entry) across 3 tasks.
+
+---
+
+### Task HR-4.1: Mock HTTP proxy helper (inlined in scenario)
+
+**Files:**
+- Create: `tests/e2e/scenarios/17_plugin_config_hot_reload.sh` (mock proxy is inlined, not a separate helper file)
+
+The mock proxy is a minimal Plug/Cowboy server spawned inline via `mix run --no-halt --eval` in the scenario script. It records all inbound requests in an ETS table and exposes `GET /request_count` → `{"count": N}`.
+
+No separate `_helpers/*.exs` file is needed. Existing `tests/e2e/scenarios/` only uses `_common_selftest.sh` and `_wait_url.py` as helpers — there is no `.exs` helper pattern to follow, and the proxy logic is trivial enough to inline.
+
+**Mock proxy LOC estimate**: ~25 LOC Elixir (inside `--eval` string in the bash script).
+
+- [ ] **Step 1: Write the failing test (bash syntax check)**
+
+```bash
+bash -n tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+```
+
+Expected at this point: `17_plugin_config_hot_reload.sh: No such file or directory` (file doesn't exist yet).
+
+- [ ] **Step 2: Implement `tests/e2e/scenarios/17_plugin_config_hot_reload.sh`**
+
+Create the file following the spec §9.5 test flow. Key structure:
+
+```bash
+#!/usr/bin/env bash
+# e2e scenario 17 — claude_code http_proxy hot-reload end-to-end.
+#
+# Spec: docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md §9.5
+# Phase: HR-4 (hot-reload e2e validation).
+#
+# WHAT THIS TEST PROVES:
+#   1. Before /plugin:reload: yaml-set alone does NOT change plugin behavior
+#   2. After /plugin:reload: on_config_change fires; effective config reflects new proxy
+#   3. changed_keys includes "http_proxy" in the reload response
+#
+# INVARIANT GATE:
+#   bash tests/e2e/scenarios/17_plugin_config_hot_reload.sh 2>&1 | tail -3
+#   → "PASS: 17_plugin_config_hot_reload"
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+# --- pick a free port for the mock proxy ---
+MOCK_PROXY_PORT=$(python3 -c \
+  "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+MOCK_PROXY_PID_FILE="/tmp/mock-proxy-${ESR_E2E_RUN_ID}.pid"
+MOCK_PROXY_READY_FILE="/tmp/mock-proxy-ready-${ESR_E2E_RUN_ID}"
+
+# --- inline Plug mock proxy ---
+PLUG_EVAL=$(cat <<'ELIXIR'
+defmodule MockProxy do
+  use Plug.Router
+  plug :match
+  plug :dispatch
+
+  get "/request_count" do
+    count = case :ets.info(:mock_proxy_requests, :size) do
+      :undefined -> 0
+      n -> n
+    end
+    Plug.Conn.send_resp(conn, 200, Jason.encode!(%{count: count}))
+  end
+
+  match _ do
+    :ets.insert(:mock_proxy_requests, {System.monotonic_time(), conn.method, conn.request_path})
+    Plug.Conn.send_resp(conn, 200, "")
+  end
+end
+
+:ets.new(:mock_proxy_requests, [:named_table, :public, :bag])
+port = String.to_integer(System.get_env("MOCK_PROXY_PORT", "8299"))
+{:ok, _} = Plug.Cowboy.http(MockProxy, [], port: port)
+IO.puts("MOCK_PROXY_READY port=#{port}")
+Process.sleep(:infinity)
+ELIXIR
+)
+
+# spawn mock proxy
+(cd "${_E2E_REPO_ROOT}/runtime" && \
+  MOCK_PROXY_PORT="${MOCK_PROXY_PORT}" \
+  mix run --no-halt --eval "${PLUG_EVAL}" 2>/dev/null &
+  echo $! > "${MOCK_PROXY_PID_FILE}")
+
+# wait for proxy to be ready (up to 10s)
+for _ in $(seq 1 50); do
+  if curl -sSf "http://127.0.0.1:${MOCK_PROXY_PORT}/request_count" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+curl -sSf "http://127.0.0.1:${MOCK_PROXY_PORT}/request_count" >/dev/null \
+  || { echo "FAIL: mock proxy did not start on port ${MOCK_PROXY_PORT}"; exit 1; }
+echo "17: mock proxy ready on port ${MOCK_PROXY_PORT}"
+
+# --- setup: start esrd with http_proxy="" ---
+seed_plugin_config
+seed_capabilities
+start_esrd
+
+# --- step a: proxy count = 0 before any proxy config set ---
+COUNT_A=$(curl -sS "http://127.0.0.1:${MOCK_PROXY_PORT}/request_count" | jq '.count')
+assert_eq "${COUNT_A}" "0" "17: step a — proxy count 0 before proxy config"
+echo "17: step a passed — proxy count 0 before any config"
+
+# --- step b: /plugin:set http_proxy ---
+SET_RESULT=$(esr_cli admin submit plugin_set \
+  --arg plugin=claude_code \
+  --arg key=http_proxy \
+  --arg value="http://127.0.0.1:${MOCK_PROXY_PORT}" \
+  --arg layer=global \
+  --wait --timeout 15)
+echo "plugin_set result: ${SET_RESULT}"
+assert_contains "${SET_RESULT}" "ok: true" "17: step b — plugin_set http_proxy ok"
+echo "17: step b passed — http_proxy written to yaml"
+
+# --- step c: proxy count still 0 (plugin not reloaded) ---
+COUNT_C=$(curl -sS "http://127.0.0.1:${MOCK_PROXY_PORT}/request_count" | jq '.count')
+assert_eq "${COUNT_C}" "0" "17: step c — proxy count still 0; plugin not reloaded"
+echo "17: step c passed — yaml-set alone does not change plugin behavior"
+
+# --- step d: /plugin:reload claude_code ---
+RELOAD_RESULT=$(esr_cli admin submit plugin_reload \
+  --arg plugin=claude_code \
+  --wait --timeout 15)
+echo "plugin_reload result: ${RELOAD_RESULT}"
+assert_contains "${RELOAD_RESULT}" '"reloaded":true'  "17: step d — reloaded=true"
+assert_contains "${RELOAD_RESULT}" '"http_proxy"'     "17: step d — http_proxy in changed_keys"
+echo "17: step d passed — reload fired; reloaded=true; http_proxy in changed_keys"
+
+# --- step e: effective config now reflects new proxy ---
+SHOW_RESULT=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code \
+  --arg layer=effective \
+  --wait --timeout 15)
+echo "plugin_show_config: ${SHOW_RESULT}"
+assert_contains "${SHOW_RESULT}" "127.0.0.1:${MOCK_PROXY_PORT}" \
+  "17: step e — effective config shows new proxy after reload"
+echo "17: step e passed — effective config reflects new proxy"
+
+# --- cleanup ---
+[[ -f "${MOCK_PROXY_PID_FILE}" ]] && kill "$(cat "${MOCK_PROXY_PID_FILE}")" 2>/dev/null || true
+rm -f "${MOCK_PROXY_PID_FILE}" "${MOCK_PROXY_READY_FILE}" 2>/dev/null || true
+
+echo "PASS: 17_plugin_config_hot_reload"
+```
+
+- [ ] **Step 3: Bash syntax check**
+
+```bash
+bash -n tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+```
+
+Expected: no output (clean parse).
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr && git add tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+git commit -m "feat(hr-4): e2e scenario 17 — http_proxy hot-reload end-to-end"
+```
+
+---
+
+### Task HR-4.2: Makefile — add `e2e-16` and `e2e-17` targets
+
+**Files:**
+- Modify: `Makefile`
+
+Add `e2e-16` (scenario 16 already exists but has no target) and `e2e-17` to the Makefile.
+
+- [ ] **Step 1: Extend `.PHONY` and add targets**
+
+In `Makefile`:
+
+**1a.** Replace the `.PHONY` line:
+
+```makefile
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-escript e2e-cli
+```
+
+With:
+
+```makefile
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-14 e2e-15 e2e-16 e2e-17 e2e-escript e2e-cli
+```
+
+**1b.** After the `e2e-11` target, add:
+
+```makefile
+e2e-14:
+	$(E2E_RUN) tests/e2e/scenarios/14_session_multiagent.sh
+
+e2e-15:
+	$(E2E_RUN) tests/e2e/scenarios/15_session_share.sh
+
+e2e-16:
+	$(E2E_RUN) tests/e2e/scenarios/16_plugin_config_layers.sh
+
+e2e-17:
+	$(E2E_RUN) tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+```
+
+**Note**: `e2e-14`, `e2e-15`, `e2e-16` are added for completeness (their scenario files exist but had no make targets). They are NOT added to the default `e2e:` aggregate — only `e2e-17` is the mandatory new gate.
+
+- [ ] **Step 2: Verify Makefile syntax**
+
+```bash
+make -n e2e-17 2>&1
+```
+
+Expected: prints the `perl -e 'alarm ...' bash tests/e2e/scenarios/17_plugin_config_hot_reload.sh` line without errors.
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr && git add Makefile
+git commit -m "feat(hr-4): add e2e-16/e2e-17 Makefile targets for plugin config scenarios"
+```
+
+---
+
+### Task HR-4.3: PR + admin-merge for HR-4
+
+- [ ] **Step 1: Push and create PR**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr && git push -u origin feat/hr-4-e2e-validation
+gh pr create --base dev --head feat/hr-4-e2e-validation \
+  --title "feat(hr-4): e2e 17 — http_proxy hot-reload validation" \
+  --body "$(cat <<'EOF'
+Hot-reload sub-phase HR-4 of spec/plugin-config-hot-reload.
+
+Adds e2e scenario 17 proving the full http_proxy hot-reload round-trip:
+
+  a. No proxy set → mock proxy sees 0 requests
+  b. /plugin:set http_proxy=http://localhost:<port> → yaml written
+  c. Still 0 requests (plugin not reloaded yet)
+  d. /plugin:reload claude_code → reloaded=true, changed_keys=["http_proxy"]
+  e. plugin_show_config effective → returns new proxy URL
+
+Mock proxy: Plug/Cowboy server inlined in the scenario script,
+listening on a random free port, recording requests in ETS.
+
+Depends on: feat/hr-3-cc-feishu-opt-in (all prior HR phases merged).
+
+Spec: docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md §9.5.
+Plan: docs/superpowers/plans/2026-05-07-plugin-config-hot-reload-plan.md HR-4.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+- [ ] **Step 2: Admin-merge**
+
+```bash
+cd /Users/h2oslabs/Workspace/esr && gh pr merge --admin --squash --delete-branch
+```

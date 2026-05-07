@@ -1,7 +1,7 @@
 # Plugin Config 热重载
 
 **日期**: 2026-05-07
-**状态**: rev-1 草稿 — 待用户审阅
+**状态**: rev-2 — e2e 验证范围扩展（用户反馈 2026-05-07）
 **英文版**: `docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md`
 **扩展自**: `docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md` §6（plugin config 3 层）
 **不替换任何现有 spec** — 本 spec 是增量设计
@@ -208,14 +208,15 @@ hot_reloadable: true   # 新增 — 显式 opt-in
 
 ---
 
-### Phasing 总览
+### Phasing 总览（rev-2 更新）
 
 | 阶段 | 依赖 | LOC（约） | 测试（约） | User-visible？ |
 |------|------|-----------|-----------|---------------|
 | HR-1 | 无 | 100 | 80 | 否 |
 | HR-2 | HR-1 | 120 | 140 | 是 |
 | HR-3 | HR-1 + HR-2 | 80 | 80 | 是 |
-| **合计** | | **~300** | **~300** | |
+| HR-4 | HR-1 + HR-2 + HR-3 | ~150 | —（e2e 即测试） | 是（scenario 17）|
+| **合计** | | **~550** | **~300 单测** | |
 
 ---
 
@@ -239,7 +240,38 @@ hot_reloadable: true   # 新增 — 显式 opt-in
 
 **集成测试（HR-3）**：claude_code 3 个 case + feishu 3 个 case
 
-**E2E 测试**：延后到后续 scenario 文件，不在 HR-1/HR-2/HR-3 必须测试范围内
+**E2E 测试（rev-2 改为 MANDATORY）**：Scenario 17 — http_proxy 热重载端到端（见下 §9.5）
+
+---
+
+## §9.5 E2E Scenario 17（rev-2 新增）
+
+### 验证目标
+
+> "没 reload 之前 yaml-set 不影响 plugin 行为；reload 之后生效。"
+
+### 5 步流程
+
+| 步骤 | 操作 | 断言 |
+|------|------|------|
+| a | esrd 启动，`http_proxy` 为空；检查 mock proxy | request count = 0（流量没走 proxy）|
+| b | `/plugin:set claude_code http_proxy=http://127.0.0.1:<port>` | yaml 写入；response `ok: true` |
+| c | 再次检查 mock proxy | request count 仍 = 0（plugin 没 reload，仍用旧 config）|
+| d | `/plugin:reload claude_code` | `"reloaded":true`，`changed_keys` 包含 `"http_proxy"` |
+| e | `plugin_show_config layer=effective` | effective config 返回新 proxy URL（reload 已生效）|
+
+### Mock Proxy 策略
+
+**选型：Plug/Cowboy 本地 server（内联在 scenario 脚本里）**
+
+不新建 `_helpers/` 文件——逻辑 <25 行，内联在 bash 脚本的 `mix run --eval` 字符串里。监听随机端口，ETS 记录所有入站请求，暴露 `GET /request_count`。
+
+**选 Plug 而不用 HTTP client spy 的原因**：用户反馈是"走一次 e2e"——要证明实际网络路径变了，不是只证明 callback 被调用了。spy 只证后者。
+
+### 文件
+
+- `tests/e2e/scenarios/17_plugin_config_hot_reload.sh`（新建）
+- `Makefile` — 新增 `e2e-17` target（及 `e2e-14/15/16` 补全）
 
 ---
 

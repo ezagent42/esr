@@ -8,9 +8,9 @@
 
 **技术栈：** Elixir/OTP；ETS backed config snapshot；YAML manifest 扩展；现有 slash routing 机制。
 
-**Spec：** `docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md`（rev-1，用户已于 2026-05-07 确认）。
+**Spec：** `docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md`（rev-2，用户 2026-05-07 Feishu 反馈后扩展 e2e 范围）。
 
-**执行顺序：** HR-1 → HR-2 → HR-3。严格依赖链：HR-2 需要 HR-1 的 `Behaviour` 和 `ConfigSnapshot`；HR-3 需要 HR-2 的 `/plugin:reload`。
+**执行顺序：** HR-1 → HR-2 → HR-3 → HR-4。严格依赖链：HR-2 需要 HR-1 的 `Behaviour` 和 `ConfigSnapshot`；HR-3 需要 HR-2 的 `/plugin:reload`；HR-4 需要 HR-3 全部合并（scenario 走完整 reload 路径）。
 
 ---
 
@@ -363,6 +363,74 @@ Expected：全部通过，无新失败。
 git push -u origin feat/hr-3-cc-feishu-opt-in
 gh pr create --base dev --head feat/hr-3-cc-feishu-opt-in \
   --title "feat(hr-3): claude_code + feishu hot-reload opt-in"
+gh pr merge --admin --squash --delete-branch
+```
+
+---
+
+---
+
+## Sub-phase HR-4: e2e 验证 — HTTP Proxy 热重载（rev-2 新增）
+
+**前提：** HR-1、HR-2、HR-3 全部合并。作为独立 PR 发给 `dev`。
+
+**Spec 引用：** `docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md` §9.5
+
+**估计规模：** ~150 LOC bash（scenario 脚本 + Makefile 条目），3 个 task。
+
+---
+
+### Task HR-4.1: e2e scenario 17 脚本
+
+**文件：**
+- 新建：`tests/e2e/scenarios/17_plugin_config_hot_reload.sh`
+
+Mock proxy 内联在 scenario 脚本中（`mix run --eval` 里的 Plug/Cowboy server），不新建 `_helpers/` 文件。
+
+**5 步断言：**
+
+| 步骤 | 操作 | 断言 |
+|------|------|------|
+| a | esrd 起来，`http_proxy=""` | mock proxy count = 0 |
+| b | `/plugin:set claude_code http_proxy=http://127.0.0.1:<port>` | `ok: true` |
+| c | 再查 mock proxy | count 仍 = 0（未 reload） |
+| d | `/plugin:reload claude_code` | `reloaded=true`，`changed_keys` 含 `"http_proxy"` |
+| e | `plugin_show_config layer=effective` | 返回新 proxy URL |
+
+- [ ] **Step 1: bash -n 语法检查（先预期失败）**
+- [ ] **Step 2: 按 spec §9.5 实现脚本**
+- [ ] **Step 3: bash -n 通过**
+- [ ] **Step 4: commit**
+
+---
+
+### Task HR-4.2: Makefile 新增 `e2e-17` target
+
+**文件：**
+- 修改：`Makefile`
+
+在 `.PHONY` 加入 `e2e-14 e2e-15 e2e-16 e2e-17`，在 `e2e-11:` 后添加：
+
+```makefile
+e2e-16:
+	$(E2E_RUN) tests/e2e/scenarios/16_plugin_config_layers.sh
+
+e2e-17:
+	$(E2E_RUN) tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+```
+
+- [ ] **Step 1: 编辑 Makefile**
+- [ ] **Step 2: `make -n e2e-17` 验证**
+- [ ] **Step 3: commit**
+
+---
+
+### Task HR-4.3: PR + admin-merge
+
+```bash
+git push -u origin feat/hr-4-e2e-validation
+gh pr create --base dev --head feat/hr-4-e2e-validation \
+  --title "feat(hr-4): e2e 17 — http_proxy hot-reload validation"
 gh pr merge --admin --squash --delete-branch
 ```
 
