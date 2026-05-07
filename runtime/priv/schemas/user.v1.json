@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esr.local/schema/user.v1.json",
+  "title": "ESR user.json (v1)",
+  "type": "object",
+  "required": ["schema_version", "id", "username"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "username": { "type": "string", "minLength": 1 },
+    "display_name": { "type": "string" },
+    "created_at": { "type": "string" }
+  }
+}

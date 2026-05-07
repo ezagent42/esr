@@ -21,6 +21,7 @@ defmodule Esr.Entity.User.Registry do
 
   @by_name :esr_users_by_name
   @by_feishu_id :esr_users_by_feishu_id
+  @by_uuid :esr_users_by_uuid
 
   defmodule User do
     @moduledoc """
@@ -40,6 +41,38 @@ defmodule Esr.Entity.User.Registry do
   @spec load_snapshot(%{String.t() => User.t()}) :: :ok
   def load_snapshot(snapshot) when is_map(snapshot) do
     GenServer.call(__MODULE__, {:load, snapshot})
+  end
+
+  @doc """
+  Replace the full snapshot atomically, also populating the UUID-keyed index.
+
+  `uuids` is a `%{username => uuid}` map. Usernames present in `snapshot` but
+  absent from `uuids` are loaded into the name/feishu tables only (no UUID
+  row is written for them).
+  """
+  @spec load_snapshot_with_uuids(%{String.t() => User.t()}, %{String.t() => String.t()}) :: :ok
+  def load_snapshot_with_uuids(snapshot, uuids)
+      when is_map(snapshot) and is_map(uuids) do
+    GenServer.call(__MODULE__, {:load_with_uuids, snapshot, uuids})
+  end
+
+  @doc "Fetch a single user record by UUID."
+  @spec get_by_id(String.t()) :: {:ok, User.t()} | :not_found
+  def get_by_id(uuid) when is_binary(uuid) do
+    case :ets.lookup(@by_uuid, uuid) do
+      [{^uuid, user}] -> {:ok, user}
+      [] -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc "List all users as `[{uuid, %User{}}]`. Order is ETS-internal (not sorted)."
+  @spec list_all() :: [{String.t(), User.t()}]
+  def list_all do
+    :ets.tab2list(@by_uuid)
+  rescue
+    ArgumentError -> []
   end
 
   @doc """
@@ -82,6 +115,7 @@ defmodule Esr.Entity.User.Registry do
   def init(:ok) do
     :ets.new(@by_name, [:named_table, :set, read_concurrency: true])
     :ets.new(@by_feishu_id, [:named_table, :set, read_concurrency: true])
+    :ets.new(@by_uuid, [:named_table, :set, read_concurrency: true])
     {:ok, %{}}
   end
 
@@ -93,6 +127,25 @@ defmodule Esr.Entity.User.Registry do
     Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
       :ets.insert(@by_name, {username, user})
       Enum.each(ids, fn id -> :ets.insert(@by_feishu_id, {id, username}) end)
+    end)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:load_with_uuids, snapshot, uuids}, _from, state) do
+    :ets.delete_all_objects(@by_name)
+    :ets.delete_all_objects(@by_feishu_id)
+    :ets.delete_all_objects(@by_uuid)
+
+    Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
+      :ets.insert(@by_name, {username, user})
+      Enum.each(ids, fn id -> :ets.insert(@by_feishu_id, {id, username}) end)
+
+      case Map.get(uuids, username) do
+        nil -> :ok
+        uuid -> :ets.insert(@by_uuid, {uuid, user})
+      end
     end)
 
     {:reply, :ok, state}

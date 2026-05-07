@@ -54,4 +54,30 @@ defmodule Esr.Paths do
 
   @doc "JSON Schema file shipped in priv."
   def workspace_schema_v1, do: Application.app_dir(:esr, "priv/schemas/workspace.v1.json")
+
+  @doc "Top-level dir for user-default workspaces. Per-instance."
+  def users_dir, do: Path.join(runtime_home(), "users")
+
+  @doc "Per-user dir. Keyed by user UUID (not username)."
+  def user_dir(user_uuid) when is_binary(user_uuid),
+    do: Path.join(users_dir(), user_uuid)
+
+  @doc "Path to user.json for the given user UUID."
+  def user_json(user_uuid) when is_binary(user_uuid),
+    do: Path.join(user_dir(user_uuid), "user.json")
+
+  @doc "Path to workspace.json for the user-default workspace."
+  def user_workspace_json(user_uuid) when is_binary(user_uuid),
+    do: Path.join([user_dir(user_uuid), ".esr", "workspace.json"])
+
+  @doc "Path to user-layer plugins.yaml."
+  def user_plugins_yaml(user_uuid) when is_binary(user_uuid),
+    do: Path.join([user_dir(user_uuid), ".esr", "plugins.yaml"])
+
+  @doc "Path to workspace-layer plugins.yaml inside a workspace root dir."
+  def workspace_plugins_yaml(workspace_root) when is_binary(workspace_root),
+    do: Path.join([workspace_root, ".esr", "plugins.yaml"])
+
+  @doc "Path to user.v1.json schema shipped in priv."
+  def user_schema_v1, do: Application.app_dir(:esr, "priv/schemas/user.v1.json")
 end

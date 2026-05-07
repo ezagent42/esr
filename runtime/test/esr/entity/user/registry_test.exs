@@ -82,4 +82,38 @@ defmodule Esr.Entity.User.RegistryTest do
     # The second insert wins on the by_feishu_id table.
     assert {:ok, _username} = Registry.lookup_by_feishu_id("ou_AAA")
   end
+
+  # Phase 1b.4 additions
+
+  describe "UUID-keyed API" do
+    setup do
+      snapshot = %{
+        "linyilun" => %Esr.Entity.User.Registry.User{username: "linyilun", feishu_ids: ["ou_aaa"]},
+        "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: []}
+      }
+      uuids = %{"linyilun" => "uuid-lyl-001", "alice" => "uuid-alice-002"}
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(snapshot, uuids)
+      :ok
+    end
+
+    test "get_by_id returns the user struct" do
+      assert {:ok, user} = Esr.Entity.User.Registry.get_by_id("uuid-lyl-001")
+      assert user.username == "linyilun"
+    end
+
+    test "get_by_id returns :not_found for unknown uuid" do
+      assert :not_found = Esr.Entity.User.Registry.get_by_id("00000000-0000-4000-8000-000000000000")
+    end
+
+    test "list_all returns all users" do
+      all = Esr.Entity.User.Registry.list_all()
+      usernames = Enum.map(all, fn {_uuid, u} -> u.username end) |> Enum.sort()
+      assert usernames == ["alice", "linyilun"]
+    end
+
+    test "existing lookup_by_name still works after UUID load" do
+      assert {:ok, user} = Esr.Entity.User.Registry.get("linyilun")
+      assert user.username == "linyilun"
+    end
+  end
 end
