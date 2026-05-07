@@ -377,15 +377,9 @@ defmodule Esr.Session.AgentSpawner do
     %{principal_id: get_param(params, :principal_id)}
   end
 
-  # PR-E (2026-04-27 actor-topology-routing): CCProcess needs
-  # `workspace_name`, `chat_id`, `app_id`, and `channel_adapter` in
-  # `proxy_ctx` so its `init/1` can call `Esr.Topology.initial_seed/3`
-  # to seed the BGP `reachable_set` from the yaml-declared neighbours.
-  # Pre-PR-E the CCProcess fell through to the catch-all `build_ctx/2`
-  # which returned `%{channel_adapter: family}` — the missing
-  # workspace_name made `build_initial_reachable_set/1` fall back to
-  # an empty MapSet, so the `<channel reachable=...>` attribute never
-  # carried neighbour URIs.
+  # CCProcess needs `workspace_name`, `chat_id`, `app_id`, and
+  # `channel_adapter` in `proxy_ctx` so its `build_channel_notification`
+  # can populate the `<channel>` envelope attributes downstream.
   defp build_ctx(%{"impl" => "Esr.Entity.CCProcess"}, params) do
     %{
       workspace_name: get_param(params, :workspace_name),
