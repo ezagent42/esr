@@ -95,4 +95,22 @@ defmodule Esr.PathsTest do
     assert Esr.Paths.workspace_plugins_yaml("/tmp/myrepo") ==
              "/tmp/myrepo/.esr/plugins.yaml"
   end
+
+  # Phase 1.5 additions
+
+  test "session_json/1 builds correct path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.session_json(uuid) ==
+             "/tmp/pth-test/default/sessions/#{uuid}/session.json"
+  end
+
+  test "session_workspace_dir/1 builds .esr dir path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.session_workspace_dir(uuid) ==
+             "/tmp/pth-test/default/sessions/#{uuid}/.esr"
+  end
+
+  test "sessions_dir/0 already exists (verify it's consistent)" do
+    assert Esr.Paths.sessions_dir() == "/tmp/pth-test/default/sessions"
+  end
 end

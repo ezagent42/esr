@@ -80,4 +80,15 @@ defmodule Esr.Paths do
 
   @doc "Path to user.v1.json schema shipped in priv."
   def user_schema_v1, do: Application.app_dir(:esr, "priv/schemas/user.v1.json")
+
+  @doc "Path to session.json inside a session state dir."
+  def session_json(uuid) when is_binary(uuid),
+    do: Path.join(session_dir(uuid), "session.json")
+
+  @doc "Path to .esr/ config overlay dir inside a session state dir."
+  def session_workspace_dir(uuid) when is_binary(uuid),
+    do: Path.join(session_dir(uuid), ".esr")
+
+  @doc "Path to session.v1.json schema shipped in priv."
+  def session_schema_v1, do: Application.app_dir(:esr, "priv/schemas/session.v1.json")
 end
