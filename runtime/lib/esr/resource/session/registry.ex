@@ -262,18 +262,7 @@ defmodule Esr.Resource.Session.Registry do
     end
   end
 
-  defp generate_uuid do
-    if Code.ensure_loaded?(Uniq.UUID) do
-      Uniq.UUID.uuid4()
-    else
-      <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
-      c_val = Bitwise.bor(Bitwise.band(c, 0x0FFF), 0x4000)
-      d_val = Bitwise.bor(Bitwise.band(d, 0x3FFF), 0x8000)
-
-      :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [a, b, c_val, d_val, e])
-      |> IO.iodata_to_binary()
-    end
-  end
+  defp generate_uuid, do: UUID.uuid4()
 
   defp scan_sessions_dir do
     base = Paths.sessions_dir()
