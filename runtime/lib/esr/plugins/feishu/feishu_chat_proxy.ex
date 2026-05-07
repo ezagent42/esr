@@ -190,12 +190,11 @@ defmodule Esr.Entity.FeishuChatProxy do
       # notification envelope cc_mcp ships into claude as a <channel>
       # tag. T3 will require claude to echo this back on `reply`.
       app_id: args["app_id"] || "",
-      # PR-C C3 (2026-04-27 actor-topology-routing §5.1 path (a)): pass
-      # the inbound `source` URI and `principal_id` through to
-      # cc_process so its BGP-style reachable_set learning can pick
-      # them up without modifying the envelope schema. Both fields
-      # are nil-safe — pre-PR-C envelopes that didn't carry them still
-      # produce valid meta maps.
+      # Pass the inbound `source` URI + `principal_id` through to
+      # cc_process. Both fields are nil-safe — envelopes that don't
+      # carry them still produce valid meta maps. (M-3 deleted the
+      # downstream BGP-style learning that originally consumed them;
+      # the fields are kept for the channel-meta envelope surface.)
       source: envelope["source"],
       principal_id: envelope["principal_id"] || args["principal_id"]
     }

@@ -246,8 +246,7 @@ defmodule EsrWeb.McpController do
         "runtime_mode" => payload["runtime_mode"] || "discussion",
         "source" => payload["source"] || "feishu",
         "user_id" => payload["user_id"],
-        "workspace" => payload["workspace"],
-        "reachable" => payload["reachable"]
+        "workspace" => payload["workspace"]
       }
       |> Enum.reject(fn {_k, v} -> is_nil(v) or v == "" end)
       |> Enum.into(%{}, fn {k, v} -> {k, to_string(v)} end)
