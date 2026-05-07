@@ -289,9 +289,55 @@ slashes:
     args:
       - { name: name, required: true }
 
-  # /session:new, /session:attach, /session:detach, /session:end, /session:list,
-  # /session:bind-workspace, /session:share, /session:info — deferred to follow-up
-  # phase (command modules not yet implemented; will land as Esr.Commands.Session.*)
+  "/session:new":
+    kind: session_new_surface
+    permission: "session:default/create"
+    command_module: "Esr.Commands.Session.New"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "起一个新 session（自动 transient workspace）；name=<X> [agent=cc]"
+    args:
+      - { name: name, required: true }
+      - { name: agent, required: false, default: "cc" }
+
+  "/session:attach":
+    kind: session_attach_surface
+    permission: "session.attach"
+    command_module: "Esr.Commands.Session.Attach"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "把已有 session 加入当前 chat；UUID-only（用 /session:list 查 UUID）"
+    args:
+      - { name: session, required: true }
+
+  "/session:detach":
+    kind: session_detach_surface
+    permission: null
+    command_module: "Esr.Commands.Session.Detach"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "离开当前 session（session 保持运行；可省略 session= 默认 detach 当前）"
+    args:
+      - { name: session, required: false }
+
+  "/session:share":
+    kind: session_share_surface
+    permission: "cap.manage"
+    command_module: "Esr.Commands.Session.Share"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "把 session 访问权授给其他用户；等价于 /cap:grant session:<uuid>/<perm>"
+    args:
+      - { name: session, required: true }
+      - { name: user, required: true }
+      - { name: perm, required: false, default: "attach" }
+
+  # /session:end, /session:list, /session:bind-workspace, /session:info — deferred
+  # (command modules not yet implemented; will land as Esr.Commands.Session.*)
 
   "/agent:list":
     kind: agent_list
