@@ -3,29 +3,37 @@
 #
 # Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §9 Scenario 14.
 # Phase: 9 (Phase 9.2 of metamodel-aligned ESR).
+# Status: partially complete (post-PR-248).
 #
-# CURRENT SCOPE (shell of full design):
-#   Steps 1-5 are fully exercised: session create, agent add×2, primary
-#   auto-assignment (first added = primary), and set-primary.
-#
-#   Steps 6-9 (Feishu @mention routing: @alice / @bob / plain→primary) are
-#   DEFERRED. They require a chat-bound session (Feishu adapter wired to
-#   a real or mock Feishu chat), but `esr admin submit session_new` creates
-#   a "pending" session with no Feishu binding.  The pending-path branch in
-#   Esr.Commands.Scope.New intentionally skips Scope.Router to avoid
-#   registering a {"pending","pending"} chat key that would shadow real
-#   sessions.  Full routing e2e will land once Esr.Commands.Scope.New
-#   accepts an explicit chat_id + skips the FeishuChatProxy pipeline, or
-#   when a dedicated `/session:new` Feishu slash path is wired.
-#
-# WHAT THIS TEST PROVES NOW:
+# WHAT THIS TEST PROVES:
 #   - session_new → session_id captured
 #   - session_add_agent (alice, type=cc) → InstanceRegistry persists alice
 #   - session_add_agent (bob, type=cc)   → InstanceRegistry persists bob
 #   - primary is alice (first added) — verified via session_set_primary no-op ack
 #   - session_set_primary bob           → InstanceRegistry primary updated
 #   - Duplicate-name guard: adding a second "alice" is rejected
+#   - unknown agent set_primary rejected with not_found
 #   - session_end teardown runs without error
+#
+# HARNESS GAP — @mention routing (step 8) remains SKIPPED post-PR-248:
+#   PR-248 added /session:new surface command (session_new_surface kind)
+#   which auto-attaches to chat when chat_id+app_id are present in the
+#   envelope.  The admin-queue path (session_new kind, used by this scenario)
+#   still produces a "pending" session with no Feishu binding because the
+#   submitted_by field is ou_admin and no chat_id is passed.
+#
+#   The mention-routing path (Esr.Entity.Agent.MentionParser +
+#   Esr.Entity.SlashHandler.resolve_routing/2) fires only when an inbound
+#   Feishu message arrives with a chat_id that has an attached session.
+#   There is no admin-queue verb that injects a raw inbound message into
+#   the routing pipeline without a real Feishu adapter connection.
+#
+#   To fully exercise step 8, the scenario would need either:
+#     (a) a mock_feishu → sidecar → runtime path for inbound text messages
+#         directed at a session_new_surface-created session, OR
+#     (b) a dedicated test-mode admin verb that drives inbound routing.
+#   Both require new infrastructure beyond the scope of this PR.
+#   Tracked in: docs/futures/todo.md (e2e-14-routing).
 #
 # INVARIANT GATE (spec §14):
 #   bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -3
@@ -132,12 +140,19 @@ assert_contains "$ERR_P" "not_found" \
   "14: unknown agent name must return not_found"
 echo "14: not_found guard confirmed"
 
-# --- step 8: @mention routing (DEFERRED) ---------------------------------
-# TODO(future-phase): once session_new accepts an explicit chat_id and
-# wires the full Feishu pipeline, extend steps here to push inbound via
-# mock_feishu with '@alice ping' and '@bob hello' and assert routed reply.
-# Reference: Esr.Scope.Router.create_session/1 + FeishuChatProxy wiring.
-echo "14: SKIPPED routing steps (pending chat-bound session support in session_new)"
+# --- step 8: @mention routing (HARNESS GAP — see header) -----------------
+# The admin-queue path cannot inject inbound Feishu messages into the
+# routing pipeline (Esr.Entity.Agent.MentionParser +
+# Esr.Entity.SlashHandler.resolve_routing/2).
+#
+# /session:new surface command (PR-248, session_new_surface kind) does
+# produce a chat-bound session when invoked from a real Feishu chat, but
+# the admin-queue path used here bypasses that binding.
+#
+# Full routing assertions (@alice / @bob / plain→primary) require a
+# mock_feishu → feishu sidecar → runtime inbound path, which is not yet
+# wired for session-scoped messages.  Tracked: docs/futures/todo.md.
+echo "14: SKIPPED routing steps (harness gap — no inbound message injection via admin submit)"
 
 # --- cleanup -----------------------------------------------------------
 esr_cli admin submit session_end \
