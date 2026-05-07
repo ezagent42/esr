@@ -33,6 +33,10 @@ defmodule Esr.Plugin.Loader do
 
   @default_root Path.expand("../plugins", __DIR__)
 
+  @doc "Returns the default plugins root directory. Used by commands that need to discover plugins."
+  @spec default_root() :: Path.t()
+  def default_root, do: @default_root
+
   @typedoc "A plugin's name (kebab-case binary)."
   @type plugin_name :: String.t()
 
