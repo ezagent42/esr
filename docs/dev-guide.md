@@ -209,8 +209,9 @@ ESR repo itself** (test commands, gotchas, links). Don't conflate.
 - MCP connection failures show as `tool_result.error.type=esrd_disconnect`
   in the CC tool output; retry is the operator's job.
 - `claude --resume <session_id>` requires the session id to exist in
-  `~/.esrd/default/session-ids.yaml` — the Elixir Launcher writes this
-  on first spawn and reads it on restart (Phase 8: esr-cc.sh deleted).
+  `~/.esrd/default/session-ids.yaml` — `Esr.Plugins.ClaudeCode.Launcher`
+  writes this on first spawn and reads it on restart (`scripts/esr-cc.sh`
+  was deleted in Phase 8; the Launcher module is now the sole entry point).
 - `metadata:` in a workspace's `workspace.json` is exposed verbatim to
   the LLM via `describe_topology` — never put secrets there. Use `env:`
   (filtered at the response boundary) or `cwd:` (also filtered).
