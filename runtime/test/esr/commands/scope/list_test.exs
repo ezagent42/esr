@@ -148,7 +148,6 @@ defmodule Esr.Commands.Scope.ListTest do
           role: "dev",
           chats: [],
           env: %{},
-          neighbors: [],
           metadata: %{}
         })
 
@@ -233,7 +232,6 @@ defmodule Esr.Commands.Scope.ListTest do
           role: "dev",
           chats: [],
           env: %{},
-          neighbors: [],
           metadata: %{}
         })
 
