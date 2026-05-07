@@ -160,10 +160,24 @@ defmodule Esr.Entity.PtyProcess do
   # ------------------------------------------------------------------
 
   @impl Esr.OSProcess
+  # Phase 8: esr-cc.sh deleted. Use Esr.Plugins.ClaudeCode.Launcher
+  # when no explicit start_cmd override is present in state.
+  # start_cmd override (from workspace config) is accepted as a string
+  # and wrapped with bash for backwards-compatible operator escape hatch.
   def os_cmd(state) do
-    cmd = state.start_cmd || default_start_cmd()
-    # erlexec accepts a single command string; bash interprets it.
-    ["bash", "-c", cmd]
+    case state.start_cmd do
+      cmd when is_binary(cmd) and cmd != "" ->
+        # Explicit override from workspace.start_cmd — wrap with bash
+        # for legacy operator scripts that may still be strings.
+        ["bash", "-c", cmd]
+
+      _ ->
+        # Default: Elixir-native Launcher builds the argv.
+        Esr.Plugins.ClaudeCode.Launcher.spawn_cmd(
+          cwd:  Map.get(state, :dir),
+          role: Map.get(state, :workspace_role, "dev")
+        )
+    end
   end
 
   @impl Esr.OSProcess
@@ -203,7 +217,7 @@ defmodule Esr.Entity.PtyProcess do
         # real terminal type plus reasonable size + UTF-8 locale
         # unblocks the boot path; xterm.js attaches later and
         # re-syncs the dimensions via the `resize` channel event.
-        [
+        base = [
           {"ESR_SESSION_ID", sid},
           {"ESR_WORKSPACE", ws},
           {"ESR_CHAT_IDS", chat_ids_json},
@@ -213,6 +227,25 @@ defmodule Esr.Entity.PtyProcess do
           {"LINES", "40"},
           {"LANG", "en_US.UTF-8"}
         ]
+
+        # Phase 8: merge plugin config env (proxy vars, esrd_url override)
+        # from Launcher. Build with the global-layer config; PtyProcess does
+        # not carry user_uuid/workspace_id so global defaults apply.
+        # Launcher.build_env returns a keyword list — convert to string tuples
+        # and merge (base wins on key conflicts since we append).
+        launcher_env =
+          try do
+            Esr.Plugins.ClaudeCode.Launcher.build_env(
+              plugin_config: Esr.Plugin.Config.resolve("claude_code"),
+              session_id: sid
+            )
+            |> Enum.map(fn {k, v} -> {Atom.to_string(k), v} end)
+          rescue
+            _ -> []
+          end
+
+        # Merge: launcher_env first so base-env explicit values win on conflict.
+        launcher_env ++ base
 
       _ ->
         []
@@ -346,14 +379,6 @@ defmodule Esr.Entity.PtyProcess do
   # ------------------------------------------------------------------
 
   defp name_for(%{session_name: n}), do: String.to_atom("esr_pty_#{n}")
-
-  # Phase 8: esr-cc.sh deleted — see Esr.Plugins.ClaudeCode.Launcher.
-  # default_start_cmd/0 now returns the claude binary directly; the
-  # Launcher module handles env, .mcp.json, and workspace trust before
-  # PtyProcess exec's claude.
-  defp default_start_cmd do
-    System.find_executable("claude") || "claude"
-  end
 
   # Returns the esrd base WebSocket URL for cc_mcp's ESR_ESRD_URL env.
   # cc_mcp's ws_client.py appends `/channel/socket/websocket?vsn=2.0.0`
