@@ -35,6 +35,12 @@ defmodule Esr.Entity.PtyProcess do
 
   alias Phoenix.PubSub
 
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below and by `deregister_attrs/2` in terminate/2 so a
+  # rename happens in exactly one place. `Esr.ActorQuery.list_by_role/2`
+  # callers (M-2+) match against this atom.
+  @role :pty_process
+
   # ------------------------------------------------------------------
   # Boot
   # ------------------------------------------------------------------
@@ -132,6 +138,23 @@ defmodule Esr.Entity.PtyProcess do
           Esr.Entity.Registry.register("pty:" <> sid, self())
         catch
           _, _ -> :error
+        end
+
+      # M-1.5: also register in Index 2 (`{sid, name}`) and Index 3
+      # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+      # `list_by_role/2` resolve this peer. Reuse the same string as
+      # the Index 1 actor_id ("pty:<sid>") so cross-references stay in
+      # sync. Best-effort guard: unit tests that bypass the application
+      # supervisor (no IndexWatcher / no ETS tables) must keep working.
+      _ =
+        try do
+          Esr.Entity.Registry.register_attrs("pty:" <> sid, %{
+            session_id: sid,
+            name: Map.get(args, :name) || ("pty-" <> sid),
+            role: @role
+          })
+        catch
+          _, _ -> :ok
         end
     end
 
@@ -291,6 +314,21 @@ defmodule Esr.Entity.PtyProcess do
     case Map.get(state, :session_id) do
       sid when is_binary(sid) and sid != "" ->
         PubSub.broadcast(EsrWeb.PubSub, "pty:" <> sid, :pty_closed)
+
+        # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+        # IndexWatcher monitor still cleans up if we crash before reaching
+        # this hook, so this call is purely an optimization that avoids
+        # a stale-entry window between shutdown signal and DOWN delivery.
+        _ =
+          try do
+            Esr.Entity.Registry.deregister_attrs("pty:" <> sid, %{
+              session_id: sid,
+              name: Map.get(state, :name) || ("pty-" <> sid),
+              role: @role
+            })
+          catch
+            _, _ -> :ok
+          end
 
       _ ->
         :ok
