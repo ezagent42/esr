@@ -86,18 +86,6 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
     }
   }
 
-  @describe_topology %{
-    "name" => "describe_topology",
-    "description" =>
-      "Inspect the current workspace's actor topology — neighbour " <>
-        "workspaces, registered chats, and metadata. Read-only diagnostic.",
-    "inputSchema" => %{
-      "type" => "object",
-      "properties" => %{},
-      "required" => []
-    }
-  }
-
   @echo %{
     "name" => "_echo",
     "description" =>
@@ -121,8 +109,8 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
   def list(role \\ "dev")
 
   def list("diagnostic"),
-    do: [@reply, @send_file, @describe_topology, @echo]
+    do: [@reply, @send_file, @echo]
 
   def list(_),
-    do: [@reply, @send_file, @describe_topology]
+    do: [@reply, @send_file]
 end

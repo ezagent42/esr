@@ -1,10 +1,8 @@
 defmodule Esr.Commands.Workspace.Describe do
   @moduledoc """
   `/workspace describe` slash / admin-queue command — operator-facing
-  view of the security-filtered workspace data shape that
-  `describe_topology` returns to the LLM. Same source of truth
-  (`Esr.Resource.Workspace.Describe`) so what operators see is what
-  the LLM sees.
+  view of the security-filtered workspace data shape sourced from
+  `Esr.Resource.Workspace.Describe`.
 
   Migrated from `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", ...)`.
   """
