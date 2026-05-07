@@ -28,6 +28,7 @@ defmodule Esr.Plugin.Loader do
   require Logger
 
   alias Esr.Plugin.Manifest
+  alias Esr.Plugin.Version, as: PluginVersion
 
   @default_root Path.expand("../plugins", __DIR__)
 
@@ -171,7 +172,8 @@ defmodule Esr.Plugin.Loader do
   """
   @spec start_plugin(plugin_name(), Manifest.t()) :: {:ok, :registered} | {:error, term()}
   def start_plugin(name, %Manifest{} = manifest) do
-    with :ok <- Manifest.validate(manifest),
+    with :ok <- check_core_version(manifest),
+         :ok <- Manifest.validate(manifest),
          :ok <- register_capabilities(name, manifest),
          :ok <- register_python_sidecars(manifest),
          :ok <- register_entities(manifest),
@@ -212,6 +214,31 @@ defmodule Esr.Plugin.Loader do
   # Test-only: clear the startup-callbacks store so independent tests
   # don't accumulate state across runs. Production never calls this.
   def __reset_startup_callbacks__, do: :persistent_term.erase({__MODULE__, :startup_callbacks})
+
+  # ------------------------------------------------------------------
+  # Phase-7 core version guard (Task 7.3)
+  # ------------------------------------------------------------------
+
+  defp check_core_version(%Manifest{depends_on: depends_on}) do
+    constraint = depends_on[:core]
+
+    if is_binary(constraint) and constraint != "" do
+      esrd_vsn = PluginVersion.esrd_version()
+
+      case PluginVersion.satisfies?(constraint, esrd_vsn) do
+        true ->
+          :ok
+
+        false ->
+          {:error, {:core_version_mismatch, constraint, esrd_vsn}}
+
+        {:error, :invalid_constraint} ->
+          {:error, {:invalid_core_constraint, constraint}}
+      end
+    else
+      :ok
+    end
+  end
 
   # ------------------------------------------------------------------
   # Phase-1 contribution handlers
