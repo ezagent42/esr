@@ -60,4 +60,39 @@ defmodule Esr.PathsTest do
     assert Esr.Paths.registered_repos_yaml() ==
              "/tmp/pth-test/default/registered_repos.yaml"
   end
+
+  # Phase 1b.5 additions
+
+  test "users_dir/0 builds correct path" do
+    assert Esr.Paths.users_dir() == "/tmp/pth-test/default/users"
+  end
+
+  test "user_dir/1 builds correct path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.user_dir(uuid) ==
+             "/tmp/pth-test/default/users/#{uuid}"
+  end
+
+  test "user_json/1 builds correct path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.user_json(uuid) ==
+             "/tmp/pth-test/default/users/#{uuid}/user.json"
+  end
+
+  test "user_workspace_json/1 builds correct path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.user_workspace_json(uuid) ==
+             "/tmp/pth-test/default/users/#{uuid}/.esr/workspace.json"
+  end
+
+  test "user_plugins_yaml/1 builds correct path" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+    assert Esr.Paths.user_plugins_yaml(uuid) ==
+             "/tmp/pth-test/default/users/#{uuid}/.esr/plugins.yaml"
+  end
+
+  test "workspace_plugins_yaml/1 builds correct path" do
+    assert Esr.Paths.workspace_plugins_yaml("/tmp/myrepo") ==
+             "/tmp/myrepo/.esr/plugins.yaml"
+  end
 end
