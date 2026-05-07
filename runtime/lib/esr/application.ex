@@ -96,7 +96,7 @@ defmodule Esr.Application do
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
-      # via Entity.Factory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
+      # via Entity.Factory.spawn_peer_bootstrap/3 if it ever spawns admin-scope
       # peers via Session.supervisor_name) and before Scope.Supervisor.
       {Registry, keys: :unique, name: Esr.Scope.Registry},
 

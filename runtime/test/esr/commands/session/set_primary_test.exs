@@ -1,6 +1,21 @@
 defmodule Esr.Commands.Session.SetPrimaryTest do
   use ExUnit.Case, async: false
-  alias Esr.Commands.Session.{AddAgent, SetPrimary}
+  alias Esr.Commands.Session.SetPrimary
+  alias Esr.Entity.Agent.InstanceRegistry
+
+  # M-2.8: AddAgent.execute now goes through add_instance_and_spawn which
+  # requires a per-session AgentSupervisor not stood up in this unit test.
+  # Seed via the legacy metadata-only add_instance/2 — set_primary +
+  # routing tests only need the registry rows, not live actor pids.
+  defp seed_agent(sess, name) do
+    :ok =
+      InstanceRegistry.add_instance(%{
+        session_id: sess,
+        type: "cc",
+        name: name,
+        config: %{}
+      })
+  end
 
   setup do
     case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
@@ -22,8 +37,8 @@ defmodule Esr.Commands.Session.SetPrimaryTest do
     alice = "alice-#{:rand.uniform(9999)}"
     bob = "bob-#{:rand.uniform(9999)}"
 
-    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}})
-    AddAgent.execute(%{"args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}})
+    seed_agent(sess, alice)
+    seed_agent(sess, bob)
 
     assert {:ok, %{"action" => "primary_set", "primary_agent" => ^bob}} =
              SetPrimary.execute(%{"args" => %{"session_id" => sess, "name" => bob}})
@@ -55,12 +70,8 @@ defmodule Esr.Commands.Session.SetPrimaryTest do
       alice = "routing-alice-#{:rand.uniform(9999)}"
       bob = "routing-bob-#{:rand.uniform(9999)}"
 
-      {:ok, _} = AddAgent.execute(%{
-        "args" => %{"session_id" => sess, "type" => "cc", "name" => alice, "config" => %{}}
-      })
-      {:ok, _} = AddAgent.execute(%{
-        "args" => %{"session_id" => sess, "type" => "cc", "name" => bob, "config" => %{}}
-      })
+      seed_agent(sess, alice)
+      seed_agent(sess, bob)
 
       # alice is primary (first added); plain text routes to alice.
       assert {:primary, ^alice} = Esr.Entity.SlashHandler.resolve_routing("hello", sess)

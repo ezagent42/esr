@@ -14,7 +14,6 @@ defmodule Esr.Entity.CCProcess do
       `HandlerRouter.call/3`
     * `:cc_state` — the handler's opaque state blob, threaded through
       each invocation (`payload["state"]` in, `new_state` out)
-    * `:neighbors` — keyword: `:pty_process`, `:cc_proxy`
     * `:proxy_ctx` — shared context snapshot (principal_id, etc.) used
       by downstream Peer.Proxy ctx hooks
     * `:handler_override` — optional 3-arity fun for tests to stub the
@@ -132,7 +131,6 @@ defmodule Esr.Entity.CCProcess do
        session_id: sid,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
-       neighbors: Map.get(args, :neighbors, []),
        proxy_ctx: proxy_ctx,
        handler_override: nil,
        pending_notifications: [],
@@ -419,21 +417,18 @@ defmodule Esr.Entity.CCProcess do
           {:reply, text}
       end
 
-    # PR-3.7: prefer any `*_chat_proxy` neighbor (the production
-    # upstream-reply target — converts :reply into `{:outbound, ...}`).
-    # Fall back to cc_proxy for unit tests that inject a raw test pid.
-    # Plugin-agnostic via name suffix instead of hardcoded "feishu".
-    target_pid =
-      find_chat_proxy_neighbor(state.neighbors) ||
-        Keyword.get(state.neighbors, :cc_proxy)
-
-    case target_pid do
-      pid when is_pid(pid) ->
+    # M-2.2: ActorQuery replaces state.neighbors. Prefer any
+    # `*_chat_proxy` role (the production upstream-reply target — the
+    # role atom is registered by each plugin's chat-proxy peer in init).
+    # Fall back to `:cc_proxy` for unit tests that inject a raw test pid
+    # via the `:cc_proxy` role index.
+    case find_reply_target(state.session_id) do
+      {:ok, pid} ->
         send(pid, msg)
 
-      _ ->
+      :not_found ->
         Logger.warning(
-          "cc_process: :reply with no *_chat_proxy or cc_proxy neighbor " <>
+          "cc_process: :reply with no *_chat_proxy or cc_proxy via ActorQuery " <>
             "session_id=#{state.session_id}"
         )
     end
@@ -450,20 +445,23 @@ defmodule Esr.Entity.CCProcess do
     state
   end
 
-  # PR-3.7: find any neighbor whose key looks like `<family>_chat_proxy`.
-  # Plugin-agnostic by suffix matching: feishu_chat_proxy works in
-  # production today; a future tlg_chat_proxy or slack_chat_proxy works
-  # automatically. Returns the first matching pid or nil.
-  defp find_chat_proxy_neighbor(neighbors) do
-    Enum.find_value(neighbors, fn
-      {key, pid} when is_pid(pid) ->
-        if String.ends_with?(Atom.to_string(key), "_chat_proxy"),
-          do: pid,
-          else: false
+  # M-2.2: ActorQuery-based reply-target resolution. Order:
+  #   1. `:feishu_chat_proxy` — production upstream-reply target (any
+  #      *_chat_proxy role can be added here as more plugins land —
+  #      atoms are checked explicitly so we never pick a wrong role).
+  #   2. `:cc_proxy` — unit-test fallback (tests register their relay
+  #      in the role index under `:cc_proxy`).
+  defp find_reply_target(session_id) do
+    case Esr.ActorQuery.list_by_role(session_id, :feishu_chat_proxy) do
+      [pid | _] ->
+        {:ok, pid}
 
-      _ ->
-        false
-    end)
+      [] ->
+        case Esr.ActorQuery.list_by_role(session_id, :cc_proxy) do
+          [pid | _] -> {:ok, pid}
+          [] -> :not_found
+        end
+    end
   end
 
   # `{:notification, envelope}` matches the existing admin-side

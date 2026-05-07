@@ -260,26 +260,12 @@ defmodule Esr.Session.AgentSpawner do
   # symbolically without spawning. Monitor each spawned pid so DOWNs
   # feed back into the Router's handle_info/2 peer_crashed telemetry.
   #
-  # PR-9 T6 — bidirectional neighbors (two-pass). Pre-T6 each peer was
-  # spawned with a forward-only neighbors keyword list (only peers
-  # already spawned were visible). That left FeishuChatProxy without
-  # its `:cc_process` or `:feishu_app_proxy` neighbors and CCProcess
-  # without its `:pty_process` or `:feishu_chat_proxy` neighbors — so
-  # T5's react-emit path dropped with `:no_app_proxy_neighbor` and the
-  # CC reply path had nowhere to go.
-  #
-  # The fix is a post-spawn back-wire pass: once every Stateful peer is
-  # spawned and every proxy target resolved, compute the full adjacency
-  # (inbound pids + proxy-target pids) and patch each spawned peer's
-  # `state.neighbors` via `:sys.replace_state/2`. `create_session/1` is
-  # synchronous and the session isn't published to `SessionRegistry`
-  # until AFTER we return, so there's no data-plane race here.
-  #
-  # Proxy-neighbor resolution: proxies with a `target: "admin::..."` are
-  # resolved to the real admin-peer pid (e.g. FeishuAppAdapter) so FCP's
-  # `emit_to_feishu_app_proxy` (T5) can `send(pid, {:outbound, ...})`
-  # directly. Refs keep the stateless `{:proxy_module, Mod}` marker for
-  # discoverability; peer-state neighbors get the usable pid.
+  # M-2.3: PR-9 T6 backwire-via-`:sys.replace_state` deleted. Peers no
+  # longer carry `state.neighbors`; routing is via
+  # `Esr.ActorQuery.list_by_role/2` (Index 3) which is populated by
+  # each peer's `register_attrs/2` in init. ActorQuery returns the
+  # full session-level adjacency at the moment of the call — no
+  # post-spawn patching, no two-pass ceremony, no race.
   defp spawn_pipeline(session_id, agent_def, params) do
     inbound = agent_def.pipeline.inbound || []
     proxies = agent_def.proxies || []
@@ -302,10 +288,6 @@ defmodule Esr.Session.AgentSpawner do
           impl = resolve_impl(spec["impl"])
           Map.put(acc, name, {:proxy_module, impl})
         end)
-
-      # T6: back-wire every spawned peer with the full bidirectional
-      # neighbors keyword (inbound pids + resolved proxy-target pids).
-      :ok = backwire_neighbors(refs, proxies, params)
 
       {:ok, refs, monitors}
     catch
@@ -334,100 +316,15 @@ defmodule Esr.Session.AgentSpawner do
     Map.put(params, :channel_adapter, channel_adapter)
   end
 
-  # PR-9 T6: patch `state.neighbors` on every spawned pid after all
-  # peers have been spawned. For OSProcess-backed peers the inner peer
-  # state lives under `worker_state.state`; we detect that wrapper and
-  # recurse into it. All other peers carry `state.neighbors` directly
-  # at the top level.
-  defp backwire_neighbors(refs, proxy_specs, params) do
-    # Inbound stateful peers contribute their pid directly.
-    inbound_entries =
-      refs
-      |> Enum.filter(fn {_name, v} -> is_pid(v) end)
-      |> Enum.map(fn {name, pid} -> {name, pid} end)
-
-    # Proxies contribute a resolved admin-peer pid when target is
-    # `admin::...`. Proxies whose target doesn't resolve (missing
-    # admin peer, no target, pool-binding proxies like VoiceASRProxy)
-    # are still added to neighbors under the `{:proxy_module, Mod}`
-    # marker so peers can decide their own fallback behaviour.
-    proxy_entries =
-      Enum.map(proxy_specs, fn spec ->
-        name = String.to_atom(spec["name"])
-        impl = resolve_impl(spec["impl"])
-        target = spec["target"]
-
-        value =
-          case resolve_proxy_target(target, params) do
-            {:ok, pid} when is_pid(pid) -> pid
-            _ -> {:proxy_module, impl}
-          end
-
-        {name, value}
-      end)
-
-    full = inbound_entries ++ proxy_entries
-
-    Enum.each(inbound_entries, fn {name, pid} ->
-      others = Enum.reject(full, fn {n, _} -> n == name end)
-
-      _ =
-        :sys.replace_state(pid, fn
-          # OSProcessWorker wrapper: %{parent: _, state: inner, ...}
-          %{parent: _, state: inner} = ws when is_map(inner) ->
-            %{ws | state: %{inner | neighbors: others}}
-
-          # Plain peer state map
-          %{neighbors: _} = s ->
-            %{s | neighbors: others}
-
-          # Defensive fallthrough — peer without a neighbors key
-          # (shouldn't happen for our Stateful impls, but don't
-          # crash on an unexpected shape).
-          other ->
-            other
-        end)
-
-      :ok
-    end)
-
-    :ok
-  end
-
-  # Resolve a proxies-block `target` string (e.g.
-  # `"admin::feishu_app_adapter_${app_id}"`) to the live admin-peer pid.
-  # Returns `{:ok, pid}` on success, `:error` otherwise. Missing targets
-  # and unresolvable `admin::` targets fall through.
-  defp resolve_proxy_target(nil, _params), do: :error
-
-  defp resolve_proxy_target(target, params) when is_binary(target) do
-    app_id = get_param(params, :app_id) || "default"
-    expanded = String.replace(target, "${app_id}", app_id)
-
-    case String.split(expanded, "::", parts: 2) do
-      ["admin", admin_peer_name] ->
-        sym = String.to_atom(admin_peer_name)
-
-        case safe_admin_peer(sym) do
-          {:ok, pid} when is_pid(pid) -> {:ok, pid}
-          _ -> :error
-        end
-
-      _ ->
-        :error
-    end
-  end
-
   defp spawn_one(session_id, spec, params, refs_acc, mon_acc) do
     name = String.to_atom(spec["name"])
     impl = resolve_impl(spec["impl"] || "")
 
     if Esr.Entity.Agent.StatefulRegistry.stateful?(impl) do
-      neighbors = build_neighbors(refs_acc)
       ctx = build_ctx(spec, params)
       args = spawn_args(impl, spec, params)
 
-      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, neighbors, ctx) do
+      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, ctx) do
         {:ok, pid} ->
           ref = Process.monitor(pid)
           {Map.put(refs_acc, name, pid), [{ref, pid} | mon_acc]}
@@ -448,16 +345,6 @@ defmodule Esr.Session.AgentSpawner do
     String.to_existing_atom("Elixir." <> impl_str)
   rescue
     ArgumentError -> nil
-  end
-
-  # PR-3 heuristic: every peer already spawned is passed as a named
-  # neighbor (keyword list). Each peer's `init/1` picks the names it
-  # wants (`:cc_process`, `:feishu_app_proxy`, ...). Matches the
-  # `Keyword.get/2` pattern used by the existing Stateful peers.
-  defp build_neighbors(refs_acc) do
-    Enum.map(refs_acc, fn {name, pid_or_marker} ->
-      {name, pid_or_marker}
-    end)
   end
 
   defp build_ctx(%{"impl" => "Esr.Entity.FeishuAppProxy", "target" => tgt}, params) do

@@ -66,7 +66,6 @@ defmodule Esr.Entity.FeishuChatProxy do
       app_id: Map.get(args, :app_id) || Map.get(ctx, :app_id) || "",
       principal_id:
         Map.get(args, :principal_id) || Map.get(ctx, :principal_id) || "",
-      neighbors: Map.get(args, :neighbors, []),
       proxy_ctx: ctx
       # PR-21λ 2026-05-01: `pending_reacts` removed — FAA owns the
       # universal react/un_react lifecycle now (PR-9 T5's per-FCP
@@ -708,14 +707,16 @@ defmodule Esr.Entity.FeishuChatProxy do
     # arrived. Function name kept (callers below) but it now just
     # forwards to CC; the un_react still fires on CC's reply path
     # via FAA's `handle_downstream` watching for `reply_to_message_id`.
-    case Keyword.get(state.neighbors, :cc_process) do
-      pid when is_pid(pid) ->
+    # M-2.1: ActorQuery replaces state.neighbors. Multi-instance same
+    # role (Q5.2) — pick the first; future fan-out hooks here.
+    case Esr.ActorQuery.list_by_role(state.session_id, :cc_process) do
+      [pid | _] ->
         send(pid, {:text, text, meta})
         {:forward, [], state}
 
-      _ ->
+      [] ->
         Logger.warning(
-          "feishu_chat_proxy: non-slash text but no cc_process neighbor " <>
+          "feishu_chat_proxy: non-slash text but no cc_process found via ActorQuery " <>
             "session_id=#{state.session_id}"
         )
 
@@ -753,15 +754,16 @@ defmodule Esr.Entity.FeishuChatProxy do
   # module without ever touching Entity.Server's tool-dispatch path —
   # react is no longer a CC MCP tool (PR-9 T5 D4).
   defp emit_to_feishu_app_proxy(envelope, state) do
-    case Keyword.get(state.neighbors, :feishu_app_proxy) do
-      pid when is_pid(pid) ->
+    # M-2.1: ActorQuery replaces state.neighbors.
+    case Esr.ActorQuery.list_by_role(state.session_id, :feishu_app_proxy) do
+      [pid | _] ->
         send(pid, {:outbound, envelope})
         :ok
 
-      _ ->
+      [] ->
         Logger.warning(
-          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy neighbor " <>
-            "session_id=#{state.session_id}"
+          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
+            "via ActorQuery session_id=#{state.session_id}"
         )
 
         {:drop, :no_app_proxy_neighbor}

@@ -3,7 +3,7 @@ defmodule Esr.Entity.Factory do
   Creation mechanics for Peers. Thin wrapper over `DynamicSupervisor.start_child`.
 
   **Hard rule:** this module MUST NOT contain routing/lookup/decision logic.
-  Its public surface is exactly three functions: `spawn_peer/5`,
+  Its public surface is exactly three functions: `spawn_peer/4`,
   `terminate_peer/2`, `restart_peer/2`. Review rejects additions.
 
   The factory resolves `session_id` to the correct Session supervisor by
@@ -16,9 +16,9 @@ defmodule Esr.Entity.Factory do
   """
   require Logger
 
-  @spec spawn_peer(session_id :: String.t(), mod :: module(), args :: map(), neighbors :: list(), ctx :: map()) ::
+  @spec spawn_peer(session_id :: String.t(), mod :: module(), args :: map(), ctx :: map()) ::
           {:ok, pid()} | {:error, term()}
-  def spawn_peer(session_id, mod, args, neighbors, ctx) do
+  def spawn_peer(session_id, mod, args, ctx) do
     :telemetry.execute([:esr, :peer_factory, :spawn], %{}, %{mod: mod, session_id: session_id})
 
     if Code.ensure_loaded?(mod) do
@@ -40,7 +40,7 @@ defmodule Esr.Entity.Factory do
         end
 
       init_args =
-        Map.merge(args, %{session_id: session_id, neighbors: neighbors, proxy_ctx: ctx_with_sp})
+        Map.merge(args, %{session_id: session_id, proxy_ctx: ctx_with_sp})
 
       DynamicSupervisor.start_child(resolve_sup(session_id), {mod, init_args})
     else
@@ -67,13 +67,13 @@ defmodule Esr.Entity.Factory do
   (not a session_id) because at boot Scope.Admin's children supervisor
   is the only supervisor that can host the peer.
   """
-  @spec spawn_peer_bootstrap(sup_name :: atom(), mod :: module(), args :: map(), neighbors :: list()) ::
+  @spec spawn_peer_bootstrap(sup_name :: atom(), mod :: module(), args :: map()) ::
           {:ok, pid()} | {:error, term()}
-  def spawn_peer_bootstrap(sup_name, mod, args, neighbors) when is_atom(sup_name) do
+  def spawn_peer_bootstrap(sup_name, mod, args) when is_atom(sup_name) do
     :telemetry.execute([:esr, :peer_factory, :spawn_bootstrap], %{}, %{mod: mod, sup: sup_name})
 
     if Code.ensure_loaded?(mod) do
-      init_args = Map.merge(args, %{session_id: "admin", neighbors: neighbors, proxy_ctx: %{}})
+      init_args = Map.merge(args, %{session_id: "admin", proxy_ctx: %{}})
       DynamicSupervisor.start_child(sup_name, {mod, init_args})
     else
       {:error, {:unknown_impl, mod}}

@@ -320,32 +320,28 @@ defmodule Esr.ScopeRouterTest do
     assert is_pid(cc)
     assert is_pid(pty)
 
+    # M-2: state.neighbors deleted. Bidirectional resolution is now via
+    # `Esr.ActorQuery.list_by_role/2` (Index 3, populated by each peer's
+    # `register_attrs/2` in init). Old assertions on
+    # `Keyword.get(state.neighbors, :*)` are gone.
     fcp_state = :sys.get_state(fcp)
+    sid = fcp_state.session_id
 
-    assert is_pid(Keyword.get(fcp_state.neighbors, :cc_process)),
-           "fcp → cc_process neighbor missing"
+    assert cc in Esr.ActorQuery.list_by_role(sid, :cc_process),
+           "ActorQuery: cc_process role index should resolve to spawned CC pid"
 
-    # T6: the feishu_app_proxy neighbor must be the live
-    # FeishuAppAdapter pid (not a `{:proxy_module, _}` marker) so
-    # FCP's `emit_to_feishu_app_proxy` can `send(pid, {:outbound, _})`
-    # directly.
-    assert Keyword.get(fcp_state.neighbors, :feishu_app_proxy) == faa,
-           "fcp → feishu_app_proxy neighbor must resolve to FAA pid (PR-9 T6)"
+    assert fcp in Esr.ActorQuery.list_by_role(sid, :feishu_chat_proxy),
+           "ActorQuery: feishu_chat_proxy role index should resolve to spawned FCP pid"
 
-    cc_state = :sys.get_state(cc)
+    assert pty in Esr.ActorQuery.list_by_role(sid, :pty_process),
+           "ActorQuery: pty_process role index should resolve to spawned PTY pid"
 
-    assert is_pid(Keyword.get(cc_state.neighbors, :pty_process)),
-           "cc → pty_process neighbor missing"
-
-    assert is_pid(Keyword.get(cc_state.neighbors, :feishu_chat_proxy)),
-           "cc → feishu_chat_proxy neighbor missing (PR-9 T6)"
-
-    # PtyProcess is wrapped by OSProcessWorker; its inner
-    # `state.neighbors` lives under `worker_state.state`.
-    pty_worker_state = :sys.get_state(pty)
-    pty_inner = pty_worker_state.state
-
-    assert is_pid(Keyword.get(pty_inner.neighbors, :cc_process)),
-           "pty → cc_process neighbor missing"
+    # FCP's home-app outbound branch (`emit_to_feishu_app_proxy`) routes
+    # via `ActorQuery.list_by_role(sid, :feishu_app_proxy)`. The live
+    # FeishuAppAdapter is registered in Index 1 under
+    # "feishu_app_adapter_<app_id>"; cross-app branch consults Index 1
+    # directly. Either way the spawned faa pid must be reachable.
+    assert {:ok, ^faa} =
+             Esr.Entity.Registry.lookup("feishu_app_adapter_" <> app_id)
   end
 end
