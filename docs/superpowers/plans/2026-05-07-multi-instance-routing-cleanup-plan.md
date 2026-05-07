@@ -1786,4 +1786,1502 @@ gh pr merge --admin --squash --delete-branch
 
 ---
 
-<!-- PLAN_END_M2 — next subagent: append "## Phase M-3" here -->
+## Phase M-3: Delete legacy diffusion
+
+**Depends on:** M-2 merged into `dev`.
+
+**Purpose:** Delete the entire `workspace.neighbors` / `reachable_set` / `describe_topology` / `symmetric_closure` surface area. Every deletion in this phase is a pure code removal — no replacement code is written. After M-3, the LLM no longer receives a `<reachable>` prompt element (follow-up design is §12 F-1 and F-4, not M-3 scope).
+
+**LOC estimate:** -488 (actual; see §7 note for breakdown vs. -300 brainstorm estimate)
+
+**Risk:** Medium — `cc_process.ex` reachable_set mutations are spread across `handle_info`, `handle_cast`, and private helpers. Each deletion site must be confirmed individually. Run `mix compile --force` after each file edit to catch dangling references early.
+
+**Invariant test (gate for M-3 done):** After M-3, `grep -rn "Esr.Topology\|reachable_set\|describe_topology\|build_initial_reachable_set\|neighbor_workspaces" runtime/lib/` must return zero results. A CI step asserting this is the completion gate.
+
+---
+
+### Task M-3.1: Delete `runtime/lib/esr/topology.ex` (entire file, 257 LOC)
+
+**Files:** `runtime/lib/esr/topology.ex` (delete), `runtime/test/esr/topology_test.exs` (delete), `runtime/test/esr/topology_integration_test.exs` (delete)
+
+**Step 1 — Write failing test** (confirm the file is a dead-code candidate post M-2):
+
+```elixir
+# runtime/test/esr/m3_topology_dead_code_test.exs
+defmodule Esr.M3TopologyDeadCodeTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "Esr.Topology has no callers outside cc_process reachable_set path" do
+    # After M-3, this grep must return zero results.
+    # Run as a static assertion so CI fails if topology is re-introduced.
+    {output, _} = System.cmd("grep", [
+      "-rn", "--include=*.ex",
+      "Esr.Topology",
+      "runtime/lib/"
+    ])
+    assert output == "",
+      "Found unexpected Esr.Topology reference: #{output}"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before M-3** (the test is deliberately red until M-3 completes).
+
+**Step 3 — Write implementation (deletions):**
+
+First confirm no remaining callers survive M-2:
+
+```bash
+grep -rn "Esr.Topology" runtime/lib/ runtime/test/
+```
+
+Expected output post-M-2:
+- `runtime/lib/esr/topology.ex` (the module itself)
+- `runtime/lib/esr/plugins/claude_code/cc_process.ex` — lines 131, 136, 141, 621 (all inside `build_initial_reachable_set/1` and `user_uri/1` one-liner — both deleted in M-3.2)
+- `runtime/lib/esr/session/agent_spawner.ex:495` — comment only; confirm line is a comment, not a call
+
+Then delete files:
+
+```bash
+rm runtime/lib/esr/topology.ex
+rm runtime/test/esr/topology_test.exs
+rm runtime/test/esr/topology_integration_test.exs
+```
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/m3_topology_dead_code_test.exs` — green after M-3.2 also completes.
+
+**Step 5 — Confirm no regressions:** `mix compile --force` — no `undefined module Esr.Topology` errors after M-3.2 removes all cc_process.ex call sites.
+
+**Commit message:** `refactor(m-3.1): delete Esr.Topology + topology tests (Phase M-3.1)`
+
+---
+
+### Task M-3.2: Delete `reachable_set` from `cc_process.ex` (~145 LOC)
+
+**File:** `runtime/lib/esr/plugins/claude_code/cc_process.ex`
+
+**Affected line ranges (per spec §7 M-3 inventory):**
+- Lines 87–103: Comment block explaining reachable_set seeding + `initial_reachable = build_initial_reachable_set(proxy_ctx)` call
+- Line 115: `reachable_set: initial_reachable` in state map
+- Lines 119–145: `defp build_initial_reachable_set/1` (calls `Esr.Topology.initial_seed/3`, `Esr.Topology.chat_uri/2`, `Esr.Topology.adapter_uri/2`)
+- Lines 205–220: `handle_info` clause adding URIs to `reachable_set` on source URI events
+- Lines 240–248: `reachable_set` mutation inside meta handler
+- Lines 428–438: `reachable_present=...` log line + comment referencing reachable attribute
+- Lines 498–538: `maybe_put_reachable/2` + `reachable_json/1` private functions
+- Lines 592–614: PR-C C4 handler — union of new URIs into `state.reachable_set`
+- Line 621: `user_uri/1` one-liner delegating to `Esr.Topology.user_uri/1` (also deleted)
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/plugins/claude_code/cc_process_m3_gate_test.exs
+defmodule Esr.CCProcessM3GateTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "cc_process.ex has no reachable_set references after M-3" do
+    content = File.read!("runtime/lib/esr/plugins/claude_code/cc_process.ex")
+    refute String.contains?(content, "reachable_set"),
+      "cc_process.ex still contains 'reachable_set'; M-3.2 is incomplete"
+    refute String.contains?(content, "Esr.Topology"),
+      "cc_process.ex still references Esr.Topology; M-3.2 is incomplete"
+    refute String.contains?(content, "build_initial_reachable_set"),
+      "cc_process.ex still contains build_initial_reachable_set; M-3.2 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit** (all three assertions fire on the current file).
+
+**Step 3 — Write implementation:**
+
+Delete each block in order from bottom to top to preserve line references:
+
+1. Delete lines 592–621 (PR-C C4 handler + `user_uri/1`)
+2. Delete lines 498–538 (`maybe_put_reachable/2` + `reachable_json/1`)
+3. Delete lines 428–438 (`reachable_present` log line + comment)
+4. Delete lines 240–248 (reachable_set mutation in meta handler)
+5. Delete lines 205–220 (`handle_info` clause for URI source events)
+6. Delete line 115 (`reachable_set: initial_reachable` in state map)
+7. Delete lines 87–145 (comment block + `initial_reachable` assignment + `build_initial_reachable_set/1`)
+
+After deletion, ensure the state map at line ~103 (adjusted) no longer has a `:reachable_set` key. The `<reachable>` XML element is built by `reachable_json/1` — with that function gone, the `build_prompt/1` call site that referenced it is also removed as part of step 2. Confirm `build_prompt/1` still compiles without the deleted helper.
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/plugins/claude_code/cc_process_m3_gate_test.exs` — green.
+
+**Step 5 — Confirm no regressions:**
+
+```bash
+mix compile --force
+mix test runtime/test/esr/plugins/claude_code/cc_process_test.exs
+```
+
+The `cc_process_test.exs` file will have failing tests (reachable_set tests). Stub them with `# deleted in M-3 — reachable_set removed; see ActorQuery tests for routing coverage`:
+
+```elixir
+# BEFORE (example pattern to delete from cc_process_test.exs):
+test "build_initial_reachable_set populates from workspace neighbors" do
+  ...
+end
+
+# AFTER — replace each deleted test block with:
+# deleted in M-3 — reachable_set removed; routing coverage is in
+# runtime/test/esr/actor_query_test.exs (M-5 extension)
+```
+
+**Commit message:** `refactor(m-3.2): delete cc_process reachable_set + Topology calls (~145 LOC) (Phase M-3.2)`
+
+---
+
+### Task M-3.3: Delete `neighbor_workspaces` from `describe.ex` (~32 LOC)
+
+**File:** `runtime/lib/esr/resource/workspace/describe.ex`
+
+**Affected lines (per spec §7 M-3 inventory):**
+- Lines 61–66: `neighbours = resolve_neighbour_workspaces(ws, overlay)` + `"neighbor_workspaces" => Enum.map(...)` entry in result map
+- Lines 122–123: `base_neighbors = legacy_neighbors(ws)` local variable
+- Lines 164–170: `defp legacy_neighbors/1` — reads `_legacy.neighbors` from struct settings
+- Lines 175–191: `defp resolve_neighbour_workspaces/2` — resolves neighbor name strings via Registry
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/resource/workspace_describe_m3_gate_test.exs
+defmodule Esr.WorkspaceDescribeM3GateTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "describe output has no neighbor_workspaces key after M-3" do
+    content = File.read!("runtime/lib/esr/resource/workspace/describe.ex")
+    refute String.contains?(content, "neighbor_workspaces"),
+      "describe.ex still contains neighbor_workspaces; M-3.3 is incomplete"
+    refute String.contains?(content, "resolve_neighbour_workspaces"),
+      "describe.ex still contains resolve_neighbour_workspaces; M-3.3 is incomplete"
+    refute String.contains?(content, "legacy_neighbors"),
+      "describe.ex still contains legacy_neighbors; M-3.3 is incomplete (M-3 part)"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+Delete from bottom to top:
+1. Delete `defp resolve_neighbour_workspaces/2` (lines 175–191)
+2. Delete `defp legacy_neighbors/1` (lines 164–170)
+3. Delete `base_neighbors = legacy_neighbors(ws)` at line 122
+4. Delete the `neighbours = resolve_neighbour_workspaces(...)` assignment and `"neighbor_workspaces" => ...` map entry (lines 61–66)
+
+After deletion, the describe result map no longer includes `"neighbor_workspaces"`. Verify that the `Struct` alias is still used (it is, for `%Struct{}` pattern matches in other functions).
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace_describe_m3_gate_test.exs` — green.
+
+**Step 5 — Confirm no regressions:**
+
+```bash
+mix compile --force
+mix test runtime/test/esr/resource/workspace_describe_test.exs
+```
+
+`workspace_describe_test.exs` assertions on `neighbor_workspaces` will fail — stub those test blocks with `# deleted in M-3 — neighbor_workspaces removed from describe output`.
+
+**Commit message:** `refactor(m-3.3): delete neighbor_workspaces output + legacy_neighbors from describe.ex (Phase M-3.3)`
+
+---
+
+### Task M-3.4: Delete `describe_topology` from `server.ex` (~22 LOC)
+
+**File:** `runtime/lib/esr/entity/server.ex`
+
+**Affected lines (per spec §7 M-3 inventory):**
+- Lines 284–291: Comment block about PR-F + the `if tool == "describe_topology" or capability_granted?(...)` bypass condition
+- Lines 820–833: `defp build_emit_for_tool("describe_topology", args, _state)` entire private function
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/entity/server_m3_gate_test.exs
+defmodule Esr.EntityServerM3GateTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "server.ex has no describe_topology after M-3" do
+    content = File.read!("runtime/lib/esr/entity/server.ex")
+    refute String.contains?(content, "describe_topology"),
+      "server.ex still contains describe_topology; M-3.4 is incomplete"
+    refute String.contains?(content, "neighbor_workspaces"),
+      "server.ex still contains neighbor_workspaces; M-3.4 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+1. Delete `defp build_emit_for_tool("describe_topology", args, _state)` at lines 820–833 (bottom-up first).
+2. At lines 284–291, delete the `describe_topology`-specific bypass. The `if tool == "describe_topology" or capability_granted?(...)` condition becomes simply `if capability_granted?(...)`. Remove the dead `tool == "describe_topology"` branch entirely.
+
+The surviving `build_emit_for_tool/3` catch-all clause (which handles all other tools) remains unchanged.
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/entity/server_m3_gate_test.exs` — green.
+
+**Step 5 — Confirm no regressions:**
+
+```bash
+mix compile --force
+mix test runtime/test/esr/entity/
+```
+
+Any tests in `entity_server_describe_topology_test.exs` asserting describe_topology output will now fail — stub those sections with `# deleted in M-3 — describe_topology MCP tool removed`.
+
+**Commit message:** `refactor(m-3.4): delete describe_topology MCP tool + cap bypass from server.ex (Phase M-3.4)`
+
+---
+
+### Task M-3.5: Delete `@describe_topology` from `mcp/tools.ex` (~29 LOC)
+
+**File:** `runtime/lib/esr/plugins/claude_code/mcp/tools.ex`
+
+**Affected lines (per spec §7 M-3 inventory):**
+- Lines 89–115: `@describe_topology` module attribute — full map literal with "name", "description", "inputSchema"
+- Line 124: `@describe_topology` reference in `diagnostic` role tool list
+- Line 127: `@describe_topology` reference in default tool list
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/plugins/claude_code/mcp_tools_m3_gate_test.exs
+defmodule Esr.MCPToolsM3GateTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "mcp/tools.ex does not advertise describe_topology after M-3" do
+    content = File.read!("runtime/lib/esr/plugins/claude_code/mcp/tools.ex")
+    refute String.contains?(content, "describe_topology"),
+      "mcp/tools.ex still advertises describe_topology; M-3.5 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+1. Delete the `@describe_topology %{...}` module attribute block (lines 89–115).
+2. Remove `@describe_topology` from both tool list references (lines ~124, ~127 — adjusted after step 1 deletion). The lists become:
+
+```elixir
+# diagnostic role list — before:
+do: [@reply, @send_file, @describe_topology, @echo]
+
+# After M-3.5:
+do: [@reply, @send_file, @echo]
+
+# default list — before:
+do: [@reply, @send_file, @describe_topology]
+
+# After M-3.5:
+do: [@reply, @send_file]
+```
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/plugins/claude_code/mcp_tools_m3_gate_test.exs` — green.
+
+**Step 5 — Confirm no regressions:**
+
+```bash
+mix compile --force
+mix test
+```
+
+Full suite must be green after M-3.5. The `cc_process_test.exs` stubs from M-3.2 should be in place; `describe_topology` tests from M-3.4 stubs should be in place.
+
+**Commit message:** `refactor(m-3.5): delete @describe_topology module attr + tool list refs from mcp/tools.ex (Phase M-3.5)`
+
+---
+
+### Task M-3.6: Remove `:neighbors` field from `%Workspace{}` struct in `registry.ex` (~3 LOC)
+
+**File:** `runtime/lib/esr/resource/workspace/registry.ex`
+
+**Affected lines (per spec §7 M-3 inventory):**
+- Line 55: `neighbors: [],` in `%Workspace{}` defstruct
+- Line 587: `neighbors: Map.get(ws.settings, "_legacy.neighbors", []),` in `to_legacy/1`
+- Line 604 (approx): `"_legacy.neighbors" => legacy.neighbors || [],` in `normalize_to_struct/1`
+
+Note: `to_legacy/1` and `normalize_to_struct/1` themselves survive M-3 — they are deleted in their entirety in M-4. This task only removes the `:neighbors` field and its reads from the legacy conversion functions.
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/resource/workspace/registry_m3_gate_test.exs
+defmodule Esr.WorkspaceRegistryM3GateTest do
+  use ExUnit.Case
+
+  @tag :m3_gate
+  test "%Workspace{} struct has no :neighbors field after M-3" do
+    # The legacy Workspace struct is Esr.Resource.Workspace.Registry.Workspace
+    # M-3 removes :neighbors; M-4 removes the whole struct.
+    # This test gates M-3 completion.
+    refute Map.has_key?(
+      struct(Esr.Resource.Workspace.Registry.Workspace),
+      :neighbors
+    ), "Workspace struct still has :neighbors field; M-3.6 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+In `registry.ex`:
+
+```elixir
+# BEFORE (line 55 in defstruct):
+neighbors: [],
+# AFTER: delete this line
+
+# BEFORE (line 587 in to_legacy/1):
+neighbors: Map.get(ws.settings, "_legacy.neighbors", []),
+# AFTER: delete this line
+
+# BEFORE (line ~604 in normalize_to_struct/1):
+"_legacy.neighbors" => legacy.neighbors || [],
+# AFTER: delete this line
+```
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace/registry_m3_gate_test.exs` — green.
+
+**Step 5 — Full M-3 gate sweep + commit all M-3 files:**
+
+```bash
+grep -rn "Esr.Topology\|reachable_set\|describe_topology\|build_initial_reachable_set\|neighbor_workspaces" runtime/lib/
+# Must return zero results.
+
+mix compile --force
+mix test
+```
+
+**Commit message:** `refactor(m-3.6): remove :neighbors field from %Workspace{} + _legacy.neighbors reads (Phase M-3.6)`
+
+---
+
+### Task M-3.7: PR + admin-merge
+
+**Step 1 — Stage all M-3 files:**
+
+```bash
+git rm \
+  runtime/lib/esr/topology.ex \
+  runtime/test/esr/topology_test.exs \
+  runtime/test/esr/topology_integration_test.exs
+git add \
+  runtime/lib/esr/plugins/claude_code/cc_process.ex \
+  runtime/lib/esr/resource/workspace/describe.ex \
+  runtime/lib/esr/entity/server.ex \
+  runtime/lib/esr/plugins/claude_code/mcp/tools.ex \
+  runtime/lib/esr/resource/workspace/registry.ex \
+  runtime/test/esr/plugins/claude_code/cc_process_test.exs \
+  runtime/test/esr/m3_topology_dead_code_test.exs \
+  runtime/test/esr/plugins/claude_code/cc_process_m3_gate_test.exs \
+  runtime/test/esr/resource/workspace_describe_m3_gate_test.exs \
+  runtime/test/esr/entity/server_m3_gate_test.exs \
+  runtime/test/esr/plugins/claude_code/mcp_tools_m3_gate_test.exs \
+  runtime/test/esr/resource/workspace/registry_m3_gate_test.exs
+```
+
+**Step 2 — Open PR against `dev`; title:** `feat(m-3): delete legacy diffusion — Topology + reachable_set + describe_topology + neighbor_workspaces`
+
+**Step 3 — Admin-merge:**
+
+```bash
+gh pr merge --admin --squash --delete-branch
+```
+
+**Step 4 — Verify:** `git log --oneline dev | head -3` — M-3 commit visible.
+
+---
+
+## Phase M-4: Delete `_legacy.*` compat shim + legacy `%Workspace{}` struct
+
+**Depends on:** M-3 merged into `dev`.
+
+**Purpose:** Remove the entire `@legacy_table` ETS infrastructure, the `%Workspace{}` legacy embedded struct, `to_legacy/1`, `normalize_to_struct/1`, `do_put(%Workspace{})`, `start_cmd_for/2`, and all callers that read `_legacy.*` keys. After M-4, the codebase has no `_legacy.*` key reads, no dual-table workspace storage, and `registry.ex` drops from ~678 LOC to ~539 LOC.
+
+**LOC estimate:** -263 pure delete (~-400 with cascading dead code cleanup in callers)
+
+**Risk:** Medium — `workspace_for_chat/2` internally uses `@uuid_table` (not `@legacy_table`) and is unaffected; all 8 callers continue to work unchanged. Verify this explicitly in the PR description. The 4 callers of `Registry.get/1` (legacy struct path) must be migrated to `NameIndex.id_for_name + get_by_id` before `get/1` is deleted.
+
+**Invariant test (gate for M-4 done):** After M-4, `grep -rn "@legacy_table\|_legacy\.\|defmodule Workspace\|normalize_to_struct\|to_legacy\|start_cmd_for" runtime/lib/` must return zero results.
+
+---
+
+### Task M-4.1: Migrate 4 callers of `Registry.get/1` to `NameIndex.id_for_name + get_by_id`
+
+**Files:**
+- `runtime/lib/esr/resource/workspace/bootstrap.ex` line 44
+- `runtime/lib/esr/resource/capability/file_loader.ex` line 157
+- `runtime/lib/esr/plugins/claude_code/cc_process.ex` line 565 (`Registry.list()`)
+- `runtime/lib/esr/commands/doctor.ex` line 57 (`Registry.list()`)
+
+**Step 1 — Write failing test** (confirm the new lookup path works before migration):
+
+```elixir
+# runtime/test/esr/resource/workspace/registry_m4_migration_test.exs
+defmodule Esr.WorkspaceRegistryM4MigrationTest do
+  use ExUnit.Case, async: false
+  alias Esr.Resource.Workspace.{Registry, Struct, NameIndex}
+
+  setup do
+    tmp = Path.join(System.tmp_dir!(), "m4_migration_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    System.put_env("ESRD_HOME", tmp)
+    System.put_env("ESR_INSTANCE", "default")
+    File.mkdir_p!(Path.join([tmp, "default", "workspaces"]))
+
+    on_exit(fn ->
+      System.delete_env("ESRD_HOME")
+      System.delete_env("ESR_INSTANCE")
+      File.rm_rf!(tmp)
+      Registry.refresh()
+    end)
+
+    unless Process.whereis(Registry), do: Registry.start_link([])
+    Registry.refresh()
+    %{tmp: tmp}
+  end
+
+  defp make_ws(tmp, name) do
+    dir = Path.join([tmp, "default", "workspaces", name])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "workspace.json"), Jason.encode!(%{
+      "schema_version" => 1,
+      "id" => UUID.uuid4(),
+      "name" => name,
+      "owner" => "test"
+    }))
+  end
+
+  test "NameIndex.id_for_name + get_by_id returns same struct as legacy get/1", %{tmp: tmp} do
+    make_ws(tmp, "test-ws")
+    Registry.refresh()
+
+    {:ok, legacy_result} = Registry.get("test-ws")
+
+    uuid = NameIndex.id_for_name(:esr_workspace_name_index, "test-ws")
+    assert uuid != nil
+    {:ok, new_result} = Registry.get_by_id(uuid)
+
+    assert legacy_result.name == new_result.name
+    assert legacy_result.id == new_result.id
+  end
+
+  test "Registry.list/0 via NameIndex.all returns same count", %{tmp: tmp} do
+    make_ws(tmp, "ws-a")
+    make_ws(tmp, "ws-b")
+    Registry.refresh()
+
+    legacy_list = Registry.list()
+
+    new_list =
+      NameIndex.all(:esr_workspace_name_index)
+      |> Enum.map(fn {_name, uuid} -> Registry.get_by_id(uuid) end)
+      |> Enum.filter(&match?({:ok, _}, &1))
+      |> Enum.map(fn {:ok, ws} -> ws end)
+
+    assert length(legacy_list) == length(new_list)
+  end
+end
+```
+
+**Step 2 — Confirm test passes** (verifies that the migration target path is functionally equivalent before deleting the old one).
+
+**Step 3 — Write implementation (migrate each caller):**
+
+**`bootstrap.ex` line 44** — `Registry.get("default")` returns `{:ok, %Workspace{}}` (legacy struct). After migration:
+
+```elixir
+# BEFORE:
+case Esr.Resource.Workspace.Registry.get("default") do
+  :error -> create_default_workspace()
+  {:ok, _} -> :ok
+end
+
+# AFTER:
+alias Esr.Resource.Workspace.{Registry, NameIndex}
+@name_index :esr_workspace_name_index
+
+defp ensure_default_workspace do
+  case NameIndex.id_for_name(@name_index, "default") do
+    nil -> create_default_workspace()
+    uuid ->
+      case Registry.get_by_id(uuid) do
+        {:ok, _} -> :ok
+        :error -> create_default_workspace()
+      end
+  end
+rescue
+  _ -> :ok
+end
+```
+
+**`file_loader.ex` line 157** — `Registry.get(name)` used to check existence:
+
+```elixir
+# BEFORE:
+case Esr.Resource.Workspace.Registry.get(name) do
+  {:ok, _ws} -> true
+  :error -> false
+end
+
+# AFTER:
+alias Esr.Resource.Workspace.{Registry, NameIndex}
+@name_index :esr_workspace_name_index
+
+defp workspace_exists?(name) do
+  case NameIndex.id_for_name(@name_index, name) do
+    nil -> false
+    uuid -> match?({:ok, _}, Registry.get_by_id(uuid))
+  end
+end
+```
+
+**`cc_process.ex` line 565** — `Registry.list()` iterates all workspaces to find chat name:
+
+```elixir
+# BEFORE:
+defp lookup_chat_name(chat_id) do
+  Esr.Resource.Workspace.Registry.list()
+  |> Enum.find_value(fn ws ->
+    Enum.find_value(ws.chats || [], fn
+      %{"chat_id" => ^chat_id} = c -> c["name"]
+      _ -> nil
+    end)
+  end)
+rescue
+  ArgumentError -> nil
+end
+
+# AFTER (uses NameIndex.all to enumerate all workspaces via UUID table):
+defp lookup_chat_name(chat_id) do
+  alias Esr.Resource.Workspace.{Registry, NameIndex}
+
+  NameIndex.all(:esr_workspace_name_index)
+  |> Enum.find_value(fn {_name, uuid} ->
+    case Registry.get_by_id(uuid) do
+      {:ok, ws} ->
+        Enum.find_value(ws.chats || [], fn
+          %{"chat_id" => ^chat_id} = c -> c["name"]
+          _ -> nil
+        end)
+      :error -> nil
+    end
+  end)
+rescue
+  ArgumentError -> nil
+end
+```
+
+**`doctor.ex` line 57** — `Registry.list()` used for count only:
+
+```elixir
+# BEFORE:
+workspace_count =
+  try do
+    length(Esr.Resource.Workspace.Registry.list())
+  rescue
+    _ -> 0
+  end
+
+# AFTER:
+workspace_count =
+  try do
+    Esr.Resource.Workspace.NameIndex.all(:esr_workspace_name_index)
+    |> length()
+  rescue
+    _ -> 0
+  end
+```
+
+**Step 4 — Confirm test passes:** Run the migration test plus full suite:
+
+```bash
+mix test runtime/test/esr/resource/workspace/registry_m4_migration_test.exs
+mix test
+```
+
+**Step 5 — No remaining callers:**
+
+```bash
+grep -rn "Registry\.get\b\|Registry\.list()" runtime/lib/esr/resource/workspace/ \
+  runtime/lib/esr/resource/capability/ \
+  runtime/lib/esr/plugins/claude_code/cc_process.ex \
+  runtime/lib/esr/commands/doctor.ex
+```
+
+Must return zero results (excluding the Registry module itself).
+
+**Commit message:** `refactor(m-4.1): migrate 4 Registry.get/list callers to NameIndex + get_by_id (Phase M-4.1)`
+
+---
+
+### Task M-4.2: Delete `defmodule Workspace` legacy embedded struct (~20 LOC)
+
+**File:** `runtime/lib/esr/resource/workspace/registry.ex` lines 41–60
+
+The embedded `defmodule Workspace` block contains `@moduledoc`, `defstruct`, and `@type t`. It is referenced only by `to_legacy/1` and `normalize_to_struct/1` (both deleted in M-4.3) and `do_put(%Workspace{})` (deleted in M-4.4).
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/resource/workspace/registry_m4_struct_deleted_test.exs
+defmodule Esr.WorkspaceRegistryM4StructDeletedTest do
+  use ExUnit.Case
+
+  @tag :m4_gate
+  test "Esr.Resource.Workspace.Registry.Workspace module does not exist after M-4" do
+    refute Code.ensure_loaded?(Esr.Resource.Workspace.Registry.Workspace),
+      "Legacy Workspace struct module still exists; M-4.2 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+Delete the entire `defmodule Workspace do ... end` block at lines 41–60 in `registry.ex`. This includes the `@moduledoc`, `defstruct`, and `@type t` lines.
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace/registry_m4_struct_deleted_test.exs` — green.
+
+**Step 5 — Compile check:** `mix compile --force` — no `Esr.Resource.Workspace.Registry.Workspace is not a module` errors (since we are deleting callers in M-4.3 and M-4.4).
+
+**Commit message:** `refactor(m-4.2): delete %Workspace{} legacy embedded struct from registry.ex (Phase M-4.2)`
+
+---
+
+### Task M-4.3: Delete `@legacy_table` + `to_legacy/1` + `normalize_to_struct/1` (~139 LOC total across M-4.2–M-4.4)
+
+**File:** `runtime/lib/esr/resource/workspace/registry.ex`
+
+**Affected content (per spec §7 M-4 inventory):**
+- `@legacy_table :esr_workspaces` declaration (line 63)
+- `@uuid_table :esr_workspaces_uuid` declaration (line 66) — keep this; it is the surviving table
+- ETS table creation for `@legacy_table` in `init/1` (lines 237–239)
+- `:ets.delete(@legacy_table, name)` in rename (lines 342, 538)
+- `:ets.delete_all_objects(@legacy_table)` in clear (line 357)
+- `:ets.insert(@legacy_table, ...)` on put (lines 373, 487, 513, 539)
+- `:ets.delete(@legacy_table, ...)` on delete (line 485)
+- `defp to_legacy(%Struct{} = ws)` function (lines 563–590)
+- `defp normalize_to_struct(%Workspace{} = legacy)` function (lines 592–615)
+- `@spec start_cmd_for/2` + `def start_cmd_for/2` (lines 177–195)
+- Legacy `list/0` reading from `@legacy_table` (line 139)
+- Legacy `get/1` reading from `@legacy_table` (lines 127–135)
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/resource/workspace/registry_m4_legacy_deleted_test.exs
+defmodule Esr.WorkspaceRegistryM4LegacyDeletedTest do
+  use ExUnit.Case
+
+  @tag :m4_gate
+  test "registry.ex has no @legacy_table references after M-4" do
+    content = File.read!("runtime/lib/esr/resource/workspace/registry.ex")
+    refute String.contains?(content, "@legacy_table"),
+      "registry.ex still contains @legacy_table; M-4.3 is incomplete"
+    refute String.contains?(content, "to_legacy"),
+      "registry.ex still contains to_legacy; M-4.3 is incomplete"
+    refute String.contains?(content, "normalize_to_struct"),
+      "registry.ex still contains normalize_to_struct; M-4.3 is incomplete"
+    refute String.contains?(content, "start_cmd_for"),
+      "registry.ex still contains start_cmd_for; M-4.7 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit** (multiple assertions fire).
+
+**Step 3 — Write implementation:**
+
+Delete in order from bottom to top:
+
+1. Delete `defp normalize_to_struct/1` (lines 592–615)
+2. Delete `defp to_legacy/1` (lines 563–590)
+3. Delete `def start_cmd_for/2` both clauses (lines 177–195) and its `@spec`
+4. Delete legacy `get/1` clause reading from `@legacy_table` (lines 127–135)
+5. Delete legacy `list/0` reading from `@legacy_table` (line 139) — the surviving `list/0` reads from `@name_index_table` via `NameIndex.all/1`; verify which clause to delete
+6. Delete all `:ets.insert(@legacy_table, ...)` calls from `do_put/1`, `rename/2` (lines 373, 487, 513, 538, 539)
+7. Delete `:ets.delete(@legacy_table, ...)` calls (lines 342, 485, 538)
+8. Delete `:ets.delete_all_objects(@legacy_table)` in clear (line 357)
+9. Delete `@legacy_table :esr_workspaces` declaration (line 63)
+10. Delete ETS table creation block for `@legacy_table` in `init/1` (lines 237–239)
+
+After deletion, `registry.ex` `init/1` only creates the `@uuid_table`. The `@uuid_table` ETS operations remain intact.
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace/registry_m4_legacy_deleted_test.exs` — green.
+
+**Step 5 — Full test sweep:**
+
+```bash
+mix compile --force
+mix test runtime/test/esr/resource/workspace/
+```
+
+**Commit message:** `refactor(m-4.3): delete @legacy_table ETS + to_legacy/1 + normalize_to_struct/1 + start_cmd_for/2 from registry.ex (Phase M-4.3)`
+
+---
+
+### Task M-4.4: Delete `do_put(%Workspace{})` clause (~21 LOC)
+
+**File:** `runtime/lib/esr/resource/workspace/registry.ex` lines 495–515
+
+The `do_put(%Workspace{} = legacy)` clause converts the legacy struct to a `%Struct{}` via `normalize_to_struct/1` (already deleted in M-4.3) before writing. After M-4.3, this clause fails to compile. Delete it in the same commit as M-4.3 or immediately after.
+
+**Step 1 — Write failing test** (compile-time test):
+
+```elixir
+# Add to registry_m4_legacy_deleted_test.exs (same file as M-4.3):
+test "do_put no longer has a %Workspace{} clause after M-4" do
+  content = File.read!("runtime/lib/esr/resource/workspace/registry.ex")
+  refute String.contains?(content, "do_put(%Workspace{}"),
+    "registry.ex still has do_put(%Workspace{}) clause; M-4.4 is incomplete"
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+Delete `defp do_put(%Workspace{} = legacy)` and its body (lines 495–515). The surviving `defp do_put(%Struct{} = ws)` clause remains.
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace/registry_m4_legacy_deleted_test.exs` — all 5 assertions green.
+
+**Step 5 — Compile + full suite:**
+
+```bash
+mix compile --force
+mix test
+```
+
+**Commit message:** `refactor(m-4.4): delete do_put(%Workspace{}) legacy clause from registry.ex (Phase M-4.4)`
+
+---
+
+### Task M-4.5: Delete `lookup_legacy/1` + `build_legacy_result/1` + `_legacy.*` reads from `info.ex` (~111 LOC)
+
+**File:** `runtime/lib/esr/commands/workspace/info.ex`
+
+**Affected content (per spec §7 M-4 inventory):**
+- Lines 26–35: `"role"`, `"neighbors"`, `"metadata"` fields in result map sourced from `_legacy.*` keys
+- Lines 78: `{:ok, build_legacy_result(w)}` call — delete and replace with Struct-path result
+- Lines 104–106: `ArgumentError -> lookup_legacy(ws_name)` rescue clause — delete
+- Lines 107–167: `defp lookup_legacy/1` — full body (~61 LOC)
+- Lines 167–200: `defp build_legacy_result/1` helper (~34 LOC)
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/commands/workspace/info_m4_gate_test.exs
+defmodule Esr.InfoCommandM4GateTest do
+  use ExUnit.Case
+
+  @tag :m4_gate
+  test "info.ex has no legacy path after M-4" do
+    content = File.read!("runtime/lib/esr/commands/workspace/info.ex")
+    refute String.contains?(content, "lookup_legacy"),
+      "info.ex still has lookup_legacy; M-4.5 is incomplete"
+    refute String.contains?(content, "build_legacy_result"),
+      "info.ex still has build_legacy_result; M-4.5 is incomplete"
+    refute String.contains?(content, "_legacy."),
+      "info.ex still has _legacy.* reads; M-4.5 is incomplete"
+    refute String.contains?(content, "ArgumentError"),
+      "info.ex still has ArgumentError rescue fallback; M-4.5 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit** (all 4 assertions fire).
+
+**Step 3 — Write implementation:**
+
+Delete from bottom to top:
+
+1. Delete `defp build_legacy_result/1` (lines 167–200)
+2. Delete `defp lookup_legacy/1` (lines 107–167)
+3. Delete the `ArgumentError -> lookup_legacy(ws_name)` rescue clause (lines 104–106) — the entire `rescue` block is removed if `lookup_legacy` was the only clause
+4. Remove the `"role"`, `"neighbors"`, `"metadata"` fields from the result map (lines 26–35) — these fields are gone; the response shape shrinks to `id`, `name`, `settings` (filtered), and `workspace_path`
+
+After deletion, `info.ex` uses only the Struct-path lookup. The `with` pipeline at the call site becomes:
+
+```elixir
+# BEFORE (abbreviated):
+with {:ok, uuid} <- NameIndex.id_for_name(...),
+     {:ok, ws} <- Registry.get_by_id(uuid) do
+  {:ok, build_legacy_result(ws)}    # line 78 — deleted
+end
+rescue
+  ArgumentError -> lookup_legacy(ws_name)  # lines 104-106 — deleted
+
+# AFTER:
+with {:ok, uuid} <- NameIndex.id_for_name(@name_index_table, ws_name),
+     {:ok, ws} <- Registry.get_by_id(uuid) do
+  {:ok, %{
+    "id"       => ws.id,
+    "name"     => ws.name,
+    "settings" => ws.settings
+      |> Enum.reject(fn {k, _} -> String.starts_with?(k, "_legacy.") end)
+      |> Map.new(),
+    "workspace_path" => ws.workspace_path
+  }}
+end
+```
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/commands/workspace/info_m4_gate_test.exs` — green.
+
+**Step 5 — Update `info_test.exs` and run full suite:**
+
+```bash
+# In runtime/test/esr/commands/workspace/info_test.exs:
+# Delete assertions on "role", "neighbors", "metadata" fields.
+# Update expected response to match new Struct-only shape.
+
+mix compile --force
+mix test
+```
+
+**Commit message:** `refactor(m-4.5): delete lookup_legacy + _legacy.* reads from info.ex (Phase M-4.5)`
+
+---
+
+### Task M-4.6: Delete `legacy_metadata/1` + `_legacy.role` reads from `describe.ex` (~13 LOC)
+
+**File:** `runtime/lib/esr/resource/workspace/describe.ex`
+
+**Affected content (per spec §7 M-4 inventory):**
+- Line 123: `base_metadata = legacy_metadata(ws)` local variable
+- Lines 134–136: `"role" => Map.get(ws.settings, "_legacy.role", "dev")` in describe result
+- Line ~135: `"_legacy.metadata"` read in describe result
+- Lines 168–174: `defp legacy_metadata/1` function body
+
+**Step 1 — Write failing test:**
+
+```elixir
+# runtime/test/esr/resource/workspace_describe_m4_gate_test.exs
+defmodule Esr.WorkspaceDescribeM4GateTest do
+  use ExUnit.Case
+
+  @tag :m4_gate
+  test "describe.ex has no legacy_metadata or _legacy.role after M-4" do
+    content = File.read!("runtime/lib/esr/resource/workspace/describe.ex")
+    refute String.contains?(content, "legacy_metadata"),
+      "describe.ex still has legacy_metadata; M-4.6 is incomplete"
+    refute String.contains?(content, "_legacy.role"),
+      "describe.ex still has _legacy.role; M-4.6 is incomplete"
+    refute String.contains?(content, "_legacy.metadata"),
+      "describe.ex still has _legacy.metadata; M-4.6 is incomplete"
+  end
+end
+```
+
+**Step 2 — Confirm test fails before edit.**
+
+**Step 3 — Write implementation:**
+
+1. Delete `defp legacy_metadata/1` (lines 168–174)
+2. Delete `base_metadata = legacy_metadata(ws)` at line 123
+3. Remove `"role" => Map.get(ws.settings, "_legacy.role", "dev")` from describe result map
+4. Remove `"_legacy.metadata"` read from describe result map
+
+The describe output no longer includes `"role"` (product decision: role concept is removed with M-4; F-2 tracks follow-up if workspace-level role is needed post-cleanup).
+
+**Step 4 — Confirm test passes:** `mix test runtime/test/esr/resource/workspace_describe_m4_gate_test.exs` — green.
+
+**Step 5 — Full suite:**
+
+```bash
+mix compile --force
+mix test runtime/test/esr/resource/
+```
+
+**Commit message:** `refactor(m-4.6): delete legacy_metadata + _legacy.role/_legacy.metadata reads from describe.ex (Phase M-4.6)`
+
+---
+
+### Task M-4.7: PR + admin-merge
+
+**Step 1 — Final M-4 gate sweep:**
+
+```bash
+grep -rn "@legacy_table\|_legacy\.\|defmodule Workspace\b\|normalize_to_struct\|to_legacy\|start_cmd_for\|lookup_legacy\|build_legacy_result" runtime/lib/
+# Must return zero results.
+
+mix compile --force
+mix test
+```
+
+**Step 2 — Stage all M-4 files:**
+
+```bash
+git add \
+  runtime/lib/esr/resource/workspace/registry.ex \
+  runtime/lib/esr/commands/workspace/info.ex \
+  runtime/lib/esr/resource/workspace/describe.ex \
+  runtime/lib/esr/resource/workspace/bootstrap.ex \
+  runtime/lib/esr/resource/capability/file_loader.ex \
+  runtime/lib/esr/plugins/claude_code/cc_process.ex \
+  runtime/lib/esr/commands/doctor.ex \
+  runtime/test/esr/resource/workspace/registry_m4_migration_test.exs \
+  runtime/test/esr/resource/workspace/registry_m4_struct_deleted_test.exs \
+  runtime/test/esr/resource/workspace/registry_m4_legacy_deleted_test.exs \
+  runtime/test/esr/commands/workspace/info_m4_gate_test.exs \
+  runtime/test/esr/commands/workspace/info_test.exs \
+  runtime/test/esr/resource/workspace_describe_m4_gate_test.exs
+```
+
+**Step 3 — Open PR against `dev`; title:** `feat(m-4): delete _legacy.* compat shim + %Workspace{} legacy struct + 4 caller migrations`
+
+PR description note: "`workspace_for_chat/2` is implemented via `@uuid_table` (not `@legacy_table`), verified at `registry.ex:149–175`. All 8 callers continue to compile and work unchanged."
+
+**Step 4 — Admin-merge:**
+
+```bash
+gh pr merge --admin --squash --delete-branch
+```
+
+**Step 5 — Verify:** `git log --oneline dev | head -3` — M-4 commit visible.
+
+---
+
+## Phase M-5: Tests + e2e sweep
+
+**Depends on:** M-4 merged into `dev`.
+
+**Purpose:** Rewrite all tests that covered deleted code; extend the ActorQuery and InstanceRegistry test suites; add e2e scenario 18 (multi-CC session lifecycle); rewrite or delete the topology e2e scenarios. After M-5, the test suite covers only surviving production code; the e2e suite validates the multi-CC workflow end-to-end.
+
+**LOC estimate:** +200 / -100
+
+**Risk:** Low — tests only. No production code changes.
+
+**Invariant test (gate for M-5 done):** The scenario 18 e2e script must complete with exit code 0. The ActorQuery integration test `find_by_name → add_instance_and_spawn → find_by_name` must be green. `grep -rn "backwire\|rewire_session_siblings\|reachable_set\|neighbor_workspaces" runtime/test/` must return zero results (excluding the M-3 stub comments).
+
+---
+
+### Task M-5.1: Delete obsolete test blocks from existing test files
+
+**Files and deletions:**
+
+**`runtime/test/esr/session/agent_spawner_test.exs`** — Delete all tests referencing `backwire_neighbors`, `build_neighbors`, or `:sys.replace_state` neighbor patching. These were the Phase 4 / PR-9 tests. Identify via:
+
+```bash
+grep -n "backwire\|build_neighbors\|replace_state.*neighbor" \
+  runtime/test/esr/session/agent_spawner_test.exs
+```
+
+Replace each deleted test block with a comment:
+
+```elixir
+# deleted in M-5 — backwire_neighbors removed in M-2; routing via ActorQuery
+# Coverage: runtime/test/esr/actor_query_test.exs + instance_registry_spawn_test.exs
+```
+
+Add two new tests to the same file:
+
+```elixir
+describe "spawn-via-InstanceRegistry (post-M-2)" do
+  test "spawned agent is findable via ActorQuery.find_by_name immediately after add_instance_and_spawn" do
+    sid = "spawner-m5-#{System.unique_integer([:positive])}"
+    name = "test-agent-#{System.unique_integer([:positive])}"
+
+    {:ok, _result} = Esr.Entity.Agent.InstanceRegistry.add_instance_and_spawn(%{
+      session_id: sid,
+      agent_name: name,
+      agent_type: :cc
+    })
+
+    assert {:ok, pid} = Esr.ActorQuery.find_by_name(sid, name)
+    assert Process.alive?(pid)
+  end
+
+  test "spawn failure leaves no orphan in name index" do
+    sid = "spawner-rollback-#{System.unique_integer([:positive])}"
+    name = "rollback-agent-#{System.unique_integer([:positive])}"
+
+    # Simulate spawn failure by passing invalid agent_type
+    {:error, _reason} = Esr.Entity.Agent.InstanceRegistry.add_instance_and_spawn(%{
+      session_id: sid,
+      agent_name: name,
+      agent_type: :nonexistent_type
+    })
+
+    assert :not_found == Esr.ActorQuery.find_by_name(sid, name)
+    assert [] == Esr.ActorQuery.list_by_role(sid, :cc_process)
+  end
+end
+```
+
+**`runtime/test/esr/entity/pty_process_test.exs`** — Delete all tests referencing `rewire_session_siblings` or `patch_neighbor_in_state`. Identify via:
+
+```bash
+grep -n "rewire_session_siblings\|patch_neighbor_in_state" \
+  runtime/test/esr/entity/pty_process_test.exs
+```
+
+Replace with stub comments:
+
+```elixir
+# deleted in M-5 — rewire_session_siblings removed in M-2; sibling discovery via ActorQuery
+# Coverage: runtime/test/esr/actor_query_test.exs list_by_role multi-instance tests
+```
+
+**`runtime/test/esr/plugins/claude_code/cc_process_test.exs`** — Delete all tests referencing `reachable_set`, `build_initial_reachable_set`, or `Esr.Topology`. These were already stubbed in M-3.2 with `# deleted in M-3` comments. In M-5, convert the stubs to proper test scaffolding for the ActorQuery-based routing (see M-5.3).
+
+**`runtime/test/esr/entity_server_describe_topology_test.exs`** (or `entity/server_describe_topology_test.exs`) — If the file tests only `describe_topology` output, delete the entire file:
+
+```bash
+rm runtime/test/esr/entity/server_describe_topology_test.exs
+# or:
+rm runtime/test/esr/entity_server_describe_topology_test.exs
+```
+
+If the file also tests other server behavior, keep the file and delete only the topology-specific `describe` section.
+
+**Step 1 — Write gate test:**
+
+```bash
+# Run as part of CI gate:
+grep -rln "backwire\|rewire_session_siblings\|reachable_set\|neighbor_workspaces\|describe_topology" \
+  runtime/test/esr/session/agent_spawner_test.exs \
+  runtime/test/esr/entity/pty_process_test.exs \
+  runtime/test/esr/plugins/claude_code/cc_process_test.exs
+# Must return zero matches.
+```
+
+**Step 2 — Confirm non-zero matches before M-5.1.**
+
+**Step 3 — Delete/stub as described above. Add new spawner tests.**
+
+**Step 4 — Confirm zero matches after edits.**
+
+**Step 5 — Full test suite:** `mix test` — green.
+
+**Commit message:** `test(m-5.1): delete obsolete backwire/rewire/reachable_set/describe_topology tests + add spawn-via-InstanceRegistry tests (Phase M-5.1)`
+
+---
+
+### Task M-5.2: Update tests pattern-matching on `%Workspace{}` legacy struct
+
+**Files:** Identified via:
+
+```bash
+grep -rln "%Esr.Resource.Workspace.Registry.Workspace{" runtime/test/
+```
+
+For each matched test file, replace any `%Esr.Resource.Workspace.Registry.Workspace{...}` struct literal with the equivalent `%Esr.Resource.Workspace.Struct{...}` construction, or replace the test entirely if it was testing legacy struct behavior.
+
+**Step 1 — Inventory:**
+
+```bash
+grep -rn "%Esr.Resource.Workspace.Registry.Workspace{" runtime/test/
+```
+
+**Step 2 — For each occurrence:**
+
+```elixir
+# BEFORE:
+assert %Esr.Resource.Workspace.Registry.Workspace{name: "foo"} = result
+
+# AFTER:
+assert %Esr.Resource.Workspace.Struct{name: "foo"} = result
+```
+
+If a test fixture constructs a legacy `%Workspace{}` to test `to_legacy/1` or `normalize_to_struct/1` behavior (both deleted), delete the entire test and replace with:
+
+```elixir
+# deleted in M-5 — to_legacy/normalize_to_struct removed in M-4;
+# Struct-only path tested in registry_test.exs
+```
+
+**Step 3 — Write gate test:**
+
+```elixir
+# runtime/test/esr/m5_no_legacy_struct_test.exs
+defmodule Esr.M5NoLegacyStructTest do
+  use ExUnit.Case
+
+  @tag :m5_gate
+  test "no test file references the legacy Workspace embedded struct after M-5" do
+    {output, _} = System.cmd("grep", [
+      "-rln",
+      "%Esr.Resource.Workspace.Registry.Workspace{",
+      "runtime/test/"
+    ])
+    assert output == "",
+      "Found legacy struct pattern-match in tests: #{output}"
+  end
+end
+```
+
+**Step 4 — Confirm gate passes after all migrations.**
+
+**Step 5 — Full test suite:** `mix test` — green.
+
+**Commit message:** `test(m-5.2): migrate legacy %Workspace{} struct refs in tests to %Struct{} (Phase M-5.2)`
+
+---
+
+### Task M-5.3: Extend `Esr.ActorQuery` integration tests
+
+**File:** `runtime/test/esr/actor_query_test.exs` (extend from M-1 additions)
+
+Add the following test cases to the existing `Esr.ActorQueryTest` module (per spec §10 ActorQuery unit tests table):
+
+**Step 1 — Write failing tests** (these cases cover the full spec §10 inventory):
+
+```elixir
+# Additions to runtime/test/esr/actor_query_test.exs
+
+describe "find_by_name/2 — extended" do
+  test "returns :not_found after deregister", %{session_id: sid} do
+    actor_id = "actor-dereg-#{System.unique_integer([:positive])}"
+    name = "peer-dereg-#{System.unique_integer([:positive])}"
+    :ok = Esr.Entity.Registry.register_attrs(actor_id, %{session_id: sid, name: name, role: :cc_process})
+    :ok = Esr.Entity.Registry.deregister_attrs(actor_id, %{session_id: sid, name: name, role: :cc_process})
+
+    assert :not_found == Esr.ActorQuery.find_by_name(sid, name)
+  end
+
+  test "returns :not_found after process crash (monitor DOWN cleanup)", %{session_id: sid} do
+    actor_id = "actor-crash-#{System.unique_integer([:positive])}"
+    name = "peer-crash-#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    # Spawn a process that registers itself, then waits to be killed.
+    # register_attrs uses self(), so the spawned process must call it.
+    pid = spawn(fn ->
+      :ok = Esr.Entity.Registry.register_attrs(actor_id, %{session_id: sid, name: name, role: :cc_process})
+      send(test_pid, :registered)
+      receive do :stop -> :ok end
+    end)
+
+    # Wait for registration to complete before killing
+    assert_receive :registered, 1000
+
+    # Force-kill the registered process
+    Process.exit(pid, :kill)
+    # Allow monitor DOWN to propagate through IndexWatcher
+    Process.sleep(200)
+
+    assert :not_found == Esr.ActorQuery.find_by_name(sid, name)
+  end
+end
+
+describe "list_by_role/2 — extended" do
+  test "returns two pids for two same-role registrations", %{session_id: sid} do
+    for n <- ["a", "b"] do
+      actor_id = "actor-multi-#{n}-#{System.unique_integer([:positive])}"
+      :ok = Esr.Entity.Registry.register_attrs(actor_id, %{
+        session_id: sid,
+        name: "peer-#{n}-#{System.unique_integer([:positive])}",
+        role: :cc_process
+      })
+    end
+
+    result = Esr.ActorQuery.list_by_role(sid, :cc_process)
+    assert length(result) == 2
+    assert Enum.all?(result, &is_pid/1)
+  end
+
+  test "returns one pid after one of two instances crashes", %{session_id: sid} do
+    actor_id_a = "actor-crash-a-#{System.unique_integer([:positive])}"
+    actor_id_b = "actor-crash-b-#{System.unique_integer([:positive])}"
+    name_a = "peer-crash-a-#{System.unique_integer([:positive])}"
+    name_b = "peer-crash-b-#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    # Each process registers itself (register_attrs uses self())
+    pid_a = spawn(fn ->
+      :ok = Esr.Entity.Registry.register_attrs(actor_id_a, %{session_id: sid, name: name_a, role: :cc_process})
+      send(test_pid, {:registered, :a})
+      receive do :stop -> :ok end
+    end)
+    _pid_b = spawn(fn ->
+      :ok = Esr.Entity.Registry.register_attrs(actor_id_b, %{session_id: sid, name: name_b, role: :cc_process})
+      send(test_pid, {:registered, :b})
+      receive do :stop -> :ok end
+    end)
+
+    assert_receive {:registered, :a}, 1000
+    assert_receive {:registered, :b}, 1000
+
+    assert length(Esr.ActorQuery.list_by_role(sid, :cc_process)) == 2
+
+    # Kill one; allow DOWN to propagate through IndexWatcher
+    Process.exit(pid_a, :kill)
+    Process.sleep(200)
+
+    remaining = Esr.ActorQuery.list_by_role(sid, :cc_process)
+    assert length(remaining) == 1
+  end
+end
+
+describe "find_by_id/1 — extended" do
+  test "returns :not_found after process exit", %{session_id: sid} do
+    actor_id = "actor-exit-#{System.unique_integer([:positive])}"
+    pid = spawn(fn -> receive do :stop -> :ok end end)
+    {:ok, _} = Esr.Entity.Registry.register(actor_id, pid)
+
+    Process.exit(pid, :kill)
+    Process.sleep(100)
+
+    assert :not_found == Esr.ActorQuery.find_by_id(actor_id)
+  end
+end
+```
+
+**Step 2 — Confirm new tests fail** before the monitor DOWN handler is confirmed working (they should pass once M-1's IndexWatcher is in place).
+
+**Step 3 — No implementation changes needed** — all behavior is in M-1's Registry changes. Run tests to validate.
+
+**Step 4 — Confirm all tests pass:** `mix test runtime/test/esr/actor_query_test.exs` — green on all cases.
+
+**Step 5 — Confirm no regressions:** `mix test` — full suite green.
+
+**Commit message:** `test(m-5.3): extend ActorQuery integration tests — crash cleanup + multi-instance (Phase M-5.3)`
+
+---
+
+### Task M-5.4: Rewrite or delete e2e topology scenarios
+
+**Files:** `tests/e2e/05_topology_routing.sh` (and `04_multi_app_routing.sh` if it references `neighbor_workspaces`)
+
+**Step 1 — Audit each scenario:**
+
+```bash
+grep -n "describe_topology\|neighbor_workspaces\|reachable_set" \
+  tests/e2e/05_topology_routing.sh \
+  tests/e2e/04_multi_app_routing.sh \
+  tests/e2e/14_session_multiagent.sh
+```
+
+**Decision criteria per spec §9 R-3:**
+- If scenario tests ONLY `describe_topology` response shape or `neighbor_workspaces` content: **delete the scenario file**.
+- If scenario tests routing correctness beyond the deleted tool: **extract valid assertions into scenario 18** (M-5.5), then delete the topology-specific portion.
+
+**For `05_topology_routing.sh`:** This scenario tests the `describe_topology` tool response and `neighbor_workspaces` content (per spec §9 R-3). The routing assertions (message delivered to correct session) are re-expressed in scenario 18. Delete the file:
+
+```bash
+rm tests/e2e/05_topology_routing.sh
+```
+
+**For `04_multi_app_routing.sh`:** Check if it uses `neighbor_workspaces`. If yes, remove only the `neighbor_workspaces` assertion block; preserve multi-app routing assertions.
+
+**Step 2 — Write gate check:**
+
+```bash
+grep -rn "describe_topology\|neighbor_workspaces" tests/e2e/
+# Must return zero results after M-5.4.
+```
+
+**Step 3 — Delete or edit as decided above.**
+
+**Step 4 — Confirm remaining e2e scenarios still pass:**
+
+```bash
+bash tests/e2e/04_multi_app_routing.sh
+bash tests/e2e/14_session_multiagent.sh
+```
+
+**Step 5 — No mix test needed** (bash e2e only in this task).
+
+**Commit message:** `test(m-5.4): delete 05_topology_routing.sh + strip neighbor_workspaces from 04_multi_app_routing.sh (Phase M-5.4)`
+
+---
+
+### Task M-5.5: Add e2e scenario 18 — multi-CC session lifecycle
+
+**File:** `tests/e2e/18_multi_cc_session.sh` (new)
+
+**Step 1 — Write failing scenario** (fails until M-2 is in place because `/session:add-agent` does not spawn live processes before M-2):
+
+```bash
+#!/usr/bin/env bash
+# tests/e2e/18_multi_cc_session.sh
+# Scenario 18: multi-CC session lifecycle
+# Validates: /session:new → add two CC agents → @mention routing → remove agent → /session:end
+# Mirror: scenario 14 pattern (post-PR-249)
+# Per project e2e standards: agent-browser screenshot required at step 3 + step 4.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+SCENARIO="18_multi_cc_session"
+SESSION_ID=""
+
+log_step() { echo "[${SCENARIO}] $*"; }
+
+# ── Step 1: /session:new ──────────────────────────────────────────────────────
+log_step "Step 1 — creating new session"
+RESPONSE=$(esrd_cmd "/session:new")
+SESSION_ID=$(echo "$RESPONSE" | jq -r '.session_id // empty')
+assert_nonempty "$SESSION_ID" "session_id from /session:new"
+
+# Assert: no CC agents yet
+CC_COUNT=$(esrd_query "ActorQuery.list_by_role(\"${SESSION_ID}\", :cc_process) |> length()")
+assert_equals "0" "$CC_COUNT" "no cc_process agents before add-agent"
+
+log_step "Step 1 PASS — session_id=${SESSION_ID}"
+
+# ── Step 2: /session:add-agent name=helper-A type=cc ─────────────────────────
+log_step "Step 2 — adding helper-A"
+ADD_A=$(esrd_cmd "/session:add-agent name=helper-A type=cc")
+ACTOR_ID_A=$(echo "$ADD_A" | jq -r '.actor_id // empty')
+assert_nonempty "$ACTOR_ID_A" "actor_id for helper-A"
+
+PID_A=$(esrd_query "Esr.ActorQuery.find_by_name(\"${SESSION_ID}\", \"helper-A\")")
+assert_matches "ok" "$PID_A" "find_by_name returns {:ok, pid} for helper-A"
+
+ROLE_COUNT=$(esrd_query "Esr.ActorQuery.list_by_role(\"${SESSION_ID}\", :cc_process) |> length()")
+assert_equals "1" "$ROLE_COUNT" "list_by_role returns 1 after add helper-A"
+
+log_step "Step 2 PASS — actor_id_a=${ACTOR_ID_A}"
+
+# ── Step 3: /session:add-agent name=helper-B type=cc ─────────────────────────
+log_step "Step 3 — adding helper-B"
+ADD_B=$(esrd_cmd "/session:add-agent name=helper-B type=cc")
+ACTOR_ID_B=$(echo "$ADD_B" | jq -r '.actor_id // empty')
+assert_nonempty "$ACTOR_ID_B" "actor_id for helper-B"
+assert_not_equals "$ACTOR_ID_A" "$ACTOR_ID_B" "actor_id_a != actor_id_b"
+
+ROLE_COUNT=$(esrd_query "Esr.ActorQuery.list_by_role(\"${SESSION_ID}\", :cc_process) |> length()")
+assert_equals "2" "$ROLE_COUNT" "list_by_role returns 2 after add helper-A + helper-B"
+
+# Agent-browser screenshot: two CC agents active in same session (PTY terminal)
+# Per esr-e2e-standards.md: screenshot saved to tests/e2e/screenshots/18_step3_two_agents.png
+screenshot_pty "18_step3_two_agents" "$SESSION_ID"
+log_step "Step 3 PASS — actor_id_b=${ACTOR_ID_B}"
+
+# ── Step 4: @helper-A mention routing ────────────────────────────────────────
+log_step "Step 4 — @mention routing to helper-A"
+ROUTED_TO=$(esrd_send_mention "$SESSION_ID" "@helper-A ping")
+assert_equals "$ACTOR_ID_A" "$ROUTED_TO" "@helper-A routes to actor_id_a"
+
+# Assert helper-B was NOT the recipient
+assert_not_equals "$ACTOR_ID_B" "$ROUTED_TO" "@helper-A does NOT route to actor_id_b"
+
+# Agent-browser screenshot: Feishu reply from helper-A specifically
+screenshot_feishu "18_step4_mention_routing" "$SESSION_ID"
+log_step "Step 4 PASS"
+
+# ── Step 5: /session:remove-agent name=helper-A ──────────────────────────────
+log_step "Step 5 — removing helper-A"
+esrd_cmd "/session:remove-agent name=helper-A"
+
+FIND_A_AFTER=$(esrd_query "Esr.ActorQuery.find_by_name(\"${SESSION_ID}\", \"helper-A\")")
+assert_equals ":not_found" "$FIND_A_AFTER" "find_by_name returns :not_found after remove"
+
+ROLE_COUNT_AFTER=$(esrd_query "Esr.ActorQuery.list_by_role(\"${SESSION_ID}\", :cc_process) |> length()")
+assert_equals "1" "$ROLE_COUNT_AFTER" "list_by_role returns 1 after remove helper-A"
+
+ALIVE_A=$(esrd_query "Process.alive?(pid_for_actor(\"${ACTOR_ID_A}\"))")
+assert_equals "false" "$ALIVE_A" "helper-A pid is not alive after remove"
+
+log_step "Step 5 PASS"
+
+# ── Step 6: /session:end ─────────────────────────────────────────────────────
+log_step "Step 6 — ending session"
+esrd_cmd "/session:end"
+
+ROLE_COUNT_FINAL=$(esrd_query "Esr.ActorQuery.list_by_role(\"${SESSION_ID}\", :cc_process) |> length()")
+assert_equals "0" "$ROLE_COUNT_FINAL" "list_by_role returns 0 after session end"
+
+ALIVE_B=$(esrd_query "Process.alive?(pid_for_actor(\"${ACTOR_ID_B}\"))")
+assert_equals "false" "$ALIVE_B" "helper-B pid is not alive after session end"
+
+log_step "Step 6 PASS"
+log_step "SCENARIO 18 COMPLETE — multi-CC session lifecycle verified"
+exit 0
+```
+
+**Step 2 — Confirm scenario fails before M-2** (`/session:add-agent` returns actor_id but no live pid — `assert_matches "ok"` fails at Step 2).
+
+**Step 3 — No implementation changes** — the scenario exercises M-2's `add_instance_and_spawn` and M-1's ActorQuery. The script runs against a live `esrd` instance.
+
+**Step 4 — Confirm scenario passes end-to-end:**
+
+```bash
+bash tests/e2e/18_multi_cc_session.sh
+# Exit code 0; screenshots at:
+#   tests/e2e/screenshots/18_step3_two_agents.png
+#   tests/e2e/screenshots/18_step4_mention_routing.png
+```
+
+Per project e2e standards (`feedback_esr_e2e_standards.md`): agent-browser screenshots of (1) PTY showing both helper-A and helper-B in the same session, (2) Feishu chat showing `@helper-A` answered by helper-A specifically, are required before M-5 is claimed complete.
+
+**Step 5 — Full e2e sweep:**
+
+```bash
+for f in tests/e2e/0*.sh tests/e2e/1*.sh; do
+  bash "$f" && echo "PASS: $f" || echo "FAIL: $f"
+done
+```
+
+All scenarios exit 0.
+
+**Commit message:** `test(m-5.5): add e2e scenario 18 — multi-CC session lifecycle + @mention routing (Phase M-5.5)`
+
+---
+
+### Task M-5.6: PR + admin-merge
+
+**Step 1 — Final M-5 gate sweep:**
+
+```bash
+# Zero references to deleted patterns in test code:
+grep -rn "backwire\|rewire_session_siblings\|reachable_set\|neighbor_workspaces\|describe_topology" \
+  runtime/test/
+# (Stubs with "# deleted in M-3/M-5" comments are acceptable — only callable code triggers failure.)
+
+# Zero legacy struct patterns:
+grep -rln "%Esr.Resource.Workspace.Registry.Workspace{" runtime/test/
+# Must be empty.
+
+# Scenario 18 exits 0:
+bash tests/e2e/18_multi_cc_session.sh
+
+# Full unit suite green:
+mix test
+```
+
+**Step 2 — Stage all M-5 files:**
+
+```bash
+git add \
+  runtime/test/esr/session/agent_spawner_test.exs \
+  runtime/test/esr/entity/pty_process_test.exs \
+  runtime/test/esr/plugins/claude_code/cc_process_test.exs \
+  runtime/test/esr/actor_query_test.exs \
+  runtime/test/esr/entity/registry_indexes_test.exs \
+  runtime/test/esr/m5_no_legacy_struct_test.exs \
+  tests/e2e/18_multi_cc_session.sh \
+  tests/e2e/04_multi_app_routing.sh  # stripped neighbor_workspaces assertion
+# git rm tests/e2e/05_topology_routing.sh
+# git rm runtime/test/esr/entity/server_describe_topology_test.exs  (if fully deleted)
+```
+
+**Step 3 — Open PR against `dev`; title:** `feat(m-5): tests + e2e sweep + scenario 18 multi-CC session lifecycle`
+
+**Step 4 — Admin-merge:**
+
+```bash
+gh pr merge --admin --squash --delete-branch
+```
+
+**Step 5 — Verify:** `git log --oneline dev | head -5` — all 5 M-1 through M-5 commits visible.
+
+---
+
+<!-- PLAN_COMPLETE — all 5 phases planned -->
