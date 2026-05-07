@@ -6,24 +6,23 @@ defmodule Esr.Commands.Workspace.InfoTest do
   setup do
     assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
-    on_exit(fn ->
-      :ets.delete(:esr_workspaces, "ws_info_test")
-    end)
+    on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("ws_info_test") end)
 
     :ok
   end
 
   test "returns the workspace record when present" do
     :ok =
-      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-        name: "ws_info_test",
-        owner: "linyilun",
-        role: "dev",
-        start_cmd: "claude",
-        chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
-        env: %{},
-        metadata: %{"purpose" => "test"}
-      })
+      Esr.Resource.Workspace.Registry.put(
+        Esr.Test.WorkspaceFixture.build(
+          name: "ws_info_test",
+          owner: "linyilun",
+          role: "dev",
+          start_cmd: "claude",
+          chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
+          metadata: %{"purpose" => "test"}
+        )
+      )
 
     cmd = %{"submitted_by" => "ou_test", "args" => %{"workspace" => "ws_info_test"}}
 
@@ -59,9 +58,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
       unique = System.unique_integer([:positive])
       ws_name = "ws_info_struct_#{unique}"
 
-      on_exit(fn ->
-        :ets.delete(:esr_workspaces, ws_name)
-      end)
+      on_exit(fn -> Esr.Test.WorkspaceFixture.delete!(ws_name) end)
 
       {:ok, ws_name: ws_name, unique: unique}
     end
@@ -69,6 +66,9 @@ defmodule Esr.Commands.Workspace.InfoTest do
     test "new struct fields are surfaced when put via %Struct{}", %{ws_name: ws_name} do
       ws_id = UUID.uuid4()
 
+      # M-4: settings keys no longer carry the `_legacy.` prefix; role/
+      # metadata go into plain settings keys (the loader/serializer
+      # treats them as just-another-setting).
       :ok =
         Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Struct{
           id: ws_id,
@@ -78,8 +78,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
           folders: [%{path: "/some/repo", name: "repo"}],
           settings: %{
             "cc.model" => "claude-sonnet-4-6",
-            "_legacy.role" => "dev",
-            "_legacy.metadata" => %{}
+            "role" => "dev"
           },
           env: %{"FOO" => "bar"},
           chats: [%{chat_id: "oc_b", app_id: "cli_z", kind: "dm"}],
@@ -100,26 +99,25 @@ defmodule Esr.Commands.Workspace.InfoTest do
       # location: nil → encoded as nil (no esr_bound dir to write)
       assert is_nil(info["location"]) or is_binary(info["location"])
 
-      # _legacy.* keys must NOT appear in settings
+      # Settings keys are passed through unchanged
+      assert info["settings"]["cc.model"] == "claude-sonnet-4-6"
+      assert info["settings"]["role"] == "dev"
+
+      # M-4: legacy `_legacy.*` keys are gone — neither expected nor written.
       refute Map.has_key?(info["settings"], "_legacy.role")
       refute Map.has_key?(info["settings"], "_legacy.metadata")
-
-      # Non-legacy settings are preserved
-      assert info["settings"]["cc.model"] == "claude-sonnet-4-6"
     end
 
-    test "legacy fields still surfaced from _legacy.* stash when put via legacy Workspace",
-         %{ws_name: ws_name} do
+    test "role + metadata surfaced from settings keys", %{ws_name: ws_name} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: ws_name,
-          owner: "bob",
-          role: "kanban",
-          start_cmd: "",
-          chats: [],
-          env: %{},
-          metadata: %{"purpose" => "kanban board"}
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: ws_name,
+            owner: "bob",
+            role: "kanban",
+            metadata: %{"purpose" => "kanban board"}
+          )
+        )
 
       cmd = %{"submitted_by" => "ou_test", "args" => %{"workspace" => ws_name}}
 
@@ -130,14 +128,13 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
     test "args.name alias accepted in place of args.workspace", %{ws_name: ws_name} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: ws_name,
-          owner: "carol",
-          role: "dev",
-          chats: [],
-          env: %{},
-          metadata: %{}
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: ws_name,
+            owner: "carol",
+            role: "dev"
+          )
+        )
 
       cmd = %{"submitted_by" => "ou_test", "args" => %{"name" => ws_name}}
 
@@ -161,7 +158,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
       on_exit(fn ->
         File.rm_rf!(tmp_repo)
-        :ets.delete(:esr_workspaces, ws_name)
+        Esr.Test.WorkspaceFixture.delete!(ws_name)
       end)
 
       ws_id = UUID.uuid4()
@@ -198,8 +195,8 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
       on_exit(fn ->
         File.rm_rf!(tmp_repo)
-        :ets.delete(:esr_workspaces, ws_name_no_folders)
-        :ets.delete(:esr_workspaces, ws_name_no_yaml)
+        Esr.Test.WorkspaceFixture.delete!(ws_name_no_folders)
+        Esr.Test.WorkspaceFixture.delete!(ws_name_no_yaml)
       end)
 
       # Workspace with empty folders list

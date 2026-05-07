@@ -10,9 +10,9 @@ defmodule Esr.Resource.Workspace.Describe do
 
   **Exposed fields (current_workspace):**
     - `name`              — workspace name
-    - `role`              — from settings._legacy.role
+    - `role`              — from settings.role
     - `chats`             — allowlisted sub-map (see filter_chat/1)
-    - `metadata`          — union of struct metadata + topology.yaml metadata
+    - `metadata`          — union of settings.metadata + topology.yaml metadata
     - `description`       — only present when topology.yaml has it
     - `topology_overlay`  — boolean, true when overlay was applied
 
@@ -108,14 +108,14 @@ defmodule Esr.Resource.Workspace.Describe do
   # description and metadata (union). Any other field must NOT be added
   # without a security regression test.
   defp filter_workspace(%Struct{} = ws, overlay) do
-    base_metadata = legacy_metadata(ws)
+    base_metadata = settings_metadata(ws)
     overlay_metadata = Map.get(overlay, "metadata") || %{}
     merged_metadata = Map.merge(base_metadata, overlay_metadata)
     desc = Map.get(overlay, "description")
 
     base = %{
       "name" => ws.name,
-      "role" => Map.get(ws.settings, "_legacy.role", "dev"),
+      "role" => Map.get(ws.settings, "role", "dev"),
       "chats" => Enum.map(ws.chats || [], &filter_chat/1),
       "metadata" => merged_metadata,
       "topology_overlay" => map_size(overlay) > 0
@@ -144,8 +144,8 @@ defmodule Esr.Resource.Workspace.Describe do
 
   defp normalise_chat_to_string_keys(m), do: m
 
-  defp legacy_metadata(%Struct{settings: settings}) do
-    case Map.get(settings, "_legacy.metadata") do
+  defp settings_metadata(%Struct{settings: settings}) do
+    case Map.get(settings, "metadata") do
       m when is_map(m) -> m
       _ -> %{}
     end

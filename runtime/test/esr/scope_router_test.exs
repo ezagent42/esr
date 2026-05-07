@@ -101,15 +101,15 @@ defmodule Esr.ScopeRouterTest do
     # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
     # resolves to it; peers' init callbacks receive the enriched params.
     :ok =
-      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-        name: "T11b2_ws",
-        start_cmd: "",
-        role: "dev",
-        chats: [%{"chat_id" => "oc_T11b2", "app_id" => "cli_test", "kind" => "dm"}],
-        env: %{}
-      })
+      Esr.Resource.Workspace.Registry.put(
+        Esr.Test.WorkspaceFixture.build(
+          name: "T11b2_ws",
+          role: "dev",
+          chats: [%{"chat_id" => "oc_T11b2", "app_id" => "cli_test", "kind" => "dm"}]
+        )
+      )
 
-    on_exit(fn -> :ets.delete(:esr_workspaces, "T11b2_ws") end)
+    on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("T11b2_ws") end)
 
     assert {:ok, session_id} =
              Scope.Router.create_session(%{

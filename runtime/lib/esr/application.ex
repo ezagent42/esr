@@ -283,7 +283,6 @@ defmodule Esr.Application do
       # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /
       # ESR_INSTANCE directly, so the passed value is effectively
       # advisory — set ESRD_HOME to override.
-      _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
 
       # PR-21β 2026-04-30: cleanup_orphans is gone. erlexec owns
@@ -384,28 +383,6 @@ defmodule Esr.Application do
     else
       Logger.info("agents.yaml: absent at #{path}; skipping")
       :ok
-    end
-  end
-
-  @doc """
-  Load `<home>/default/workspaces.yaml` into
-  `Esr.Resource.Workspace.Registry`. v0.2 uses instance="default". Missing
-  file is not an error — returns :ok.
-  """
-  @spec load_workspaces_from_disk(Path.t()) :: :ok
-  def load_workspaces_from_disk(_esrd_home) do
-    path = Esr.Paths.workspaces_yaml()
-
-    case Esr.Resource.Workspace.Registry.load_from_file(path) do
-      {:ok, workspaces} ->
-        for {_name, ws} <- workspaces do
-          :ok = Esr.Resource.Workspace.Registry.put(ws)
-        end
-
-        :ok
-
-      _ ->
-        :ok
     end
   end
 
