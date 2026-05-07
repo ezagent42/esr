@@ -4552,4 +4552,2828 @@ git commit -m "feat: session cap UUID-only contract + output rendering (Phase 5)
 
 ---
 
-<!-- PLAN_END_PHASE_5 — next subagent: append "## Phase 6" here -->
+## Phase 6: Colon-namespace slash cutover
+
+**PR title:** `feat: colon-namespace slash cutover — hard cutover, /session:* family, /pty:key (Phase 6)`
+**Branch:** `feat/phase-6-colon-namespace`
+**Target:** `dev`
+**Est LOC:** ~1200
+**Depends on:** Phase 1b (user UUID), Phase 3 (Session command modules), Phase 5 (cap UUID enforcement)
+
+**Goal:** Rename every slash command to colon-namespace form in one hard-cutover PR. No aliases survive.
+Drop `/workspace:sessions`. Rename `/key` → `/pty:key`. Add the full `/session:*`, `/pty:*`, and `/cap:*` families
+(routing entries only; command modules for session:* were implemented in Phase 3). Add `/plugin:set`,
+`/plugin:unset`, `/plugin:show-config`, `/plugin:list-config` routing stubs (command modules land in Phase 7).
+Patch `slash_handler.ex` with a `@deprecated_slashes` hint map so operators get a clear "use X instead"
+message rather than a generic "unknown command". Update `/help` grouping to colon-prefix headers.
+Test sweep: update all test files that reference old slash literals.
+
+> **Spec §4 Rule 5 (authoritative):** `/key` → `/pty:key`. The absorbed `spec/colon-namespace-grammar`
+> inventory table incorrectly mapped it to `/session:key`; the main spec rev-2 §4 locks this as `/pty:key`.
+> Follow the main spec.
+
+---
+
+### Task 6.1: Validate matcher accepts colon-form names (registry smoke test)
+
+**Files:**
+- Read: `runtime/lib/esr/resource/slash_route/registry.ex` (lines 296-317)
+- Read: `runtime/lib/esr/resource/slash_route/file_loader.ex`
+- Create (then delete): scratch test to confirm colon keys route correctly
+- Extend: `runtime/test/esr/resource/slash_route/registry_test.exs` with colon-form key cases
+
+**Analysis:** `slash_head/1` splits on `\s+` (whitespace), so `/session:new` is treated as a single
+opaque token — the colon is transparent to the matcher. `keys_in_text/1` also splits on whitespace, so
+`/session:new name=foo` produces candidates `["/session:new name=foo", "/session:new"]` — correct.
+`file_loader.ex`'s `validate_slash_key/1` only checks that the key starts with `/`; colon-form passes.
+**Conclusion:** zero logic changes required. This task only adds a failing-then-passing regression test.
+
+- [ ] **Step 1 — Write failing test.** Add to `runtime/test/esr/resource/slash_route/registry_test.exs`:
+
+```elixir
+# Task 6.1 — colon-form matcher regression
+describe "colon-form slash key matching" do
+  test "colon-form key inserted directly resolves via lookup/1" do
+    # Load a synthetic route map with a colon-form key.
+    route = %{
+      slash: "/session:new",
+      kind: "session_new",
+      permission: "session:default/create",
+      command_module: "Esr.Commands.Session.New",
+      requires_workspace_binding: false,
+      requires_user_binding: true,
+      category: "Sessions",
+      description: "test",
+      args: []
+    }
+
+    # Insert directly into the slash table (bypasses yaml loader).
+    :ets.insert(:slash_routes, {"/session:new", route})
+
+    assert {:ok, found} = Esr.Resource.SlashRoute.Registry.lookup("/session:new name=test")
+    assert found.slash == "/session:new"
+    assert found.kind == "session_new"
+  end
+
+  test "colon-form key with trailing args resolves to the colon key" do
+    route = %{
+      slash: "/workspace:list",
+      kind: "workspace_list",
+      permission: "session.list",
+      command_module: "Esr.Commands.Workspace.List",
+      requires_workspace_binding: false,
+      requires_user_binding: true,
+      category: "Workspace",
+      description: "test",
+      args: []
+    }
+
+    :ets.insert(:slash_routes, {"/workspace:list", route})
+
+    assert {:ok, found} = Esr.Resource.SlashRoute.Registry.lookup("/workspace:list")
+    assert found.slash == "/workspace:list"
+  end
+
+  test "old space-separated form does NOT match colon-form key" do
+    # After yaml cutover the old form "/workspace list" must not match.
+    # Here we verify that a lookup for "/workspace list" returns :not_found
+    # when only "/workspace:list" is in the table.
+    :ets.delete(:slash_routes, "/workspace list")
+
+    assert :not_found = Esr.Resource.SlashRoute.Registry.lookup("/workspace list")
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/resource/slash_route/registry_test.exs --only "colon-form" 2>&1 | tail -15
+```
+
+The third sub-test may fail because `/workspace list` might already be absent. The first two should fail
+with ETS key not found — the test is inserting into ETS directly; confirm the table name matches the
+registry's `@slash_table`. If the table is named differently, read `registry.ex` lines 1-30 to find
+`@slash_table` value and update the test accordingly.
+
+- [ ] **Step 3 — Verify no logic change needed.**
+
+```bash
+grep -n "@slash_table\|@kind_table\|keys_in_text\|slash_head\|validate_slash_key" \
+  runtime/lib/esr/resource/slash_route/registry.ex \
+  runtime/lib/esr/resource/slash_route/file_loader.ex
+```
+
+Confirm `validate_slash_key/1` only checks `String.starts_with?(key, "/")`. If it validates against a
+character whitelist that excludes colons, patch it to allow `[a-z0-9:_-]` after the `/`. Otherwise no
+patch needed.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/resource/slash_route/registry_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/test/esr/resource/slash_route/registry_test.exs
+git commit -m "test(slash): colon-form matcher regression — confirm no logic change needed (Phase 6.1)"
+```
+
+---
+
+### Task 6.2: Rewrite `slash-routes.default.yaml` — full colon-namespace inventory
+
+**Files:**
+- Modify: `runtime/priv/slash-routes.default.yaml`
+- Extend: `runtime/test/esr/resource/slash_route/registry_test.exs` (full load test)
+
+**Mapping (from spec §4, rev-2 authoritative):**
+
+| Old key | New key |
+|---|---|
+| `/whoami` | `/user:whoami` |
+| `/key` | `/pty:key` |
+| `/new-workspace` | `/workspace:new` |
+| `/workspace list` | `/workspace:list` |
+| `/workspace edit` | `/workspace:edit` |
+| `/workspace add-folder` | `/workspace:add-folder` |
+| `/workspace remove-folder` | `/workspace:remove-folder` |
+| `/workspace bind-chat` | `/workspace:bind-chat` |
+| `/workspace unbind-chat` | `/workspace:unbind-chat` |
+| `/workspace remove` | `/workspace:remove` |
+| `/workspace rename` | `/workspace:rename` |
+| `/workspace use` | `/workspace:use` |
+| `/workspace import-repo` | `/workspace:import-repo` |
+| `/workspace forget-repo` | `/workspace:forget-repo` |
+| `/workspace info` | `/workspace:info` |
+| `/workspace describe` | `/workspace:describe` |
+| `/workspace sessions` | **DELETED** (Rule 6 — workspace must not depend on session) |
+| `/sessions` | `/session:list` |
+| `/new-session` | `/session:new` |
+| `/end-session` | `/session:end` |
+| `/list-agents` | `/agent:list` |
+| `/actors` | `/actor:list` |
+| `/attach` | `/session:attach` |
+| `/plugin list` | `/plugin:list` |
+| `/plugin info` | `/plugin:info` |
+| `/plugin install` | `/plugin:install` |
+| `/plugin enable` | `/plugin:enable` |
+| `/plugin disable` | `/plugin:disable` |
+
+**Aliases removed:** `/list-sessions`, `/session new`, `/session end`, `/list-actors` (all `aliases:` fields deleted).
+
+**New entries added (§4.B — `/session:*` family):**
+
+```
+/session:new            kind: session_new      → Esr.Commands.Session.New
+/session:attach         kind: session_attach   → Esr.Commands.Session.Attach
+/session:detach         kind: session_detach   → Esr.Commands.Session.Detach
+/session:end            kind: session_end      → Esr.Commands.Session.End
+/session:list           kind: session_list     → Esr.Commands.Session.List
+/session:add-agent      kind: session_add_agent → Esr.Commands.Session.AddAgent
+/session:remove-agent   kind: session_remove_agent → Esr.Commands.Session.RemoveAgent
+/session:set-primary    kind: session_set_primary → Esr.Commands.Session.SetPrimary
+/session:bind-workspace kind: session_bind_workspace → Esr.Commands.Session.BindWorkspace
+/session:share          kind: session_share    → Esr.Commands.Session.Share
+/session:info           kind: session_info     → Esr.Commands.Session.Info
+```
+
+**New entries added (§4.C — `/pty:*` family):**
+
+```
+/pty:key    kind: pty_key    → Esr.Commands.Pty.Key
+```
+
+**New entries added (§4.D — `/plugin:*` config management, Phase 7 commands):**
+
+```
+/plugin:set         kind: plugin_set         → Esr.Commands.Plugin.Set
+/plugin:unset       kind: plugin_unset       → Esr.Commands.Plugin.Unset
+/plugin:show-config kind: plugin_show_config → Esr.Commands.Plugin.ShowConfig
+/plugin:list-config kind: plugin_list_config → Esr.Commands.Plugin.ListConfig
+```
+
+**New entries added (§4.E — `/cap:*` family):**
+
+```
+/cap:grant   kind: cap_grant   → Esr.Commands.Cap.Grant
+/cap:revoke  kind: cap_revoke  → Esr.Commands.Cap.Revoke
+```
+
+**Also update `/user:whoami`** kind from `whoami` → `user_whoami` (colon namespace alignment).
+
+- [ ] **Step 1 — Write failing test.** Add to `runtime/test/esr/resource/slash_route/registry_test.exs`:
+
+```elixir
+describe "Phase 6 — full colon-form yaml load" do
+  @colon_slashes [
+    "/help", "/doctor",
+    "/user:whoami",
+    "/pty:key",
+    "/workspace:new", "/workspace:list", "/workspace:edit",
+    "/workspace:add-folder", "/workspace:remove-folder",
+    "/workspace:bind-chat", "/workspace:unbind-chat",
+    "/workspace:remove", "/workspace:rename", "/workspace:use",
+    "/workspace:import-repo", "/workspace:forget-repo",
+    "/workspace:info", "/workspace:describe",
+    "/session:new", "/session:attach", "/session:detach",
+    "/session:end", "/session:list", "/session:add-agent",
+    "/session:remove-agent", "/session:set-primary",
+    "/session:bind-workspace", "/session:share", "/session:info",
+    "/agent:list", "/actor:list",
+    "/plugin:list", "/plugin:info", "/plugin:install",
+    "/plugin:enable", "/plugin:disable",
+    "/plugin:set", "/plugin:unset", "/plugin:show-config",
+    "/plugin:list-config",
+    "/cap:grant", "/cap:revoke"
+  ]
+
+  @old_slashes [
+    "/whoami", "/key", "/new-workspace", "/workspace list",
+    "/workspace info", "/sessions", "/new-session", "/end-session",
+    "/list-agents", "/actors", "/attach", "/plugin list",
+    "/workspace sessions"
+  ]
+
+  test "all colon-form slash keys resolve" do
+    Enum.each(@colon_slashes, fn slash ->
+      assert {:ok, route} = Esr.Resource.SlashRoute.Registry.lookup(slash),
+             "expected #{slash} to resolve, got :not_found"
+      assert is_binary(route.kind), "route.kind must be a string for #{slash}"
+    end)
+  end
+
+  test "old-form slash keys do not resolve" do
+    Enum.each(@old_slashes, fn slash ->
+      assert :not_found = Esr.Resource.SlashRoute.Registry.lookup(slash),
+             "expected #{slash} to return :not_found after cutover"
+    end)
+  end
+
+  test "/workspace:sessions is absent (Rule 6)" do
+    assert :not_found = Esr.Resource.SlashRoute.Registry.lookup("/workspace:sessions")
+  end
+
+  test "every command_module in slash entries is loadable" do
+    slashes = Esr.Resource.SlashRoute.Registry.list_slashes()
+
+    Enum.each(slashes, fn route ->
+      mod_str = route[:command_module] || route.command_module
+      mod = Module.concat([mod_str])
+
+      assert Code.ensure_loaded?(mod),
+             "command_module #{mod_str} for #{route.slash} is not loadable"
+    end)
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/resource/slash_route/registry_test.exs --only "Phase 6" 2>&1 | tail -20
+```
+
+Expect failures on the colon-form keys (not yet in yaml) and old-form keys still present.
+
+- [ ] **Step 3 — Rewrite the yaml.** Replace the content of `runtime/priv/slash-routes.default.yaml`
+with the full colon-namespace inventory. Key structural changes:
+
+  1. Remove ALL `aliases:` fields from every entry.
+  2. Rename every `slashes:` key per the mapping table above.
+  3. Delete the `/workspace sessions` entry entirely.
+  4. Rename `/key` → `/pty:key`; update `kind: key` → `kind: pty_key`.
+  5. Rename `/whoami` → `/user:whoami`; update `kind: whoami` → `kind: user_whoami`.
+  6. Rename `/sessions` → `/session:list`; update kind to `session_list`.
+  7. Rename `/new-session` → `/session:new`; update kind to `session_new`; update `command_module` to
+     `"Esr.Commands.Session.New"` (Phase 3 module).
+  8. Rename `/end-session` → `/session:end`; update kind to `session_end`; update `command_module` to
+     `"Esr.Commands.Session.End"`.
+  9. Rename `/attach` → `/session:attach`; update kind to `session_attach`; update `command_module` to
+     `"Esr.Commands.Session.Attach"`.
+  10. Rename `/list-agents` → `/agent:list`; update kind to `agent_list`.
+  11. Rename `/actors` → `/actor:list`; update kind to `actor_list`.
+  12. Rename `/plugin list|info|install|enable|disable` → `/plugin:list|info|install|enable|disable`.
+  13. Add all new `/session:*` entries (detach, add-agent, remove-agent, set-primary, bind-workspace,
+      share, info) referencing Phase 3 command modules.
+  14. Add `/pty:key` entry (replaces `/key` entirely).
+  15. Add `/plugin:set`, `/plugin:unset`, `/plugin:show-config`, `/plugin:list-config` entries
+      (command modules implemented in Phase 7; declare here so routing is complete before Phase 7 lands).
+  16. Add `/cap:grant` and `/cap:revoke` as slash entries (previously internal_kinds only; Phase 6
+      adds the slash-callable form while keeping the `cap_grant`/`cap_revoke` internal_kinds untouched
+      for the escript path).
+
+  Full yaml for new `/session:*` entries (reference for implementor):
+
+  ```yaml
+  "/session:new":
+    kind: session_new
+    permission: "session:default/create"
+    command_module: "Esr.Commands.Session.New"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "创建 session + 自动 transient workspace；auto-attach 到当前 chat；设 attached-current"
+    args:
+      - { name: name, required: false }
+      - { name: worktree, required: false }
+      - { name: workspace, required: false }
+
+  "/session:attach":
+    kind: session_attach
+    permission: "session:default/attach"
+    command_module: "Esr.Commands.Session.Attach"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "加入已有 session（仅 UUID）；设 attached-current。跨用户需 session:<uuid>/attach cap"
+    args:
+      - { name: session, required: true }
+
+  "/session:detach":
+    kind: session_detach
+    permission: null
+    command_module: "Esr.Commands.Session.Detach"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Sessions"
+    description: "离开当前 chat 的 attached session；不结束 session"
+    args: []
+
+  "/session:end":
+    kind: session_end
+    permission: "session:default/end"
+    command_module: "Esr.Commands.Session.End"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "结束 session；worktree 干净则自动 prune transient workspace"
+    args:
+      - { name: session, required: false }
+
+  "/session:list":
+    kind: session_list
+    permission: "session.list"
+    command_module: "Esr.Commands.Session.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "列当前 chat 的 sessions：name/UUID/agent 数/attached-current 状态/workspace"
+    args: []
+
+  "/session:add-agent":
+    kind: session_add_agent
+    permission: "session:default/add-agent"
+    command_module: "Esr.Commands.Session.AddAgent"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "向当前 session 添加 agent 实例；name 须全局唯一"
+    args:
+      - { name: type, required: true }
+      - { name: name, required: true }
+
+  "/session:remove-agent":
+    kind: session_remove_agent
+    permission: "session:default/add-agent"
+    command_module: "Esr.Commands.Session.RemoveAgent"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "从当前 session 删除 agent；不能删 primary（需先 set-primary 到其他 agent）"
+    args:
+      - { name: name, required: true }
+
+  "/session:set-primary":
+    kind: session_set_primary
+    permission: "session:default/add-agent"
+    command_module: "Esr.Commands.Session.SetPrimary"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "设当前 session 的 primary agent（接收无 @ 前缀的纯文本）"
+    args:
+      - { name: name, required: true }
+
+  "/session:bind-workspace":
+    kind: session_bind_workspace
+    permission: "session:default/end"
+    command_module: "Esr.Commands.Session.BindWorkspace"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "把 session 的 workspace 从 auto-transient 改绑到已命名 workspace"
+    args:
+      - { name: name, required: true }
+
+  "/session:share":
+    kind: session_share
+    permission: "session:default/share"
+    command_module: "Esr.Commands.Session.Share"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "授权指定用户访问 session；仅 UUID 识别；perm=attach|admin（默认 attach）"
+    args:
+      - { name: session, required: true }
+      - { name: user, required: true }
+      - { name: perm, required: false, default: "attach" }
+
+  "/session:info":
+    kind: session_info
+    permission: "session.list"
+    command_module: "Esr.Commands.Session.Info"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "显示 session 详情：id/name/owner/workspace/agents/primary/attached chats/创建时间/transient"
+    args:
+      - { name: session, required: false }
+
+  "/pty:key":
+    kind: pty_key
+    permission: null
+    command_module: "Esr.Commands.Pty.Key"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "PTY"
+    description: "把特殊键盘输入（up/down/enter/esc/tab/c-X 等）发到 chat-current session 的 PTY"
+    args:
+      - { name: keys, required: true }
+
+  "/plugin:set":
+    kind: plugin_set
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.Set"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "设置 plugin 配置项（须在 manifest config_schema 中声明）；layer=global|user|workspace（默认 global）"
+    args:
+      - { name: plugin, required: true }
+      - { name: key, required: true }
+      - { name: value, required: true }
+      - { name: layer, required: false, default: "global" }
+
+  "/plugin:unset":
+    kind: plugin_unset
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.Unset"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "删除 plugin 某层的配置项（幂等）；layer=global|user|workspace（默认 global）"
+    args:
+      - { name: plugin, required: true }
+      - { name: key, required: true }
+      - { name: layer, required: false, default: "global" }
+
+  "/plugin:show-config":
+    kind: plugin_show_config
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.ShowConfig"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "显示 plugin 配置；layer=effective|global|user|workspace（默认 effective）"
+    args:
+      - { name: plugin, required: true }
+      - { name: layer, required: false, default: "effective" }
+
+  "/plugin:list-config":
+    kind: plugin_list_config
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.ListConfig"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "显示所有已启用 plugin 的 effective 配置"
+    args: []
+
+  "/cap:grant":
+    kind: cap_grant
+    permission: "cap.manage"
+    command_module: "Esr.Commands.Cap.Grant"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Capabilities"
+    description: "授权 cap 给用户；session cap 仅接受 UUID 形式"
+    args:
+      - { name: cap, required: true }
+      - { name: user, required: true }
+
+  "/cap:revoke":
+    kind: cap_revoke
+    permission: "cap.manage"
+    command_module: "Esr.Commands.Cap.Revoke"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Capabilities"
+    description: "撤销用户的 cap；session cap 仅接受 UUID 形式"
+    args:
+      - { name: cap, required: true }
+      - { name: user, required: true }
+  ```
+
+  Also add `"Capabilities"` to `category_order/1` in `help.ex` (Task 6.4).
+
+  **Also update `internal_kinds:`**: The `cap_grant` and `cap_revoke` internal kinds remain (escript path
+  still uses them). No removal needed — the same kind name is shared by both the slash entry and the
+  internal_kind entry; the Registry handles this correctly (slash table and kind table are separate ETS
+  tables). If there is a duplicate-kind conflict, add a comment explaining the dual registration.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/resource/slash_route/registry_test.exs 2>&1 | tail -10
+```
+
+The `command_module loadable` test will fail for Phase-7-only command modules
+(`Esr.Commands.Plugin.Set`, `Esr.Commands.Plugin.Unset`, etc.) that don't exist yet.
+**Handle this** by marking those yaml entries with a `# phase: 7` comment and wrapping the
+loadability assertion in the test to skip modules in a `@phase_7_modules` list:
+
+```elixir
+@phase_7_modules [
+  "Esr.Commands.Plugin.Set",
+  "Esr.Commands.Plugin.Unset",
+  "Esr.Commands.Plugin.ShowConfig",
+  "Esr.Commands.Plugin.ListConfig"
+]
+
+test "every command_module in slash entries is loadable" do
+  slashes = Esr.Resource.SlashRoute.Registry.list_slashes()
+
+  Enum.each(slashes, fn route ->
+    mod_str = route[:command_module] || route.command_module
+
+    unless mod_str in @phase_7_modules do
+      mod = Module.concat([mod_str])
+
+      assert Code.ensure_loaded?(mod),
+             "command_module #{mod_str} for #{route.slash} is not loadable"
+    end
+  end)
+end
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/priv/slash-routes.default.yaml \
+        runtime/test/esr/resource/slash_route/registry_test.exs
+git commit -m "feat(slash): hard-cutover to colon-namespace — yaml rewrite + new session/pty/cap/plugin entries (Phase 6.2)"
+```
+
+---
+
+### Task 6.3: `slash_handler.ex` — deprecated-slash hint map + `pty_key` routing
+
+**Files:**
+- Modify: `runtime/lib/esr/entity/slash_handler.ex`
+- Extend: `runtime/test/esr/entity/slash_handler_test.exs` (or equivalent integration test)
+
+**Analysis:** The dispatcher already works for colon-form keys — the ETS lookup is key-based and the
+`slash_head/1` function treats `/session:new` as a single token. Two changes are needed:
+
+1. The `:not_found` branch currently emits `"unknown command: /old-form"`. Spec §4 Rule 1 says hard
+   cutover with no aliases, but operators will type old forms. Add a `@deprecated_slashes` hint map that
+   returns a structured "renamed to X" message for known old forms. This is NOT routing — it is an error
+   message enhancement.
+
+2. The `merge_chat_context/2` clause for `"key"` must be updated to `"pty_key"` (kind changed in yaml).
+
+- [ ] **Step 1 — Write failing test.**
+
+```elixir
+# In slash_handler integration test:
+test "old-form /new-session returns deprecated hint, not unknown command" do
+  envelope = %{
+    "principal_id" => "ou_test",
+    "payload" => %{"text" => "/new-session name=foo"}
+  }
+
+  ref = make_ref()
+  # Dispatch and capture the reply.
+  SlashHandler.dispatch(envelope, self(), ref)
+
+  assert_receive {:reply, result, ^ref}, 1000
+
+  text = case result do
+    {:text, t} -> t
+    {:ok, %{"text" => t}} -> t
+    other -> inspect(other)
+  end
+
+  assert String.contains?(text, "/session:new") or String.contains?(text, "renamed"),
+         "expected deprecated hint mentioning /session:new, got: #{text}"
+end
+
+test "old-form /workspace info returns deprecated hint" do
+  envelope = %{
+    "principal_id" => "ou_test",
+    "payload" => %{"text" => "/workspace info"}
+  }
+
+  ref = make_ref()
+  SlashHandler.dispatch(envelope, self(), ref)
+
+  assert_receive {:reply, result, ^ref}, 1000
+
+  text = case result do
+    {:text, t} -> t
+    {:ok, %{"text" => t}} -> t
+    other -> inspect(other)
+  end
+
+  assert String.contains?(text, "/workspace:info"),
+         "expected hint /workspace:info, got: #{text}"
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/entity/slash_handler_test.exs 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Implement.** In `slash_handler.ex`:
+
+  **3a.** Add module attribute `@deprecated_slashes` immediately before `handle_cast/2`:
+
+  ```elixir
+  # Phase 6 — hard-cutover hint map. Fires only when the registry lookup
+  # returns :not_found for a text whose head (or two-token head) matches a
+  # known old-form name. Returns a structured "renamed" error so operators
+  # get a clear message. This map is NOT routing — old forms are dead.
+  # Removal: separate PR after operators have migrated.
+  @deprecated_slashes %{
+    "/new-session"              => "/session:new",
+    "/end-session"              => "/session:end",
+    "/sessions"                 => "/session:list",
+    "/list-sessions"            => "/session:list",
+    "/attach"                   => "/session:attach",
+    "/whoami"                   => "/user:whoami",
+    "/key"                      => "/pty:key",
+    "/new-workspace"            => "/workspace:new",
+    "/list-agents"              => "/agent:list",
+    "/actors"                   => "/actor:list",
+    "/list-actors"              => "/actor:list",
+    "/workspace list"           => "/workspace:list",
+    "/workspace edit"           => "/workspace:edit",
+    "/workspace add-folder"     => "/workspace:add-folder",
+    "/workspace remove-folder"  => "/workspace:remove-folder",
+    "/workspace bind-chat"      => "/workspace:bind-chat",
+    "/workspace unbind-chat"    => "/workspace:unbind-chat",
+    "/workspace remove"         => "/workspace:remove",
+    "/workspace rename"         => "/workspace:rename",
+    "/workspace use"            => "/workspace:use",
+    "/workspace import-repo"    => "/workspace:import-repo",
+    "/workspace forget-repo"    => "/workspace:forget-repo",
+    "/workspace info"           => "/workspace:info",
+    "/workspace describe"       => "/workspace:describe",
+    "/workspace sessions"       => nil,
+    "/plugin list"              => "/plugin:list",
+    "/plugin info"              => "/plugin:info",
+    "/plugin install"           => "/plugin:install",
+    "/plugin enable"            => "/plugin:enable",
+    "/plugin disable"           => "/plugin:disable"
+  }
+  ```
+
+  **3b.** Replace the `:not_found` branch in `handle_cast({:dispatch, ...})`:
+
+  ```elixir
+  :not_found ->
+    head1 = slash_head(text)
+    head2 = two_token_head(text)
+
+    case Map.get(@deprecated_slashes, head2) || Map.get(@deprecated_slashes, head1) do
+      nil ->
+        Esr.Slash.ReplyTarget.dispatch(target, {:text, "unknown command: #{head1}"}, ref)
+
+      new_name when is_binary(new_name) ->
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:text, "slash command renamed; use #{new_name} instead of #{head1}"},
+          ref
+        )
+
+      nil_value when is_nil(nil_value) ->
+        # /workspace:sessions dropped (workspace must not depend on session).
+        Esr.Slash.ReplyTarget.dispatch(
+          target,
+          {:text, "#{head1} has been removed; use /session:list to list sessions"},
+          ref
+        )
+    end
+
+    {:noreply, state}
+  ```
+
+  **3c.** Add `two_token_head/1` private function after `slash_head/1`:
+
+  ```elixir
+  defp two_token_head(text) do
+    text
+    |> String.trim()
+    |> String.split(~r/\s+/, parts: 3, trim: true)
+    |> Enum.take(2)
+    |> Enum.join(" ")
+  end
+  ```
+
+  **3d.** Update the `merge_chat_context/2` clause for the old `"key"` kind to `"pty_key"`:
+
+  ```elixir
+  # Was: defp merge_chat_context(args, "key", envelope) do
+  defp merge_chat_context(args, "pty_key", envelope) do
+    text = (get_in(envelope, ["payload", "text"]) || "") |> to_string()
+    remainder = strip_slash_prefix(text, "/pty:key") |> String.trim()
+    maybe_put(args, "keys", remainder)
+  end
+  ```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/entity/slash_handler_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/entity/slash_handler.ex \
+        runtime/test/esr/entity/slash_handler_test.exs
+git commit -m "feat(slash): deprecated-slash hint map + pty_key kind routing (Phase 6.3)"
+```
+
+---
+
+### Task 6.4: `/help` — colon-prefix grouping headers
+
+**Files:**
+- Modify: `runtime/lib/esr/commands/help.ex`
+- Extend: `runtime/test/esr/commands/help_test.exs`
+
+**Analysis:** `render/0` calls `list_slashes()` and groups by `route[:category]`. After the yaml rewrite,
+the categories on the entries are already the right Chinese/English labels. The `category_order/1`
+function needs additions for the new categories: `"PTY"`, `"Capabilities"`. The bare `/help` and `/doctor`
+remain in `"诊断"`. No logic change needed for colon rendering — `route.slash` is emitted verbatim.
+
+- [ ] **Step 1 — Write failing test.**
+
+```elixir
+defmodule Esr.Commands.HelpTest do
+  use ExUnit.Case, async: true
+
+  # Requires the registry to have loaded the yaml.
+  # Tag: @moduletag :integration (requires running registry)
+
+  describe "render/0 with colon-namespace yaml" do
+    test "help output contains colon-form slash names" do
+      output = Esr.Commands.Help.render()
+      assert String.contains?(output, "/session:new")
+      assert String.contains?(output, "/workspace:list")
+      assert String.contains?(output, "/pty:key")
+      assert String.contains?(output, "/plugin:list")
+      assert String.contains?(output, "/user:whoami")
+    end
+
+    test "help output does NOT contain old-form slash names" do
+      output = Esr.Commands.Help.render()
+      refute String.contains?(output, "/new-session")
+      refute String.contains?(output, "/workspace list")
+      refute String.contains?(output, "/workspace sessions")
+      refute String.contains?(output, "/key\n")
+      refute String.contains?(output, "/sessions\n")
+    end
+
+    test "help output contains bare /help and /doctor" do
+      output = Esr.Commands.Help.render()
+      assert String.contains?(output, "/help")
+      assert String.contains?(output, "/doctor")
+    end
+
+    test "Sessions group header appears before Agents group" do
+      output = Esr.Commands.Help.render()
+      sessions_pos = :binary.match(output, "Sessions") |> elem(0)
+      agents_pos = :binary.match(output, "Agents") |> elem(0)
+      assert sessions_pos < agents_pos
+    end
+
+    test "PTY group appears in output" do
+      output = Esr.Commands.Help.render()
+      assert String.contains?(output, "PTY")
+    end
+
+    test "Capabilities group appears in output" do
+      output = Esr.Commands.Help.render()
+      assert String.contains?(output, "Capabilities")
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/commands/help_test.exs 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Implement.** In `runtime/lib/esr/commands/help.ex`, update `category_order/1`:
+
+```elixir
+defp category_order("诊断"), do: 0
+defp category_order("Workspace"), do: 1
+defp category_order("Sessions"), do: 2
+defp category_order("Agents"), do: 3
+defp category_order("PTY"), do: 4
+defp category_order("Plugins"), do: 5
+defp category_order("Capabilities"), do: 6
+defp category_order("其他"), do: 99
+defp category_order(_), do: 50
+```
+
+No other changes needed — the render loop uses `route.slash` verbatim.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/help_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/commands/help.ex \
+        runtime/test/esr/commands/help_test.exs
+git commit -m "feat(help): add PTY + Capabilities to category_order for colon-namespace grouping (Phase 6.4)"
+```
+
+---
+
+### Task 6.5: `/admin/slash_schema.json` controller — colon-name smoke test
+
+**Files:**
+- Read: `runtime/lib/esr_web/slash_schema_controller.ex`
+- Extend: `runtime/test/esr_web/slash_schema_controller_test.exs`
+
+**Analysis:** The controller renders slash names directly from `Registry.list_slashes/0`. After the yaml
+rewrite, it will automatically return colon-form names. No logic patch needed. This task adds a smoke
+test that verifies colon names appear in the JSON response.
+
+- [ ] **Step 1 — Write failing test.**
+
+```elixir
+describe "GET /admin/slash_schema.json — colon-namespace" do
+  test "response contains colon-form slash names", %{conn: conn} do
+    conn = get(conn, "/admin/slash_schema.json")
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    slashes = get_in(body, ["slashes"]) || Map.keys(body)
+
+    slash_names =
+      case slashes do
+        list when is_list(list) -> Enum.map(list, &(Map.get(&1, "slash") || Map.get(&1, :slash) || &1))
+        map when is_map(map) -> Map.keys(map)
+      end
+
+    assert Enum.any?(slash_names, &String.contains?(&1, ":")),
+           "expected at least one colon-form slash name in response, got: #{inspect(slash_names)}"
+
+    assert Enum.any?(slash_names, &String.starts_with?(&1, "/session:")),
+           "expected /session:* entries in response"
+  end
+
+  test "response does NOT contain old-form slash names", %{conn: conn} do
+    conn = get(conn, "/admin/slash_schema.json")
+    body = Jason.decode!(conn.resp_body)
+    slashes = get_in(body, ["slashes"]) || Map.keys(body)
+
+    slash_names =
+      case slashes do
+        list when is_list(list) -> Enum.map(list, &(Map.get(&1, "slash") || &1))
+        map when is_map(map) -> Map.keys(map)
+      end
+
+    refute Enum.any?(slash_names, &(&1 == "/new-session")),
+           "old-form /new-session should not appear in schema endpoint"
+
+    refute Enum.any?(slash_names, &(&1 == "/workspace sessions")),
+           "/workspace sessions should be absent (Rule 6)"
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr_web/slash_schema_controller_test.exs 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Verify no logic change needed.**
+
+```bash
+cat runtime/lib/esr_web/slash_schema_controller.ex
+```
+
+If the controller serializes `route.slash` fields directly, no patch is needed. If it constructs its own
+list from a different source, update it to call `Registry.list_slashes/0`.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr_web/slash_schema_controller_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/test/esr_web/slash_schema_controller_test.exs
+git commit -m "test(web): slash_schema_controller smoke test — colon names in JSON response (Phase 6.5)"
+```
+
+---
+
+### Task 6.6: Escript subcommand routing — `esr session new` → `/session:new`
+
+**Files:**
+- Read: `runtime/lib/esr/cli/main.ex`
+- Modify if needed: `runtime/lib/esr/cli/main.ex`
+- Extend: `runtime/test/esr/cli/main_test.exs`
+
+**Analysis:** Read `main.ex` to understand how `esr session new --name=foo` maps to a slash string.
+The escript uses sub-action concatenation to produce kind names (e.g. `esr cap grant` → kind `cap_grant`).
+If the escript sends a kind directly (bypassing slash routing), no change is needed for the routing
+itself. But if the escript constructs a `/session new` slash string and sends it to SlashHandler, it
+must be updated to construct `/session:new`.
+
+- [ ] **Step 1 — Read and assess.**
+
+```bash
+grep -n "session\|slash\|dispatch\|colon\|/session\|new_session" runtime/lib/esr/cli/main.ex | head -40
+```
+
+- [ ] **Step 2 — Write failing test.** After reading, write a test that asserts the escript mapping
+produces a colon-form slash string (if it produces slash strings) or the correct kind (if kind-based):
+
+```elixir
+describe "escript → colon-slash mapping (Phase 6.6)" do
+  test "esr session new produces kind session_new" do
+    # Parse without executing — call the arg-parse path only.
+    result = Esr.CLI.Main.parse_args(["session", "new", "--name=foo"])
+
+    # Depending on implementation:
+    # If parse_args returns {kind, args}: assert kind == "session_new"
+    # If it constructs a slash string: assert slash == "/session:new"
+    assert match?({:ok, "session_new", _} , result) or
+           match?({:ok, %{"kind" => "session_new"}}, result) or
+           match?({kind, _} when kind == "session_new", result),
+           "Expected session_new kind from 'esr session new', got: #{inspect(result)}"
+  end
+
+  test "esr session list produces kind session_list" do
+    result = Esr.CLI.Main.parse_args(["session", "list"])
+    assert inspect(result) =~ "session_list",
+           "Expected session_list, got: #{inspect(result)}"
+  end
+end
+```
+
+- [ ] **Step 3 — Implement (if needed).** If the escript uses a sub-action concatenation like
+`"#{group}_#{verb}"` to produce kind names, the colon-form yaml change is transparent (kind names
+haven't changed). Only patch if the escript literally builds slash strings like `"/session new"`.
+
+  If `main.ex` constructs slash strings for a `session` sub-group, update the builder to emit
+  `"/session:new"` instead of `"/session new"`.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/cli/main_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/cli/main.ex \
+        runtime/test/esr/cli/main_test.exs
+git commit -m "feat(cli): escript session subcommands route to colon-form kinds (Phase 6.6)"
+```
+
+---
+
+### Task 6.7: Test sweep — update all slash literals in `runtime/test/`
+
+**Files:**
+- Search and update: all files under `runtime/test/` containing old slash literals
+
+- [ ] **Step 1 — Enumerate old-form literals.**
+
+```bash
+grep -rn '"/new-session\|"/end-session\|"/sessions\|"/list-sessions\|"/list-agents\|"/actors\|"/attach\|"/workspace list\|"/workspace info\|"/workspace sessions\|"/plugin list\|"/plugin info\|"/plugin install\|"/plugin enable\|"/plugin disable\|"/whoami\|"/new-workspace\|"/key"' \
+  runtime/test/ 2>/dev/null | grep -v "_test.exs:.*#"
+```
+
+- [ ] **Step 2 — Run failing test sweep.** Before editing, confirm which tests fail:
+
+```bash
+cd runtime && mix test 2>&1 | grep -E "FAILED|failed|error" | head -20
+```
+
+- [ ] **Step 3 — Apply replacements.** For each file found in Step 1, apply the mapping:
+
+| Old literal | New literal |
+|---|---|
+| `"/new-session"` | `"/session:new"` |
+| `"/end-session"` | `"/session:end"` |
+| `"/sessions"` | `"/session:list"` |
+| `"/list-sessions"` | `"/session:list"` |
+| `"/attach"` (slash literal only) | `"/session:attach"` |
+| `"/list-agents"` | `"/agent:list"` |
+| `"/actors"` | `"/actor:list"` |
+| `"/list-actors"` | `"/actor:list"` |
+| `"/workspace list"` | `"/workspace:list"` |
+| `"/workspace info"` | `"/workspace:info"` |
+| `"/workspace sessions"` | Remove test or replace with `/session:list` |
+| `"/workspace edit"` | `"/workspace:edit"` |
+| `"/workspace add-folder"` | `"/workspace:add-folder"` |
+| `"/workspace remove-folder"` | `"/workspace:remove-folder"` |
+| `"/workspace bind-chat"` | `"/workspace:bind-chat"` |
+| `"/workspace unbind-chat"` | `"/workspace:unbind-chat"` |
+| `"/workspace remove"` | `"/workspace:remove"` |
+| `"/workspace rename"` | `"/workspace:rename"` |
+| `"/workspace use"` | `"/workspace:use"` |
+| `"/workspace import-repo"` | `"/workspace:import-repo"` |
+| `"/workspace forget-repo"` | `"/workspace:forget-repo"` |
+| `"/workspace describe"` | `"/workspace:describe"` |
+| `"/new-workspace"` | `"/workspace:new"` |
+| `"/plugin list"` | `"/plugin:list"` |
+| `"/plugin info"` | `"/plugin:info"` |
+| `"/plugin install"` | `"/plugin:install"` |
+| `"/plugin enable"` | `"/plugin:enable"` |
+| `"/plugin disable"` | `"/plugin:disable"` |
+| `"/whoami"` | `"/user:whoami"` |
+| `"/key"` (slash command) | `"/pty:key"` |
+
+For tests that specifically **validate the deprecated hint path** (e.g. "dispatch `/new-session` returns
+unknown command"), update them to assert the hint text contains `/session:new`.
+
+- [ ] **Step 4 — Run full test suite.**
+
+```bash
+cd runtime && mix test 2>&1 | tail -20
+```
+
+All previously-passing tests must continue to pass.
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/test/
+git commit -m "test: update all slash literals to colon-namespace form (Phase 6.7)"
+```
+
+---
+
+### Task 6.8: Docs preview sweep (advisory docs only)
+
+**Files:**
+- Search: `docs/` (excluding `docs/superpowers/specs/` historical and `docs/futures/` deferred items)
+- Update advisory docs that reference old slash forms
+
+- [ ] **Step 1 — Enumerate old-form references in advisory docs.**
+
+```bash
+grep -rn '/new-session\|/end-session\|/sessions\b\|/list-agents\|/workspace list\|/workspace info\|/workspace sessions\|/plugin list\|/plugin install\|/whoami\|/new-workspace\|/key\b' \
+  docs/ --include="*.md" \
+  | grep -v "specs/2026-05-07-metamodel-aligned-esr\|specs/2026-05-07-colon-namespace\|futures/\|migration\|before-cutover\|historical" \
+  | head -50
+```
+
+- [ ] **Step 2 — Update advisory docs.** For each match in `docs/dev-guide.md`, `docs/cookbook.md`,
+`docs/runbook.md`, or similar operator-facing documents: replace old slash literals with colon forms.
+Leave untouched:
+  - Historical migration notes that explicitly describe "before Phase 6" state
+  - `docs/superpowers/specs/` files (these are the specs themselves, not advisory docs)
+  - `docs/futures/` items
+
+- [ ] **Step 3 — Verify no spec files modified.**
+
+```bash
+git diff --name-only | grep "docs/superpowers/specs" && echo "ERROR: spec file modified" || echo "OK"
+```
+
+- [ ] **Step 4 — Run test suite (docs change only, no test failures expected).**
+
+```bash
+cd runtime && mix test 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add docs/
+git commit -m "docs: preview sweep — advisory docs updated to colon-namespace slash forms (Phase 6.8)"
+```
+
+---
+
+### Phase 6 PR checklist
+
+Before opening the PR:
+
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — all pass
+- [ ] `grep -rn '"/new-session\|"/workspace list\|"/workspace info"' runtime/test/` — zero hits
+- [ ] `grep -rn 'aliases:' runtime/priv/slash-routes.default.yaml` — zero hits
+- [ ] `grep -n '"/workspace sessions"' runtime/priv/slash-routes.default.yaml` — zero hits
+- [ ] `grep -n '"/pty:key"' runtime/priv/slash-routes.default.yaml` — one hit
+- [ ] `grep -n '"/key"' runtime/priv/slash-routes.default.yaml` — zero hits
+
+```bash
+git commit -m "feat: colon-namespace slash cutover — hard cutover + session/pty/cap families (Phase 6)"
+```
+
+---
+
+## Phase 7: Plugin-config 3-layer + manifest config_schema + depends_on.core SemVer
+
+**PR title:** `feat: plugin-config 3-layer + manifest config_schema + depends_on.core SemVer (Phase 7)`
+**Branch:** `feat/phase-7-plugin-config`
+**Target:** `dev`
+**Est LOC:** ~700
+**Depends on:** Phase 6 (slash routing for /plugin:set etc.), Phase 1b (user UUID for user-layer config path)
+
+**Goal:** Implement the 3-layer plugin config resolution stack (global → user → workspace, per-key merge,
+most-specific wins). Add `config_schema:` field to `Esr.Plugin.Manifest`. Add `Esr.Plugin.Version`
+for `depends_on.core` SemVer enforcement at plugin load time. Implement `/plugin:set`, `/plugin:unset`,
+`/plugin:show-config` command modules. Migrate feishu and claude_code manifests to include `config_schema:`.
+Phase 7 ends with the config mechanism in place; Phase 8 removes the env-var fallback in `feishu_app_adapter.ex`.
+
+---
+
+### Task 7.1: Manifest `config_schema:` parsing
+
+**Files:**
+- Modify: `runtime/lib/esr/plugin/manifest.ex`
+- Extend: `runtime/test/esr/plugin/manifest_test.exs`
+
+**Goal:** Parse a `config_schema:` YAML block into a map of `%{type, description, default}` entries.
+Validate required fields (`type`, `description`, `default`) at parse time. Support types: `string`, `boolean`.
+
+- [ ] **Step 1 — Write failing test.**
+
+```elixir
+describe "config_schema: parsing (Phase 7.1)" do
+  @manifest_with_schema """
+  name: test-plugin
+  version: 0.1.0
+  description: test
+  depends_on:
+    core: ">= 0.1.0"
+    plugins: []
+  declares: {}
+  config_schema:
+    http_proxy:
+      type: string
+      description: "HTTP proxy URL."
+      default: ""
+    verbose:
+      type: boolean
+      description: "Enable verbose logging."
+      default: false
+  """
+
+  @manifest_missing_description """
+  name: test-plugin
+  version: 0.1.0
+  description: test
+  depends_on:
+    core: ">= 0.1.0"
+    plugins: []
+  declares: {}
+  config_schema:
+    bad_key:
+      type: string
+      default: ""
+  """
+
+  @manifest_missing_default """
+  name: test-plugin
+  version: 0.1.0
+  description: test
+  depends_on:
+    core: ">= 0.1.0"
+    plugins: []
+  declares: {}
+  config_schema:
+    bad_key:
+      type: string
+      description: "Missing default."
+  """
+
+  @manifest_unknown_type """
+  name: test-plugin
+  version: 0.1.0
+  description: test
+  depends_on:
+    core: ">= 0.1.0"
+    plugins: []
+  declares: {}
+  config_schema:
+    bad_key:
+      type: fancy_type
+      description: "Unknown type."
+      default: ""
+  """
+
+  defp parse_yaml_string(content) do
+    path = System.tmp_dir!() |> Path.join("test_manifest_#{:rand.uniform(9999)}.yaml")
+    File.write!(path, content)
+    result = Esr.Plugin.Manifest.parse(path)
+    File.rm(path)
+    result
+  end
+
+  test "valid config_schema parses into declares.config_schema map" do
+    {:ok, manifest} = parse_yaml_string(@manifest_with_schema)
+    schema = manifest.declares[:config_schema]
+    assert is_map(schema)
+    assert schema["http_proxy"]["type"] == "string"
+    assert schema["http_proxy"]["default"] == ""
+    assert schema["verbose"]["type"] == "boolean"
+    assert schema["verbose"]["default"] == false
+  end
+
+  test "missing description field returns config_schema_missing_field error" do
+    assert {:error, {:config_schema_missing_field, "bad_key", "description"}} =
+             parse_yaml_string(@manifest_missing_description)
+  end
+
+  test "missing default field returns config_schema_missing_field error" do
+    assert {:error, {:config_schema_missing_field, "bad_key", "default"}} =
+             parse_yaml_string(@manifest_missing_default)
+  end
+
+  test "unknown type returns config_schema_unknown_type error" do
+    assert {:error, {:config_schema_unknown_type, "bad_key", "fancy_type"}} =
+             parse_yaml_string(@manifest_unknown_type)
+  end
+
+  test "manifest without config_schema: has empty declares.config_schema" do
+    yaml = """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: ">= 0.1.0"
+      plugins: []
+    declares: {}
+    """
+
+    {:ok, manifest} = parse_yaml_string(yaml)
+    assert manifest.declares[:config_schema] == %{} or is_nil(manifest.declares[:config_schema])
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/plugin/manifest_test.exs --only "config_schema" 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Implement.** In `runtime/lib/esr/plugin/manifest.ex`:
+
+  **3a.** In `parse/1`, after `atomize_declares`, call a new `parse_config_schema/1`:
+
+  ```elixir
+  # In parse/1, add after declares assignment:
+  with {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}) do
+    declares_with_schema = Map.put(declares, :config_schema, config_schema)
+
+    {:ok,
+     %__MODULE__{
+       name: name,
+       version: version,
+       description: parsed["description"] || "",
+       depends_on: depends_on,
+       declares: declares_with_schema,
+       path: path
+     }}
+  end
+  ```
+
+  Replace the existing `{:ok, %__MODULE__{...}}` return at the end of `parse/1` with the `with` form above.
+
+  **3b.** Add `parse_config_schema/1`:
+
+  ```elixir
+  @supported_types ~w(string boolean)
+
+  defp parse_config_schema(schema_map) when is_map(schema_map) do
+    Enum.reduce_while(schema_map, {:ok, %{}}, fn {key, entry}, {:ok, acc} ->
+      with {:ok, type} <- fetch_schema_field(key, entry, "type"),
+           :ok <- validate_schema_type(key, type),
+           {:ok, description} <- fetch_schema_field(key, entry, "description"),
+           {:ok, default} <- fetch_schema_field(key, entry, "default") do
+        {:cont, {:ok, Map.put(acc, key, %{"type" => type, "description" => description, "default" => default})}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp parse_config_schema(_), do: {:ok, %{}}
+
+  defp fetch_schema_field(key, entry, field) when is_map(entry) do
+    case Map.fetch(entry, field) do
+      {:ok, value} when not is_nil(value) -> {:ok, value}
+      _ -> {:error, {:config_schema_missing_field, key, field}}
+    end
+  end
+
+  defp fetch_schema_field(key, _entry, field), do: {:error, {:config_schema_missing_field, key, field}}
+
+  defp validate_schema_type(key, type) when is_binary(type) do
+    if type in @supported_types do
+      :ok
+    else
+      {:error, {:config_schema_unknown_type, key, type}}
+    end
+  end
+
+  defp validate_schema_type(key, type), do: {:error, {:config_schema_unknown_type, key, inspect(type)}}
+  ```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/plugin/manifest_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/plugin/manifest.ex \
+        runtime/test/esr/plugin/manifest_test.exs
+git commit -m "feat(plugin): manifest config_schema: field — parse + validate type/description/default (Phase 7.1)"
+```
+
+---
+
+### Task 7.2: `Esr.Plugin.Version` — SemVer constraint wrapper
+
+**Files:**
+- Create: `runtime/lib/esr/plugin/version.ex`
+- Create: `runtime/test/esr/plugin/version_test.exs`
+
+**Goal:** Thin wrapper over Elixir stdlib `Version` module for `depends_on.core` constraint checks.
+Exposes `satisfies?/2` and `esrd_version/0`.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/plugin/version_test.exs`:
+
+```elixir
+defmodule Esr.Plugin.VersionTest do
+  use ExUnit.Case, async: true
+
+  alias Esr.Plugin.Version, as: V
+
+  describe "satisfies?/2" do
+    test ">= constraint passes when version is equal" do
+      assert V.satisfies?(">= 0.1.0", "0.1.0") == true
+    end
+
+    test ">= constraint passes when version is higher" do
+      assert V.satisfies?(">= 0.1.0", "0.2.0") == true
+    end
+
+    test ">= constraint fails when version is lower" do
+      assert V.satisfies?(">= 0.2.0", "0.1.0") == false
+    end
+
+    test "~> pessimistic constraint passes patch bump" do
+      assert V.satisfies?("~> 0.1.0", "0.1.5") == true
+    end
+
+    test "~> pessimistic constraint fails minor bump" do
+      assert V.satisfies?("~> 0.1.0", "0.2.0") == false
+    end
+
+    test "exact == constraint passes on exact match" do
+      assert V.satisfies?("== 0.1.0", "0.1.0") == true
+    end
+
+    test "exact == constraint fails on mismatch" do
+      assert V.satisfies?("== 0.1.0", "0.2.0") == false
+    end
+
+    test "invalid constraint string returns {:error, :invalid_constraint}" do
+      assert {:error, :invalid_constraint} = V.satisfies?("not_a_constraint", "0.1.0")
+    end
+
+    test "invalid version string returns {:error, :invalid_constraint}" do
+      assert {:error, :invalid_constraint} = V.satisfies?(">= 0.1.0", "not_a_version")
+    end
+
+    test ">= 0.1.0 passes 0.1.0 (exact boundary)" do
+      assert V.satisfies?(">= 0.1.0", "0.1.0") == true
+    end
+
+    test ">= 99.0.0 fails on current esrd version" do
+      vsn = V.esrd_version()
+      assert V.satisfies?(">= 99.0.0", vsn) == false
+    end
+  end
+
+  describe "esrd_version/0" do
+    test "returns a valid SemVer string" do
+      vsn = V.esrd_version()
+      assert is_binary(vsn)
+      assert {:ok, _} = Version.parse(vsn)
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/plugin/version_test.exs 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Implement.** Create `runtime/lib/esr/plugin/version.ex`:
+
+```elixir
+defmodule Esr.Plugin.Version do
+  @moduledoc """
+  SemVer constraint check for `depends_on.core`.
+
+  Wraps Elixir stdlib `Version` module. Thin — the only reason for this
+  module is to centralize the error handling shape and provide
+  `esrd_version/0` in one place.
+
+  Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6 (D8).
+  """
+
+  @doc """
+  Check whether `version` satisfies `constraint`.
+
+  Returns `true | false` on success, or `{:error, :invalid_constraint}`
+  when either string is not valid SemVer / not a valid constraint.
+
+  Uses Elixir stdlib `Version.match?/2` under the hood.
+  """
+  @spec satisfies?(constraint :: String.t(), version :: String.t()) ::
+          boolean() | {:error, :invalid_constraint}
+  def satisfies?(constraint, version) when is_binary(constraint) and is_binary(version) do
+    try do
+      Version.match?(version, constraint)
+    rescue
+      _ -> {:error, :invalid_constraint}
+    end
+  end
+
+  def satisfies?(_constraint, _version), do: {:error, :invalid_constraint}
+
+  @doc """
+  Return the running ESR version as a SemVer string.
+
+  Reads from the `:esr` application spec at runtime (populated by
+  `mix.exs`'s `@version`). Falls back to `"0.0.0"` if the app spec
+  is unavailable (e.g. in unit tests that don't start the application).
+  """
+  @spec esrd_version() :: String.t()
+  def esrd_version do
+    case Application.spec(:esr, :vsn) do
+      nil -> "0.0.0"
+      vsn -> to_string(vsn)
+    end
+  end
+end
+```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/plugin/version_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/plugin/version.ex \
+        runtime/test/esr/plugin/version_test.exs
+git commit -m "feat(plugin): Esr.Plugin.Version — SemVer constraint check for depends_on.core (Phase 7.2)"
+```
+
+---
+
+### Task 7.3: `depends_on.core` enforcement at plugin load
+
+**Files:**
+- Modify: `runtime/lib/esr/plugin/loader.ex`
+- Extend: `runtime/test/esr/plugin/loader_test.exs`
+
+**Goal:** Call `Esr.Plugin.Version.satisfies?/2` at `start_plugin/2` before `Manifest.validate/1`.
+If the constraint is unmet, return `{:error, {:core_version_mismatch, constraint, actual}}` and let it
+crash (no silent skip).
+
+- [ ] **Step 1 — Write failing test.**
+
+```elixir
+describe "depends_on.core enforcement (Phase 7.3)" do
+  defp make_manifest(core_constraint) do
+    path = System.tmp_dir!() |> Path.join("test_manifest_#{:rand.uniform(99999)}.yaml")
+
+    content = """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: "#{core_constraint}"
+      plugins: []
+    declares: {}
+    """
+
+    File.write!(path, content)
+    {:ok, manifest} = Esr.Plugin.Manifest.parse(path)
+    File.rm(path)
+    manifest
+  end
+
+  test "plugin with satisfied core constraint starts successfully" do
+    manifest = make_manifest(">= 0.1.0")
+    # ESR version is >= 0.1.0 in any real build.
+    result = Esr.Plugin.Loader.start_plugin("test-plugin", manifest)
+    # May fail on validate/1 for missing modules, but must NOT fail on
+    # core_version_mismatch.
+    refute match?({:error, {:core_version_mismatch, _, _}}, result)
+  end
+
+  test "plugin requiring future core version is rejected" do
+    manifest = make_manifest(">= 99.0.0")
+    assert {:error, {:core_version_mismatch, ">= 99.0.0", actual_vsn}} =
+             Esr.Plugin.Loader.start_plugin("test-plugin", manifest)
+    assert is_binary(actual_vsn)
+  end
+
+  test "plugin without core constraint starts successfully (no constraint = unrestricted)" do
+    path = System.tmp_dir!() |> Path.join("test_manifest_nocore.yaml")
+
+    content = """
+    name: test-plugin-nocore
+    version: 0.1.0
+    description: test
+    depends_on:
+      plugins: []
+    declares: {}
+    """
+
+    File.write!(path, content)
+    {:ok, manifest} = Esr.Plugin.Manifest.parse(path)
+    File.rm(path)
+
+    result = Esr.Plugin.Loader.start_plugin("test-plugin-nocore", manifest)
+    refute match?({:error, {:core_version_mismatch, _, _}}, result)
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/plugin/loader_test.exs --only "core enforcement" 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Implement.** In `runtime/lib/esr/plugin/loader.ex`:
+
+  **3a.** Add alias at top of module:
+
+  ```elixir
+  alias Esr.Plugin.Version, as: PluginVersion
+  ```
+
+  **3b.** Add private `check_core_version/1`:
+
+  ```elixir
+  defp check_core_version(%Manifest{depends_on: depends_on}) do
+    constraint = depends_on[:core]
+
+    if is_binary(constraint) and constraint != "" do
+      esrd_vsn = PluginVersion.esrd_version()
+
+      case PluginVersion.satisfies?(constraint, esrd_vsn) do
+        true ->
+          :ok
+
+        false ->
+          {:error, {:core_version_mismatch, constraint, esrd_vsn}}
+
+        {:error, :invalid_constraint} ->
+          {:error, {:invalid_core_constraint, constraint}}
+      end
+    else
+      :ok
+    end
+  end
+  ```
+
+  **3c.** Prepend `check_core_version/1` to the `with` chain in `start_plugin/2`:
+
+  ```elixir
+  def start_plugin(name, %Manifest{} = manifest) do
+    with :ok <- check_core_version(manifest),
+         :ok <- Manifest.validate(manifest),
+         :ok <- register_capabilities(name, manifest),
+         :ok <- register_python_sidecars(manifest),
+         :ok <- register_entities(manifest),
+         :ok <- register_startup(name, manifest) do
+      Logger.info("plugin loader: started #{name} v#{manifest.version}")
+      {:ok, :registered}
+    end
+  end
+  ```
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/plugin/loader_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/plugin/loader.ex \
+        runtime/test/esr/plugin/loader_test.exs
+git commit -m "feat(plugin): depends_on.core SemVer enforcement at start_plugin/2 (Phase 7.3)"
+```
+
+---
+
+### Task 7.4: `Esr.Plugin.Config` — 3-layer resolver
+
+**Files:**
+- Create: `runtime/lib/esr/plugin/config.ex`
+- Create: `runtime/test/esr/plugin/config_test.exs`
+
+**Goal:** Implement the 3-layer plugin config resolution stack:
+- **global** layer: `$ESRD_HOME/<inst>/plugins.yaml` → `config.<plugin>` section
+- **user** layer: `$ESRD_HOME/<inst>/users/<user_uuid>/.esr/plugins.yaml` → `config.<plugin>` section
+- **workspace** layer: `<workspace_dir>/.esr/plugins.yaml` → `config.<plugin>` section
+
+Resolution: workspace > user > global (per-key merge). Schema defaults fill in any remaining gaps.
+Write operations (`store_layer/4`) write atomically to the correct layer file.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/plugin/config_test.exs`:
+
+```elixir
+defmodule Esr.Plugin.ConfigTest do
+  use ExUnit.Case, async: true
+
+  alias Esr.Plugin.Config
+
+  # We use temp dirs to simulate the layer files.
+  setup do
+    tmp = System.tmp_dir!() |> Path.join("esr_config_test_#{:rand.uniform(999_999)}")
+    File.mkdir_p!(tmp)
+
+    global_dir = Path.join(tmp, "instance")
+    user_uuid = "aabbccdd-1234-5678-abcd-ef0123456789"
+    user_dir = Path.join([tmp, "instance", "users", user_uuid, ".esr"])
+    workspace_dir = Path.join([tmp, "workspace1", ".esr"])
+
+    File.mkdir_p!(global_dir)
+    File.mkdir_p!(user_dir)
+    File.mkdir_p!(workspace_dir)
+
+    on_exit(fn -> File.rm_rf!(tmp) end)
+
+    %{
+      tmp: tmp,
+      global_plugins_yaml: Path.join(global_dir, "plugins.yaml"),
+      user_plugins_yaml: Path.join(user_dir, "plugins.yaml"),
+      workspace_plugins_yaml: Path.join(workspace_dir, "plugins.yaml"),
+      user_uuid: user_uuid
+    }
+  end
+
+  defp write_yaml(path, content), do: File.write!(path, content)
+
+  describe "resolve/2 — 3-layer merge" do
+    test "empty all layers returns empty map", ctx do
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      assert result == %{}
+    end
+
+    test "global-only: returns global config", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      enabled:
+        - my-plugin
+      config:
+        my-plugin:
+          api_key: "global-key"
+          log_level: "info"
+      """)
+
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      assert result["api_key"] == "global-key"
+      assert result["log_level"] == "info"
+    end
+
+    test "user overrides global per-key", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          api_key: "global-key"
+          log_level: "info"
+      """)
+
+      write_yaml(ctx.user_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "debug"
+      """)
+
+      result = Config.resolve("my-plugin",
+        global_path: ctx.global_plugins_yaml,
+        user_path: ctx.user_plugins_yaml
+      )
+
+      assert result["api_key"] == "global-key"
+      assert result["log_level"] == "debug"
+    end
+
+    test "workspace overrides user and global per-key", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          http_proxy: "http://global-proxy:8080"
+          log_level: "info"
+      """)
+
+      write_yaml(ctx.user_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "debug"
+      """)
+
+      write_yaml(ctx.workspace_plugins_yaml, """
+      config:
+        my-plugin:
+          http_proxy: ""
+      """)
+
+      result = Config.resolve("my-plugin",
+        global_path: ctx.global_plugins_yaml,
+        user_path: ctx.user_plugins_yaml,
+        workspace_path: ctx.workspace_plugins_yaml
+      )
+
+      assert result["http_proxy"] == ""
+      assert result["log_level"] == "debug"
+    end
+
+    test "explicit empty string in workspace layer wins (disables proxy)", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          http_proxy: "http://proxy:8080"
+      """)
+
+      write_yaml(ctx.workspace_plugins_yaml, """
+      config:
+        my-plugin:
+          http_proxy: ""
+      """)
+
+      result = Config.resolve("my-plugin",
+        global_path: ctx.global_plugins_yaml,
+        workspace_path: ctx.workspace_plugins_yaml
+      )
+
+      assert result["http_proxy"] == ""
+    end
+
+    test "absent key in all layers returns nil for get/3", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "info"
+      """)
+
+      assert nil == Config.get("my-plugin", "nonexistent_key",
+               global_path: ctx.global_plugins_yaml)
+    end
+
+    test "get/3 returns most-specific value", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "info"
+      """)
+
+      write_yaml(ctx.user_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "debug"
+      """)
+
+      assert "debug" == Config.get("my-plugin", "log_level",
+               global_path: ctx.global_plugins_yaml,
+               user_path: ctx.user_plugins_yaml)
+    end
+
+    test "other plugin's config in same yaml is not returned", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "info"
+        other-plugin:
+          log_level: "warn"
+      """)
+
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      refute Map.has_key?(result, "other-plugin")
+    end
+  end
+
+  describe "store_layer/4 — atomic write" do
+    test "writes key to global layer", ctx do
+      Config.store_layer("my-plugin", "log_level", "debug",
+        layer: :global,
+        global_path: ctx.global_plugins_yaml
+      )
+
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      assert result["log_level"] == "debug"
+    end
+
+    test "write-then-read round-trip at workspace layer", ctx do
+      Config.store_layer("my-plugin", "http_proxy", "http://test:8080",
+        layer: :workspace,
+        workspace_path: ctx.workspace_plugins_yaml
+      )
+
+      result = Config.resolve("my-plugin", workspace_path: ctx.workspace_plugins_yaml)
+      assert result["http_proxy"] == "http://test:8080"
+    end
+
+    test "store is idempotent (overwrite same key)" , ctx do
+      Config.store_layer("my-plugin", "k", "v1", layer: :global, global_path: ctx.global_plugins_yaml)
+      Config.store_layer("my-plugin", "k", "v2", layer: :global, global_path: ctx.global_plugins_yaml)
+
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      assert result["k"] == "v2"
+    end
+  end
+
+  describe "delete_layer/3 — remove key from layer" do
+    test "deletes a key from the global layer", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "info"
+          api_key: "key"
+      """)
+
+      Config.delete_layer("my-plugin", "log_level",
+        layer: :global,
+        global_path: ctx.global_plugins_yaml
+      )
+
+      result = Config.resolve("my-plugin", global_path: ctx.global_plugins_yaml)
+      refute Map.has_key?(result, "log_level")
+      assert result["api_key"] == "key"
+    end
+
+    test "deleting nonexistent key is idempotent", ctx do
+      write_yaml(ctx.global_plugins_yaml, """
+      config:
+        my-plugin:
+          log_level: "info"
+      """)
+
+      assert :ok = Config.delete_layer("my-plugin", "nonexistent",
+               layer: :global,
+               global_path: ctx.global_plugins_yaml)
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/plugin/config_test.exs 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Implement.** Create `runtime/lib/esr/plugin/config.ex`:
+
+```elixir
+defmodule Esr.Plugin.Config do
+  @moduledoc """
+  3-layer plugin config resolution: global / user / workspace.
+
+  Precedence: workspace > user > global (per-key merge, most-specific wins).
+  An explicit empty string `""` at a more-specific layer wins over a
+  non-empty value at a less-specific layer (e.g. "disable proxy for this
+  workspace").
+
+  ## Layer file locations (production defaults)
+
+    * global:    `$ESRD_HOME/<inst>/plugins.yaml`         (`:enabled` + `:config`)
+    * user:      `$ESRD_HOME/<inst>/users/<uuid>/.esr/plugins.yaml`  (`:config` only)
+    * workspace: `<workspace_root>/.esr/plugins.yaml`     (`:config` only)
+
+  ## Public API
+
+    * `resolve/2` — merge all layers, return a flat config map.
+    * `get/3`     — convenience: resolve + fetch one key.
+    * `store_layer/4` — write one key to a specific layer file (atomic).
+    * `delete_layer/3` — remove one key from a specific layer file.
+
+  Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
+  """
+
+  require Logger
+
+  @doc """
+  Resolve effective config for `plugin_name`. All layers are optional;
+  pass paths via opts.
+
+  Opts:
+    * `:global_path`    — path to global plugins.yaml
+    * `:user_path`      — path to user-layer plugins.yaml
+    * `:workspace_path` — path to workspace-layer plugins.yaml
+
+  Returns a flat `%{key => value}` map. Missing files are treated as
+  empty layers (not errors).
+  """
+  @spec resolve(plugin_name :: String.t(), opts :: keyword()) :: map()
+  def resolve(plugin_name, opts \\ []) do
+    global    = read_layer(opts[:global_path], plugin_name)
+    user      = read_layer(opts[:user_path], plugin_name)
+    workspace = read_layer(opts[:workspace_path], plugin_name)
+
+    global
+    |> merge_layer(user)
+    |> merge_layer(workspace)
+  end
+
+  @doc """
+  Resolve and return a single config key for `plugin_name`, or `nil`
+  if absent in all layers.
+  """
+  @spec get(plugin_name :: String.t(), key :: String.t(), opts :: keyword()) :: term() | nil
+  def get(plugin_name, key, opts \\ []) do
+    resolve(plugin_name, opts) |> Map.get(key)
+  end
+
+  @doc """
+  Write a single key-value pair to the specified layer file.
+
+  Opts (required for the target layer):
+    * `:layer`          — `:global | :user | :workspace`
+    * `:global_path`    — required when `layer: :global`
+    * `:user_path`      — required when `layer: :user`
+    * `:workspace_path` — required when `layer: :workspace`
+
+  Atomic: reads the file, merges the key, writes to a temp path, then
+  renames. Returns `:ok` on success; raises on file-system error.
+  """
+  @spec store_layer(plugin_name :: String.t(), key :: String.t(), value :: term(), opts :: keyword()) :: :ok
+  def store_layer(plugin_name, key, value, opts) do
+    path = layer_path!(opts)
+    update_layer_file(path, plugin_name, fn cfg -> Map.put(cfg, key, value) end)
+  end
+
+  @doc """
+  Remove a single key from the specified layer file. Idempotent.
+  Returns `:ok` even if the key was absent.
+  """
+  @spec delete_layer(plugin_name :: String.t(), key :: String.t(), opts :: keyword()) :: :ok
+  def delete_layer(plugin_name, key, opts) do
+    path = layer_path!(opts)
+    update_layer_file(path, plugin_name, fn cfg -> Map.delete(cfg, key) end)
+  end
+
+  # ------------------------------------------------------------------
+  # Private helpers
+  # ------------------------------------------------------------------
+
+  defp read_layer(nil, _plugin_name), do: %{}
+  defp read_layer(path, plugin_name) do
+    case File.read(path) do
+      {:error, :enoent} ->
+        %{}
+
+      {:error, reason} ->
+        Logger.warning("plugin_config: cannot read #{path}: #{inspect(reason)}")
+        %{}
+
+      {:ok, content} ->
+        case YamlElixir.read_from_string(content) do
+          {:ok, parsed} ->
+            get_in(parsed, ["config", plugin_name]) || %{}
+
+          {:error, reason} ->
+            Logger.warning("plugin_config: yaml parse error #{path}: #{inspect(reason)}")
+            %{}
+        end
+    end
+  end
+
+  # Layer merge: base keys survive unless explicitly set in overlay.
+  # Explicit empty string in overlay wins (e.g. http_proxy: "" disables proxy).
+  # Only absent keys (not present in overlay) fall back to base.
+  defp merge_layer(base, overlay) when is_map(overlay) do
+    Map.merge(base, overlay)
+  end
+
+  defp merge_layer(base, _), do: base
+
+  defp layer_path!(opts) do
+    case opts[:layer] do
+      :global    -> opts[:global_path]    || raise ArgumentError, "global_path required for layer: :global"
+      :user      -> opts[:user_path]      || raise ArgumentError, "user_path required for layer: :user"
+      :workspace -> opts[:workspace_path] || raise ArgumentError, "workspace_path required for layer: :workspace"
+      other      -> raise ArgumentError, "unknown layer #{inspect(other)}; must be :global | :user | :workspace"
+    end
+  end
+
+  defp update_layer_file(path, plugin_name, updater_fn) do
+    # Read existing content (may not exist yet).
+    existing =
+      case File.read(path) do
+        {:ok, content} ->
+          case YamlElixir.read_from_string(content) do
+            {:ok, parsed} -> parsed
+            _ -> %{}
+          end
+
+        _ -> %{}
+      end
+
+    # Merge updated plugin config into existing content.
+    current_cfg = get_in(existing, ["config", plugin_name]) || %{}
+    updated_cfg = updater_fn.(current_cfg)
+
+    # Rebuild the full file map.
+    updated_file =
+      existing
+      |> Map.put("config", Map.put(existing["config"] || %{}, plugin_name, updated_cfg))
+
+    # Serialize and write atomically.
+    yaml_content = yaml_encode(updated_file)
+    tmp_path = path <> ".tmp.#{:rand.uniform(999_999)}"
+    dir = Path.dirname(path)
+    File.mkdir_p!(dir)
+    File.write!(tmp_path, yaml_content)
+    File.rename!(tmp_path, path)
+    :ok
+  end
+
+  # Minimal YAML encoder for plugin config maps.
+  # Only handles string/boolean/integer scalar values + string keys.
+  defp yaml_encode(map, indent \\ 0) when is_map(map) do
+    prefix = String.duplicate("  ", indent)
+
+    map
+    |> Enum.map(fn {k, v} ->
+      key = "#{prefix}#{k}:"
+
+      case v do
+        v when is_map(v) ->
+          "#{key}\n#{yaml_encode(v, indent + 1)}"
+
+        v when is_binary(v) ->
+          ~s(#{key} "#{String.replace(v, "\"", "\\\"")}")
+
+        v ->
+          "#{key} #{v}"
+      end
+    end)
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
+  end
+end
+```
+
+> **Note on YAML serialization:** If the project already has a YAML encoder dependency (check `mix.exs`
+> for `:yaml_elixir` and `:yamerl`), prefer it over the custom `yaml_encode/2`. `YamlElixir` is a
+> read-only library; for writing, the custom encoder or `Yamerl.encode/1` may be needed. Check
+> `mix.exs` and adjust the `yaml_encode` call accordingly.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/plugin/config_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/plugin/config.ex \
+        runtime/test/esr/plugin/config_test.exs
+git commit -m "feat(plugin): Esr.Plugin.Config — 3-layer resolver + store/delete per layer (Phase 7.4)"
+```
+
+---
+
+### Task 7.5: `/plugin:set` + `/plugin:unset` + `/plugin:show-config` command modules
+
+**Files:**
+- Create: `runtime/lib/esr/commands/plugin/set.ex`
+- Create: `runtime/lib/esr/commands/plugin/unset.ex`
+- Create: `runtime/lib/esr/commands/plugin/show_config.ex`
+- Create: `runtime/lib/esr/commands/plugin/list_config.ex` (stub for `/plugin:list-config`)
+- Create: `runtime/test/esr/commands/plugin/set_test.exs`
+- Create: `runtime/test/esr/commands/plugin/unset_test.exs`
+- Create: `runtime/test/esr/commands/plugin/show_config_test.exs`
+
+**Analysis:** The yaml routing entries for these commands were added in Task 6.2 with a `@phase_7_modules`
+skip guard. When these modules are created in this task, the guard can be removed from the registry test.
+
+- [ ] **Step 1 — Write failing tests.**
+
+```elixir
+# runtime/test/esr/commands/plugin/set_test.exs
+defmodule Esr.Commands.Plugin.SetTest do
+  use ExUnit.Case, async: true
+
+  alias Esr.Commands.Plugin.Set
+
+  @tmp_dir System.tmp_dir!()
+
+  setup do
+    dir = Path.join(@tmp_dir, "plugin_set_test_#{:rand.uniform(999_999)}")
+    File.mkdir_p!(dir)
+    global_yaml = Path.join(dir, "plugins.yaml")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    %{global_yaml: global_yaml, dir: dir}
+  end
+
+  test "returns error for unknown plugin name" do
+    cmd = %{
+      "kind" => "plugin_set",
+      "args" => %{
+        "plugin" => "nonexistent-plugin-xyz",
+        "key" => "log_level",
+        "value" => "debug",
+        "layer" => "global"
+      }
+    }
+
+    assert {:error, %{"type" => "unknown_plugin"}} = Set.execute(cmd)
+  end
+
+  test "returns restart hint on successful write" do
+    # Use a manifest known to exist: feishu or claude_code.
+    # Resolve path dynamically via Esr.Plugin.Loader.discover/0.
+    {:ok, manifests} = Esr.Plugin.Loader.discover()
+    {plugin_name, manifest} = List.first(manifests)
+    schema = manifest.declares[:config_schema] || %{}
+
+    if map_size(schema) == 0 do
+      # Skip if manifest has no schema (pre-7.6 state).
+      :ok
+    else
+      {key, _entry} = Enum.at(schema, 0)
+      tmp_global = System.tmp_dir!() |> Path.join("plugin_set_test_global_#{:rand.uniform(999)}.yaml")
+      on_exit(fn -> File.rm(tmp_global) end)
+
+      cmd = %{
+        "kind" => "plugin_set",
+        "args" => %{
+          "plugin" => plugin_name,
+          "key" => key,
+          "value" => "test-value",
+          "layer" => "global",
+          "_global_path_override" => tmp_global
+        }
+      }
+
+      assert {:ok, %{"text" => text}} = Set.execute(cmd)
+      assert String.contains?(text, "restart") or String.contains?(text, "config written")
+    end
+  end
+
+  test "rejects key not in manifest config_schema" do
+    # Works after Task 7.6 adds config_schema to feishu/claude_code.
+    # Before 7.6: plugin has no schema and all keys are rejected.
+    {:ok, manifests} = Esr.Plugin.Loader.discover()
+
+    case List.first(manifests) do
+      nil ->
+        :ok
+
+      {plugin_name, _manifest} ->
+        tmp_global = System.tmp_dir!() |> Path.join("plugin_set_reject_#{:rand.uniform(999)}.yaml")
+        on_exit(fn -> File.rm(tmp_global) end)
+
+        cmd = %{
+          "kind" => "plugin_set",
+          "args" => %{
+            "plugin" => plugin_name,
+            "key" => "nonexistent_schema_key_xyz",
+            "value" => "test",
+            "layer" => "global",
+            "_global_path_override" => tmp_global
+          }
+        }
+
+        result = Set.execute(cmd)
+        assert match?({:error, %{"type" => "unknown_config_key"}}, result) or
+               match?({:error, %{"type" => "no_config_schema"}}, result),
+               "Expected config key rejection, got: #{inspect(result)}"
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/plugin/set_test.exs 2>&1 | tail -15
+```
+
+- [ ] **Step 3 — Implement all four command modules.**
+
+  **`runtime/lib/esr/commands/plugin/set.ex`:**
+
+  ```elixir
+  defmodule Esr.Commands.Plugin.Set do
+    @moduledoc """
+    `/plugin:set <plugin> key=<k> value=<v> [layer=global|user|workspace]`
+
+    Writes a config key to the specified layer's plugins.yaml.
+    Key must be declared in the plugin's manifest config_schema:.
+    Default layer: global.
+
+    Returns restart-required hint on success.
+
+    Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
+    """
+
+    @behaviour Esr.Role.Control
+
+    alias Esr.Plugin.Config
+    alias Esr.Plugin.Loader
+
+    @valid_layers ~w(global user workspace)
+
+    @impl Esr.Role.Control
+    def execute(%{"args" => args} = _cmd) do
+      plugin_name = args["plugin"]
+      key         = args["key"]
+      value       = args["value"]
+      layer_str   = args["layer"] || "global"
+
+      with {:ok, manifest}  <- resolve_manifest(plugin_name),
+           :ok              <- validate_config_key(manifest, key),
+           {:ok, layer}     <- parse_layer(layer_str),
+           {:ok, path_opts} <- resolve_path_opts(layer, args) do
+        store_opts = [{:layer, layer} | path_opts]
+        :ok = Config.store_layer(plugin_name, key, value, store_opts)
+
+        {:ok, %{"text" => "config written: #{plugin_name}.#{key} = #{inspect(value)} [#{layer_str}]; restart esrd to apply"}}
+      end
+    end
+
+    defp resolve_manifest(plugin_name) do
+      case Loader.discover() do
+        {:ok, manifests} ->
+          case Enum.find(manifests, fn {name, _} -> name == plugin_name end) do
+            nil -> {:error, %{"type" => "unknown_plugin", "plugin" => plugin_name}}
+            {_, manifest} -> {:ok, manifest}
+          end
+
+        {:error, reason} ->
+          {:error, %{"type" => "discovery_failed", "reason" => inspect(reason)}}
+      end
+    end
+
+    defp validate_config_key(manifest, key) do
+      schema = manifest.declares[:config_schema] || %{}
+
+      cond do
+        map_size(schema) == 0 ->
+          {:error, %{"type" => "no_config_schema", "plugin" => manifest.name}}
+
+        not Map.has_key?(schema, key) ->
+          {:error, %{
+            "type" => "unknown_config_key",
+            "key" => key,
+            "valid_keys" => Map.keys(schema)
+          }}
+
+        true ->
+          :ok
+      end
+    end
+
+    defp parse_layer(layer_str) when layer_str in @valid_layers do
+      {:ok, String.to_atom(layer_str)}
+    end
+
+    defp parse_layer(layer_str) do
+      {:error, %{"type" => "invalid_layer", "layer" => layer_str, "valid" => @valid_layers}}
+    end
+
+    defp resolve_path_opts(:global, args) do
+      path = args["_global_path_override"] || Esr.Paths.global_plugins_yaml()
+      {:ok, [global_path: path]}
+    end
+
+    defp resolve_path_opts(:user, args) do
+      user_uuid = args["user_uuid"]
+
+      if is_binary(user_uuid) and user_uuid != "" do
+        path = args["_user_path_override"] || Esr.Paths.user_plugins_yaml(user_uuid)
+        {:ok, [user_path: path]}
+      else
+        {:error, %{"type" => "user_uuid_required", "message" => "layer=user requires user_uuid"}}
+      end
+    end
+
+    defp resolve_path_opts(:workspace, args) do
+      workspace_id = args["workspace_id"]
+
+      if is_binary(workspace_id) and workspace_id != "" do
+        path = args["_workspace_path_override"] || workspace_plugins_yaml(workspace_id)
+        {:ok, [workspace_path: path]}
+      else
+        {:error, %{"type" => "workspace_id_required", "message" => "layer=workspace requires workspace_id"}}
+      end
+    end
+
+    defp workspace_plugins_yaml(workspace_id) do
+      case Esr.Resource.Workspace.Registry.lookup(workspace_id) do
+        {:ok, ws} -> Path.join([ws.folders |> List.first(""), ".esr", "plugins.yaml"])
+        _ -> raise "workspace not found: #{workspace_id}"
+      end
+    end
+  end
+  ```
+
+  **`runtime/lib/esr/commands/plugin/unset.ex`:**
+
+  ```elixir
+  defmodule Esr.Commands.Plugin.Unset do
+    @moduledoc """
+    `/plugin:unset <plugin> key [layer=global|user|workspace]`
+
+    Removes a config key from the specified layer's plugins.yaml.
+    Idempotent. Default layer: global.
+
+    Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
+    """
+
+    @behaviour Esr.Role.Control
+
+    alias Esr.Plugin.Config
+    alias Esr.Plugin.Loader
+
+    @valid_layers ~w(global user workspace)
+
+    @impl Esr.Role.Control
+    def execute(%{"args" => args} = _cmd) do
+      plugin_name = args["plugin"]
+      key         = args["key"]
+      layer_str   = args["layer"] || "global"
+
+      with {:ok, _manifest} <- resolve_manifest(plugin_name),
+           {:ok, layer}     <- parse_layer(layer_str),
+           {:ok, path_opts} <- resolve_path_opts(layer, args) do
+        delete_opts = [{:layer, layer} | path_opts]
+        :ok = Config.delete_layer(plugin_name, key, delete_opts)
+
+        {:ok, %{"text" => "config key #{key} removed from #{plugin_name} [#{layer_str}]; restart esrd to apply"}}
+      end
+    end
+
+    defp resolve_manifest(plugin_name) do
+      case Loader.discover() do
+        {:ok, manifests} ->
+          case Enum.find(manifests, fn {name, _} -> name == plugin_name end) do
+            nil -> {:error, %{"type" => "unknown_plugin", "plugin" => plugin_name}}
+            {_, manifest} -> {:ok, manifest}
+          end
+
+        {:error, reason} ->
+          {:error, %{"type" => "discovery_failed", "reason" => inspect(reason)}}
+      end
+    end
+
+    defp parse_layer(layer_str) when layer_str in @valid_layers, do: {:ok, String.to_atom(layer_str)}
+    defp parse_layer(layer_str) do
+      {:error, %{"type" => "invalid_layer", "layer" => layer_str, "valid" => @valid_layers}}
+    end
+
+    defp resolve_path_opts(:global, args) do
+      path = args["_global_path_override"] || Esr.Paths.global_plugins_yaml()
+      {:ok, [global_path: path]}
+    end
+
+    defp resolve_path_opts(:user, args) do
+      user_uuid = args["user_uuid"]
+      if is_binary(user_uuid) and user_uuid != "" do
+        path = args["_user_path_override"] || Esr.Paths.user_plugins_yaml(user_uuid)
+        {:ok, [user_path: path]}
+      else
+        {:error, %{"type" => "user_uuid_required"}}
+      end
+    end
+
+    defp resolve_path_opts(:workspace, args) do
+      workspace_id = args["workspace_id"]
+      if is_binary(workspace_id) and workspace_id != "" do
+        path = args["_workspace_path_override"] || workspace_plugins_yaml(workspace_id)
+        {:ok, [workspace_path: path]}
+      else
+        {:error, %{"type" => "workspace_id_required"}}
+      end
+    end
+
+    defp workspace_plugins_yaml(workspace_id) do
+      case Esr.Resource.Workspace.Registry.lookup(workspace_id) do
+        {:ok, ws} -> Path.join([ws.folders |> List.first(""), ".esr", "plugins.yaml"])
+        _ -> raise "workspace not found: #{workspace_id}"
+      end
+    end
+  end
+  ```
+
+  **`runtime/lib/esr/commands/plugin/show_config.ex`:**
+
+  ```elixir
+  defmodule Esr.Commands.Plugin.ShowConfig do
+    @moduledoc """
+    `/plugin:show-config <plugin> [layer=effective|global|user|workspace]`
+
+    Show plugin config at the specified layer (default: effective = merged result).
+
+    Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
+    """
+
+    @behaviour Esr.Role.Control
+
+    alias Esr.Plugin.Config
+
+    @impl Esr.Role.Control
+    def execute(%{"args" => args} = _cmd) do
+      plugin_name = args["plugin"]
+      layer_str   = args["layer"] || "effective"
+
+      path_opts = build_path_opts(args)
+
+      config =
+        case layer_str do
+          "effective" ->
+            Config.resolve(plugin_name, path_opts)
+
+          layer when layer in ~w(global user workspace) ->
+            layer_opt_key = :"#{layer}_path"
+            path = Keyword.get(path_opts, layer_opt_key)
+            if path, do: Config.resolve(plugin_name, [{layer_opt_key, path}]), else: %{}
+
+          _ ->
+            %{}
+        end
+
+      text = render_config(plugin_name, layer_str, config)
+      {:ok, %{"text" => text}}
+    end
+
+    defp build_path_opts(args) do
+      [
+        global_path:    args["_global_path_override"]    || Esr.Paths.global_plugins_yaml(),
+        user_path:      args["_user_path_override"],
+        workspace_path: args["_workspace_path_override"]
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+    end
+
+    defp render_config(plugin_name, layer, config) when map_size(config) == 0 do
+      "#{plugin_name} config [#{layer}]: (empty)"
+    end
+
+    defp render_config(plugin_name, layer, config) do
+      rows =
+        config
+        |> Enum.sort_by(fn {k, _} -> k end)
+        |> Enum.map_join("\n", fn {k, v} -> "  #{k} = #{inspect(v)}" end)
+
+      "#{plugin_name} config [#{layer}]:\n#{rows}"
+    end
+  end
+  ```
+
+  **`runtime/lib/esr/commands/plugin/list_config.ex`:**
+
+  ```elixir
+  defmodule Esr.Commands.Plugin.ListConfig do
+    @moduledoc """
+    `/plugin:list-config`
+
+    Show effective config for all enabled plugins.
+
+    Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
+    """
+
+    @behaviour Esr.Role.Control
+
+    alias Esr.Plugin.Config
+    alias Esr.Plugin.EnabledList
+
+    @impl Esr.Role.Control
+    def execute(_cmd) do
+      enabled = EnabledList.list() || []
+
+      global_path = Esr.Paths.global_plugins_yaml()
+
+      text =
+        enabled
+        |> Enum.map(fn plugin_name ->
+          config = Config.resolve(plugin_name, global_path: global_path)
+
+          if map_size(config) == 0 do
+            "#{plugin_name}: (no config)"
+          else
+            rows =
+              config
+              |> Enum.sort_by(fn {k, _} -> k end)
+              |> Enum.map_join("\n", fn {k, v} -> "    #{k} = #{inspect(v)}" end)
+
+            "#{plugin_name}:\n#{rows}"
+          end
+        end)
+        |> Enum.join("\n\n")
+
+      {:ok, %{"text" => "Plugin effective config:\n\n#{text}"}}
+    end
+  end
+  ```
+
+  **Also:** remove `@phase_7_modules` guard in `registry_test.exs` (Task 6.2) now that these modules exist.
+
+- [ ] **Step 4 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/commands/plugin/ 2>&1 | tail -15
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add runtime/lib/esr/commands/plugin/set.ex \
+        runtime/lib/esr/commands/plugin/unset.ex \
+        runtime/lib/esr/commands/plugin/show_config.ex \
+        runtime/lib/esr/commands/plugin/list_config.ex \
+        runtime/test/esr/commands/plugin/set_test.exs \
+        runtime/test/esr/commands/plugin/unset_test.exs \
+        runtime/test/esr/commands/plugin/show_config_test.exs \
+        runtime/test/esr/resource/slash_route/registry_test.exs
+git commit -m "feat(plugin): /plugin:set + /plugin:unset + /plugin:show-config + /plugin:list-config command modules (Phase 7.5)"
+```
+
+---
+
+### Task 7.6: Feishu + claude_code manifest `config_schema:` migration
+
+**Files:**
+- Modify: `runtime/lib/esr/plugins/feishu/manifest.yaml`
+- Modify: `runtime/lib/esr/plugins/claude_code/manifest.yaml`
+- Modify: `runtime/lib/esr/entity/feishu_app_adapter.ex` (or wherever `FEISHU_APP_ID` is read)
+- Create: `runtime/test/esr/plugins/feishu/config_migration_test.exs`
+
+**Goal:** Add `config_schema:` to both manifests. Update `feishu_app_adapter.ex` to read `app_id`
+and `app_secret` from `Esr.Plugin.Config.get/3` with a fallback to `System.get_env/1` for backward
+compatibility. Phase 8 removes the env-var fallback; Phase 7 merely adds the config-based path.
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/plugins/feishu/config_migration_test.exs`:
+
+```elixir
+defmodule Esr.Plugins.Feishu.ConfigMigrationTest do
+  use ExUnit.Case, async: true
+
+  alias Esr.Plugin.Manifest
+
+  @feishu_manifest_path Path.expand(
+    "../../../../lib/esr/plugins/feishu/manifest.yaml",
+    __DIR__
+  )
+
+  @cc_manifest_path Path.expand(
+    "../../../../lib/esr/plugins/claude_code/manifest.yaml",
+    __DIR__
+  )
+
+  describe "feishu manifest config_schema" do
+    test "feishu manifest has config_schema with app_id" do
+      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "app_id"),
+             "feishu manifest missing app_id in config_schema"
+    end
+
+    test "feishu manifest has config_schema with app_secret" do
+      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "app_secret"),
+             "feishu manifest missing app_secret in config_schema"
+    end
+
+    test "feishu manifest has config_schema with log_level" do
+      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "log_level"),
+             "feishu manifest missing log_level in config_schema"
+    end
+
+    test "feishu config_schema entries have required fields" do
+      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+
+      Enum.each(schema, fn {key, entry} ->
+        assert Map.has_key?(entry, "type"),        "feishu config_schema.#{key} missing type"
+        assert Map.has_key?(entry, "description"), "feishu config_schema.#{key} missing description"
+        assert Map.has_key?(entry, "default"),     "feishu config_schema.#{key} missing default"
+      end)
+    end
+  end
+
+  describe "claude_code manifest config_schema" do
+    test "claude_code manifest has config_schema with http_proxy" do
+      {:ok, manifest} = Manifest.parse(@cc_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "http_proxy"),
+             "claude_code manifest missing http_proxy in config_schema"
+    end
+
+    test "claude_code manifest has config_schema with anthropic_api_key_ref" do
+      {:ok, manifest} = Manifest.parse(@cc_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "anthropic_api_key_ref"),
+             "claude_code manifest missing anthropic_api_key_ref"
+    end
+
+    test "claude_code manifest has config_schema with esrd_url" do
+      {:ok, manifest} = Manifest.parse(@cc_manifest_path)
+      schema = manifest.declares[:config_schema] || %{}
+      assert Map.has_key?(schema, "esrd_url"),
+             "claude_code manifest missing esrd_url in config_schema"
+    end
+  end
+
+  describe "feishu plugin boots with config from layered yaml" do
+    test "FeishuAppAdapter.get_app_id/1 reads from Plugin.Config before env var" do
+      # Confirm the read function exists and is exported.
+      assert function_exported?(Esr.Entity.FeishuAppAdapter, :get_app_id, 1) or
+             function_exported?(Esr.Entity.FeishuAppAdapter, :get_app_id, 0),
+             "FeishuAppAdapter must export get_app_id/0 or get_app_id/1 after Phase 7.6"
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+cd runtime && mix test test/esr/plugins/feishu/config_migration_test.exs 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Update feishu manifest.** Add `config_schema:` to
+`runtime/lib/esr/plugins/feishu/manifest.yaml`:
+
+```yaml
+config_schema:
+  app_id:
+    type: string
+    description: "Feishu app ID (cli_xxx). Required for Feishu API calls."
+    default: ""
+
+  app_secret:
+    type: string
+    description: "Feishu app secret. Required for Feishu API calls. Do not commit to repo — set via /plugin:set feishu key=app_secret value=... or in global plugins.yaml."
+    default: ""
+
+  log_level:
+    type: string
+    description: "Log verbosity for the feishu adapter (debug|info|warning|error)."
+    default: "info"
+```
+
+- [ ] **Step 4 — Update claude_code manifest.** Add `config_schema:` to
+`runtime/lib/esr/plugins/claude_code/manifest.yaml`:
+
+```yaml
+config_schema:
+  http_proxy:
+    type: string
+    description: "HTTP proxy URL for outbound Anthropic API requests. Empty string = no proxy."
+    default: ""
+
+  https_proxy:
+    type: string
+    description: "HTTPS proxy URL. Usually same as http_proxy."
+    default: ""
+
+  no_proxy:
+    type: string
+    description: "Comma-separated host/suffix list that bypasses the proxy."
+    default: ""
+
+  anthropic_api_key_ref:
+    type: string
+    description: "Env-var reference for the Anthropic API key, e.g. ${ANTHROPIC_API_KEY}. Resolved via System.get_env/1 at session-start."
+    default: "${ANTHROPIC_API_KEY}"
+
+  esrd_url:
+    type: string
+    description: "WebSocket URL of the esrd host. Controls the HTTP MCP endpoint."
+    default: "ws://127.0.0.1:4001"
+```
+
+- [ ] **Step 5 — Add `get_app_id/0` accessor to `feishu_app_adapter.ex`.** Find the call sites for
+`System.get_env("FEISHU_APP_ID")` and `System.get_env("FEISHU_APP_SECRET")`:
+
+```bash
+grep -rn 'FEISHU_APP_ID\|FEISHU_APP_SECRET\|FEISHU_VERIFICATION_TOKEN' \
+  runtime/lib/esr/entity/ runtime/lib/esr/plugins/feishu/ 2>/dev/null
+```
+
+For each call site, wrap with a config-first lookup and env-var fallback:
+
+```elixir
+# Phase 7.6: read app_id from plugin config first; env var as fallback.
+# Phase 8 removes the env-var fallback.
+defp get_app_id(opts \\ []) do
+  config_val = Esr.Plugin.Config.get("feishu", "app_id",
+    [global_path: Esr.Paths.global_plugins_yaml()] ++ opts)
+
+  if is_binary(config_val) and config_val != "" do
+    config_val
+  else
+    System.get_env("FEISHU_APP_ID", "")
+  end
+end
+
+defp get_app_secret(opts \\ []) do
+  config_val = Esr.Plugin.Config.get("feishu", "app_secret",
+    [global_path: Esr.Paths.global_plugins_yaml()] ++ opts)
+
+  if is_binary(config_val) and config_val != "" do
+    config_val
+  else
+    System.get_env("FEISHU_APP_SECRET", "")
+  end
+end
+```
+
+Replace `System.get_env("FEISHU_APP_ID")` with `get_app_id()` and
+`System.get_env("FEISHU_APP_SECRET")` with `get_app_secret()` at each call site.
+
+- [ ] **Step 6 — Run passing tests.**
+
+```bash
+cd runtime && mix test test/esr/plugins/feishu/config_migration_test.exs 2>&1 | tail -10
+cd runtime && mix test 2>&1 | tail -20
+```
+
+- [ ] **Step 7 — Commit.**
+
+```bash
+git add runtime/lib/esr/plugins/feishu/manifest.yaml \
+        runtime/lib/esr/plugins/claude_code/manifest.yaml \
+        runtime/lib/esr/entity/feishu_app_adapter.ex \
+        runtime/test/esr/plugins/feishu/config_migration_test.exs
+git commit -m "feat(feishu+cc): manifest config_schema + Plugin.Config-first app_id/secret reads (Phase 7.6)"
+```
+
+---
+
+### Phase 7 PR checklist
+
+Before opening the PR:
+
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — all pass
+- [ ] `grep -n "config_schema" runtime/lib/esr/plugins/feishu/manifest.yaml` — present
+- [ ] `grep -n "config_schema" runtime/lib/esr/plugins/claude_code/manifest.yaml` — present
+- [ ] `grep -n "check_core_version" runtime/lib/esr/plugin/loader.ex` — present in `start_plugin/2`
+- [ ] `grep -n "satisfies?" runtime/lib/esr/plugin/version.ex` — present
+- [ ] `cat runtime/lib/esr/plugin/config.ex | grep "def resolve"` — `resolve/2` exported
+- [ ] Confirm `/plugin:set` + `/plugin:unset` + `/plugin:show-config` + `/plugin:list-config` are
+  loadable: `grep -n "Esr.Commands.Plugin" runtime/priv/slash-routes.default.yaml | head -10`
+
+```bash
+git commit -m "feat: plugin-config 3-layer + manifest config_schema + depends_on.core SemVer (Phase 7)"
+```
+
+---
+
+<!-- PLAN_END_PHASE_7 — next subagent: append "## Phase 8" here -->

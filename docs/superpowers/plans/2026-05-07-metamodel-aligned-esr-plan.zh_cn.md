@@ -672,4 +672,304 @@ else
 
 ---
 
-<!-- PLAN_END_PHASE_5 — next subagent: append "## Phase 6" here -->
+## Phase 6：冒号命名空间 slash 切换
+
+**PR 标题：** `feat: colon-namespace slash cutover — hard cutover, /session:* family, /pty:key (Phase 6)`
+**分支：** `feat/phase-6-colon-namespace`
+**目标：** `dev`
+**预估 LOC：** ~1200
+**依赖：** Phase 1b（用户 UUID）、Phase 3（Session 命令模块）、Phase 5（cap UUID 强制）
+
+**目标：** 一次性硬切换所有 slash 命令为冒号命名空间形式，无别名。删除 `/workspace:sessions`。
+`/key` 改为 `/pty:key`。新增完整 `/session:*`、`/pty:*`、`/cap:*` 系列路由条目（命令模块在 Phase 3 已实现）。
+新增 `/plugin:set`、`/plugin:unset`、`/plugin:show-config`、`/plugin:list-config` 路由占位（命令模块在 Phase 7 实现）。
+在 `slash_handler.ex` 中添加 `@deprecated_slashes` 提示映射，让操作员看到清晰的"请使用 X"提示。
+更新 `/help` 分组标题。更新全量测试文件中的旧 slash 字面量。
+
+> **规格 §4 Rule 5（权威）：** `/key` → `/pty:key`。已吸收的 `spec/colon-namespace-grammar` 表格
+> 错误映射到 `/session:key`；主规格 rev-2 §4 锁定为 `/pty:key`，以主规格为准。
+
+---
+
+### 任务 6.1：验证匹配器支持冒号形式名称（注册表冒烟测试）
+
+**分析：** `slash_head/1` 以 `\s+`（空白）分割，`/session:new` 作为单一 token 处理——冒号对匹配器
+透明。`file_loader.ex` 的 `validate_slash_key/1` 只检查键是否以 `/` 开头，冒号形式通过。
+**结论：** 无需修改逻辑，本任务只添加回归测试。
+
+- [ ] **Step 1–5**（见英文版 Task 6.1，代码块相同）
+- [ ] **提交**：`test(slash): colon-form matcher regression — confirm no logic change needed (Phase 6.1)`
+
+---
+
+### 任务 6.2：重写 `slash-routes.default.yaml` — 完整冒号命名空间清单
+
+**映射（规格 §4 rev-2 权威）：**
+
+| 旧键 | 新键 |
+|---|---|
+| `/whoami` | `/user:whoami` |
+| `/key` | `/pty:key` |
+| `/new-workspace` | `/workspace:new` |
+| `/workspace list` ... | `/workspace:list` ... |
+| `/workspace sessions` | **删除**（Rule 6）|
+| `/sessions` | `/session:list` |
+| `/new-session` | `/session:new` |
+| `/end-session` | `/session:end` |
+| `/attach` | `/session:attach` |
+| `/list-agents` | `/agent:list` |
+| `/actors` | `/actor:list` |
+| `/plugin list/info/install/enable/disable` | `/plugin:list/info/install/enable/disable` |
+
+**新增 `/session:*`、`/pty:key`、`/plugin:set|unset|show-config|list-config`、`/cap:grant|revoke` 条目。**
+**删除所有 `aliases:` 字段。**
+
+- [ ] **Step 1–5**（见英文版 Task 6.2，代码块相同）
+- [ ] **提交**：`feat(slash): hard-cutover to colon-namespace — yaml rewrite + new session/pty/cap/plugin entries (Phase 6.2)`
+
+---
+
+### 任务 6.3：`slash_handler.ex` — 废弃 slash 提示映射 + `pty_key` 路由
+
+**变更：**
+1. 添加 `@deprecated_slashes` 模块属性——当注册表查找返回 `:not_found` 时，对已知旧形式返回"已更名为 X"提示。这不是路由，是错误提示增强。
+2. 将 `merge_chat_context/2` 中 `"key"` 的 kind 子句更新为 `"pty_key"`。
+3. 添加 `two_token_head/1` 私有函数（用于检测两词旧形如 `/workspace info`）。
+
+- [ ] **Step 1–5**（见英文版 Task 6.3，代码块相同）
+- [ ] **提交**：`feat(slash): deprecated-slash hint map + pty_key kind routing (Phase 6.3)`
+
+---
+
+### 任务 6.4：`/help` — 冒号前缀分组标题
+
+更新 `category_order/1`，新增 `"PTY"`（优先级 4）、`"Plugins"`（5）、`"Capabilities"`（6）。
+渲染循环直接输出 `route.slash`，yaml 重写后自动显示冒号形式，无需其他修改。
+
+- [ ] **Step 1–5**（见英文版 Task 6.4，代码块相同）
+- [ ] **提交**：`feat(help): add PTY + Capabilities to category_order for colon-namespace grouping (Phase 6.4)`
+
+---
+
+### 任务 6.5：`/admin/slash_schema.json` 控制器冒烟测试
+
+控制器直接从 `Registry.list_slashes/0` 渲染 slash 名称，yaml 重写后自动返回冒号形式，无需逻辑改动。
+本任务只添加验证冒号名称出现在 JSON 响应中的测试。
+
+- [ ] **Step 1–5**（见英文版 Task 6.5，代码块相同）
+- [ ] **提交**：`test(web): slash_schema_controller smoke test — colon names in JSON response (Phase 6.5)`
+
+---
+
+### 任务 6.6：Escript 子命令路由 — `esr session new` → `/session:new`
+
+读取 `runtime/lib/esr/cli/main.ex`，确认 escript 是否构造 slash 字符串。
+若 escript 使用子动作拼接（如 `session_new` kind），冒号形式 yaml 变更透明，无需修改。
+若 escript 构造 `/session new` slash 字符串，更新为 `/session:new`。
+
+- [ ] **Step 1–5**（见英文版 Task 6.6，代码块相同）
+- [ ] **提交**：`feat(cli): escript session subcommands route to colon-form kinds (Phase 6.6)`
+
+---
+
+### 任务 6.7：测试扫描 — 更新 `runtime/test/` 中所有 slash 字面量
+
+搜索并替换 `runtime/test/` 下所有旧形式 slash 字面量为冒号形式（映射表见英文版）。
+对专门验证废弃提示路径的测试，更新断言为检验提示文本包含新形式。
+
+- [ ] **Step 1–5**（见英文版 Task 6.7，代码块相同）
+- [ ] **提交**：`test: update all slash literals to colon-namespace form (Phase 6.7)`
+
+---
+
+### 任务 6.8：文档预览扫描（仅限建议性文档）
+
+更新 `docs/dev-guide.md`、`docs/cookbook.md` 等操作员面向文档中的旧 slash 引用。
+不修改历史性迁移说明、`docs/superpowers/specs/` 文件、`docs/futures/` 文件。
+
+- [ ] **Step 1–5**（见英文版 Task 6.8，代码块相同）
+- [ ] **提交**：`docs: preview sweep — advisory docs updated to colon-namespace slash forms (Phase 6.8)`
+
+---
+
+### Phase 6 PR 检查清单
+
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — 全部通过
+- [ ] `grep -rn '"/new-session\|"/workspace list\|"/workspace info"' runtime/test/` — 零命中
+- [ ] `grep -rn 'aliases:' runtime/priv/slash-routes.default.yaml` — 零命中
+- [ ] `grep -n '"/workspace sessions"' runtime/priv/slash-routes.default.yaml` — 零命中
+- [ ] `grep -n '"/pty:key"' runtime/priv/slash-routes.default.yaml` — 一条命中
+- [ ] `grep -n '"/key"' runtime/priv/slash-routes.default.yaml` — 零命中
+
+---
+
+## Phase 7：Plugin-config 三层配置 + manifest config_schema + depends_on.core SemVer
+
+**PR 标题：** `feat: plugin-config 3-layer + manifest config_schema + depends_on.core SemVer (Phase 7)`
+**分支：** `feat/phase-7-plugin-config`
+**目标：** `dev`
+**预估 LOC：** ~700
+**依赖：** Phase 6（slash 路由）、Phase 1b（用户 UUID，用于 user 层配置路径）
+
+**目标：** 实现三层 plugin 配置解析栈（global → user → workspace，按键合并，最具体层优先）。
+为 `Esr.Plugin.Manifest` 添加 `config_schema:` 字段。新增 `Esr.Plugin.Version` 用于
+`depends_on.core` SemVer 强制检查。实现 `/plugin:set`、`/plugin:unset`、`/plugin:show-config`
+命令模块。迁移 feishu 和 claude_code manifest 增加 `config_schema:`。
+Phase 7 结束时配置机制就位；Phase 8 删除 env var 回退。
+
+---
+
+### 任务 7.1：Manifest `config_schema:` 解析
+
+**变更：** 扩展 `Esr.Plugin.Manifest.parse/1`，解析 `config_schema:` YAML 块为
+`%{type, description, default}` 条目映射。支持类型：`string`、`boolean`。
+按键验证必填字段（`type`、`description`、`default`）。
+
+**验证规则：**
+- `type:` 缺失 → `{:error, {:config_schema_missing_field, key, "type"}}`
+- `description:` 缺失 → `{:error, {:config_schema_missing_field, key, "description"}}`
+- `default:` 缺失 → `{:error, {:config_schema_missing_field, key, "default"}}`
+- 未知类型 → `{:error, {:config_schema_unknown_type, key, type}}`
+- 无 `sensitive:` 字段（规格 D7 明确删除）
+
+- [ ] **Step 1–5**（见英文版 Task 7.1，代码块相同）
+- [ ] **提交**：`feat(plugin): manifest config_schema: field — parse + validate type/description/default (Phase 7.1)`
+
+---
+
+### 任务 7.2：`Esr.Plugin.Version` — SemVer 约束封装
+
+**新建：** `runtime/lib/esr/plugin/version.ex`
+**新建：** `runtime/test/esr/plugin/version_test.exs`
+
+对 Elixir 标准库 `Version` 模块的薄封装，提供：
+- `satisfies?(constraint, version) :: boolean | {:error, :invalid_constraint}`
+- `esrd_version() :: String.t()`（从 `:esr` app spec 读取）
+
+- [ ] **Step 1–5**（见英文版 Task 7.2，代码块相同）
+- [ ] **提交**：`feat(plugin): Esr.Plugin.Version — SemVer constraint check for depends_on.core (Phase 7.2)`
+
+---
+
+### 任务 7.3：`depends_on.core` 加载时强制检查
+
+**变更：** 在 `Esr.Plugin.Loader.start_plugin/2` 的 `with` 链中，在 `Manifest.validate/1`
+之前插入 `check_core_version/1`：
+
+```elixir
+with :ok <- check_core_version(manifest),
+     :ok <- Manifest.validate(manifest),
+     ...
+```
+
+约束不满足时返回 `{:error, {:core_version_mismatch, constraint, actual}}` 并 let-it-crash。
+
+- [ ] **Step 1–5**（见英文版 Task 7.3，代码块相同）
+- [ ] **提交**：`feat(plugin): depends_on.core SemVer enforcement at start_plugin/2 (Phase 7.3)`
+
+---
+
+### 任务 7.4：`Esr.Plugin.Config` — 三层解析器
+
+**新建：** `runtime/lib/esr/plugin/config.ex`
+**新建：** `runtime/test/esr/plugin/config_test.exs`
+
+**三层文件位置（生产默认值）：**
+- global：`$ESRD_HOME/<inst>/plugins.yaml`
+- user：`$ESRD_HOME/<inst>/users/<uuid>/.esr/plugins.yaml`
+- workspace：`<workspace_root>/.esr/plugins.yaml`
+
+**合并语义：** workspace > user > global，逐键合并；空字符串 `""` 也算显式设置（如禁用代理）。
+
+**公开 API：**
+- `resolve(plugin_name, opts) :: map()` — 合并三层，返回扁平配置 map
+- `get(plugin_name, key, opts) :: term() | nil` — 便捷封装
+- `store_layer(plugin_name, key, value, opts) :: :ok` — 原子写入指定层文件
+- `delete_layer(plugin_name, key, opts) :: :ok` — 从指定层删除键（幂等）
+
+- [ ] **Step 1–5**（见英文版 Task 7.4，代码块相同）
+- [ ] **提交**：`feat(plugin): Esr.Plugin.Config — 3-layer resolver + store/delete per layer (Phase 7.4)`
+
+---
+
+### 任务 7.5：`/plugin:set` + `/plugin:unset` + `/plugin:show-config` + `/plugin:list-config` 命令模块
+
+**新建四个命令模块：**
+- `Esr.Commands.Plugin.Set` — 写入配置键；验证 config_schema；打印"重启生效"提示
+- `Esr.Commands.Plugin.Unset` — 删除配置键；幂等
+- `Esr.Commands.Plugin.ShowConfig` — 显示指定层或 effective 合并配置
+- `Esr.Commands.Plugin.ListConfig` — 显示所有已启用 plugin 的 effective 配置
+
+**同时：** 删除 Task 6.2 注册表测试中的 `@phase_7_modules` 跳过守卫，因为这些模块已创建。
+
+- [ ] **Step 1–5**（见英文版 Task 7.5，代码块相同）
+- [ ] **提交**：`feat(plugin): /plugin:set + /plugin:unset + /plugin:show-config + /plugin:list-config command modules (Phase 7.5)`
+
+---
+
+### 任务 7.6：Feishu + claude_code manifest `config_schema:` 迁移
+
+**变更 feishu manifest，新增：**
+
+```yaml
+config_schema:
+  app_id:
+    type: string
+    description: "Feishu app ID (cli_xxx). Required for Feishu API calls."
+    default: ""
+  app_secret:
+    type: string
+    description: "Feishu app secret. Required for Feishu API calls. Do not commit to repo."
+    default: ""
+  log_level:
+    type: string
+    description: "Log verbosity for the feishu adapter (debug|info|warning|error)."
+    default: "info"
+```
+
+**变更 claude_code manifest，新增：**
+
+```yaml
+config_schema:
+  http_proxy:
+    type: string
+    description: "HTTP proxy URL for outbound Anthropic API requests. Empty string = no proxy."
+    default: ""
+  https_proxy:
+    type: string
+    description: "HTTPS proxy URL. Usually same as http_proxy."
+    default: ""
+  no_proxy:
+    type: string
+    description: "Comma-separated host/suffix list that bypasses the proxy."
+    default: ""
+  anthropic_api_key_ref:
+    type: string
+    description: "Env-var reference for the Anthropic API key."
+    default: "${ANTHROPIC_API_KEY}"
+  esrd_url:
+    type: string
+    description: "WebSocket URL of the esrd host."
+    default: "ws://127.0.0.1:4001"
+```
+
+**变更 `feishu_app_adapter.ex`：** 新增 `get_app_id/0` 和 `get_app_secret/0`，优先从
+`Esr.Plugin.Config.get/3` 读取，env var 作为向后兼容回退（Phase 8 删除 env var 回退）。
+
+- [ ] **Step 1–7**（见英文版 Task 7.6，代码块相同）
+- [ ] **提交**：`feat(feishu+cc): manifest config_schema + Plugin.Config-first app_id/secret reads (Phase 7.6)`
+
+---
+
+### Phase 7 PR 检查清单
+
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — 全部通过
+- [ ] `grep -n "config_schema" runtime/lib/esr/plugins/feishu/manifest.yaml` — 存在
+- [ ] `grep -n "config_schema" runtime/lib/esr/plugins/claude_code/manifest.yaml` — 存在
+- [ ] `grep -n "check_core_version" runtime/lib/esr/plugin/loader.ex` — 在 `start_plugin/2` 中存在
+- [ ] `grep -n "satisfies?" runtime/lib/esr/plugin/version.ex` — 存在
+- [ ] `cat runtime/lib/esr/plugin/config.ex | grep "def resolve"` — `resolve/2` 已导出
+
+---
+
+<!-- PLAN_END_PHASE_7 — next subagent: append "## Phase 8" here -->
