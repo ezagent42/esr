@@ -462,6 +462,17 @@ slashes:
     description: "显示所有 enabled plugins 的 effective config"
     args: []
 
+  "/plugin:reload":
+    kind: plugin_reload
+    permission: "plugin/manage"
+    command_module: "Esr.Commands.Plugin.Reload"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "触发指定 plugin 的 config reload（plugin manifest 必须 hot_reloadable: true；不传 plugin name = 报错，无 batch reload）"
+    args:
+      - { name: plugin, required: true }
+
   "/cap:grant":
     kind: cap_grant
     permission: "cap.manage"
