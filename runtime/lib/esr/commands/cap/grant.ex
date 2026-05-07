@@ -37,9 +37,12 @@ defmodule Esr.Commands.Cap.Grant do
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
-    case Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
-      {:ok, translated_perm} ->
-        do_grant(pid, translated_perm)
+    with :ok <- validate_session_cap(perm),
+         {:ok, translated_perm} <- Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
+      do_grant(pid, translated_perm)
+    else
+      {:error, {:session_name_in_cap, msg}} ->
+        {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}}
 
       {:error, :unknown_workspace} ->
         {:error,
@@ -57,6 +60,10 @@ defmodule Esr.Commands.Cap.Grant do
        "message" =>
          "grant requires args.principal_id and args.permission (non-empty strings)"
      }}
+  end
+
+  defp validate_session_cap(perm) do
+    Esr.Resource.Capability.UuidTranslator.validate_session_cap_input(perm)
   end
 
   # ------------------------------------------------------------------

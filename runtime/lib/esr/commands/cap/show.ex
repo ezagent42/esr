@@ -44,7 +44,7 @@ defmodule Esr.Commands.Cap.Show do
   defp render_entry(entry) do
     caps =
       (entry["capabilities"] || [])
-      |> Enum.map(&Esr.Resource.Capability.UuidTranslator.uuid_to_name/1)
+      |> Enum.map(&Esr.Resource.Capability.UuidTranslator.render_cap_for_display/1)
 
     base = "id: #{entry["id"]}\nkind: #{entry["kind"] || ""}"
     note = if entry["note"] in [nil, ""], do: "", else: "\nnote: #{inspect(entry["note"])}"
