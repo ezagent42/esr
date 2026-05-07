@@ -471,4 +471,16 @@ defmodule Esr.SlashRoutesTest do
     File.write!(path, content)
     path
   end
+
+  describe "/plugin:reload route registration (HR-2)" do
+    test "plugin:reload is registered with permission plugin/manage and correct module" do
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      FileLoader.load(priv)
+
+      assert {:ok, route} = SlashRouteRegistry.lookup("/plugin:reload test_plugin")
+      assert route.kind == "plugin_reload"
+      assert route.permission == "plugin/manage"
+      assert route.command_module == Esr.Commands.Plugin.Reload
+    end
+  end
 end
