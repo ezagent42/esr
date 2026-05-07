@@ -913,7 +913,7 @@ defmodule Esr.Entity.Server do
   # rather than `Esr.Scope.Process.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
   # to per-session peer modules which are spawned through
-  # `Entity.Factory.spawn_peer/5` and receive a `session_process_pid` in
+  # `Entity.Factory.spawn_peer/4` and receive a `session_process_pid` in
   # their `proxy_ctx`). Leaving the global read in place here keeps the
   # legacy data plane working during the cutover; migration happens by
   # deletion, not refactor.

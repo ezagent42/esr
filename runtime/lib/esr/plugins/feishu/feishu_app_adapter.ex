@@ -80,7 +80,6 @@ defmodule Esr.Entity.FeishuAppAdapter do
      %{
        instance_id: instance_id,
        app_id: args[:app_id] || instance_id,
-       neighbors: args[:neighbors] || [],
        proxy_ctx: args[:proxy_ctx] || %{},
        # PR-21κ Phase 4: ref → {chat_id, message_id} for slash dispatches
        # in flight. When SlashHandler.dispatch returns `{:reply, text,

@@ -324,10 +324,7 @@ defmodule Esr.Session.AgentSpawner do
       ctx = build_ctx(spec, params)
       args = spawn_args(impl, spec, params)
 
-      # M-2.3: empty `neighbors` arg passed for Factory.spawn_peer/5
-      # signature compatibility. Peers ignore it (M-2 deleted state.neighbors).
-      # M-2.7+ removes the arg from Factory.spawn_peer entirely.
-      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, [], ctx) do
+      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, ctx) do
         {:ok, pid} ->
           ref = Process.monitor(pid)
           {Map.put(refs_acc, name, pid), [{ref, pid} | mon_acc]}

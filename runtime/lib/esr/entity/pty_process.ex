@@ -124,7 +124,6 @@ defmodule Esr.Entity.PtyProcess do
       session_name: args.session_name,
       dir: args.dir,
       subscribers: [args[:subscriber] || self()],
-      neighbors: Map.get(args, :neighbors, []),
       session_id: Map.get(args, :session_id),
       workspace_name: Map.get(args, :workspace_name),
       chat_id: Map.get(args, :chat_id),

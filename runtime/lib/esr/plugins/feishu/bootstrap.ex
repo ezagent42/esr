@@ -69,7 +69,6 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
     args = %{
       instance_id: instance_id,
       app_id: app_id,
-      neighbors: [],
       proxy_ctx: %{}
     }
 

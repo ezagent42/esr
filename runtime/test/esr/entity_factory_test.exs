@@ -32,18 +32,18 @@ defmodule Esr.EntityFactoryTest do
       })
 
     assert {:ok, pid} =
-             Esr.Entity.Factory.spawn_peer("pf-s1", TestPeer, %{name: "p1"}, [], %{})
+             Esr.Entity.Factory.spawn_peer("pf-s1", TestPeer, %{name: "p1"}, %{})
 
     assert Process.alive?(pid)
   end
 
   test "Entity.Factory.__info__(:functions) matches the declared public surface" do
     expected = [
-      {:spawn_peer, 5},
+      {:spawn_peer, 4},
       {:terminate_peer, 2},
       {:restart_peer, 2},
-      # Added in P2-1
-      {:spawn_peer_bootstrap, 4}
+      # Added in P2-1; M-2.5 dropped the neighbors arg
+      {:spawn_peer_bootstrap, 3}
     ]
 
     actual =
