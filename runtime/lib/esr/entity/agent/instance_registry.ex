@@ -208,20 +208,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  defp uuid_v4 do
-    if Code.ensure_loaded?(Uniq.UUID) do
-      Uniq.UUID.uuid4()
-    else
-      <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
-      c = Bitwise.bor(Bitwise.band(c, 0x0FFF), 0x4000)
-      d = Bitwise.bor(Bitwise.band(d, 0x3FFF), 0x8000)
-      :io_lib.format(
-        "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
-        [a, b, c, d, e]
-      )
-      |> IO.iodata_to_binary()
-    end
-  end
+  defp uuid_v4, do: UUID.uuid4()
 
   defp iso_now do
     DateTime.utc_now() |> DateTime.to_iso8601()
