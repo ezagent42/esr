@@ -12,8 +12,11 @@ defmodule Esr.Resource.Session.Registry do
     * `get_by_id/1` — returns `{:ok, Struct.t()} | :not_found`
     * `list_all/0` — returns `[Struct.t()]`
 
-  Mutation API (put/1, delete_by_id/1) added in Phase 2 when session
-  create/end commands ship.
+  Phase 3 additions (multi-agent per session):
+    * `create_session/2` — writes session.json + registers in ETS
+    * `get_session/1` — alias for get_by_id/1
+    * `add_agent_to_session/5` — write-through to InstanceRegistry + persists to disk
+    * `remove_agent_from_session/3` — write-through to InstanceRegistry + persists to disk
   """
 
   @behaviour Esr.Role.State
@@ -53,6 +56,54 @@ defmodule Esr.Resource.Session.Registry do
     ArgumentError -> []
   end
 
+  @doc "Alias for get_by_id/1 — returns `{:ok, Struct.t()} | :not_found`."
+  @spec get_session(String.t()) :: {:ok, Struct.t()} | :not_found
+  def get_session(session_id), do: get_by_id(session_id)
+
+  @doc """
+  Create a new session on disk and register it in the ETS tables.
+
+  Writes `<data_dir>/sessions/<uuid>/session.json` using `JsonWriter`.
+  A fresh UUID v4 is assigned as the session `id`.
+
+  Returns `{:ok, session_uuid}` on success.
+  """
+  @spec create_session(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def create_session(data_dir, attrs) when is_binary(data_dir) and is_map(attrs) do
+    GenServer.call(__MODULE__, {:create_session, data_dir, attrs})
+  end
+
+  @doc """
+  Add an agent instance to the session with `session_id`.
+
+  Delegates name-uniqueness enforcement to `Esr.Entity.Agent.InstanceRegistry`.
+  On success, writes the updated agents list back to `session.json`.
+
+  Returns `:ok` or `{:error, {:duplicate_agent_name, name}}`.
+  """
+  @spec add_agent_to_session(String.t(), String.t(), String.t(), String.t(), map()) ::
+          :ok | {:error, {:duplicate_agent_name, String.t()}}
+  def add_agent_to_session(data_dir, session_id, type, name, config)
+      when is_binary(data_dir) and is_binary(session_id) and is_binary(type) and
+             is_binary(name) and is_map(config) do
+    GenServer.call(
+      __MODULE__,
+      {:add_agent_to_session, data_dir, session_id, type, name, config}
+    )
+  end
+
+  @doc """
+  Remove the agent named `name` from the session with `session_id`.
+
+  Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
+  """
+  @spec remove_agent_from_session(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :cannot_remove_primary | :not_found}
+  def remove_agent_from_session(session_id, name, data_dir)
+      when is_binary(session_id) and is_binary(name) and is_binary(data_dir) do
+    GenServer.call(__MODULE__, {:remove_agent_from_session, session_id, name, data_dir})
+  end
+
   ## GenServer callbacks ---------------------------------------------------
 
   @impl GenServer
@@ -72,6 +123,71 @@ defmodule Esr.Resource.Session.Registry do
   @impl GenServer
   def handle_call(:reload, _from, state) do
     {:reply, do_reload(), state}
+  end
+
+  @impl GenServer
+  def handle_call({:create_session, data_dir, attrs}, _from, state) do
+    uuid = generate_uuid()
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    session = %Struct{
+      id: uuid,
+      name: Map.get(attrs, :name) || Map.get(attrs, "name", ""),
+      owner_user: Map.get(attrs, :owner_user) || Map.get(attrs, "owner_user", ""),
+      workspace_id: Map.get(attrs, :workspace_id) || Map.get(attrs, "workspace_id", ""),
+      agents: [],
+      primary_agent: nil,
+      attached_chats: [],
+      created_at: now,
+      transient: Map.get(attrs, :transient, false)
+    }
+
+    session_dir = Path.join([data_dir, "sessions", uuid])
+    File.mkdir_p!(session_dir)
+    session_json_path = Path.join(session_dir, "session.json")
+
+    case Esr.Resource.Session.JsonWriter.write(session_json_path, session) do
+      :ok ->
+        :ets.insert(@uuid_table, {uuid, session})
+        :ets.insert(@name_index, {{session.owner_user, session.name}, uuid})
+        {:reply, {:ok, uuid}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, {:write_failed, reason}}, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:add_agent_to_session, data_dir, session_id, type, name, config}, _from, state) do
+    case Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+           session_id: session_id,
+           type: type,
+           name: name,
+           config: config
+         }) do
+      :ok ->
+        case persist_agents(data_dir, session_id) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = err -> {:reply, err, state}
+        end
+
+      {:error, _} = err ->
+        {:reply, err, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:remove_agent_from_session, session_id, name, data_dir}, _from, state) do
+    case Esr.Entity.Agent.InstanceRegistry.remove_instance(session_id, name) do
+      :ok ->
+        case persist_agents(data_dir, session_id) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = err -> {:reply, err, state}
+        end
+
+      {:error, _} = err ->
+        {:reply, err, state}
+    end
   end
 
   ## Internals -------------------------------------------------------------
@@ -98,6 +214,65 @@ defmodule Esr.Resource.Session.Registry do
     end)
 
     :ok
+  end
+
+  defp persist_agents(data_dir, session_id) do
+    instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
+
+    primary =
+      case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+        {:ok, n} -> n
+        :not_found -> nil
+      end
+
+    agents_json =
+      Enum.map(instances, fn i -> %{"type" => i.type, "name" => i.name, "config" => i.config} end)
+
+    session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
+
+    case File.read(session_json_path) do
+      {:ok, raw} ->
+        doc =
+          raw
+          |> Jason.decode!()
+          |> Map.put("agents", agents_json)
+          |> Map.put("primary_agent", primary)
+
+        tmp_path = session_json_path <> ".tmp"
+        File.write!(tmp_path, Jason.encode!(doc, pretty: true))
+        File.rename!(tmp_path, session_json_path)
+
+        # Also update ETS with the fresh agents list.
+        case :ets.lookup(@uuid_table, session_id) do
+          [{^session_id, s}] ->
+            agents_atoms =
+              Enum.map(instances, fn i -> %{type: i.type, name: i.name, config: i.config} end)
+
+            updated = %{s | agents: agents_atoms, primary_agent: primary}
+            :ets.insert(@uuid_table, {session_id, updated})
+
+          [] ->
+            :ok
+        end
+
+        :ok
+
+      {:error, reason} ->
+        {:error, {:session_json_missing, reason}}
+    end
+  end
+
+  defp generate_uuid do
+    if Code.ensure_loaded?(Uniq.UUID) do
+      Uniq.UUID.uuid4()
+    else
+      <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+      c_val = Bitwise.bor(Bitwise.band(c, 0x0FFF), 0x4000)
+      d_val = Bitwise.bor(Bitwise.band(d, 0x3FFF), 0x8000)
+
+      :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [a, b, c_val, d_val, e])
+      |> IO.iodata_to_binary()
+    end
   end
 
   defp scan_sessions_dir do

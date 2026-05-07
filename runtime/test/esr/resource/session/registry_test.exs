@@ -73,4 +73,73 @@ defmodule Esr.Resource.Session.RegistryTest do
     assert sess.name == "my-session"
     assert sess.owner_user == @owner_uuid
   end
+
+  describe "add_agent_to_session/5 + persistence" do
+    setup do
+      # Ensure InstanceRegistry is running.
+      case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+        nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+        _ -> :ok
+      end
+
+      :ok
+    end
+
+    test "create_session writes session.json on disk", %{tmp: tmp} do
+      data_dir = Path.join([tmp, "default"])
+
+      {:ok, session_id} =
+        Registry.create_session(data_dir, %{
+          name: "my-sess",
+          owner_user: @owner_uuid,
+          workspace_id: @ws_uuid
+        })
+
+      session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
+      assert File.exists?(session_json_path)
+      {:ok, doc} = Jason.decode(File.read!(session_json_path))
+      assert doc["id"] == session_id
+      assert doc["name"] == "my-sess"
+    end
+
+    test "add_agent persists to session.json and updates ETS", %{tmp: tmp} do
+      data_dir = Path.join([tmp, "default"])
+
+      {:ok, session_id} =
+        Registry.create_session(data_dir, %{
+          name: "agent-sess",
+          owner_user: @owner_uuid,
+          workspace_id: @ws_uuid
+        })
+
+      :ok = Registry.add_agent_to_session(data_dir, session_id, "cc", "dev", %{})
+
+      # Verify persisted JSON contains the agent.
+      session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
+      persisted = File.read!(session_json_path) |> Jason.decode!()
+      assert [%{"type" => "cc", "name" => "dev"}] = persisted["agents"]
+      assert persisted["primary_agent"] == "dev"
+
+      # Verify ETS is also updated.
+      {:ok, sess} = Registry.get_session(session_id)
+      assert [%{type: "cc", name: "dev"}] = sess.agents
+      assert sess.primary_agent == "dev"
+    end
+
+    test "add_agent returns error on duplicate name in same session", %{tmp: tmp} do
+      data_dir = Path.join([tmp, "default"])
+
+      {:ok, session_id} =
+        Registry.create_session(data_dir, %{
+          name: "dup-sess",
+          owner_user: @owner_uuid,
+          workspace_id: @ws_uuid
+        })
+
+      :ok = Registry.add_agent_to_session(data_dir, session_id, "cc", "dev", %{})
+
+      assert {:error, {:duplicate_agent_name, "dev"}} =
+               Registry.add_agent_to_session(data_dir, session_id, "codex", "dev", %{})
+    end
+  end
 end

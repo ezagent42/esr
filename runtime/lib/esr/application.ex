@@ -76,6 +76,17 @@ defmodule Esr.Application do
       # requested agent name against this registry.
       {Esr.Entity.Agent.Registry, []},
 
+      # 4d.2 Agent InstanceRegistry (Phase 3): per-session ETS backing the
+      # multi-agent model. Single global instance — session UUID+name key
+      # provides the per-session isolation. Started before Session.Registry
+      # since add_agent_to_session delegates to it at write time.
+      {Esr.Entity.Agent.InstanceRegistry, []},
+
+      # 4d.3 Session.Registry (Phase 1): ETS-backed session UUID+name index
+      # rebuilt from disk at boot. Wraps session.json I/O via FileLoader +
+      # JsonWriter. Phase 3 adds add_agent_to_session write-through.
+      {Esr.Resource.Session.Registry, []},
+
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
       # via Entity.Factory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
