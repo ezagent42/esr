@@ -897,14 +897,26 @@ git add \
   runtime/test/esr/entity/registry_indexes_test.exs
 ```
 
-**Step 2 — Open PR against `dev`; title:** `feat(m-1): Esr.ActorQuery + Registry indexes — additive`
+**Step 2 — Create and push branch; open PR against integration branch:**
 
-**Step 3 — Admin-merge** (per project policy):
+```bash
+git branch feat/m1-actor-query-indexes
+git push origin feat/m1-actor-query-indexes
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m1-actor-query-indexes \
+  --title "feat(m-1): Esr.ActorQuery + Registry indexes — additive" \
+  --body "Additive phase: Registry indexes (name, role) + ActorQuery public API.
+
+No deletions, no renames. Full backward compatibility.
+
+Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07)."
+```
+
+**Step 3 — Admin-merge:**
 ```bash
 gh pr merge --admin --squash --delete-branch
 ```
 
-**Step 4 — Verify:** `git log --oneline dev | head -3` — M-1 commit visible.
+**Step 4 — Verify:** `git log --oneline feat/multi-instance-routing-cleanup | head -3` — M-1 commit visible.
 
 ---
 
@@ -1777,9 +1789,21 @@ git add \
   runtime/test/esr/m2_no_neighbors_field_test.exs
 ```
 
-Open PR against `dev`; title: `feat(m-2): migrate callers to ActorQuery + delete state.neighbors + per-session AgentSupervisor + atomic add-agent`
+**Step 7 — Create and push branch; open PR against integration branch:**
 
-Admin-merge:
+```bash
+git branch feat/m2-delete-neighbors
+git push origin feat/m2-delete-neighbors
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m2-delete-neighbors \
+  --title "feat(m-2): migrate callers to ActorQuery + delete state.neighbors + per-session AgentSupervisor + atomic add-agent" \
+  --body "Core behavior migration: delete state.neighbors keyword lists, adopt per-session DynamicSupervisor, make /session:add-agent atomic via InstanceRegistry.add_instance_and_spawn.
+
+Four callers migrated; -200 net LOC. Hard cutover, no backward compat.
+
+Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07)."
+```
+
+**Step 8 — Admin-merge:**
 ```bash
 gh pr merge --admin --squash --delete-branch
 ```
@@ -2193,7 +2217,19 @@ git add \
   runtime/test/esr/resource/workspace/registry_m3_gate_test.exs
 ```
 
-**Step 2 — Open PR against `dev`; title:** `feat(m-3): delete legacy diffusion — Topology + reachable_set + describe_topology + neighbor_workspaces`
+**Step 2 — Create and push branch; open PR against integration branch:**
+
+```bash
+git branch feat/m3-delete-topology
+git push origin feat/m3-delete-topology
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m3-delete-topology \
+  --title "feat(m-3): delete legacy diffusion — Topology + reachable_set + describe_topology + neighbor_workspaces" \
+  --body "Pure deletion phase: remove Topology module, reachable_set mutations from cc_process, neighbor_workspaces from describe, describe_topology from server, etc. After M-3, LLM no longer receives <reachable> prompt.
+
+-488 LOC. Hard cutover.
+
+Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07)."
+```
 
 **Step 3 — Admin-merge:**
 
@@ -2201,7 +2237,7 @@ git add \
 gh pr merge --admin --squash --delete-branch
 ```
 
-**Step 4 — Verify:** `git log --oneline dev | head -3` — M-3 commit visible.
+**Step 4 — Verify:** `git log --oneline feat/multi-instance-routing-cleanup | head -3` — M-3 commit visible.
 
 ---
 
@@ -2742,9 +2778,19 @@ git add \
   runtime/test/esr/resource/workspace_describe_m4_gate_test.exs
 ```
 
-**Step 3 — Open PR against `dev`; title:** `feat(m-4): delete _legacy.* compat shim + %Workspace{} legacy struct + 4 caller migrations`
+**Step 3 — Create and push branch; open PR against integration branch:**
 
-PR description note: "`workspace_for_chat/2` is implemented via `@uuid_table` (not `@legacy_table`), verified at `registry.ex:149–175`. All 8 callers continue to compile and work unchanged."
+```bash
+git branch feat/m4-delete-legacy-compat
+git push origin feat/m4-delete-legacy-compat
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m4-delete-legacy-compat \
+  --title "feat(m-4): delete _legacy.* compat shim + %Workspace{} legacy struct + 4 caller migrations" \
+  --body "Final compat deletion: remove @legacy_table + to_legacy/normalize_to_struct shim, delete embedded %Workspace{} struct, migrate 4 callers. workspace_for_chat/2 uses @uuid_table (verified registry.ex:149–175); all callers continue working.
+
+-227 LOC. Hard cutover.
+
+Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07)."
+```
 
 **Step 4 — Admin-merge:**
 
@@ -3272,7 +3318,17 @@ git add \
 # git rm runtime/test/esr/entity/server_describe_topology_test.exs  (if fully deleted)
 ```
 
-**Step 3 — Open PR against `dev`; title:** `feat(m-5): tests + e2e sweep + scenario 18 multi-CC session lifecycle`
+**Step 3 — Create and push branch; open PR against integration branch:**
+
+```bash
+git branch feat/m5-tests-e2e-sweep
+git push origin feat/m5-tests-e2e-sweep
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m5-tests-e2e-sweep \
+  --title "feat(m-5): tests + e2e sweep + scenario 18 multi-CC session lifecycle" \
+  --body "Final validation phase: add scenario 18 (multi-CC in same session with @mention routing), sweep all e2e tests, confirm full unit suite green. All gate checks pass: no deleted patterns, no legacy structs, e2e 14/15/17/18 green.
+
+Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07)."
+```
 
 **Step 4 — Admin-merge:**
 
@@ -3280,7 +3336,58 @@ git add \
 gh pr merge --admin --squash --delete-branch
 ```
 
-**Step 5 — Verify:** `git log --oneline dev | head -5` — all 5 M-1 through M-5 commits visible.
+**Step 5 — Final Step: Squash-merge integration branch → dev**
+
+After M-5 PR is merged to feat/multi-instance-routing-cleanup, run e2e validation:
+
+```bash
+cd runtime
+mix test
+make e2e-14 e2e-15 e2e-17 e2e-18
+```
+
+If all green, open the integration → dev PR:
+
+```bash
+gh pr create --base dev --head feat/multi-instance-routing-cleanup \
+  --title "Multi-instance routing cleanup — 5 phases (M-1..M-5)" \
+  --body "Squash-merge of all 5 phases. Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md (rev-1, user-approved 2026-05-07).
+
+Phases (each was a sub-PR to feat/multi-instance-routing-cleanup):
+  - M-1: Esr.ActorQuery + Registry indexes
+  - M-2: Migrate callers + delete state.neighbors / backwire / rewire + per-session DynSup + atomic add-agent
+  - M-3: Delete legacy diffusion (workspace.neighbors / topology / reachable_set / describe_topology cleanup)
+  - M-4: Delete _legacy.* compat shim + legacy %Workspace{} struct + 4 caller migrations
+  - M-5: Tests + e2e sweep + scenario 18 multi-CC
+
+Net ~-550 LOC. Hard cutover, no backward compatibility.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+gh pr merge --admin --squash --delete-branch
+```
+
+After merge, the feat/multi-instance-routing-cleanup branch is auto-deleted.
+
+**Step 6 — Verify:** `git log --oneline dev | head -5` — all 5 M-1 through M-5 commits visible.
+
+---
+
+## §13: Branching strategy — integration branch
+
+This plan ships through an integration branch `feat/multi-instance-routing-cleanup` (NOT directly to dev) because the changes are structurally invasive (M-2 deletes state.neighbors mid-flight).
+
+**Mechanism:**
+- Each phase PR (M-1 through M-5) targets `feat/multi-instance-routing-cleanup`, NOT `dev`
+- Phase PRs are still independently reviewable + admin-mergeable
+- Final step (after M-5): one squash-merge PR from integration branch → dev, gated on full e2e green
+
+**Why not direct-to-dev:**
+- M-2 → M-5 leaves dev in a broken state if e2e isn't run between phases
+- Integration branch quarantines the broken-state window from dev's CI
+
+**Why not e2e per phase (option A):**
+- Adding e2e setup to every phase PR triples the per-PR work
+- Operator-grade verification is meaningful only at full chain (all 5 phases)
 
 ---
 

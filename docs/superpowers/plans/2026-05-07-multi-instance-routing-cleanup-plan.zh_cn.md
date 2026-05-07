@@ -152,7 +152,15 @@ name 从 args 中取，若无则使用默认值（`"pty-" <> sid` 等）。
 
 ### M-1.6 任务：PR + admin-merge
 
-提交所有 M-1 文件，PR 标题：`feat(m-1): Esr.ActorQuery + Registry indexes — additive`
+创建分支，发起 PR 至集成分支：
+
+```bash
+git branch feat/m1-actor-query-indexes
+git push origin feat/m1-actor-query-indexes
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m1-actor-query-indexes \
+  --title "feat(m-1): Esr.ActorQuery + Registry indexes — additive" \
+  --body "纯增量阶段：Registry 索引 (name, role) + ActorQuery 公开 API。无删除、无重命名，完全向后兼容。"
+```
 
 Admin-merge：`gh pr merge --admin --squash --delete-branch`
 
@@ -309,7 +317,15 @@ Esr.Scope.Supervisor (DynamicSupervisor)
 mix test runtime/test/esr/entity/agent/instance_registry_spawn_test.exs
 ```
 
-提交所有 M-2 文件，PR 标题：`feat(m-2): migrate callers to ActorQuery + delete state.neighbors + per-session AgentSupervisor + atomic add-agent`
+创建分支，发起 PR 至集成分支：
+
+```bash
+git branch feat/m2-delete-neighbors
+git push origin feat/m2-delete-neighbors
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m2-delete-neighbors \
+  --title "feat(m-2): migrate callers to ActorQuery + delete state.neighbors + per-session AgentSupervisor + atomic add-agent" \
+  --body "核心行为迁移：删除 state.neighbors 关键字列表、采用 per-session DynamicSupervisor、让 /session:add-agent 通过 InstanceRegistry.add_instance_and_spawn 原子化。四个调用方迁移，-200 net LOC，硬切换。"
+```
 
 Admin-merge：`gh pr merge --admin --squash --delete-branch`
 
@@ -451,20 +467,15 @@ mix compile --force && mix test
 
 ### M-3.7 任务：PR + admin-merge
 
-```bash
-git rm runtime/lib/esr/topology.ex runtime/test/esr/topology_test.exs \
-        runtime/test/esr/topology_integration_test.exs
-git add runtime/lib/esr/plugins/claude_code/cc_process.ex \
-        runtime/lib/esr/resource/workspace/describe.ex \
-        runtime/lib/esr/entity/server.ex \
-        runtime/lib/esr/plugins/claude_code/mcp/tools.ex \
-        runtime/lib/esr/resource/workspace/registry.ex \
-        runtime/test/esr/plugins/claude_code/cc_process_test.exs \
-        runtime/test/esr/m3_topology_dead_code_test.exs \
-        # ... 其余门控测试文件
-```
+创建分支，发起 PR 至集成分支：
 
-PR 标题：`feat(m-3): delete legacy diffusion — Topology + reachable_set + describe_topology + neighbor_workspaces`
+```bash
+git branch feat/m3-delete-topology
+git push origin feat/m3-delete-topology
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m3-delete-topology \
+  --title "feat(m-3): delete legacy diffusion — Topology + reachable_set + describe_topology + neighbor_workspaces" \
+  --body "纯删除阶段：删除 Topology 模块、cc_process 中的 reachable_set 变更、describe 中的 neighbor_workspaces、server 中的 describe_topology 等。M-3 完成后，LLM 不再接收 <reachable> prompt。-488 LOC，硬切换。"
+```
 
 Admin-merge：`gh pr merge --admin --squash --delete-branch`
 
@@ -640,9 +651,15 @@ grep -rn "@legacy_table\|_legacy\.\|defmodule Workspace\b\|normalize_to_struct\|
 mix compile --force && mix test
 ```
 
-PR 标题：`feat(m-4): delete _legacy.* compat shim + %Workspace{} legacy struct + 4 caller migrations`
+创建分支，发起 PR 至集成分支：
 
-PR 描述注明：`workspace_for_chat/2` 内部使用 `@uuid_table`（已在 `registry.ex:149–175` 确认），8 处调用方无需修改。
+```bash
+git branch feat/m4-delete-legacy-compat
+git push origin feat/m4-delete-legacy-compat
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m4-delete-legacy-compat \
+  --title "feat(m-4): delete _legacy.* compat shim + %Workspace{} legacy struct + 4 caller migrations" \
+  --body "最终 compat 删除：删除 @legacy_table + to_legacy/normalize_to_struct shim，删除内嵌 %Workspace{} struct，迁移 4 个调用方。workspace_for_chat/2 使用 @uuid_table（已确认），所有调用方继续工作。-227 LOC，硬切换。"
+```
 
 Admin-merge：`gh pr merge --admin --squash --delete-branch`
 
@@ -816,11 +833,68 @@ bash tests/e2e/18_multi_cc_session.sh
 mix test
 ```
 
-PR 标题：`feat(m-5): tests + e2e sweep + scenario 18 multi-CC session lifecycle`
+创建分支，发起 PR 至集成分支：
+
+```bash
+git branch feat/m5-tests-e2e-sweep
+git push origin feat/m5-tests-e2e-sweep
+gh pr create --base feat/multi-instance-routing-cleanup --head feat/m5-tests-e2e-sweep \
+  --title "feat(m-5): tests + e2e sweep + scenario 18 multi-CC session lifecycle" \
+  --body "最终验证阶段：新增 scenario 18（多 CC 同会话生命周期 + @mention 路由）、全 e2e sweep、全单测绿。全门控通过：无删除模式残留、无 legacy struct、e2e 14/15/17/18 绿。"
+```
 
 Admin-merge：`gh pr merge --admin --squash --delete-branch`
 
+**Final Step: 集成分支 → dev 整体 squash-merge**
+
+M-5 PR 合入 feat/multi-instance-routing-cleanup 后，运行 e2e 验证：
+
+```bash
+cd runtime
+mix test
+make e2e-14 e2e-15 e2e-17 e2e-18
+```
+
+全绿后，发起集成分支 → dev PR：
+
+```bash
+gh pr create --base dev --head feat/multi-instance-routing-cleanup \
+  --title "Multi-instance routing cleanup — 5 phases (M-1..M-5)" \
+  --body "五个阶段的全量 squash-merge。规范：docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md（rev-1，用户 2026-05-07 批准）。
+
+各阶段（每个都是对集成分支的 sub-PR）：
+  - M-1: Esr.ActorQuery + Registry indexes
+  - M-2: 迁移调用方 + 删除 state.neighbors / backwire / rewire + per-session DynSup + 原子 add-agent
+  - M-3: 删除 legacy diffusion（workspace.neighbors / topology / reachable_set / describe_topology cleanup）
+  - M-4: 删除 _legacy.* compat shim + legacy %Workspace{} struct + 4 caller 迁移
+  - M-5: 测试 + e2e sweep + scenario 18 多 CC
+
+Net ~-550 LOC，硬切换，无向后兼容。🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+gh pr merge --admin --squash --delete-branch
+```
+
+合并后集成分支自动删除。
+
 验证：`git log --oneline dev | head -5` — M-1 至 M-5 全部 5 个提交可见。
+
+---
+
+## §13：分支策略 —— integration 分支
+
+本 plan 通过 `feat/multi-instance-routing-cleanup` 集成分支 ship（不直接合 dev）。理由：M-2 至 M-5 涉及结构性修改（M-2 删 state.neighbors），中间 phase 合到 dev 期间若未贯通 e2e，dev 会处于不稳定状态。
+
+**机制：**
+- 每个阶段 PR（M-1 ~ M-5）目标是 `feat/multi-instance-routing-cleanup`，不是 `dev`
+- 各阶段 PR 仍可独立审查 + admin-merge
+- 最后一步（M-5 完成后）：集成分支一次 squash-merge PR 到 dev，门控条件是全 e2e 绿
+
+**为何不直接 dev：**
+- M-2 ~ M-5 若不贯通 e2e，dev 处于破坏状态
+- 集成分支隔离破坏状态窗口，dev CI 保持绿
+
+**为何不每阶段都跑 e2e（方案 A）：**
+- 每个 PR 加 e2e setup 会三倍工作量
+- Operator 级验证只在全链路完整（5 个阶段都合）时才有意义
 
 ---
 
