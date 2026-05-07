@@ -33,3 +33,29 @@ declares:
 
   # No python_sidecars — PR-3.5 (2026-05-05) deleted adapters/cc_mcp/.
   # The MCP server is now esrd-hosted (Elixir, EsrWeb.McpController).
+
+config_schema:
+  http_proxy:
+    type: string
+    description: "HTTP proxy URL for outbound Anthropic API requests. Empty string = no proxy."
+    default: ""
+
+  https_proxy:
+    type: string
+    description: "HTTPS proxy URL. Usually same as http_proxy."
+    default: ""
+
+  no_proxy:
+    type: string
+    description: "Comma-separated host/suffix list that bypasses the proxy."
+    default: ""
+
+  anthropic_api_key_ref:
+    type: string
+    description: "Env-var reference for the Anthropic API key, e.g. ${ANTHROPIC_API_KEY}. Resolved via System.get_env/1 at session-start."
+    default: "${ANTHROPIC_API_KEY}"
+
+  esrd_url:
+    type: string
+    description: "WebSocket URL of the esrd host. Controls the HTTP MCP endpoint."
+    default: "ws://127.0.0.1:4001"

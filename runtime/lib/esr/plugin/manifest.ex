@@ -61,9 +61,11 @@ defmodule Esr.Plugin.Manifest do
          {:ok, parsed} <- read_yaml(content, path),
          {:ok, name} <- fetch_required(parsed, "name"),
          :ok <- validate_kebab(name),
-         {:ok, version} <- fetch_required(parsed, "version") do
+         {:ok, version} <- fetch_required(parsed, "version"),
+         {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}) do
       depends_on = parse_depends_on(parsed["depends_on"] || %{})
       declares = atomize_declares(parsed["declares"] || %{})
+      declares_with_schema = Map.put(declares, :config_schema, config_schema)
 
       {:ok,
        %__MODULE__{
@@ -71,7 +73,7 @@ defmodule Esr.Plugin.Manifest do
          version: version,
          description: parsed["description"] || "",
          depends_on: depends_on,
-         declares: declares,
+         declares: declares_with_schema,
          path: path
        }}
     end
@@ -133,6 +135,64 @@ defmodule Esr.Plugin.Manifest do
   end
 
   defp parse_depends_on(_), do: %{core: ">= 0.0.0", plugins: []}
+
+  # ---- config_schema parsing (Phase 7.1) ----
+
+  @supported_schema_types ~w(string boolean)
+
+  defp parse_config_schema(schema_map) when is_map(schema_map) do
+    Enum.reduce_while(schema_map, {:ok, %{}}, fn {key, entry}, {:ok, acc} ->
+      with {:ok, type} <- fetch_schema_field(key, entry, "type"),
+           :ok <- validate_schema_type(key, type),
+           {:ok, description} <- fetch_schema_field(key, entry, "description"),
+           {:ok, default} <- fetch_schema_field_with_nil(key, entry, "default") do
+        {:cont,
+         {:ok,
+          Map.put(acc, key, %{"type" => type, "description" => description, "default" => default})}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp parse_config_schema(_), do: {:ok, %{}}
+
+  defp fetch_schema_field(key, entry, field) when is_map(entry) do
+    case Map.fetch(entry, field) do
+      {:ok, value} when not is_nil(value) -> {:ok, value}
+      _ -> {:error, {:config_schema_missing_field, key, field}}
+    end
+  end
+
+  defp fetch_schema_field(key, _entry, field),
+    do: {:error, {:config_schema_missing_field, key, field}}
+
+  # `default` is allowed to be nil (absent key = missing field error),
+  # but an explicit `false` or `""` must be accepted (Map.fetch returns
+  # {:ok, false} which the guard `not is_nil(value)` allows).
+  # We use Map.has_key? to distinguish "key present with nil value" from
+  # "key absent". YAML `default: ` (bare) parses as nil → missing field.
+  defp fetch_schema_field_with_nil(key, entry, field) when is_map(entry) do
+    if Map.has_key?(entry, field) do
+      {:ok, Map.get(entry, field)}
+    else
+      {:error, {:config_schema_missing_field, key, field}}
+    end
+  end
+
+  defp fetch_schema_field_with_nil(key, _entry, field),
+    do: {:error, {:config_schema_missing_field, key, field}}
+
+  defp validate_schema_type(key, type) when is_binary(type) do
+    if type in @supported_schema_types do
+      :ok
+    else
+      {:error, {:config_schema_unknown_type, key, type}}
+    end
+  end
+
+  defp validate_schema_type(key, type),
+    do: {:error, {:config_schema_unknown_type, key, inspect(type)}}
 
   # Convert the top-level keys of `declares` into atoms for
   # struct-friendly access. Sub-values stay as plain maps (yaml-shape).

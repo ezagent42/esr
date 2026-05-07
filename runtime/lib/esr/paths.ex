@@ -22,6 +22,9 @@ defmodule Esr.Paths do
   def admin_queue_dir, do: Path.join(runtime_home(), "admin_queue")
   def plugins_yaml, do: Path.join(runtime_home(), "plugins.yaml")
 
+  @doc "Path to global-layer plugins.yaml (alias for plugins_yaml/0 — Phase 7)."
+  def global_plugins_yaml, do: plugins_yaml()
+
   @doc "Top-level dir for ESR-bound workspaces. Per-instance."
   def workspaces_dir, do: Path.join(runtime_home(), "workspaces")
 

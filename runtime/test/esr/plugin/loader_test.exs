@@ -173,4 +173,60 @@ defmodule Esr.Plugin.LoaderTest do
       assert :ok == Loader.stop_plugin("anything")
     end
   end
+
+  describe "depends_on.core enforcement (Phase 7.3)" do
+    defp make_manifest(core_constraint) do
+      path = System.tmp_dir!() |> Path.join("test_manifest_#{:rand.uniform(99_999)}.yaml")
+
+      content = """
+      name: test-plugin
+      version: 0.1.0
+      description: test
+      depends_on:
+        core: "#{core_constraint}"
+        plugins: []
+      declares: {}
+      """
+
+      File.write!(path, content)
+      {:ok, manifest} = Esr.Plugin.Manifest.parse(path)
+      File.rm(path)
+      manifest
+    end
+
+    test "plugin with satisfied core constraint starts successfully" do
+      manifest = make_manifest(">= 0.1.0")
+      result = Esr.Plugin.Loader.start_plugin("test-plugin", manifest)
+      refute match?({:error, {:core_version_mismatch, _, _}}, result)
+    end
+
+    test "plugin requiring future core version is rejected" do
+      manifest = make_manifest(">= 99.0.0")
+
+      assert {:error, {:core_version_mismatch, ">= 99.0.0", actual_vsn}} =
+               Esr.Plugin.Loader.start_plugin("test-plugin", manifest)
+
+      assert is_binary(actual_vsn)
+    end
+
+    test "plugin without core constraint starts successfully (no constraint = unrestricted)" do
+      path = System.tmp_dir!() |> Path.join("test_manifest_nocore.yaml")
+
+      content = """
+      name: test-plugin-nocore
+      version: 0.1.0
+      description: test
+      depends_on:
+        plugins: []
+      declares: {}
+      """
+
+      File.write!(path, content)
+      {:ok, manifest} = Esr.Plugin.Manifest.parse(path)
+      File.rm(path)
+
+      result = Esr.Plugin.Loader.start_plugin("test-plugin-nocore", manifest)
+      refute match?({:error, {:core_version_mismatch, _, _}}, result)
+    end
+  end
 end
