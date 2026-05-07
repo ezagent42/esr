@@ -32,6 +32,11 @@ defmodule Esr.Plugin.LoaderIntegrationTest do
   @fixture_names ~w(bare_component dependent_topology composite_session)
 
   setup do
+    # HR-1: ensure the ConfigSnapshot ETS table exists before any
+    # start_plugin/2 call (Application.start/2 normally does this;
+    # integration tests bypass Application).
+    :ok = Esr.Plugin.ConfigSnapshot.create_table()
+
     on_exit(fn ->
       # Clean up sidecar registrations our fixture plugins inserted so
       # parallel suites and re-runs see a fresh table.

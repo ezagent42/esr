@@ -253,6 +253,11 @@ defmodule Esr.Application do
         # Esr.Slash.Supervisor so Watcher orphan-recovery lands on a
         # live peer). No post-start work needed here.
 
+        # HR-1: create the config snapshot ETS table before loading plugins
+        # so ConfigSnapshot.init/2 (called from Loader.start_plugin/2) has
+        # a table to write into.
+        :ok = Esr.Plugin.ConfigSnapshot.create_table()
+
         # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on
         # disk → no-op. Once `runtime.exs` populates `:enabled_plugins`
         # (Task 0.5) and plugins materialize under

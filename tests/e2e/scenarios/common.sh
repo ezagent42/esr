@@ -413,6 +413,47 @@ workspaces:
 EOF
 }
 
+# seed_plugin_config — write test plugin config to the 3-layer paths used by
+# Esr.Plugin.Config so e2e scenarios do not source esr-cc.sh (deleted Phase 8).
+#
+# Writes a minimal global plugins.yaml under ${ESRD_HOME}/${ESRD_INSTANCE}/
+# that enables claude_code + feishu with defaults suitable for local e2e runs.
+#
+# Usage:
+#   seed_plugin_config             # minimal config, no extra block
+#   seed_plugin_config "$(cat <<'EXTRA'
+#   config:
+#     claude_code:
+#       http_proxy: "http://proxy.test:3128"
+#   EXTRA
+#   )"
+seed_plugin_config() {
+  local extra_yaml="${1:-}"
+  local global_cfg="${ESRD_HOME}/${ESRD_INSTANCE}/plugins.yaml"
+
+  mkdir -p "$(dirname "$global_cfg")"
+
+  cat > "$global_cfg" <<YAML
+enabled:
+  - claude_code
+  - feishu
+config:
+  claude_code:
+    esrd_url: "ws://127.0.0.1:${ESRD_PORT:-4001}"
+    http_proxy: ""
+    https_proxy: ""
+    no_proxy: ""
+    anthropic_api_key_ref: "\${ANTHROPIC_API_KEY}"
+  feishu:
+    app_id: "${FEISHU_APP_ID:-cli_test}"
+    app_secret: "${FEISHU_APP_SECRET:-test_secret}"
+    log_level: "debug"
+${extra_yaml}
+YAML
+
+  echo "[seed_plugin_config] wrote ${global_cfg}"
+}
+
 start_esrd() {
   # Leaves ESR_E2E_TMUX_SOCK exported so application.ex's boot reader
   # picks it up (J1).

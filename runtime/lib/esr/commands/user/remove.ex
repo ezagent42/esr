@@ -6,10 +6,17 @@ defmodule Esr.Commands.User.Remove do
   Does NOT cascade-delete capabilities granted to the user — operator
   runs `esr cap revoke` (or `cap_revoke` slash) separately for cleanup.
 
+  Also removes the user from `Esr.Entity.User.NameIndex` so that
+  subsequent `/session:share user=<name>` calls return `user_not_found`
+  immediately.
+
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
+  fix/user-name-index-population: wire NameIndex cleanup on remove.
   """
 
   @behaviour Esr.Role.Control
+
+  alias Esr.Entity.User.NameIndex
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -27,8 +34,17 @@ defmodule Esr.Commands.User.Remove do
       updated_doc = Map.put(doc, "users", updated_users)
 
       case Esr.Yaml.Writer.write(path, updated_doc) do
-        :ok -> {:ok, %{"text" => "removed esr user #{name}"}}
-        {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+        :ok ->
+          # Remove from NameIndex. Look up by name to get the UUID first.
+          case NameIndex.id_for_name(:esr_user_name_index, name) do
+            {:ok, uuid} -> NameIndex.delete_by_id(:esr_user_name_index, uuid)
+            :not_found -> :ok
+          end
+
+          {:ok, %{"text" => "removed esr user #{name}"}}
+
+        {:error, reason} ->
+          {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
       end
     end
   end

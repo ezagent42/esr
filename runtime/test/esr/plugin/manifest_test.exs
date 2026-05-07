@@ -302,4 +302,47 @@ defmodule Esr.Plugin.ManifestTest do
       assert manifest.declares[:config_schema] == %{} or is_nil(manifest.declares[:config_schema])
     end
   end
+
+  describe "parse/1 — hot_reloadable field (HR-1)" do
+    defp hr1_yaml(extra \\ "") do
+      """
+      name: test-plugin
+      version: 0.1.0
+      description: test
+      depends_on:
+        core: ">= 0.1.0"
+        plugins: []
+      declares: {}
+      #{extra}
+      """
+    end
+
+    test "hot_reloadable: true → manifest.hot_reloadable == true" do
+      path = manifest_path(hr1_yaml("hot_reloadable: true"))
+      assert {:ok, manifest} = Manifest.parse(path)
+      assert manifest.hot_reloadable == true
+    end
+
+    test "hot_reloadable: false → manifest.hot_reloadable == false" do
+      path = manifest_path(hr1_yaml("hot_reloadable: false"))
+      assert {:ok, manifest} = Manifest.parse(path)
+      assert manifest.hot_reloadable == false
+    end
+
+    test "absent hot_reloadable → manifest.hot_reloadable == false (default)" do
+      path = manifest_path(hr1_yaml())
+      assert {:ok, manifest} = Manifest.parse(path)
+      assert manifest.hot_reloadable == false
+    end
+
+    test "hot_reloadable: 'yes' (string) → {:error, {:invalid_hot_reloadable, \"yes\"}}" do
+      path = manifest_path(hr1_yaml("hot_reloadable: \"yes\""))
+      assert {:error, {:invalid_hot_reloadable, "yes"}} = Manifest.parse(path)
+    end
+
+    test "hot_reloadable: 1 (integer) → {:error, {:invalid_hot_reloadable, 1}}" do
+      path = manifest_path(hr1_yaml("hot_reloadable: 1"))
+      assert {:error, {:invalid_hot_reloadable, 1}} = Manifest.parse(path)
+    end
+  end
 end

@@ -27,10 +27,15 @@ defmodule Esr.Plugin.Loader do
 
   require Logger
 
+  alias Esr.Plugin.ConfigSnapshot
   alias Esr.Plugin.Manifest
   alias Esr.Plugin.Version, as: PluginVersion
 
   @default_root Path.expand("../plugins", __DIR__)
+
+  @doc "Returns the default plugins root directory. Used by commands that need to discover plugins."
+  @spec default_root() :: Path.t()
+  def default_root, do: @default_root
 
   @typedoc "A plugin's name (kebab-case binary)."
   @type plugin_name :: String.t()
@@ -178,6 +183,13 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_python_sidecars(manifest),
          :ok <- register_entities(manifest),
          :ok <- register_startup(name, manifest) do
+      # HR-1: take a config snapshot at plugin load time so the first
+      # /plugin:reload always has a baseline to diff against.
+      # ConfigSnapshot.create_table/0 is guaranteed to have been called
+      # by Esr.Application.start/2 before load_enabled_plugins/0.
+      snapshot = Esr.Plugin.Config.resolve(name)
+      ConfigSnapshot.init(name, snapshot)
+
       Logger.info("plugin loader: started #{name} v#{manifest.version}")
       {:ok, :registered}
     end

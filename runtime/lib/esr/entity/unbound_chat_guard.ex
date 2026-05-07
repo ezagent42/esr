@@ -101,7 +101,7 @@ defmodule Esr.Entity.UnboundChatGuard do
 
        ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
            --owner <esr_username> \\
-           --start-cmd scripts/esr-cc.sh \\
+           --start-cmd claude \\
            --role dev \\
            --chat #{chat_id}:#{app_id}:dm
 

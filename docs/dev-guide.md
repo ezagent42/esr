@@ -34,7 +34,7 @@ through the admin queue.
 3. `runtime/esr exec adapter_start type=feishu instance_id=feishu-prod \
        app_id=<app_id> app_secret=<app_secret>` (or `./esr.sh ...`).
 4. `runtime/esr exec workspace_new name=esr-dev role=dev \
-       start_cmd=scripts/esr-cc.sh \
+       start_cmd=claude \
        chat_id=<chat_id> app_id=<app_id>`
 5. In Feishu, DM the bot: `/workspace:new name=esr-dev` (then use `/session:add-agent` etc.)
 6. A tmux window `smoke-root` appears hosting a CC session with
@@ -209,8 +209,9 @@ ESR repo itself** (test commands, gotchas, links). Don't conflate.
 - MCP connection failures show as `tool_result.error.type=esrd_disconnect`
   in the CC tool output; retry is the operator's job.
 - `claude --resume <session_id>` requires the session id to exist in
-  `~/.esrd/default/session-ids.yaml` — `esr-cc.sh` writes this on first
-  spawn and reads it on restart.
+  `~/.esrd/default/session-ids.yaml` — `Esr.Plugins.ClaudeCode.Launcher`
+  writes this on first spawn and reads it on restart (`scripts/esr-cc.sh`
+  was deleted in Phase 8; the Launcher module is now the sole entry point).
 - `metadata:` in a workspace's `workspace.json` is exposed verbatim to
   the LLM via `describe_topology` — never put secrets there. Use `env:`
   (filtered at the response boundary) or `cwd:` (also filtered).

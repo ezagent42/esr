@@ -47,11 +47,11 @@ bash scripts/esrd.sh start --instance=default
 
 # 4. Register a workspace
 ./esr.sh workspace add esr-dev \
-    --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
+    --cwd ~/Workspace/esr \
     --role dev --chat <chat_id>:<app_id>:dm
 
-# 5. In Feishu, DM the bot:  /new-session esr-dev tag=root
-#    A tmux window appears hosting a Claude Code session with esr-channel MCP loaded.
+# 5. In Feishu, DM the bot:  /session:new name=esr-dev
+#    A Claude Code session starts via Esr.Plugins.ClaudeCode.Launcher with esr-channel MCP loaded.
 ```
 
 See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern authoring.
@@ -190,11 +190,11 @@ bash scripts/esrd.sh start --instance=default
 
 # 4. 注册 workspace
 ./esr.sh workspace add esr-dev \
-    --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
+    --cwd ~/Workspace/esr \
     --role dev --chat <chat_id>:<app_id>:dm
 
-# 5. 在 Feishu 给 bot 发：  /new-session esr-dev tag=root
-#    会出现一个 tmux 窗口，里面是带 esr-channel MCP 的 Claude Code 会话。
+# 5. 在 Feishu 给 bot 发：  /session:new name=esr-dev
+#    Claude Code 通过 Esr.Plugins.ClaudeCode.Launcher 启动，加载 esr-channel MCP。
 ```
 
 详见 [`docs/dev-guide.md`](docs/dev-guide.md)（handler / adapter / pattern 写法）。

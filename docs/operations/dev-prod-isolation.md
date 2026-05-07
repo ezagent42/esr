@@ -21,7 +21,7 @@ Before running `install.sh`, verify the following:
   - `lark_oapi` (Feishu API SDK — required by the `create-app` wizard)
   - `python-ulid >= 3.0` (admin command IDs)
   - `pyyaml` (runtime YAML read path — faster than ruamel when comments are unnecessary)
-- **git**: 2.30+ with `git worktree` support (used by `/new-session --new-worktree`).
+- **git**: 2.30+ with `git worktree` support (used by `/session:new` worktree flows).
 - **Optional but recommended**: `fswatch` or the `:file_system` package's native backend. The `FileSystem` hex dep brings the macOS FSEvents adapter on its own; no separate install needed.
 
 Verify with::
@@ -136,12 +136,12 @@ The `Esr.Capabilities.Watcher` picks up file changes via mtime within ~1 s — n
 
 These are typed into a Feishu DM with the **dev** bot (the prod bot does not honour them)::
 
-    /new-session feature/foo --new-worktree
-    /switch-session feature/foo
-    /sessions
-    /end-session feature/foo
+    /session:new name=feature/foo worktree=true
+    /session:switch name=feature/foo
+    /session:list
+    /session:end session_id=<uuid>
 
-Under the hood, the `Esr.Routing.SessionRouter` parses these and casts to `Esr.Admin.Dispatcher`, which shells `scripts/esr-branch.sh` (git-worktree + ephemeral esrd at `/tmp/esrd-<branch>/`) and updates `routing.yaml` + `branches.yaml`.
+Under the hood, the slash handler routes these through `Esr.Commands.Scope.*`, which manages the git-worktree + ephemeral esrd at `/tmp/esrd-<branch>/` and updates `routing.yaml` + `branches.yaml`.
 
 ### 4.5 Inspect the admin queue
 
@@ -224,7 +224,7 @@ If a SPECIFIC command is wedging the Dispatcher, delete its `processing/<id>.yam
 
 ### 7.4 "Unauthorized" reply to a slash command
 
-**Symptom:** typing `/new-session foo` into the dev DM replies `❌ 无权限执行 session.create (请联系管理员授权)`.
+**Symptom:** typing `/session:new name=foo` into the dev DM replies `❌ 无权限执行 session.create (请联系管理员授权)`.
 
 **Likely cause:** the sender's Feishu `open_id` isn't in `capabilities.yaml` with the `session.create` permission, OR the workspace inferred from the chat isn't in the grant's scope.
 
@@ -289,7 +289,7 @@ The hook uses `HEAD@{1}` (reflog), not `last_reload.yaml`, so this fix only help
 
     ~/.esrd-dev/                       # dev — same layout
 
-    /tmp/esrd-<branch>/                # ephemeral per-branch esrd (spun up by /new-session)
+    /tmp/esrd-<branch>/                # ephemeral per-branch esrd (spun up by /session:new)
       default/
         esrd.port                      # random free port
         ...                            # (same sub-tree as above, scoped to branch)
