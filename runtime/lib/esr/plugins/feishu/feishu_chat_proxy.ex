@@ -23,6 +23,12 @@ defmodule Esr.Entity.FeishuChatProxy do
   use GenServer
   require Logger
 
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below so callers (M-2+) can resolve this peer via
+  # `Esr.ActorQuery.list_by_role(sid, :feishu_chat_proxy)` without
+  # grepping for a string literal.
+  @role :feishu_chat_proxy
+
   @default_react_emoji "EYES"
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
@@ -60,7 +66,6 @@ defmodule Esr.Entity.FeishuChatProxy do
       app_id: Map.get(args, :app_id) || Map.get(ctx, :app_id) || "",
       principal_id:
         Map.get(args, :principal_id) || Map.get(ctx, :principal_id) || "",
-      neighbors: Map.get(args, :neighbors, []),
       proxy_ctx: ctx
       # PR-21λ 2026-05-01: `pending_reacts` removed — FAA owns the
       # universal react/un_react lifecycle now (PR-9 T5's per-FCP
@@ -81,6 +86,23 @@ defmodule Esr.Entity.FeishuChatProxy do
     # can route CC's MCP tool calls (reply / react / send_file) here via
     # `Registry.lookup(Esr.Entity.Registry, "thread:" <> session_id)`.
     _ = Registry.register(Esr.Entity.Registry, "thread:" <> session_id, nil)
+
+    # M-1.5: also register in Index 2 (`{sid, name}`) and Index 3
+    # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+    # `list_by_role/2` resolve this peer (M-2+ call sites).
+    name_for_index = Map.get(args, :name) || ("fcp-" <> session_id)
+    state = Map.put(state, :name, name_for_index)
+
+    _ =
+      try do
+        Esr.Entity.Registry.register_attrs("thread:" <> session_id, %{
+          session_id: session_id,
+          name: name_for_index,
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
 
     # PR-24 step 2: PTY ↔ Feishu boot bridge. Before cc_mcp joins
     # `cli:channel/<sid>`, claude's TUI is the only window into what
@@ -168,12 +190,11 @@ defmodule Esr.Entity.FeishuChatProxy do
       # notification envelope cc_mcp ships into claude as a <channel>
       # tag. T3 will require claude to echo this back on `reply`.
       app_id: args["app_id"] || "",
-      # PR-C C3 (2026-04-27 actor-topology-routing §5.1 path (a)): pass
-      # the inbound `source` URI and `principal_id` through to
-      # cc_process so its BGP-style reachable_set learning can pick
-      # them up without modifying the envelope schema. Both fields
-      # are nil-safe — pre-PR-C envelopes that didn't carry them still
-      # produce valid meta maps.
+      # Pass the inbound `source` URI + `principal_id` through to
+      # cc_process. Both fields are nil-safe — envelopes that don't
+      # carry them still produce valid meta maps. (M-3 deleted the
+      # downstream BGP-style learning that originally consumed them;
+      # the fields are kept for the channel-meta envelope surface.)
       source: envelope["source"],
       principal_id: envelope["principal_id"] || args["principal_id"]
     }
@@ -367,6 +388,28 @@ defmodule Esr.Entity.FeishuChatProxy do
   end
 
   def handle_info({:pty_attach, _other}, state), do: {:noreply, state}
+
+  # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+  # IndexWatcher monitor still cleans up if we crash before this hook
+  # runs, so this is purely an optimization that closes the stale-entry
+  # window between shutdown signal and DOWN delivery.
+  @impl GenServer
+  def terminate(_reason, %{session_id: sid} = state) when is_binary(sid) and sid != "" do
+    _ =
+      try do
+        Esr.Entity.Registry.deregister_attrs("thread:" <> sid, %{
+          session_id: sid,
+          name: Map.get(state, :name) || ("fcp-" <> sid),
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   # Collapse runs of 3+ blank lines down to a single blank line so a
   # screen-clear + repaint doesn't fire 40 newlines into the chat.
@@ -663,14 +706,16 @@ defmodule Esr.Entity.FeishuChatProxy do
     # arrived. Function name kept (callers below) but it now just
     # forwards to CC; the un_react still fires on CC's reply path
     # via FAA's `handle_downstream` watching for `reply_to_message_id`.
-    case Keyword.get(state.neighbors, :cc_process) do
-      pid when is_pid(pid) ->
+    # M-2.1: ActorQuery replaces state.neighbors. Multi-instance same
+    # role (Q5.2) — pick the first; future fan-out hooks here.
+    case Esr.ActorQuery.list_by_role(state.session_id, :cc_process) do
+      [pid | _] ->
         send(pid, {:text, text, meta})
         {:forward, [], state}
 
-      _ ->
+      [] ->
         Logger.warning(
-          "feishu_chat_proxy: non-slash text but no cc_process neighbor " <>
+          "feishu_chat_proxy: non-slash text but no cc_process found via ActorQuery " <>
             "session_id=#{state.session_id}"
         )
 
@@ -708,15 +753,16 @@ defmodule Esr.Entity.FeishuChatProxy do
   # module without ever touching Entity.Server's tool-dispatch path —
   # react is no longer a CC MCP tool (PR-9 T5 D4).
   defp emit_to_feishu_app_proxy(envelope, state) do
-    case Keyword.get(state.neighbors, :feishu_app_proxy) do
-      pid when is_pid(pid) ->
+    # M-2.1: ActorQuery replaces state.neighbors.
+    case Esr.ActorQuery.list_by_role(state.session_id, :feishu_app_proxy) do
+      [pid | _] ->
         send(pid, {:outbound, envelope})
         :ok
 
-      _ ->
+      [] ->
         Logger.warning(
-          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy neighbor " <>
-            "session_id=#{state.session_id}"
+          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
+            "via ActorQuery session_id=#{state.session_id}"
         )
 
         {:drop, :no_app_proxy_neighbor}

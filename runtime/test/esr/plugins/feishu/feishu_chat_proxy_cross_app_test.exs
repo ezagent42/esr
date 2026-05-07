@@ -10,7 +10,8 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   Test seams used:
     * `Esr.Resource.Capability.Grants.load_snapshot/1` — pattern from
       runtime/test/esr/capabilities_has_all_test.exs.
-    * `Esr.Resource.Workspace.Registry.put/1` with %Workspace{}.
+    * `Esr.Resource.Workspace.Registry.put/1` with `%Struct{}`
+      (built via `Esr.Test.WorkspaceFixture.build/1`).
     * `Esr.Entity.Registry.register/2` only registers `self()`, hence the
       relay registers itself before entering its receive loop.
   """
@@ -30,12 +31,17 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
     on_exit(fn ->
       Esr.Resource.Capability.Grants.load_snapshot(prior_grants)
 
-      :ets.delete(:esr_workspaces, "ws_kanban")
-      :ets.delete(:esr_workspaces, "ws_unknown")
+      Esr.Test.WorkspaceFixture.delete!("ws_kanban")
+      Esr.Test.WorkspaceFixture.delete!("ws_unknown")
     end)
 
     parent = self()
 
+    # M-2.1: relays register in Index 1 (Entity.Registry — used by FCP's
+    # cross-app dispatch via `Registry.lookup(..., "feishu_app_adapter_<app>")`).
+    # The home-app reply path uses `ActorQuery.list_by_role/2` (Index 3);
+    # tests that exercise that path call `register_role/3` (helper below)
+    # to bind the dev relay into their session's role index.
     spawn_relay = fn label, registered_name ->
       spawn_link(fn ->
         {:ok, _} = Esr.Entity.Registry.register(registered_name, self())
@@ -52,8 +58,46 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
     %{dev_pid: dev_pid, kanban_pid: kanban_pid}
   end
 
+  # M-2.1 helper: register `pid` in the role index under
+  # `(session_id, :feishu_app_proxy)` so FCP's home-app branch
+  # (ActorQuery.list_by_role) resolves it. Returns the actor_id used so
+  # tests can deregister if needed.
+  defp register_role(pid, session_id, role) do
+    actor_id = "test-faa-#{session_id}-#{System.unique_integer([:positive])}"
+
+    # register_attrs registers `self()`, so we must run it from the
+    # target pid. Send a sync message to do so.
+    parent = self()
+
+    Process.send(
+      pid,
+      {:m2_register_role, parent, actor_id, session_id, role},
+      []
+    )
+
+    receive do
+      {:m2_role_registered, ^actor_id} -> actor_id
+    after
+      1000 -> raise "register_role timed out for #{inspect(pid)}"
+    end
+  end
+
   defp relay_loop(parent, label) do
     receive do
+      # M-2.1 test seam: register self() in Index 3 for the given session_id.
+      # Used by tests that need the home-app reply (ActorQuery.list_by_role)
+      # branch to resolve to this relay.
+      {:m2_register_role, replier, actor_id, session_id, role} ->
+        :ok =
+          Esr.Entity.Registry.register_attrs(actor_id, %{
+            session_id: session_id,
+            name: "faa-test-#{session_id}-#{actor_id}",
+            role: role
+          })
+
+        send(replier, {:m2_role_registered, actor_id})
+        relay_loop(parent, label)
+
       msg ->
         send(parent, {:relay, label, msg})
         relay_loop(parent, label)
@@ -67,18 +111,16 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   end
 
   # Helper to seed (chat_id, app_id) → workspace_name. Uses
-  # Workspaces.Registry.put/1 with the existing Workspace struct
-  # at Esr.Resource.Workspace.Registry.Workspace (note: nested under Registry,
-  # not at Esr.Resource.Workspace.Workspace).
+  # Workspaces.Registry.put/1 with the canonical %Struct{} built via
+  # Esr.Test.WorkspaceFixture (M-4: legacy %Workspace{} struct deleted).
   defp put_chat_in_workspace(ws_name, chat_id, app_id) do
-    Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-      name: ws_name,
-      owner: nil,
-      start_cmd: "",
-      role: "dev",
-      chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}],
-      env: %{}
-    })
+    Esr.Resource.Workspace.Registry.put(
+      Esr.Test.WorkspaceFixture.build(
+        name: ws_name,
+        role: "dev",
+        chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}]
+      )
+    )
   end
 
   # FCP's init/1 fetches :session_id, :chat_id, :thread_id and reads
@@ -101,12 +143,15 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   end
 
   test "home-app reply routes to home FAA (no cross-app branch)", ctx do
+    # M-2.1: home-app reply path goes through ActorQuery.list_by_role.
+    # Register the dev relay in the role index for this test session.
+    _ = register_role(ctx.dev_pid, "S_PRA4_HOME", :feishu_app_proxy)
+
     {:ok, peer} =
       GenServer.start_link(
         FeishuChatProxy,
         fcp_args(%{
-          session_id: "S_PRA4_HOME",
-          neighbors: [feishu_app_proxy: ctx.dev_pid]
+          session_id: "S_PRA4_HOME"
         })
       )
 

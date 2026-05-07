@@ -281,14 +281,7 @@ defmodule Esr.Entity.Server do
     workspace = Map.get(args, "workspace_name")
     required = "workspace:#{workspace || "*"}/#{tool}"
 
-    # PR-F 2026-04-28: `describe_topology` returns non-secret yaml
-    # metadata (operator-readable workspace + 1-hop neighbour info).
-    # Per Q6 grill decision (Lane A/B audit-table reasoning), no cap
-    # gate — the existing Lane B inbound gate is the single
-    # enforcement point. Skip the workspace:<ws>/<tool> check here
-    # so the tool is callable without operators wiring up
-    # `workspace:<ws>/describe_topology` for every principal.
-    if tool == "describe_topology" or capability_granted?(principal_id, required) do
+    if capability_granted?(principal_id, required) do
       # Emit a structured log line for _echo so the gate's L2 grep can match
       # "tool_invoke.*_echo.*req_id=.*args.nonce=..."
       if tool == "_echo" do
@@ -808,30 +801,6 @@ defmodule Esr.Entity.Server do
   # must never block or crash the tool_invoke; the CC-side caller gets
   # the ack regardless. Task 25 adds matching `handle_info/2` on
   # `Esr.Admin.Dispatcher` — today its catch-all swallows the message.
-  # PR-F 2026-04-28: business-topology MCP tool. Reads workspaces.yaml
-  # data from `Esr.Resource.Workspace.Registry`, filters operational fields
-  # (cwd, env, start_cmd) out, expands `workspace:<name>` neighbour
-  # entries into a `neighbor_workspaces` array. cc_mcp's tool handler
-  # injects `workspace_name` from the `ESR_WORKSPACE` env var so the
-  # LLM-facing tool API stays parameter-less.
-  #
-  # Returns `{:ok, :direct_ack, %{"data" => %{...}}}` — synchronous,
-  # no adapter directive emitted.
-  defp build_emit_for_tool("describe_topology", args, _state) do
-    ws_name = Map.get(args, "workspace_name")
-
-    case Esr.Resource.Workspace.Describe.describe(ws_name) do
-      {:ok, data} ->
-        {:ok, :direct_ack, %{"data" => data}}
-
-      {:error, :unknown_workspace} ->
-        {:error, "unknown_workspace: #{ws_name}"}
-
-      {:error, :missing_workspace_name} ->
-        {:error, "describe_topology requires workspace_name"}
-    end
-  end
-
   defp build_emit_for_tool("session.signal_cleanup", args, _state) do
     # PR-2.3a: forward to Esr.Slash.CleanupRendezvous instead of the
     # legacy Esr.Admin.Dispatcher named-process rendezvous.
@@ -913,7 +882,7 @@ defmodule Esr.Entity.Server do
   # rather than `Esr.Scope.Process.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
   # to per-session peer modules which are spawned through
-  # `Entity.Factory.spawn_peer/5` and receive a `session_process_pid` in
+  # `Entity.Factory.spawn_peer/4` and receive a `session_process_pid` in
   # their `proxy_ctx`). Leaving the global read in place here keeps the
   # legacy data plane working during the cutover; migration happens by
   # deletion, not refactor.

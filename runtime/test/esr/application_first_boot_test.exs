@@ -54,7 +54,11 @@ defmodule Esr.ApplicationFirstBootTest do
       # The application's Bootstrap ran at boot, so "default" should already
       # be in the Registry. Confirm it survives explicit re-invocation.
       assert :ok = Bootstrap.run()
-      assert {:ok, ws} = Registry.get("default")
+
+      {:ok, id} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+
+      assert {:ok, ws} = Registry.get_by_id(id)
       assert ws.name == "default"
     end
 
@@ -78,7 +82,11 @@ defmodule Esr.ApplicationFirstBootTest do
       assert :ok = Bootstrap.run()
 
       refute File.exists?(Path.join(runtime_home, "workspaces.yaml"))
-      assert {:ok, _} = Registry.get("default")
+
+      {:ok, id} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+
+      assert {:ok, _} = Registry.get_by_id(id)
     end
   end
 end

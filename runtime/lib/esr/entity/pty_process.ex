@@ -20,10 +20,15 @@ defmodule Esr.Entity.PtyProcess do
   - `on_raw_stdout/2` (new optional `Esr.OSProcess` callback) fires
     BEFORE line-splitting, broadcasting raw bytes so ANSI escapes
     spanning chunk boundaries reach xterm.js intact.
-  - `handle_downstream(:rewire_siblings, state)` runs the PR-21ω' rewire
-    inlined here (no separate `PeerRewire` module).
   - `on_terminate/1` broadcasts a bare `:pty_closed` so attached
     LiveViews can render a "session ended" overlay.
+
+  M-2.4: PR-21ω' `rewire_session_siblings/1` + `patch_neighbor_in_state/3`
+  (which used `:sys.replace_state/2` to patch sibling peers'
+  `state.neighbors` with this PTY's pid post-init) deleted. ActorQuery
+  (M-1) replaces neighbor lookup; PTY is registered in Index 3 under
+  `(session_id, :pty_process)` in init, so peers resolve us via
+  `Esr.ActorQuery.list_by_role/2` without any patching ceremony.
   """
 
   require Logger
@@ -34,6 +39,12 @@ defmodule Esr.Entity.PtyProcess do
   use Esr.OSProcess, kind: :pty, wrapper: :pty
 
   alias Phoenix.PubSub
+
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below and by `deregister_attrs/2` in terminate/2 so a
+  # rename happens in exactly one place. `Esr.ActorQuery.list_by_role/2`
+  # callers (M-2+) match against this atom.
+  @role :pty_process
 
   # ------------------------------------------------------------------
   # Boot
@@ -104,8 +115,8 @@ defmodule Esr.Entity.PtyProcess do
   end
 
   # ------------------------------------------------------------------
-  # Peer init — registers in Entity.Registry, schedules rewire + trust
-  # confirmation timers (gated for test env)
+  # Peer init — registers in Entity.Registry (Index 1/2/3); ActorQuery
+  # is now the only neighbor lookup mechanism.
   # ------------------------------------------------------------------
 
   def init(%{session_name: _, dir: _} = args) do
@@ -113,7 +124,6 @@ defmodule Esr.Entity.PtyProcess do
       session_name: args.session_name,
       dir: args.dir,
       subscribers: [args[:subscriber] || self()],
-      neighbors: Map.get(args, :neighbors, []),
       session_id: Map.get(args, :session_id),
       workspace_name: Map.get(args, :workspace_name),
       chat_id: Map.get(args, :chat_id),
@@ -133,15 +143,23 @@ defmodule Esr.Entity.PtyProcess do
         catch
           _, _ -> :error
         end
-    end
 
-    # Deferred rewire: must NOT call back into peers_sup synchronously
-    # from init (deadlock). 50ms gives DynamicSupervisor time to ack
-    # this child's start_child. Gated by `:force_claude_launch` so unit
-    # tests that don't run a full pipeline can disable it.
-    if is_binary(sid) and sid != "" and
-         Application.get_env(:esr, :force_claude_launch, Mix.env() != :test) do
-      Process.send_after(self(), :rewire_siblings, 50)
+      # M-1.5: also register in Index 2 (`{sid, name}`) and Index 3
+      # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+      # `list_by_role/2` resolve this peer. Reuse the same string as
+      # the Index 1 actor_id ("pty:<sid>") so cross-references stay in
+      # sync. Best-effort guard: unit tests that bypass the application
+      # supervisor (no IndexWatcher / no ETS tables) must keep working.
+      _ =
+        try do
+          Esr.Entity.Registry.register_attrs("pty:" <> sid, %{
+            session_id: sid,
+            name: Map.get(args, :name) || ("pty-" <> sid),
+            role: @role
+          })
+        catch
+          _, _ -> :ok
+        end
     end
 
     {:ok, state}
@@ -280,7 +298,8 @@ defmodule Esr.Entity.PtyProcess do
   @impl Esr.OSProcess
   # PR-21ω'' carryover: any process exit (even 0) triggers peers
   # DynamicSupervisor's :transient restart so a fresh peer + claude
-  # come back. PR-21ω' rewire patches siblings via :pty_process key.
+  # come back. New PTY's init re-registers Index 2/3 entries; siblings
+  # find it via ActorQuery.list_by_role(sid, :pty_process).
   def on_os_exit(0, _state), do: {:stop, :pty_died_unexpectedly}
   def on_os_exit(status, _state), do: {:stop, {:pty_crashed, status}}
 
@@ -291,6 +310,21 @@ defmodule Esr.Entity.PtyProcess do
     case Map.get(state, :session_id) do
       sid when is_binary(sid) and sid != "" ->
         PubSub.broadcast(EsrWeb.PubSub, "pty:" <> sid, :pty_closed)
+
+        # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+        # IndexWatcher monitor still cleans up if we crash before reaching
+        # this hook, so this call is purely an optimization that avoids
+        # a stale-entry window between shutdown signal and DOWN delivery.
+        _ =
+          try do
+            Esr.Entity.Registry.deregister_attrs("pty:" <> sid, %{
+              session_id: sid,
+              name: Map.get(state, :name) || ("pty-" <> sid),
+              role: @role
+            })
+          catch
+            _, _ -> :ok
+          end
 
       _ ->
         :ok
@@ -308,71 +342,12 @@ defmodule Esr.Entity.PtyProcess do
   def handle_upstream(_msg, state), do: {:forward, [], state}
 
   # ------------------------------------------------------------------
-  # Peer.Stateful — downstream events arrive when init's send_after
-  # delivers messages (rewire, trust-confirm) or when sibling peers
-  # send us commands.
+  # Peer.Stateful — downstream events arrive when sibling peers send
+  # us commands. M-2.4: removed :rewire_siblings handler (rewire deleted).
   # ------------------------------------------------------------------
 
   @impl Esr.Entity.Stateful
-  def handle_downstream(:rewire_siblings, state) do
-    rewire_session_siblings(state)
-    {:forward, [], state}
-  end
-
   def handle_downstream(_msg, state), do: {:forward, [], state}
-
-  # ------------------------------------------------------------------
-  # Sibling rewire (PR-21ω'). Public for the rewire test in Phase 4.
-  # ------------------------------------------------------------------
-
-  @doc false
-  def rewire_session_siblings(%{session_id: sid}) when is_binary(sid) and sid != "" do
-    peers_sup_via = {:via, Registry, {Esr.Scope.Registry, {:peers_sup, sid}}}
-
-    case GenServer.whereis(peers_sup_via) do
-      nil ->
-        :ok
-
-      sup_pid ->
-        my_pid = self()
-
-        sup_pid
-        |> DynamicSupervisor.which_children()
-        |> Enum.each(fn
-          {_id, child_pid, _type, _modules} when is_pid(child_pid) and child_pid != my_pid ->
-            patch_neighbor_in_state(child_pid, :pty_process, my_pid)
-
-          _ ->
-            :ok
-        end)
-    end
-  rescue
-    _ -> :ok
-  catch
-    :exit, _ -> :ok
-  end
-
-  def rewire_session_siblings(_state), do: :ok
-
-  defp patch_neighbor_in_state(pid, name, new_pid) do
-    _ =
-      :sys.replace_state(pid, fn
-        %{parent: _, state: inner} = ws when is_map(inner) ->
-          %{ws | state: %{inner | neighbors: Keyword.put(inner.neighbors, name, new_pid)}}
-
-        %{neighbors: nb} = s when is_list(nb) ->
-          %{s | neighbors: Keyword.put(nb, name, new_pid)}
-
-        other ->
-          other
-      end)
-
-    :ok
-  rescue
-    _ -> :ok
-  catch
-    :exit, _ -> :ok
-  end
 
   # ------------------------------------------------------------------
   # Helpers

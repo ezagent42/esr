@@ -27,12 +27,14 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       cc_process = spawn_link(fn -> relay(me, :cc) end)
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(cc_process, "s_fwd", :cc_process)
+      _ = register_role(app_proxy, "s_fwd", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_fwd",
           chat_id: "oc_fwd",
           thread_id: "om_fwd",
-          neighbors: [cc_process: cc_process, feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -69,7 +71,6 @@ defmodule Esr.Entity.FeishuChatProxyTest do
           session_id: "s_no_cc",
           chat_id: "oc_no_cc",
           thread_id: "om_no_cc",
-          neighbors: [],
           proxy_ctx: %{}
         })
 
@@ -89,7 +90,8 @@ defmodule Esr.Entity.FeishuChatProxyTest do
           Process.sleep(50)
         end)
 
-      assert log =~ "feishu_chat_proxy: non-slash text but no cc_process neighbor"
+      # M-2.1: warning text changed (now references ActorQuery, not "neighbor").
+      assert log =~ "feishu_chat_proxy: non-slash text but no cc_process found via ActorQuery"
       assert Process.alive?(peer)
     end
 
@@ -98,12 +100,14 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       cc_process = spawn_link(fn -> relay(me, :cc) end)
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(cc_process, "s_no_mid", :cc_process)
+      _ = register_role(app_proxy, "s_no_mid", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_no_mid",
           chat_id: "oc_no_mid",
           thread_id: "om_no_mid",
-          neighbors: [cc_process: cc_process, feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -123,12 +127,13 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(app_proxy, "s_un", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_un",
           chat_id: "oc_un",
           thread_id: "om_un",
-          neighbors: [feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -157,12 +162,13 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(app_proxy, "s_bwc", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_bwc",
           chat_id: "oc_bwc",
           thread_id: "om_bwc",
-          neighbors: [feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -199,12 +205,13 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(app_proxy, "s_tool_reply", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_tool_reply",
           chat_id: "oc_t",
           thread_id: "om_t",
-          neighbors: [feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -243,12 +250,13 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
+      _ = register_role(app_proxy, "s_sf", :feishu_app_proxy)
+
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_sf",
           chat_id: "oc_sf",
           thread_id: "om_sf",
-          neighbors: [feishu_app_proxy: app_proxy],
           proxy_ctx: %{}
         })
 
@@ -389,9 +397,36 @@ defmodule Esr.Entity.FeishuChatProxyTest do
   # with a label so tests can distinguish cc_process vs feishu_app_proxy.
   defp relay(reply_to, label) do
     receive do
+      # M-2.1 test seam: register self() under (sid, role) so FCP's
+      # ActorQuery.list_by_role resolves to this relay.
+      {:m2_register_role, replier, actor_id, session_id, role} ->
+        :ok =
+          Esr.Entity.Registry.register_attrs(actor_id, %{
+            session_id: session_id,
+            name: "test-#{role}-#{actor_id}",
+            role: role
+          })
+
+        send(replier, {:m2_role_registered, actor_id})
+        relay(reply_to, label)
+
       msg ->
         send(reply_to, {:relay, label, msg})
         relay(reply_to, label)
+    end
+  end
+
+  # M-2.1: register `pid` in Index 3 under (session_id, role). Used by
+  # tests that exercise FCP's ActorQuery-based role lookups.
+  defp register_role(pid, session_id, role) do
+    actor_id = "test-actor-#{session_id}-#{role}-#{System.unique_integer([:positive])}"
+    parent = self()
+    send(pid, {:m2_register_role, parent, actor_id, session_id, role})
+
+    receive do
+      {:m2_role_registered, ^actor_id} -> actor_id
+    after
+      1000 -> raise "register_role timed out for #{inspect(pid)} sid=#{session_id} role=#{role}"
     end
   end
 end

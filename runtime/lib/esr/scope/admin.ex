@@ -7,7 +7,7 @@ defmodule Esr.Scope.Admin do
   Bootstrap exception (Risk F, spec §6): Scope.Admin is started directly
   by `Esr.Supervisor`, NOT by `Esr.Scope.Router` (which doesn't exist
   yet at boot; introduced in PR-3). Children of Scope.Admin are spawned
-  via `Esr.Entity.Factory.spawn_peer_bootstrap/4` which bypasses the
+  via `Esr.Entity.Factory.spawn_peer_bootstrap/3` which bypasses the
   Scope.Router control-plane resolution.
 
   See spec §3.4 and §6 Risk F.
@@ -70,7 +70,7 @@ defmodule Esr.Scope.Admin do
   def bootstrap_slash_handler do
     sup = children_supervisor_name()
 
-    case Esr.Entity.Factory.spawn_peer_bootstrap(sup, Esr.Entity.SlashHandler, %{}, []) do
+    case Esr.Entity.Factory.spawn_peer_bootstrap(sup, Esr.Entity.SlashHandler, %{}) do
       {:ok, _pid} -> :ok
       {:ok, _pid, _info} -> :ok
       {:error, {:already_started, _pid}} -> :ok

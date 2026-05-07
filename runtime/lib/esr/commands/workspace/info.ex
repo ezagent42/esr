@@ -23,14 +23,13 @@ defmodule Esr.Commands.Workspace.Info do
         "owner"     => "linyilun",
         "agent"     => "cc",
         "folders"   => [%{"path" => "...", "name" => "..."}],
-        "settings"  => %{},                    # _legacy.* keys filtered out
+        "settings"  => %{},
         "env"       => %{},
         "chats"     => [%{"chat_id" => ..., "app_id" => ..., "kind" => ...}],
         "transient" => false,
         "location"  => "esr:<dir>" | "repo:<path>",
-        "role"      => "dev",                  # from settings["_legacy.role"]
-        "neighbors" => [],                     # from settings["_legacy.neighbors"]
-        "metadata"  => %{},                    # from settings["_legacy.metadata"]
+        "role"      => "dev",                  # from settings["role"]
+        "metadata"  => %{},                    # from settings["metadata"]
         "topology"  => %{...} | nil            # <folders[0].path>/.esr/topology.yaml
       }}
 
@@ -72,58 +71,34 @@ defmodule Esr.Commands.Workspace.Info do
       {:ok, ws} ->
         {:ok, build_result(ws)}
 
-      {:legacy, w} ->
-        # NameIndex not running (admin-CLI without full app boot); fall back
-        # to legacy struct shape for compat.
-        {:ok, build_legacy_result(w)}
-
       :not_found ->
         {:error, %{"type" => "unknown_workspace", "workspace" => ws_name}}
     end
   end
 
-  # Try NameIndex → UUID → new Struct. Falls back to legacy table when
-  # NameIndex ETS table is not started (ArgumentError from :ets.lookup).
+  # NameIndex → UUID → %Struct{}. M-4 deleted the legacy fallback path.
   defp lookup_struct(ws_name) do
-    id =
-      case NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
-        {:ok, id} -> id
-        :not_found -> nil
-      end
+    case NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+      {:ok, id} ->
+        case Registry.get_by_id(id) do
+          {:ok, ws} -> {:ok, ws}
+          :not_found -> :not_found
+        end
 
-    if id do
-      case Registry.get_by_id(id) do
-        {:ok, ws} -> {:ok, ws}
-        :not_found -> :not_found
-      end
-    else
-      :not_found
+      :not_found ->
+        :not_found
     end
   rescue
-    # NameIndex ETS tables not created (admin-CLI or test without Registry started)
-    ArgumentError -> lookup_legacy(ws_name)
-  end
-
-  defp lookup_legacy(ws_name) do
-    case Registry.get(ws_name) do
-      {:ok, w} -> {:legacy, w}
-      :error -> :not_found
-    end
+    # NameIndex ETS tables not created yet (very early test setup with no
+    # Registry running). Treat as workspace-not-found.
+    ArgumentError -> :not_found
   end
 
   defp build_result(ws) do
     settings = ws.settings || %{}
 
-    # Filter out _legacy.* keys for user-facing settings
-    clean_settings =
-      settings
-      |> Enum.reject(fn {k, _v} -> String.starts_with?(k, "_legacy.") end)
-      |> Map.new()
-
-    # Surface legacy-stashed fields
-    role = Map.get(settings, "_legacy.role", "dev")
-    neighbors = Map.get(settings, "_legacy.neighbors", [])
-    metadata = Map.get(settings, "_legacy.metadata", %{})
+    role = Map.get(settings, "role", "dev")
+    metadata = Map.get(settings, "metadata", %{})
 
     # Serialise chats to string-keyed maps
     chats =
@@ -152,34 +127,14 @@ defmodule Esr.Commands.Workspace.Info do
       "owner" => ws.owner,
       "agent" => ws.agent || "cc",
       "folders" => serialize_folders(ws.folders),
-      "settings" => clean_settings,
+      "settings" => settings,
       "env" => ws.env || %{},
       "chats" => chats,
       "transient" => ws.transient || false,
       "location" => location,
       "role" => role,
-      "neighbors" => neighbors,
       "metadata" => metadata,
       "topology" => topology
-    }
-  end
-
-  defp build_legacy_result(w) do
-    %{
-      "name" => w.name,
-      "id" => nil,
-      "owner" => w.owner,
-      "agent" => "cc",
-      "folders" => [],
-      "settings" => %{},
-      "env" => w.env || %{},
-      "chats" => w.chats || [],
-      "transient" => false,
-      "location" => nil,
-      "role" => w.role || "dev",
-      "neighbors" => w.neighbors || [],
-      "metadata" => w.metadata || %{},
-      "topology" => nil
     }
   end
 

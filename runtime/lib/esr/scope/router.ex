@@ -26,8 +26,8 @@ defmodule Esr.Scope.Router do
   spawn pipeline mechanics, neighbor wiring, per-Entity ctx
   construction, and workspace `start_cmd` resolution. R6 extracted
   the middle three to `Esr.Session.AgentSpawner`
-  (`@behaviour Esr.Interface.Spawner`) and moved `start_cmd`
-  resolution to `Esr.Resource.Workspace.Registry.start_cmd_for/2`.
+  (`@behaviour Esr.Interface.Spawner`); M-4 inlined `start_cmd`
+  resolution as `Esr.Session.AgentSpawner.resolve_start_cmd/2`.
   This module now coordinates lifecycle events only.
 
   ## Risk E — data-plane boundary

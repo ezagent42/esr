@@ -40,6 +40,13 @@ defmodule Esr.Application do
       # 2. Message bus — everything else may publish/subscribe.
       {Phoenix.PubSub, name: EsrWeb.PubSub},
 
+      # 3a. (M-1) IndexWatcher owns the ETS tables backing
+      # Esr.Entity.Registry.register_attrs/2 (Index 2: `{session_id, name}`,
+      # Index 3: `{session_id, role}`). Started BEFORE the Elixir.Registry
+      # below so that any peer's init/1 — which routinely registers in
+      # Index 1 and may also call register_attrs/2 — finds the tables ready.
+      Esr.Entity.Registry.IndexWatcher,
+
       # 3. Actor registry before any Entity.Server can register itself.
       {Registry, keys: :unique, name: Esr.Entity.Registry},
 
@@ -89,7 +96,7 @@ defmodule Esr.Application do
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
-      # via Entity.Factory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
+      # via Entity.Factory.spawn_peer_bootstrap/3 if it ever spawns admin-scope
       # peers via Session.supervisor_name) and before Scope.Supervisor.
       {Registry, keys: :unique, name: Esr.Scope.Registry},
 
@@ -276,7 +283,6 @@ defmodule Esr.Application do
       # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /
       # ESR_INSTANCE directly, so the passed value is effectively
       # advisory — set ESRD_HOME to override.
-      _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
 
       # PR-21β 2026-04-30: cleanup_orphans is gone. erlexec owns
@@ -377,28 +383,6 @@ defmodule Esr.Application do
     else
       Logger.info("agents.yaml: absent at #{path}; skipping")
       :ok
-    end
-  end
-
-  @doc """
-  Load `<home>/default/workspaces.yaml` into
-  `Esr.Resource.Workspace.Registry`. v0.2 uses instance="default". Missing
-  file is not an error — returns :ok.
-  """
-  @spec load_workspaces_from_disk(Path.t()) :: :ok
-  def load_workspaces_from_disk(_esrd_home) do
-    path = Esr.Paths.workspaces_yaml()
-
-    case Esr.Resource.Workspace.Registry.load_from_file(path) do
-      {:ok, workspaces} ->
-        for {_name, ws} <- workspaces do
-          :ok = Esr.Resource.Workspace.Registry.put(ws)
-        end
-
-        :ok
-
-      _ ->
-        :ok
     end
   end
 

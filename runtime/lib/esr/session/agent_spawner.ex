@@ -16,9 +16,8 @@ defmodule Esr.Session.AgentSpawner do
   `Esr.Scope.Router` was a 799-LOC GenServer mixing five concerns:
   lifecycle coordination, spawn pipeline mechanics, neighbor wiring,
   per-Entity ctx construction, and workspace `start_cmd` resolution.
-  AgentSpawner owns the middle three; lifecycle stays in
-  `Scope.Router`; `start_cmd` resolution moved to
-  `Esr.Resource.Workspace.Registry.start_cmd_for/2`.
+  AgentSpawner owns the middle three plus (M-4) `start_cmd`
+  resolution; lifecycle stays in `Scope.Router`.
 
   ## API shape
 
@@ -204,12 +203,10 @@ defmodule Esr.Session.AgentSpawner do
           :not_found -> "default"
         end
 
-    # PR-21ξ 2026-05-01: read the workspace's `start_cmd` (when set in
-    # workspaces.yaml) and inject as a peer param so the launching peer
-    # uses the operator-configured launcher instead of the hardcoded
-    # `claude …` argv. Resolution + path expansion lives in
-    # `Esr.Resource.Workspace.Registry.start_cmd_for/2` after R6.
-    start_cmd = Esr.Resource.Workspace.Registry.start_cmd_for(workspace_name, params)
+    # M-4: read start_cmd from caller params first, then fall back to the
+    # workspace's `settings["start_cmd"]`. Path is expanded relative to
+    # ESR_REPO_DIR if not absolute.
+    start_cmd = resolve_start_cmd(workspace_name, params)
 
     params
     |> Map.put(:session_id, session_id)
@@ -260,26 +257,12 @@ defmodule Esr.Session.AgentSpawner do
   # symbolically without spawning. Monitor each spawned pid so DOWNs
   # feed back into the Router's handle_info/2 peer_crashed telemetry.
   #
-  # PR-9 T6 — bidirectional neighbors (two-pass). Pre-T6 each peer was
-  # spawned with a forward-only neighbors keyword list (only peers
-  # already spawned were visible). That left FeishuChatProxy without
-  # its `:cc_process` or `:feishu_app_proxy` neighbors and CCProcess
-  # without its `:pty_process` or `:feishu_chat_proxy` neighbors — so
-  # T5's react-emit path dropped with `:no_app_proxy_neighbor` and the
-  # CC reply path had nowhere to go.
-  #
-  # The fix is a post-spawn back-wire pass: once every Stateful peer is
-  # spawned and every proxy target resolved, compute the full adjacency
-  # (inbound pids + proxy-target pids) and patch each spawned peer's
-  # `state.neighbors` via `:sys.replace_state/2`. `create_session/1` is
-  # synchronous and the session isn't published to `SessionRegistry`
-  # until AFTER we return, so there's no data-plane race here.
-  #
-  # Proxy-neighbor resolution: proxies with a `target: "admin::..."` are
-  # resolved to the real admin-peer pid (e.g. FeishuAppAdapter) so FCP's
-  # `emit_to_feishu_app_proxy` (T5) can `send(pid, {:outbound, ...})`
-  # directly. Refs keep the stateless `{:proxy_module, Mod}` marker for
-  # discoverability; peer-state neighbors get the usable pid.
+  # M-2.3: PR-9 T6 backwire-via-`:sys.replace_state` deleted. Peers no
+  # longer carry `state.neighbors`; routing is via
+  # `Esr.ActorQuery.list_by_role/2` (Index 3) which is populated by
+  # each peer's `register_attrs/2` in init. ActorQuery returns the
+  # full session-level adjacency at the moment of the call — no
+  # post-spawn patching, no two-pass ceremony, no race.
   defp spawn_pipeline(session_id, agent_def, params) do
     inbound = agent_def.pipeline.inbound || []
     proxies = agent_def.proxies || []
@@ -302,10 +285,6 @@ defmodule Esr.Session.AgentSpawner do
           impl = resolve_impl(spec["impl"])
           Map.put(acc, name, {:proxy_module, impl})
         end)
-
-      # T6: back-wire every spawned peer with the full bidirectional
-      # neighbors keyword (inbound pids + resolved proxy-target pids).
-      :ok = backwire_neighbors(refs, proxies, params)
 
       {:ok, refs, monitors}
     catch
@@ -334,100 +313,15 @@ defmodule Esr.Session.AgentSpawner do
     Map.put(params, :channel_adapter, channel_adapter)
   end
 
-  # PR-9 T6: patch `state.neighbors` on every spawned pid after all
-  # peers have been spawned. For OSProcess-backed peers the inner peer
-  # state lives under `worker_state.state`; we detect that wrapper and
-  # recurse into it. All other peers carry `state.neighbors` directly
-  # at the top level.
-  defp backwire_neighbors(refs, proxy_specs, params) do
-    # Inbound stateful peers contribute their pid directly.
-    inbound_entries =
-      refs
-      |> Enum.filter(fn {_name, v} -> is_pid(v) end)
-      |> Enum.map(fn {name, pid} -> {name, pid} end)
-
-    # Proxies contribute a resolved admin-peer pid when target is
-    # `admin::...`. Proxies whose target doesn't resolve (missing
-    # admin peer, no target, pool-binding proxies like VoiceASRProxy)
-    # are still added to neighbors under the `{:proxy_module, Mod}`
-    # marker so peers can decide their own fallback behaviour.
-    proxy_entries =
-      Enum.map(proxy_specs, fn spec ->
-        name = String.to_atom(spec["name"])
-        impl = resolve_impl(spec["impl"])
-        target = spec["target"]
-
-        value =
-          case resolve_proxy_target(target, params) do
-            {:ok, pid} when is_pid(pid) -> pid
-            _ -> {:proxy_module, impl}
-          end
-
-        {name, value}
-      end)
-
-    full = inbound_entries ++ proxy_entries
-
-    Enum.each(inbound_entries, fn {name, pid} ->
-      others = Enum.reject(full, fn {n, _} -> n == name end)
-
-      _ =
-        :sys.replace_state(pid, fn
-          # OSProcessWorker wrapper: %{parent: _, state: inner, ...}
-          %{parent: _, state: inner} = ws when is_map(inner) ->
-            %{ws | state: %{inner | neighbors: others}}
-
-          # Plain peer state map
-          %{neighbors: _} = s ->
-            %{s | neighbors: others}
-
-          # Defensive fallthrough — peer without a neighbors key
-          # (shouldn't happen for our Stateful impls, but don't
-          # crash on an unexpected shape).
-          other ->
-            other
-        end)
-
-      :ok
-    end)
-
-    :ok
-  end
-
-  # Resolve a proxies-block `target` string (e.g.
-  # `"admin::feishu_app_adapter_${app_id}"`) to the live admin-peer pid.
-  # Returns `{:ok, pid}` on success, `:error` otherwise. Missing targets
-  # and unresolvable `admin::` targets fall through.
-  defp resolve_proxy_target(nil, _params), do: :error
-
-  defp resolve_proxy_target(target, params) when is_binary(target) do
-    app_id = get_param(params, :app_id) || "default"
-    expanded = String.replace(target, "${app_id}", app_id)
-
-    case String.split(expanded, "::", parts: 2) do
-      ["admin", admin_peer_name] ->
-        sym = String.to_atom(admin_peer_name)
-
-        case safe_admin_peer(sym) do
-          {:ok, pid} when is_pid(pid) -> {:ok, pid}
-          _ -> :error
-        end
-
-      _ ->
-        :error
-    end
-  end
-
   defp spawn_one(session_id, spec, params, refs_acc, mon_acc) do
     name = String.to_atom(spec["name"])
     impl = resolve_impl(spec["impl"] || "")
 
     if Esr.Entity.Agent.StatefulRegistry.stateful?(impl) do
-      neighbors = build_neighbors(refs_acc)
       ctx = build_ctx(spec, params)
       args = spawn_args(impl, spec, params)
 
-      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, neighbors, ctx) do
+      case Esr.Entity.Factory.spawn_peer(session_id, impl, args, ctx) do
         {:ok, pid} ->
           ref = Process.monitor(pid)
           {Map.put(refs_acc, name, pid), [{ref, pid} | mon_acc]}
@@ -448,16 +342,6 @@ defmodule Esr.Session.AgentSpawner do
     String.to_existing_atom("Elixir." <> impl_str)
   rescue
     ArgumentError -> nil
-  end
-
-  # PR-3 heuristic: every peer already spawned is passed as a named
-  # neighbor (keyword list). Each peer's `init/1` picks the names it
-  # wants (`:cc_process`, `:feishu_app_proxy`, ...). Matches the
-  # `Keyword.get/2` pattern used by the existing Stateful peers.
-  defp build_neighbors(refs_acc) do
-    Enum.map(refs_acc, fn {name, pid_or_marker} ->
-      {name, pid_or_marker}
-    end)
   end
 
   defp build_ctx(%{"impl" => "Esr.Entity.FeishuAppProxy", "target" => tgt}, params) do
@@ -490,15 +374,9 @@ defmodule Esr.Session.AgentSpawner do
     %{principal_id: get_param(params, :principal_id)}
   end
 
-  # PR-E (2026-04-27 actor-topology-routing): CCProcess needs
-  # `workspace_name`, `chat_id`, `app_id`, and `channel_adapter` in
-  # `proxy_ctx` so its `init/1` can call `Esr.Topology.initial_seed/3`
-  # to seed the BGP `reachable_set` from the yaml-declared neighbours.
-  # Pre-PR-E the CCProcess fell through to the catch-all `build_ctx/2`
-  # which returned `%{channel_adapter: family}` — the missing
-  # workspace_name made `build_initial_reachable_set/1` fall back to
-  # an empty MapSet, so the `<channel reachable=...>` attribute never
-  # carried neighbour URIs.
+  # CCProcess needs `workspace_name`, `chat_id`, `app_id`, and
+  # `channel_adapter` in `proxy_ctx` so its `build_channel_notification`
+  # can populate the `<channel>` envelope attributes downstream.
   defp build_ctx(%{"impl" => "Esr.Entity.CCProcess"}, params) do
     %{
       workspace_name: get_param(params, :workspace_name),
@@ -546,6 +424,74 @@ defmodule Esr.Session.AgentSpawner do
   # normalise.
   defp get_param(params, key) when is_atom(key) do
     Map.get(params, key) || Map.get(params, Atom.to_string(key))
+  end
+
+  # M-4 inlined start-cmd resolution previously hosted in
+  # Esr.Resource.Workspace.Registry (deleted alongside the legacy struct).
+  #   1. Caller-supplied params[:start_cmd] (atom or string key) wins
+  #      when non-empty.
+  #   2. Otherwise read the workspace's `settings["start_cmd"]` via
+  #      NameIndex → get_by_id.
+  #   3. Returns nil when neither is set.
+  # ESR_REPO_DIR / ~ expansion + `/`-prefix passthrough match the
+  # legacy expand_start_cmd/1 contract.
+  defp resolve_start_cmd(workspace_name, params) do
+    raw =
+      case get_param(params, :start_cmd) do
+        cmd when is_binary(cmd) and cmd != "" ->
+          cmd
+
+        _ ->
+          workspace_setting_start_cmd(workspace_name)
+      end
+
+    expand_start_cmd(raw)
+  end
+
+  defp workspace_setting_start_cmd(name) when is_binary(name) and name != "" do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, id} ->
+        case Esr.Resource.Workspace.Registry.get_by_id(id) do
+          {:ok, %{settings: settings}} when is_map(settings) ->
+            Map.get(settings, "start_cmd")
+
+          _ ->
+            nil
+        end
+
+      :not_found ->
+        nil
+    end
+  rescue
+    ArgumentError -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp workspace_setting_start_cmd(_), do: nil
+
+  defp expand_start_cmd(nil), do: nil
+  defp expand_start_cmd(""), do: nil
+
+  defp expand_start_cmd(cmd) when is_binary(cmd) do
+    [head | rest] = String.split(cmd, " ", parts: 2, trim: true)
+
+    head =
+      cond do
+        String.starts_with?(head, "/") ->
+          head
+
+        String.starts_with?(head, "~") ->
+          String.replace_prefix(head, "~", System.get_env("HOME") || "")
+
+        true ->
+          case System.get_env("ESR_REPO_DIR") do
+            repo when is_binary(repo) and repo != "" -> Path.join(repo, head)
+            _ -> head
+          end
+      end
+
+    Enum.join([head | rest], " ")
   end
 
   # Safe wrapper around Scope.Admin.Process.admin_peer/1 — returns

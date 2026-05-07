@@ -236,19 +236,17 @@ slashes:
     kind: workspace_describe
     permission: "session.list"
     command_module: "Esr.Commands.Workspace.Describe"
-    # requires_workspace_binding: false — diverges from /workspace:info
-    # (which is true) on purpose. /workspace:describe is the operator-
-    # facing twin of the LLM's `describe_topology` MCP tool; both use
-    # the same security-filtered allowlist (Esr.Resource.Workspace.Describe)
-    # which excludes owner/start_cmd/env/users.yaml. Operators may need
-    # to inspect ANY workspace for diagnostic reasons (cross-workspace
-    # neighbour topology checks, debugging the LLM's view), so binding
-    # to one workspace would defeat the purpose. The data is already
-    # safe to expose; permission `session.list` gates raw access.
+    # requires_workspace_binding: false on purpose. /workspace:describe
+    # uses the security-filtered allowlist in
+    # Esr.Resource.Workspace.Describe (excludes owner/start_cmd/env/
+    # users.yaml). Operators may inspect ANY workspace for diagnostic
+    # reasons; binding to one workspace would defeat the purpose. The
+    # data is already safe to expose; permission `session.list` gates
+    # raw access.
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Workspace"
-    description: "显示 workspace 的安全过滤后视图（与 describe_topology MCP 工具同一数据源）"
+    description: "显示 workspace 的安全过滤后视图"
     args:
       - { name: workspace, required: true }
 

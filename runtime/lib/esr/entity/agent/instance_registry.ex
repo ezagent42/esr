@@ -59,6 +59,36 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @doc """
+  Add an agent instance AND spawn its (CC, PTY) subtree atomically.
+
+  Serialized via the GenServer mailbox — no two concurrent calls for
+  the same `{session_id, name}` can both pass the uniqueness check.
+
+  Steps:
+    1. Look up `{session_id, name}` in the metadata table; reject
+       if already present (`:duplicate_agent_name`).
+    2. Resolve the per-session `Esr.Scope.AgentSupervisor` via
+       `{:via, Registry, {Esr.Scope.Registry, {:agent_sup, sid}}}`
+       and call `add_agent_subtree/2`.
+    3. On success: write the `%Instance{}` ETS record, plus
+       `{:instance_sup, sid, name, instance_sup_pid}` so
+       remove_instance can cascade-terminate the subtree.
+    4. On spawn failure: clean the Index 2 name placeholder
+       (`:esr_actor_name_index`) so a retry isn't blocked.
+
+  Returns:
+    - `{:ok, %{cc_pid, pty_pid, actor_ids: %{cc, pty}}}` on success.
+    - `{:error, {:duplicate_agent_name, name}}` if name is taken.
+    - `{:error, {:spawn_failed, reason}}` if the AgentSupervisor refuses.
+  """
+  @spec add_instance_and_spawn(GenServer.server(), map()) ::
+          {:ok, %{cc_pid: pid(), pty_pid: pid(), actor_ids: map()}}
+          | {:error, {:duplicate_agent_name, String.t()} | {:spawn_failed, term()}}
+  def add_instance_and_spawn(server \\ __MODULE__, attrs) when is_map(attrs) do
+    GenServer.call(server, {:add_instance_and_spawn, attrs}, 30_000)
+  end
+
+  @doc """
   Remove the agent named `name` from `session_id`.
 
   Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
@@ -204,6 +234,75 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     end
   end
 
+  @impl true
+  def handle_call({:add_instance_and_spawn, attrs}, _from, state) do
+    session_id = Map.fetch!(attrs, :session_id)
+    name = Map.fetch!(attrs, :name)
+    type = Map.fetch!(attrs, :type)
+    config = Map.get(attrs, :config, %{})
+
+    case :ets.lookup(state.table, {session_id, name}) do
+      [_] ->
+        {:reply, {:error, {:duplicate_agent_name, name}}, state}
+
+      [] ->
+        cc_actor_id = uuid_v4()
+        pty_actor_id = uuid_v4()
+
+        cc_args = build_cc_args(session_id, name, cc_actor_id, type, config)
+        pty_args = build_pty_args(session_id, name, pty_actor_id, config)
+
+        agent_sup_via =
+          {:via, Registry, {Esr.Scope.Registry, {:agent_sup, session_id}}}
+
+        spawn_result =
+          try do
+            Esr.Scope.AgentSupervisor.add_agent_subtree(agent_sup_via, %{
+              session_id: session_id,
+              name: name,
+              cc_args: cc_args,
+              pty_args: pty_args
+            })
+          catch
+            :exit, reason -> {:error, {:exit, reason}}
+          end
+
+        case spawn_result do
+          {:ok, instance_sup_pid} ->
+            cc_pid = resolve_child_pid(instance_sup_pid, Esr.Entity.CCProcess)
+            pty_pid = resolve_child_pid(instance_sup_pid, Esr.Entity.PtyProcess)
+
+            inst = %Instance{
+              id: cc_actor_id,
+              session_id: session_id,
+              type: type,
+              name: name,
+              config: config,
+              created_at: iso_now()
+            }
+
+            :ets.insert(state.table, {{session_id, name}, inst})
+            :ets.insert(state.table, {{:instance_sup, session_id, name}, instance_sup_pid})
+
+            if :ets.lookup(state.table, {session_id, :__primary__}) == [] do
+              :ets.insert(state.table, {{session_id, :__primary__}, name})
+            end
+
+            {:reply,
+             {:ok,
+              %{
+                cc_pid: cc_pid,
+                pty_pid: pty_pid,
+                actor_ids: %{cc: cc_actor_id, pty: pty_actor_id}
+              }}, state}
+
+          {:error, reason} ->
+            cleanup_index_placeholder(session_id, name)
+            {:reply, {:error, {:spawn_failed, reason}}, state}
+        end
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
@@ -212,5 +311,64 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
   defp iso_now do
     DateTime.utc_now() |> DateTime.to_iso8601()
+  end
+
+  defp build_cc_args(session_id, name, actor_id, type, config) do
+    %{
+      session_id: session_id,
+      name: name,
+      actor_id: actor_id,
+      handler_module: resolve_handler_module(type, config),
+      proxy_ctx: %{session_id: session_id}
+    }
+  end
+
+  defp build_pty_args(session_id, name, actor_id, config) do
+    base = %{
+      session_name: name,
+      dir: resolve_workspace_dir(session_id, config),
+      session_id: session_id,
+      name: name,
+      actor_id: actor_id
+    }
+
+    case Map.get(config, "start_cmd") || Map.get(config, :start_cmd) do
+      cmd when is_binary(cmd) and cmd != "" -> Map.put(base, :start_cmd, cmd)
+      _ -> base
+    end
+  end
+
+  defp resolve_child_pid(instance_sup_pid, child_module) do
+    instance_sup_pid
+    |> Supervisor.which_children()
+    |> Enum.find_value(fn
+      {^child_module, pid, :worker, _} when is_pid(pid) -> pid
+      _ -> nil
+    end)
+  end
+
+  # Default to "cc_adapter_runner" handler — same fallback Esr.Entity.CCProcess's
+  # spawn_args/1 uses. Future: per-type lookup from agent type registry.
+  defp resolve_handler_module(_type, _config), do: "cc_adapter_runner"
+
+  defp resolve_workspace_dir(session_id, config) do
+    case Map.get(config, "dir") || Map.get(config, :dir) do
+      d when is_binary(d) and d != "" -> d
+      _ -> "/tmp/esr-agent-#{session_id}"
+    end
+  end
+
+  # Best-effort cleanup if a peer registered itself in Index 2/3 before
+  # spawn failed elsewhere in the subtree. The IndexWatcher monitors
+  # processes too, so DOWN events also clean — this is just to close
+  # the race window when start_child returns an error.
+  defp cleanup_index_placeholder(session_id, name) do
+    try do
+      :ets.delete(:esr_actor_name_index, {session_id, name})
+    catch
+      _, _ -> :ok
+    end
+
+    :ok
   end
 end
