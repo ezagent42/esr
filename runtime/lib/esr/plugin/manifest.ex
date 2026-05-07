@@ -29,7 +29,11 @@ defmodule Esr.Plugin.Manifest do
     :declares,
     # path to the manifest.yaml (used by Loader to resolve `priv/*.yaml`
     # references back to absolute paths)
-    :path
+    :path,
+    # Whether the plugin supports /plugin:reload without esrd restart.
+    # Declared in manifest as `hot_reloadable: true|false`. Default: false.
+    # Spec: docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md §3.
+    hot_reloadable: false
   ]
 
   @type t :: %__MODULE__{
@@ -38,6 +42,7 @@ defmodule Esr.Plugin.Manifest do
           description: String.t(),
           depends_on: %{core: String.t(), plugins: [String.t()]},
           declares: map(),
+          hot_reloadable: boolean(),
           path: Path.t() | nil
         }
 
@@ -62,7 +67,8 @@ defmodule Esr.Plugin.Manifest do
          {:ok, name} <- fetch_required(parsed, "name"),
          :ok <- validate_kebab(name),
          {:ok, version} <- fetch_required(parsed, "version"),
-         {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}) do
+         {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}),
+         {:ok, hot_reloadable} <- parse_hot_reloadable(parsed) do
       depends_on = parse_depends_on(parsed["depends_on"] || %{})
       declares = atomize_declares(parsed["declares"] || %{})
       declares_with_schema = Map.put(declares, :config_schema, config_schema)
@@ -74,6 +80,7 @@ defmodule Esr.Plugin.Manifest do
          description: parsed["description"] || "",
          depends_on: depends_on,
          declares: declares_with_schema,
+         hot_reloadable: hot_reloadable,
          path: path
        }}
     end
@@ -203,6 +210,17 @@ defmodule Esr.Plugin.Manifest do
   end
 
   defp atomize_declares(_), do: %{}
+
+  # ---- hot_reloadable parser (HR-1) ----
+
+  defp parse_hot_reloadable(parsed) do
+    case parsed["hot_reloadable"] do
+      nil   -> {:ok, false}
+      true  -> {:ok, true}
+      false -> {:ok, false}
+      other -> {:error, {:invalid_hot_reloadable, other}}
+    end
+  end
 
   # ---- validate/1 helpers ----
 
