@@ -34,18 +34,11 @@ defmodule Esr.Commands.Workspace.Describe do
          "message" => "/workspace describe requires args.workspace"
        }}
 
-  defp format(%{"current_workspace" => current, "neighbor_workspaces" => neighbours}) do
+  defp format(%{"current_workspace" => current}) do
     chats =
       (current["chats"] || [])
       |> Enum.map(fn chat ->
         "    - #{chat["chat_id"] || "?"} #{chat["kind"] || "?"} app=#{chat["app_id"] || "?"}"
-      end)
-      |> Enum.join("\n")
-
-    neighbour_lines =
-      neighbours
-      |> Enum.map(fn ws ->
-        "  • #{ws["name"]} role=#{ws["role"]}"
       end)
       |> Enum.join("\n")
 
@@ -54,10 +47,7 @@ defmodule Esr.Commands.Workspace.Describe do
       role: #{current["role"]}
       chats:
     #{if chats == "", do: "    (none)", else: chats}
-      neighbors_declared: #{inspect(current["neighbors_declared"] || [])}
       metadata: #{inspect(current["metadata"] || %{})}
-    neighbor_workspaces:
-    #{if neighbour_lines == "", do: "  (none)", else: neighbour_lines}
     """
     |> String.trim_trailing()
   end
