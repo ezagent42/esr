@@ -175,11 +175,12 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     # exercises the broadcast path; the unbound-chat path has its own
     # test below.
     :ok =
-      Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-        name: "ws_for_new_chat_thread_test",
-        owner: nil,
-        chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
-      })
+      Esr.Resource.Workspace.Registry.put(
+        Esr.Test.WorkspaceFixture.build(
+          name: "ws_for_new_chat_thread_test",
+          chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
+        )
+      )
 
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
 
@@ -305,13 +306,15 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     test "chat-bound + user-unbound emits user-guide DM", %{sup: sup} do
       # Pre: register a workspace bound to (oc_user_test, inst_user_guide)
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: "ws_for_user_guide_test",
-          owner: "linyilun",
-          chats: [
-            %{"chat_id" => "oc_user_test", "app_id" => "inst_user_guide", "kind" => "dm"}
-          ]
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: "ws_for_user_guide_test",
+            owner: "linyilun",
+            chats: [
+              %{"chat_id" => "oc_user_test", "app_id" => "inst_user_guide", "kind" => "dm"}
+            ]
+          )
+        )
 
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_user_guide")
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
@@ -371,13 +374,15 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
         })
 
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: "ws_for_user_bound_test",
-          owner: "linyilun",
-          chats: [
-            %{"chat_id" => "oc_bound", "app_id" => "inst_user_bound", "kind" => "dm"}
-          ]
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: "ws_for_user_bound_test",
+            owner: "linyilun",
+            chats: [
+              %{"chat_id" => "oc_bound", "app_id" => "inst_user_bound", "kind" => "dm"}
+            ]
+          )
+        )
 
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "session_router")
 
@@ -455,13 +460,15 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
     test "second inbound from same unbound user is rate-limited", %{sup: sup} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: "ws_for_user_ratelimit",
-          owner: "linyilun",
-          chats: [
-            %{"chat_id" => "oc_ratelimit", "app_id" => "inst_user_ratelimit", "kind" => "dm"}
-          ]
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: "ws_for_user_ratelimit",
+            owner: "linyilun",
+            chats: [
+              %{"chat_id" => "oc_ratelimit", "app_id" => "inst_user_ratelimit", "kind" => "dm"}
+            ]
+          )
+        )
 
       :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/inst_user_ratelimit")
 

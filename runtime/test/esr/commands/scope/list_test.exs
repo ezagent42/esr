@@ -142,16 +142,15 @@ defmodule Esr.Commands.Scope.ListTest do
 
       # Workspace must exist in registry for the existence check to pass.
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: ws_name,
-          owner: "linyilun",
-          role: "dev",
-          chats: [],
-          env: %{},
-          metadata: %{}
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: ws_name,
+            owner: "linyilun",
+            role: "dev"
+          )
+        )
 
-      on_exit(fn -> :ets.delete(:esr_workspaces, ws_name) end)
+      on_exit(fn -> Esr.Test.WorkspaceFixture.delete!(ws_name) end)
 
       sid_a = "sid-listA-#{unique}"
       sid_b = "sid-listB-#{unique}"
@@ -226,18 +225,15 @@ defmodule Esr.Commands.Scope.ListTest do
       env = "empty-#{System.unique_integer([:positive])}"
 
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-          name: ws_name,
-          owner: "linyilun",
-          role: "dev",
-          chats: [],
-          env: %{},
-          metadata: %{}
-        })
+        Esr.Resource.Workspace.Registry.put(
+          Esr.Test.WorkspaceFixture.build(
+            name: ws_name,
+            owner: "linyilun",
+            role: "dev"
+          )
+        )
 
-      on_exit(fn ->
-        :ets.delete(:esr_workspaces, ws_name)
-      end)
+      on_exit(fn -> Esr.Test.WorkspaceFixture.delete!(ws_name) end)
 
       cmd = %{
         "submitted_by" => "ou_alice",

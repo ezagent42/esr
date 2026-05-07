@@ -16,9 +16,8 @@ defmodule Esr.Session.AgentSpawner do
   `Esr.Scope.Router` was a 799-LOC GenServer mixing five concerns:
   lifecycle coordination, spawn pipeline mechanics, neighbor wiring,
   per-Entity ctx construction, and workspace `start_cmd` resolution.
-  AgentSpawner owns the middle three; lifecycle stays in
-  `Scope.Router`; `start_cmd` resolution moved to
-  `Esr.Resource.Workspace.Registry.start_cmd_for/2`.
+  AgentSpawner owns the middle three plus (M-4) `start_cmd`
+  resolution; lifecycle stays in `Scope.Router`.
 
   ## API shape
 
@@ -204,12 +203,10 @@ defmodule Esr.Session.AgentSpawner do
           :not_found -> "default"
         end
 
-    # PR-21ξ 2026-05-01: read the workspace's `start_cmd` (when set in
-    # workspaces.yaml) and inject as a peer param so the launching peer
-    # uses the operator-configured launcher instead of the hardcoded
-    # `claude …` argv. Resolution + path expansion lives in
-    # `Esr.Resource.Workspace.Registry.start_cmd_for/2` after R6.
-    start_cmd = Esr.Resource.Workspace.Registry.start_cmd_for(workspace_name, params)
+    # M-4: read start_cmd from caller params first, then fall back to the
+    # workspace's `settings["start_cmd"]`. Path is expanded relative to
+    # ESR_REPO_DIR if not absolute.
+    start_cmd = resolve_start_cmd(workspace_name, params)
 
     params
     |> Map.put(:session_id, session_id)
@@ -427,6 +424,74 @@ defmodule Esr.Session.AgentSpawner do
   # normalise.
   defp get_param(params, key) when is_atom(key) do
     Map.get(params, key) || Map.get(params, Atom.to_string(key))
+  end
+
+  # M-4 inlined start-cmd resolution previously hosted in
+  # Esr.Resource.Workspace.Registry (deleted alongside the legacy struct).
+  #   1. Caller-supplied params[:start_cmd] (atom or string key) wins
+  #      when non-empty.
+  #   2. Otherwise read the workspace's `settings["start_cmd"]` via
+  #      NameIndex → get_by_id.
+  #   3. Returns nil when neither is set.
+  # ESR_REPO_DIR / ~ expansion + `/`-prefix passthrough match the
+  # legacy expand_start_cmd/1 contract.
+  defp resolve_start_cmd(workspace_name, params) do
+    raw =
+      case get_param(params, :start_cmd) do
+        cmd when is_binary(cmd) and cmd != "" ->
+          cmd
+
+        _ ->
+          workspace_setting_start_cmd(workspace_name)
+      end
+
+    expand_start_cmd(raw)
+  end
+
+  defp workspace_setting_start_cmd(name) when is_binary(name) and name != "" do
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, id} ->
+        case Esr.Resource.Workspace.Registry.get_by_id(id) do
+          {:ok, %{settings: settings}} when is_map(settings) ->
+            Map.get(settings, "start_cmd")
+
+          _ ->
+            nil
+        end
+
+      :not_found ->
+        nil
+    end
+  rescue
+    ArgumentError -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp workspace_setting_start_cmd(_), do: nil
+
+  defp expand_start_cmd(nil), do: nil
+  defp expand_start_cmd(""), do: nil
+
+  defp expand_start_cmd(cmd) when is_binary(cmd) do
+    [head | rest] = String.split(cmd, " ", parts: 2, trim: true)
+
+    head =
+      cond do
+        String.starts_with?(head, "/") ->
+          head
+
+        String.starts_with?(head, "~") ->
+          String.replace_prefix(head, "~", System.get_env("HOME") || "")
+
+        true ->
+          case System.get_env("ESR_REPO_DIR") do
+            repo when is_binary(repo) and repo != "" -> Path.join(repo, head)
+            _ -> head
+          end
+      end
+
+    Enum.join([head | rest], " ")
   end
 
   # Safe wrapper around Scope.Admin.Process.admin_peer/1 — returns

@@ -23,8 +23,8 @@ defmodule Esr.Commands.Workspace.UseTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      :ets.delete_all_objects(:esr_workspaces)
-      :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Test.WorkspaceFixture.reset!()
+      Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
       # NOTE: :esr_chat_scope_default_workspace_index is :protected (owned by
       # ChatScope.Registry GenServer); cleanup via registry API or unique keys.

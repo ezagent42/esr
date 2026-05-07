@@ -129,18 +129,24 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     test_app_id = "smoke_app_#{System.unique_integer([:positive])}"
     smoke_chat_id = "oc_smoke"
 
-    workspace = %Esr.Resource.Workspace.Registry.Workspace{
-      name: "esr-dev",
-      owner: @test_principal,
-      role: "dev",
-      chats: [%{"chat_id" => smoke_chat_id, "app_id" => test_app_id}],
-      metadata: %{}
-    }
+    workspace =
+      Esr.Test.WorkspaceFixture.build(
+        name: "esr-dev",
+        owner: @test_principal,
+        role: "dev",
+        chats: [%{"chat_id" => smoke_chat_id, "app_id" => test_app_id}]
+      )
 
     prior_ws =
-      case Esr.Resource.Workspace.Registry.get("esr-dev") do
-        {:ok, ws} -> ws
-        :not_found -> nil
+      case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "esr-dev") do
+        {:ok, id} ->
+          case Esr.Resource.Workspace.Registry.get_by_id(id) do
+            {:ok, ws} -> ws
+            :not_found -> nil
+          end
+
+        :not_found ->
+          nil
       end
 
     Esr.Resource.Workspace.Registry.put(workspace)

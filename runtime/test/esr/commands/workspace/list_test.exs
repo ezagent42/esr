@@ -19,8 +19,8 @@ defmodule Esr.Commands.Workspace.ListTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      :ets.delete_all_objects(:esr_workspaces)
-      :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Test.WorkspaceFixture.reset!()
+      Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
     end)
 
@@ -30,8 +30,8 @@ defmodule Esr.Commands.Workspace.ListTest do
   test "empty registry → no workspaces registered" do
     # Wipe ETS so this test sees a truly empty registry. The on_exit
     # already restores "default" via Bootstrap.run() for subsequent tests.
-    :ets.delete_all_objects(:esr_workspaces)
-    :ets.delete_all_objects(:esr_workspaces_uuid)
+    Esr.Test.WorkspaceFixture.reset!()
+    Esr.Test.WorkspaceFixture.reset!()
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
     assert text == "no workspaces registered"
   end

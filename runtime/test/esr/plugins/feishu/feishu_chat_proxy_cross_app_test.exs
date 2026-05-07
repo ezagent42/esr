@@ -10,7 +10,8 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   Test seams used:
     * `Esr.Resource.Capability.Grants.load_snapshot/1` — pattern from
       runtime/test/esr/capabilities_has_all_test.exs.
-    * `Esr.Resource.Workspace.Registry.put/1` with %Workspace{}.
+    * `Esr.Resource.Workspace.Registry.put/1` with `%Struct{}`
+      (built via `Esr.Test.WorkspaceFixture.build/1`).
     * `Esr.Entity.Registry.register/2` only registers `self()`, hence the
       relay registers itself before entering its receive loop.
   """
@@ -30,8 +31,8 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
     on_exit(fn ->
       Esr.Resource.Capability.Grants.load_snapshot(prior_grants)
 
-      :ets.delete(:esr_workspaces, "ws_kanban")
-      :ets.delete(:esr_workspaces, "ws_unknown")
+      Esr.Test.WorkspaceFixture.delete!("ws_kanban")
+      Esr.Test.WorkspaceFixture.delete!("ws_unknown")
     end)
 
     parent = self()
@@ -110,18 +111,16 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   end
 
   # Helper to seed (chat_id, app_id) → workspace_name. Uses
-  # Workspaces.Registry.put/1 with the existing Workspace struct
-  # at Esr.Resource.Workspace.Registry.Workspace (note: nested under Registry,
-  # not at Esr.Resource.Workspace.Workspace).
+  # Workspaces.Registry.put/1 with the canonical %Struct{} built via
+  # Esr.Test.WorkspaceFixture (M-4: legacy %Workspace{} struct deleted).
   defp put_chat_in_workspace(ws_name, chat_id, app_id) do
-    Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Registry.Workspace{
-      name: ws_name,
-      owner: nil,
-      start_cmd: "",
-      role: "dev",
-      chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}],
-      env: %{}
-    })
+    Esr.Resource.Workspace.Registry.put(
+      Esr.Test.WorkspaceFixture.build(
+        name: ws_name,
+        role: "dev",
+        chats: [%{"chat_id" => chat_id, "app_id" => app_id, "kind" => "dm"}]
+      )
+    )
   end
 
   # FCP's init/1 fetches :session_id, :chat_id, :thread_id and reads

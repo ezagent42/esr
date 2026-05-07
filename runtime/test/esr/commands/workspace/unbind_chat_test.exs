@@ -21,8 +21,8 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      :ets.delete_all_objects(:esr_workspaces)
-      :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Test.WorkspaceFixture.reset!()
+      Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
     end)
 

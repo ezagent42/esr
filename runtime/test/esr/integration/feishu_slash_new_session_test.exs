@@ -114,13 +114,13 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # production-equivalent dispatch path.
     test_app_id = "default"
 
-    workspace = %Esr.Resource.Workspace.Registry.Workspace{
-      name: "esr-dev",
-      owner: "t3_user",
-      role: "dev",
-      chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}],
-      metadata: %{}
-    }
+    workspace =
+      Esr.Test.WorkspaceFixture.build(
+        name: "esr-dev",
+        owner: "t3_user",
+        role: "dev",
+        chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}]
+      )
 
     Esr.Resource.Workspace.Registry.put(workspace)
 

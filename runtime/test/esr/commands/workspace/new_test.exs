@@ -31,8 +31,7 @@ defmodule Esr.Commands.Workspace.NewTest do
 
       File.rm_rf!(tmp)
       Esr.Entity.User.Registry.load_snapshot(%{})
-      :ets.delete_all_objects(:esr_workspaces)
-      :ets.delete_all_objects(:esr_workspaces_uuid)
+      Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
     end)
 
@@ -79,9 +78,12 @@ defmodule Esr.Commands.Workspace.NewTest do
     assert parsed["name"] == "test-ws-1"
     assert parsed["owner"] == "linyilun"
 
-    # Registry populated proactively (both tables)
-    assert {:ok, ws_legacy} = Esr.Resource.Workspace.Registry.get("test-ws-1")
-    assert ws_legacy.owner == "linyilun"
+    # Registry populated proactively
+    {:ok, id} =
+      Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "test-ws-1")
+
+    assert {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_id(id)
+    assert ws.owner == "linyilun"
 
     structs = Esr.Resource.Workspace.Registry.list_all()
     assert Enum.any?(structs, fn s -> s.name == "test-ws-1" end)
