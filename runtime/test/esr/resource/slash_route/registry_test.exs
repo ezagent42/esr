@@ -56,12 +56,15 @@ defmodule Esr.SlashRoutesTest do
       assert route.kind == "workspace"
     end
 
-    test "alias resolves to same route as primary" do
+    test "alias resolves to same route as primary (fixture mechanism test)" do
+      # Phase 6: the priv default yaml no longer uses aliases (hard cutover).
+      # This test validates the Registry's alias-resolution mechanism with a
+      # synthetic fixture (the mechanism is still supported for custom yaml).
       route = simple_route("session_list", "Esr.Commands.Notify")
-      load_fixture(slashes: %{"/sessions" => Map.put(route, "aliases", ["/list-sessions"])})
+      load_fixture(slashes: %{"/session:list" => Map.put(route, "aliases", ["/sessions"])})
 
-      assert {:ok, r1} = SlashRouteRegistry.lookup("/sessions")
-      assert {:ok, r2} = SlashRouteRegistry.lookup("/list-sessions")
+      assert {:ok, r1} = SlashRouteRegistry.lookup("/session:list")
+      assert {:ok, r2} = SlashRouteRegistry.lookup("/sessions")
       assert r1.kind == r2.kind
     end
 
@@ -77,20 +80,20 @@ defmodule Esr.SlashRoutesTest do
       load_fixture(
         slashes: %{
           "/help" => Map.put(simple_route("help", "Esr.Commands.Notify"), "permission", nil),
-          "/new-session" =>
+          "/session:add-agent" =>
             Map.put(
-              simple_route("session_new", "Esr.Commands.Notify"),
+              simple_route("session_add_agent", "Esr.Commands.Notify"),
               "permission",
-              "session:default/create"
+              "session:default/add-agent"
             )
         }
       )
 
       assert nil == SlashRouteRegistry.permission_for("help")
-      assert "session:default/create" == SlashRouteRegistry.permission_for("session_new")
+      assert "session:default/add-agent" == SlashRouteRegistry.permission_for("session_add_agent")
 
       assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("help")
-      assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("session_new")
+      assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("session_add_agent")
     end
 
     test "covers internal_kinds" do
@@ -119,7 +122,7 @@ defmodule Esr.SlashRoutesTest do
     test "returns all slashes deduplicated by kind, sorted by category + kind" do
       load_fixture(
         slashes: %{
-          "/sessions" =>
+          "/session:list" =>
             Map.merge(simple_route("session_list", "Esr.Commands.Notify"), %{
               "category" => "Sessions"
             }),
@@ -242,14 +245,18 @@ defmodule Esr.SlashRoutesTest do
       assert File.exists?(priv_path), "priv default missing at #{priv_path}"
 
       assert :ok = FileLoader.load(priv_path)
-      # Should have loaded the 10 slashes from the default
+      # Phase 6: colon-namespace cutover — should have loaded all colon-form slashes
       list = SlashRouteRegistry.list_slashes()
       assert length(list) >= 8
-      # Help should resolve
+      # Help should resolve (bare meta command — stays bare)
       assert {:ok, _} = SlashRouteRegistry.lookup("/help")
-      # /sessions has /list-sessions alias — both must resolve
-      assert {:ok, _} = SlashRouteRegistry.lookup("/sessions")
-      assert {:ok, _} = SlashRouteRegistry.lookup("/list-sessions")
+      # Colon-form session commands resolve
+      assert {:ok, _} = SlashRouteRegistry.lookup("/session:add-agent")
+      assert {:ok, _} = SlashRouteRegistry.lookup("/workspace:list")
+      assert {:ok, _} = SlashRouteRegistry.lookup("/user:whoami")
+      # Old-form slashes do NOT resolve after cutover
+      assert :not_found = SlashRouteRegistry.lookup("/sessions")
+      assert :not_found = SlashRouteRegistry.lookup("/list-sessions")
       # Internal kind: notify should resolve via permission_for
       assert "notify.send" == SlashRouteRegistry.permission_for("notify")
     end
@@ -352,6 +359,61 @@ defmodule Esr.SlashRoutesTest do
       assert is_binary(json)
       decoded = Jason.decode!(json)
       assert decoded["version"] == 1
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # Task 6.1 — colon-form matcher regression
+  # ------------------------------------------------------------------
+
+  describe "colon-form slash key matching" do
+    test "colon-form key inserted directly resolves via lookup/1" do
+      route = %{
+        slash: "/session:new",
+        kind: "session_new",
+        permission: "session:default/create",
+        command_module: Esr.Commands.Notify,
+        requires_workspace_binding: false,
+        requires_user_binding: true,
+        category: "Sessions",
+        description: "test",
+        args: []
+      }
+
+      :ets.insert(:esr_slash_routes, {"/session:new", route})
+
+      assert {:ok, found} = SlashRouteRegistry.lookup("/session:new name=test")
+      assert found.slash == "/session:new"
+      assert found.kind == "session_new"
+    end
+
+    test "colon-form key with trailing args resolves to the colon key" do
+      route = %{
+        slash: "/workspace:list",
+        kind: "workspace_list",
+        permission: "session.list",
+        command_module: Esr.Commands.Notify,
+        requires_workspace_binding: false,
+        requires_user_binding: true,
+        category: "Workspace",
+        description: "test",
+        args: []
+      }
+
+      :ets.insert(:esr_slash_routes, {"/workspace:list", route})
+
+      assert {:ok, found} = SlashRouteRegistry.lookup("/workspace:list")
+      assert found.slash == "/workspace:list"
+    end
+
+    test "old space-separated form does NOT match colon-form key" do
+      # After yaml cutover the old form "/workspace list" must not match.
+      # Here we verify that a lookup for "/workspace list" returns :not_found
+      # when only "/workspace:list" is in the table (start empty + insert colon form).
+      :ets.delete(:esr_slash_routes, "/workspace list")
+      :ets.delete(:esr_slash_routes, "/workspace")
+
+      assert :not_found = SlashRouteRegistry.lookup("/workspace list")
     end
   end
 

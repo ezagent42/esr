@@ -33,10 +33,10 @@ through the admin queue.
 2. `bash scripts/esrd.sh start --instance=default`
 3. `runtime/esr exec adapter_start type=feishu instance_id=feishu-prod \
        app_id=<app_id> app_secret=<app_secret>` (or `./esr.sh ...`).
-4. `runtime/esr exec /new-workspace name=esr-dev role=dev \
+4. `runtime/esr exec workspace_new name=esr-dev role=dev \
        start_cmd=scripts/esr-cc.sh \
        chat_id=<chat_id> app_id=<app_id>`
-5. In Feishu, DM the bot: `/new-session esr-dev name=root`
+5. In Feishu, DM the bot: `/workspace:new name=esr-dev` (then use `/session:add-agent` etc.)
 6. A tmux window `smoke-root` appears hosting a CC session with
    `esr-channel` MCP loaded. Subsequent messages to the bot (or with
    `@root <message>` prefix) get routed into that session's prompt.
@@ -124,7 +124,7 @@ def hello() -> None:
     )
 ```
 
-Invoke via `/new-session` (the topology DSL `esr cmd run` was P3-13-deleted
+Invoke via `/session:add-agent` (the topology DSL `esr cmd run` was P3-13-deleted
 along with `Esr.Topology`; sessions are spawned via slash routes now).
 
 ## Debugging

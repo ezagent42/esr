@@ -128,6 +128,44 @@ defmodule Esr.Entity.SlashHandler do
     ref
   end
 
+  # Phase 6 — hard-cutover hint map. Fires only when the registry lookup
+  # returns :not_found for a text whose head (or two-token head) matches a
+  # known old-form name. Returns a structured "renamed" error so operators
+  # get a clear message. This map is NOT routing — old forms are dead.
+  # Removal: separate PR after operators have migrated.
+  @deprecated_slashes %{
+    "/new-session" => "/session:new",
+    "/end-session" => "/session:end",
+    "/sessions" => "/session:list",
+    "/list-sessions" => "/session:list",
+    "/attach" => "/session:attach",
+    "/whoami" => "/user:whoami",
+    "/key" => "/pty:key",
+    "/new-workspace" => "/workspace:new",
+    "/list-agents" => "/agent:list",
+    "/actors" => "/actor:list",
+    "/list-actors" => "/actor:list",
+    "/workspace list" => "/workspace:list",
+    "/workspace edit" => "/workspace:edit",
+    "/workspace add-folder" => "/workspace:add-folder",
+    "/workspace remove-folder" => "/workspace:remove-folder",
+    "/workspace bind-chat" => "/workspace:bind-chat",
+    "/workspace unbind-chat" => "/workspace:unbind-chat",
+    "/workspace remove" => "/workspace:remove",
+    "/workspace rename" => "/workspace:rename",
+    "/workspace use" => "/workspace:use",
+    "/workspace import-repo" => "/workspace:import-repo",
+    "/workspace forget-repo" => "/workspace:forget-repo",
+    "/workspace info" => "/workspace:info",
+    "/workspace describe" => "/workspace:describe",
+    "/workspace sessions" => nil,
+    "/plugin list" => "/plugin:list",
+    "/plugin info" => "/plugin:info",
+    "/plugin install" => "/plugin:install",
+    "/plugin enable" => "/plugin:enable",
+    "/plugin disable" => "/plugin:disable"
+  }
+
   @impl GenServer
   def handle_cast({:dispatch, envelope, reply_to, ref}, state) do
     # Normalize defensively: callers that GenServer.cast directly
@@ -140,7 +178,30 @@ defmodule Esr.Entity.SlashHandler do
 
     case Esr.Resource.SlashRoute.Registry.lookup(text) do
       :not_found ->
-        Esr.Slash.ReplyTarget.dispatch(target, {:text, "unknown command: #{slash_head(text)}"}, ref)
+        head1 = slash_head(text)
+        head2 = two_token_head(text)
+
+        case Map.get(@deprecated_slashes, head2) || Map.get(@deprecated_slashes, head1) do
+          new_name when is_binary(new_name) ->
+            Esr.Slash.ReplyTarget.dispatch(
+              target,
+              {:text, "slash command renamed; use #{new_name} instead of #{head1}"},
+              ref
+            )
+
+          nil_value when is_nil(nil_value) and
+                           (head2 == "/workspace sessions" or head1 == "/workspace sessions") ->
+            # /workspace:sessions dropped (workspace must not depend on session).
+            Esr.Slash.ReplyTarget.dispatch(
+              target,
+              {:text, "/workspace sessions has been removed; use /session:list to list sessions"},
+              ref
+            )
+
+          _ ->
+            Esr.Slash.ReplyTarget.dispatch(target, {:text, "unknown command: #{head1}"}, ref)
+        end
+
         {:noreply, state}
 
       {:ok, route} ->
@@ -412,6 +473,17 @@ defmodule Esr.Entity.SlashHandler do
     |> List.first("")
   end
 
+  # Phase 6: used for deprecated-slash hint lookup. Returns the first two
+  # whitespace-separated tokens joined with a space (e.g. "/workspace info").
+  # Single-token inputs (e.g. "/new-session") return only that token.
+  defp two_token_head(text) do
+    text
+    |> String.trim()
+    |> String.split(~r/\s+/, parts: 3, trim: true)
+    |> Enum.take(2)
+    |> Enum.join(" ")
+  end
+
   # Strip the matched slash prefix (`route.slash` is the literal
   # whitespace-joined key, e.g. "/workspace info") from the front of
   # the user's text. Returns the trimmed remainder ready for tokenize.
@@ -507,7 +579,7 @@ defmodule Esr.Entity.SlashHandler do
 
       _ ->
         {:error,
-         "this command requires the chat to be bound to a workspace; run `/new-workspace <name>` first"}
+         "this command requires the chat to be bound to a workspace; run `/workspace:new <name>` first"}
     end
   end
 
@@ -639,14 +711,14 @@ defmodule Esr.Entity.SlashHandler do
     |> maybe_put("username", username)
   end
 
-  # PR-24 step 2 follow-up: `/key` takes the entire remainder text after
-  # the slash as a single positional arg. The standard `parse_route_args`
-  # only peels ONE positional token, dropping the rest, so multi-key
-  # input like `/key down down enter` would lose all but the first
-  # token. Capture the raw remainder ourselves.
-  defp merge_chat_context(args, "key", envelope) do
+  # Phase 6: `/pty:key` (renamed from `/key`) takes the entire remainder
+  # text after the slash as a single positional arg. The standard
+  # `parse_route_args` only peels ONE positional token, dropping the rest,
+  # so multi-key input like `/pty:key down down enter` would lose all but
+  # the first token. Capture the raw remainder ourselves.
+  defp merge_chat_context(args, "pty_key", envelope) do
     text = (get_in(envelope, ["payload", "text"]) || "") |> to_string()
-    remainder = strip_slash_prefix(text, "/key") |> String.trim()
+    remainder = strip_slash_prefix(text, "/pty:key") |> String.trim()
     maybe_put(args, "keys", remainder)
   end
 

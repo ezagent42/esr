@@ -134,12 +134,14 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id}
   end
 
-  test "slash /new-session binds session in SessionRegistry; 2nd inbound resolves to it",
+  # Phase 6 colon-namespace cutover: /new-session is now a dead form.
+  # The full E2E session-creation test will be re-implemented when
+  # Esr.Commands.Session.New ships (follow-up phase).
+  # For now, verify the old form returns a deprecated-slash hint.
+  test "old /new-session returns deprecated-slash hint pointing to /session:new",
        %{smoke_repo: smoke_repo, app_id: app_id} do
-    {:ok, slash} = Esr.Scope.Admin.Process.slash_handler_ref()
     branch = "t3-#{System.unique_integer([:positive])}"
 
-    # Step 1: inbound slash envelope, shaped as FeishuChatProxy would build it.
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
@@ -150,38 +152,11 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       }
     }
 
-    # Step 2 + 3 + 4: SlashHandler.dispatch/3 → Dispatcher → Session.New.
-    # (PR-21κ Phase 6: legacy `:slash_cmd` send replaced by yaml-driven
-    # dispatch/3.)
-    _ = slash
     ref = Esr.Entity.SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 2_000
-
-    assert text =~ "session started:",
-           "expected session-started reply, got: #{inspect(text)}"
-
-    [_, sid] = Regex.run(~r/session started: (\S+)/, text)
-
-    # Step 5: a second inbound for the same (chat_id, app_id, thread_id)
-    # resolves to the newly-created session — the binding loop is closed.
-    # PR-A T1: slash flow doesn't yet supply app_id so Scope.Router
-    # defaults to "default".
-    assert {:ok, ^sid, refs} =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat(@chat_id, "default"),
-           "SessionRegistry.lookup_by_chat_thread/3 must return the session " <>
-             "created by the slash command"
-
-    assert is_map(refs)
-
-    # Scope.Process actually stored the chat_thread_key too (T2 behaviour,
-    # double-checked here so T3 failures are easy to diagnose).
-    state = Esr.Scope.Process.state(sid)
-
-    # PR-21λ: chat_thread_key narrowed to the (chat_id, app_id) routing key.
-    assert state.chat_thread_key == %{chat_id: @chat_id, app_id: "default"}
-
-    assert state.metadata.principal_id == @test_principal
+    assert text =~ "/session:new",
+           "expected deprecated-slash hint mentioning /session:new, got: #{inspect(text)}"
   end
 
   # Borrowed from Esr.Integration.NewSessionSmokeTest — tests that restart

@@ -558,7 +558,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       :ok
     end
 
-    for slash <- ["/help", "/whoami", "/doctor", "/new-workspace my-ws"] do
+    for slash <- ["/help", "/user:whoami", "/doctor", "/workspace:new my-ws"] do
       @slash slash
       test "FAA forwards #{@slash} to SlashHandler.dispatch/3", %{sup: sup} do
         instance = "inst_dispatch_#{System.unique_integer([:positive])}"

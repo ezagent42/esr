@@ -63,22 +63,23 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       assert text =~ "echo:help"
     end
 
-    test "/sessions executes its kind=session_list" do
+    test "/session:list executes its kind=session_list" do
       pid = start_handler!()
       ref = make_ref()
-      cast_dispatch(pid, envelope("/sessions"), self(), ref)
+      cast_dispatch(pid, envelope("/session:list"), self(), ref)
 
       assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "echo:session_list"
     end
 
-    test "/list-sessions alias resolves to same kind" do
+    test "old /sessions returns deprecated hint mentioning /session:list" do
+      # Phase 6: /sessions is removed; dispatcher returns a rename hint.
       pid = start_handler!()
       ref = make_ref()
-      cast_dispatch(pid, envelope("/list-sessions"), self(), ref)
+      cast_dispatch(pid, envelope("/sessions"), self(), ref)
 
       assert_receive {:reply, text, ^ref}, 1000
-      assert text =~ "echo:session_list"
+      assert text =~ "/session:list"
     end
 
     test "envelope chat_id/app_id/principal_id flow into the command's args" do
@@ -116,7 +117,7 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
 
       assert_receive {:reply, text, ^ref}, 1000
       assert text =~ "workspace"
-      assert text =~ "/new-workspace"
+      assert text =~ "/workspace:new"
     end
 
     test "missing required arg → reply with hint" do
@@ -179,7 +180,7 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
     %{
       slashes: [
         route("/help", "help"),
-        route("/sessions", "session_list", aliases: ["/list-sessions"]),
+        route("/session:list", "session_list"),
         route("/echo", "echo",
           args: [
             %{name: "positional_one", required: true, default: nil},
