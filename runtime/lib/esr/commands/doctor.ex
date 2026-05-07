@@ -54,7 +54,9 @@ defmodule Esr.Commands.Doctor do
 
     workspace_count =
       try do
-        length(Esr.Resource.Workspace.Registry.list())
+        :esr_workspace_name_index
+        |> Esr.Resource.Workspace.NameIndex.all()
+        |> length()
       rescue
         _ -> 0
       end

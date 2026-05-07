@@ -151,13 +151,18 @@ defmodule Esr.Resource.Capability.FileLoader do
 
   defp validate_scope(scope), do: {:error, {:bad_scope_prefix, scope}}
 
-  # Esr.Resource.Workspace.Registry exposes get/1 returning {:ok, ws} | :error.
-  # No dedicated exists?/1 helper — we use get/1 at the call site.
+  # Existence check via NameIndex → UUID → Registry. M-4.1 removed the
+  # legacy `Registry.get/1` (name-keyed) call.
   defp workspace_exists?(name) do
-    case Esr.Resource.Workspace.Registry.get(name) do
-      {:ok, _ws} -> true
-      :error -> false
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+      {:ok, uuid} ->
+        match?({:ok, _}, Esr.Resource.Workspace.Registry.get_by_id(uuid))
+
+      :not_found ->
+        false
     end
+  rescue
+    ArgumentError -> false
   end
 
   defp validate_perm("*", _pid), do: :ok

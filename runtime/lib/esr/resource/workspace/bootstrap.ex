@@ -41,16 +41,20 @@ defmodule Esr.Resource.Workspace.Bootstrap do
   end
 
   defp ensure_default_workspace do
-    case Esr.Resource.Workspace.Registry.get("default") do
-      :error ->
+    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default") do
+      :not_found ->
         create_default_workspace()
 
-      {:ok, _} ->
-        :ok
+      {:ok, uuid} ->
+        case Esr.Resource.Workspace.Registry.get_by_id(uuid) do
+          {:ok, _} -> :ok
+          :not_found -> create_default_workspace()
+        end
     end
   rescue
     _ ->
-      # Registry not running (e.g. during early test setups). Skip.
+      # Registry / NameIndex ETS tables not running (e.g. early test
+      # setups). Skip.
       :ok
   end
 
