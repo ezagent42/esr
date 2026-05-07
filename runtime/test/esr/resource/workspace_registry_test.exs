@@ -17,7 +17,7 @@ defmodule Esr.Resource.Workspace.RegistryTest do
     workspaces:
       esr-dev:
         owner: linyilun
-        start_cmd: scripts/esr-cc.sh
+        start_cmd: claude
         role: dev
         chats:
           - {chat_id: oc_x, app_id: cli_x, kind: dm}

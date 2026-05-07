@@ -19,7 +19,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
         name: "ws_info_test",
         owner: "linyilun",
         role: "dev",
-        start_cmd: "scripts/esr-cc.sh",
+        start_cmd: "claude",
         chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
         env: %{},
         neighbors: ["workspace:other-ws"],

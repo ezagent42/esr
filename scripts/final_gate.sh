@@ -339,7 +339,7 @@ section "8/13 live L0 — workspace add esr-dev (role=diagnostic)"
 ESR_INSTANCE="$instance" runtime/esr exec /new-workspace \
     name=esr-dev \
     role=diagnostic \
-    start_cmd=scripts/esr-cc.sh \
+    start_cmd=claude \
     chat_id="$FEISHU_TEST_CHAT_ID" \
     app_id="$FEISHU_APP_ID" \
     >/tmp/fg.live.ws.log 2>&1 || {

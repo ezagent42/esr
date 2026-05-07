@@ -147,10 +147,11 @@ defmodule Esr.Entity.PtyProcess do
     {:ok, state}
   end
 
-  # No auto-confirm of trust / dev-channels dialogs: CLAUDE_FLAGS in
-  # esr-cc.sh sets `--permission-mode auto` +
-  # `--dangerously-load-development-channels`, and esr-cc.sh pre-trusts
-  # the workspace path in `~/.claude.json`, so the trust dialog doesn't
+  # No auto-confirm of trust / dev-channels dialogs: Phase 8 deleted
+  # scripts/esr-cc.sh (superseded by Esr.Plugins.ClaudeCode.Launcher).
+  # Launcher sets `--permission-mode auto` +
+  # `--dangerously-load-development-channels`, and pre-trusts the
+  # workspace path in `~/.claude.json`, so the trust dialog doesn't
   # render. The dev-channels dialog is answered by the operator in the
   # browser /attach page, or by the e2e helper for unattended scenarios.
 
@@ -169,7 +170,7 @@ defmodule Esr.Entity.PtyProcess do
   # Hand the configured `dir` (the per-session worktree path threaded
   # through from /new-session's slash → Session.New → Scope.Router)
   # to erlexec as the `:cd` option. Without this callback, OSProcess
-  # falls back to BEAM's pwd, so the spawned esr-cc.sh + claude end
+  # falls back to BEAM's pwd, so the spawned claude process ends
   # up in `~/Workspace/esr/.../runtime` instead of
   # `<root>/.worktrees/<branch>` — confusing operators and breaking
   # the per-session git isolation PR-21θ promises.
@@ -346,9 +347,12 @@ defmodule Esr.Entity.PtyProcess do
 
   defp name_for(%{session_name: n}), do: String.to_atom("esr_pty_#{n}")
 
+  # Phase 8: esr-cc.sh deleted — see Esr.Plugins.ClaudeCode.Launcher.
+  # default_start_cmd/0 now returns the claude binary directly; the
+  # Launcher module handles env, .mcp.json, and workspace trust before
+  # PtyProcess exec's claude.
   defp default_start_cmd do
-    Path.join([Application.app_dir(:esr), "..", "..", "..", "scripts", "esr-cc.sh"])
-    |> Path.expand()
+    System.find_executable("claude") || "claude"
   end
 
   # Returns the esrd base WebSocket URL for cc_mcp's ESR_ESRD_URL env.

@@ -45,7 +45,7 @@ admin_id=$(uv run python3 -c "import uuid; print(uuid.uuid4().hex[:26].upper())"
 submitted_at=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
 
 mkdir -p "$QUEUE_DIR/pending" "$QUEUE_DIR/completed" "$QUEUE_DIR/failed"
-# session dir must exist before esr-cc.sh tries to chdir into it
+# session dir must exist before the Launcher tries to chdir into it (Phase 8: esr-cc.sh deleted)
 mkdir -p /tmp/scenario-07-pty-bidir
 yaml_path="$QUEUE_DIR/pending/${admin_id}.yaml"
 
