@@ -190,4 +190,116 @@ defmodule Esr.Plugin.ManifestTest do
       assert :ok == Manifest.validate(manifest)
     end
   end
+
+  describe "config_schema: parsing (Phase 7.1)" do
+    @manifest_with_schema """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: ">= 0.1.0"
+      plugins: []
+    declares: {}
+    config_schema:
+      http_proxy:
+        type: string
+        description: "HTTP proxy URL."
+        default: ""
+      verbose:
+        type: boolean
+        description: "Enable verbose logging."
+        default: false
+    """
+
+    @manifest_missing_description """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: ">= 0.1.0"
+      plugins: []
+    declares: {}
+    config_schema:
+      bad_key:
+        type: string
+        default: ""
+    """
+
+    @manifest_missing_default """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: ">= 0.1.0"
+      plugins: []
+    declares: {}
+    config_schema:
+      bad_key:
+        type: string
+        description: "Missing default."
+    """
+
+    @manifest_unknown_type """
+    name: test-plugin
+    version: 0.1.0
+    description: test
+    depends_on:
+      core: ">= 0.1.0"
+      plugins: []
+    declares: {}
+    config_schema:
+      bad_key:
+        type: fancy_type
+        description: "Unknown type."
+        default: ""
+    """
+
+    defp parse_yaml_string(content) do
+      path = System.tmp_dir!() |> Path.join("test_manifest_#{:rand.uniform(9999)}.yaml")
+      File.write!(path, content)
+      result = Esr.Plugin.Manifest.parse(path)
+      File.rm(path)
+      result
+    end
+
+    test "valid config_schema parses into declares.config_schema map" do
+      {:ok, manifest} = parse_yaml_string(@manifest_with_schema)
+      schema = manifest.declares[:config_schema]
+      assert is_map(schema)
+      assert schema["http_proxy"]["type"] == "string"
+      assert schema["http_proxy"]["default"] == ""
+      assert schema["verbose"]["type"] == "boolean"
+      assert schema["verbose"]["default"] == false
+    end
+
+    test "missing description field returns config_schema_missing_field error" do
+      assert {:error, {:config_schema_missing_field, "bad_key", "description"}} =
+               parse_yaml_string(@manifest_missing_description)
+    end
+
+    test "missing default field returns config_schema_missing_field error" do
+      assert {:error, {:config_schema_missing_field, "bad_key", "default"}} =
+               parse_yaml_string(@manifest_missing_default)
+    end
+
+    test "unknown type returns config_schema_unknown_type error" do
+      assert {:error, {:config_schema_unknown_type, "bad_key", "fancy_type"}} =
+               parse_yaml_string(@manifest_unknown_type)
+    end
+
+    test "manifest without config_schema: has empty declares.config_schema" do
+      yaml = """
+      name: test-plugin
+      version: 0.1.0
+      description: test
+      depends_on:
+        core: ">= 0.1.0"
+        plugins: []
+      declares: {}
+      """
+
+      {:ok, manifest} = parse_yaml_string(yaml)
+      assert manifest.declares[:config_schema] == %{} or is_nil(manifest.declares[:config_schema])
+    end
+  end
 end
