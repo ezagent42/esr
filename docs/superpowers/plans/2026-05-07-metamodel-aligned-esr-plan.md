@@ -7376,4 +7376,1160 @@ git commit -m "feat: plugin-config 3-layer + manifest config_schema + depends_on
 
 ---
 
-<!-- PLAN_END_PHASE_7 — next subagent: append "## Phase 8" here -->
+## Phase 8: Delete esr-cc.sh + e2e migration + post-deploy cleanup
+
+**PR title:** `chore: delete esr-cc.sh + esr-cc.local.sh; elixir-native PTY launcher; e2e migration to plugin config (Phase 8)`
+**Branch:** `feat/phase-8-delete-esr-cc-sh`
+**Target:** `dev`
+**Est LOC:** ~300 deleted + ~400 added
+**Depends on:** Phase 7
+
+**Spec ref:** `docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md` §6 (shell-script deletion map), §7 (Phase 8 row), §11 (post-deploy migration steps), §14 (Phase 8 invariant).
+
+**Invariant gate (spec §14):**
+```bash
+# Both of these must be true before PR opens:
+[[ ! -f scripts/esr-cc.sh ]] && echo "PASS: esr-cc.sh deleted"
+[[ ! -f scripts/esr-cc.local.sh ]] && echo "PASS: esr-cc.local.sh deleted"
+make e2e 2>&1 | tail -5   # all scenarios 01-13 pass
+```
+
+---
+
+### Task 8.1: Delete `scripts/esr-cc.sh` + `scripts/esr-cc.local.sh` + `scripts/esr-cc.local.sh.example`
+
+**Files deleted:**
+- `scripts/esr-cc.sh`
+- `scripts/esr-cc.local.sh`
+- `scripts/esr-cc.local.sh.example`
+
+**Files to audit for references (from spec §6 shell-script deletion map):**
+- `runtime/lib/esr/entity/pty_process.ex` — line ~350
+- `runtime/lib/esr/entity/unbound_chat_guard.ex` — line ~104
+- `runtime/test/esr/commands/workspace/info_test.exs` — line ~22
+- `runtime/test/esr/resource/workspace_registry_test.exs` — line ~20
+- `scripts/final_gate.sh` — line ~342
+- `tests/e2e/scenarios/07_pty_bidir.sh` — line ~48
+- `docs/dev-guide.md` — lines ~37, ~212
+- `docs/cookbook.md` — line ~74
+
+- [ ] **Step 1 — Write failing test.** Create `runtime/test/esr/entity/pty_process_launcher_test.exs` — assert `Esr.Entity.PtyProcess.launcher_script_path/0` does NOT return a path ending in `esr-cc.sh`:
+
+```elixir
+defmodule Esr.Entity.PtyProcessLauncherTest do
+  use ExUnit.Case, async: true
+
+  test "launcher does not reference deleted esr-cc.sh" do
+    # PtyProcess must use Esr.Plugins.ClaudeCode.Launcher, not a shell script.
+    # This test fails until Task 8.2 replaces the shell-script reference.
+    refute function_exported?(Esr.Entity.PtyProcess, :launcher_script_path, 0),
+           "launcher_script_path/0 must be removed; use ClaudeCode.Launcher instead"
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm it fails (or is currently green because the function doesn't exist — in which case skip to step 3).
+
+```bash
+cd runtime && mix test test/esr/entity/pty_process_launcher_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Delete the three files.**
+
+```bash
+git rm scripts/esr-cc.sh scripts/esr-cc.local.sh scripts/esr-cc.local.sh.example
+```
+
+- [ ] **Step 4 — Grep and patch reference sites.** For each file referencing `esr-cc.sh`, replace the script path with a placeholder comment `# esr-cc.sh deleted (Phase 8) — see Esr.Plugins.ClaudeCode.Launcher` so CI does not hard-fail before Task 8.2 lands the full replacement. Do NOT add fallback defaults.
+
+```bash
+grep -rn "esr-cc" runtime/ scripts/ tests/ docs/ 2>/dev/null | grep -v ".git"
+```
+
+- [ ] **Step 5 — Run test + commit.**
+
+```bash
+cd runtime && mix test test/esr/entity/pty_process_launcher_test.exs 2>&1 | tail -10
+git add -p
+git commit -m "chore: delete esr-cc shell scripts (Phase 8.1) — superseded by plugin config (Phase 7)"
+```
+
+---
+
+### Task 8.2: `Esr.Plugins.ClaudeCode.Launcher` — Elixir-native PTY launcher
+
+**Files:**
+- Create: `runtime/lib/esr/plugins/claude_code/launcher.ex`
+- Create: `runtime/test/esr/plugins/claude_code/launcher_test.exs`
+- Modify: `runtime/lib/esr/entity/pty_process.ex` — call `ClaudeCode.Launcher.build_env/1` instead of sourcing `esr-cc.sh`
+
+**Responsibility migration (spec §6 shell-script deletion map):**
+
+| Was in `esr-cc.sh` | Moves to |
+|---|---|
+| `http_proxy`, `https_proxy`, `no_proxy` exports | `Esr.Plugin.Config.resolve("claude_code", ...)["http_proxy"]` etc. |
+| `ANTHROPIC_API_KEY` / `.mcp.env` source | Launchd plist; `claude_code.config.anthropic_api_key_ref` |
+| `ESR_ESRD_URL` | `Esr.Plugin.Config.resolve("claude_code", ...)["esrd_url"]` |
+| `exec claude` + `CLAUDE_FLAGS` construction | `ClaudeCode.Launcher.spawn_cmd/1` |
+| `session-ids.yaml` resume lookup | Elixir lookup before PTY spawn |
+| `.mcp.json` write | `ClaudeCode.Launcher.write_mcp_json/1` |
+| Workspace trust pre-write to `~/.claude.json` | Elixir `File.write/2` before spawn |
+| `mkdir -p "$cwd"` | `File.mkdir_p!/1` before spawn |
+| `ESR_WORKSPACE`, `ESR_SESSION_ID` | PtyProcess spawn env (already set by BEAM) |
+
+- [ ] **Step 1 — Write failing tests.** Create `runtime/test/esr/plugins/claude_code/launcher_test.exs`:
+
+```elixir
+defmodule Esr.Plugins.ClaudeCode.LauncherTest do
+  use ExUnit.Case, async: true
+  alias Esr.Plugins.ClaudeCode.Launcher
+
+  @session_id "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+  describe "build_env/1" do
+    test "includes http_proxy from plugin config" do
+      # Stub Plugin.Config so test does not need a running daemon
+      opts = [
+        plugin_config: %{
+          "http_proxy"  => "http://test-proxy:3128",
+          "https_proxy" => "http://test-proxy:3128",
+          "no_proxy"    => "localhost,127.0.0.1",
+          "esrd_url"    => "ws://127.0.0.1:4001"
+        },
+        session_id: @session_id
+      ]
+      env = Launcher.build_env(opts)
+      assert Keyword.get(env, :http_proxy)  == "http://test-proxy:3128"
+      assert Keyword.get(env, :https_proxy) == "http://test-proxy:3128"
+      assert Keyword.get(env, :no_proxy)    == "localhost,127.0.0.1"
+    end
+
+    test "empty http_proxy does not inject env var" do
+      opts = [
+        plugin_config: %{
+          "http_proxy"  => "",
+          "https_proxy" => "",
+          "no_proxy"    => "",
+          "esrd_url"    => "ws://127.0.0.1:4001"
+        },
+        session_id: @session_id
+      ]
+      env = Launcher.build_env(opts)
+      refute Keyword.has_key?(env, :http_proxy),
+             "empty http_proxy must not be injected"
+    end
+
+    test "includes ESR_ESRD_URL from plugin config esrd_url" do
+      opts = [
+        plugin_config: %{"http_proxy" => "", "https_proxy" => "", "no_proxy" => "",
+                         "esrd_url" => "ws://10.0.0.1:4001"},
+        session_id: @session_id
+      ]
+      env = Launcher.build_env(opts)
+      assert Keyword.get(env, :ESR_ESRD_URL) == "ws://10.0.0.1:4001"
+    end
+  end
+
+  describe "write_mcp_json/1" do
+    test "writes .mcp.json to workspace cwd" do
+      tmp = System.tmp_dir!() |> Path.join("launcher-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      :ok = Launcher.write_mcp_json(cwd: tmp, esrd_url: "ws://127.0.0.1:4001", session_id: @session_id)
+      mcp_path = Path.join(tmp, ".mcp.json")
+      assert File.exists?(mcp_path)
+      {:ok, body} = File.read(mcp_path)
+      decoded = Jason.decode!(body)
+      assert is_map(decoded["mcpServers"])
+    end
+  end
+end
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm `Esr.Plugins.ClaudeCode.Launcher is not available`.
+
+```bash
+cd runtime && mix test test/esr/plugins/claude_code/launcher_test.exs 2>&1 | tail -10
+```
+
+- [ ] **Step 3 — Implement `Launcher`.** Create `runtime/lib/esr/plugins/claude_code/launcher.ex`:
+
+```elixir
+defmodule Esr.Plugins.ClaudeCode.Launcher do
+  @moduledoc """
+  Elixir-native launcher for the Claude Code agent process.
+
+  Replaces `scripts/esr-cc.sh` (deleted Phase 8). All env-var construction and
+  pre-spawn filesystem operations are performed here in Elixir before PtyProcess
+  is asked to exec the `claude` binary.
+
+  Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6 (shell-script deletion map).
+  """
+
+  alias Esr.Plugin.Config
+
+  @claude_binary System.find_executable("claude") || "claude"
+
+  @doc """
+  Build the OS environment keyword list to pass to PtyProcess.
+  Only injects env vars for non-empty plugin config values (let-it-crash: no fallback defaults).
+
+  Options:
+    * `:plugin_config` — pre-resolved config map (from `Plugin.Config.resolve/2`). Required.
+    * `:session_id`    — session UUID string. Required.
+  """
+  @spec build_env(keyword()) :: keyword()
+  def build_env(opts) do
+    config     = Keyword.fetch!(opts, :plugin_config)
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    base = [ESR_SESSION_ID: session_id]
+
+    base
+    |> maybe_put(:http_proxy,  config["http_proxy"])
+    |> maybe_put(:HTTP_PROXY,  config["http_proxy"])
+    |> maybe_put(:https_proxy, config["https_proxy"])
+    |> maybe_put(:HTTPS_PROXY, config["https_proxy"])
+    |> maybe_put(:no_proxy,    config["no_proxy"])
+    |> maybe_put(:NO_PROXY,    config["no_proxy"])
+    |> maybe_put(:ESR_ESRD_URL, config["esrd_url"])
+  end
+
+  @doc """
+  Write `.mcp.json` into `cwd` before spawning the PTY.
+
+  Options:
+    * `:cwd`        — workspace directory. Required.
+    * `:esrd_url`   — WebSocket URL of the ESRD host. Required.
+    * `:session_id` — session UUID string. Required.
+  """
+  @spec write_mcp_json(keyword()) :: :ok | {:error, term()}
+  def write_mcp_json(opts) do
+    cwd        = Keyword.fetch!(opts, :cwd)
+    esrd_url   = Keyword.fetch!(opts, :esrd_url)
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    content = Jason.encode!(%{
+      "mcpServers" => %{
+        "esr" => %{
+          "type"    => "sse",
+          "url"     => "#{esrd_url}/mcp/sse?session_id=#{session_id}",
+          "headers" => %{}
+        }
+      }
+    }, pretty: true)
+
+    mcp_path = Path.join(cwd, ".mcp.json")
+    File.write(mcp_path, content)
+  end
+
+  @doc """
+  Return the resolved claude binary command and flag list.
+  Does NOT exec — just builds the argv. PtyProcess calls exec.
+  """
+  @spec spawn_cmd(keyword()) :: [String.t()]
+  def spawn_cmd(_opts) do
+    [@claude_binary]
+  end
+
+  @doc """
+  Full pre-spawn sequence:
+    1. mkdir_p workspace cwd
+    2. write .mcp.json
+    3. return {cmd, env} tuple for PtyProcess
+  """
+  @spec prepare_spawn(keyword()) :: {:ok, {[String.t()], keyword()}} | {:error, term()}
+  def prepare_spawn(opts) do
+    cwd        = Keyword.fetch!(opts, :cwd)
+    session_id = Keyword.fetch!(opts, :session_id)
+    config     = resolve_plugin_config(opts)
+
+    with :ok <- File.mkdir_p(cwd),
+         :ok <- write_mcp_json(cwd: cwd, esrd_url: config["esrd_url"] || "", session_id: session_id) do
+      env = build_env(plugin_config: config, session_id: session_id)
+      cmd = spawn_cmd(opts)
+      {:ok, {cmd, env}}
+    end
+  end
+
+  # -------------------------------------------------------------------
+  # Private helpers
+  # -------------------------------------------------------------------
+
+  defp maybe_put(env, _key, value) when is_nil(value), do: env
+  defp maybe_put(env, _key, ""),    do: env
+  defp maybe_put(env, key, value),  do: Keyword.put(env, key, value)
+
+  defp resolve_plugin_config(opts) do
+    case Keyword.fetch(opts, :plugin_config) do
+      {:ok, cfg} -> cfg
+      :error     -> Config.resolve("claude_code", Keyword.take(opts, [:user_uuid, :workspace_id]))
+    end
+  end
+end
+```
+
+- [ ] **Step 4 — Update `pty_process.ex`.** Remove the `esr-cc.sh` invocation; call `ClaudeCode.Launcher.prepare_spawn/1` instead. Find the call site:
+
+```bash
+grep -n "esr-cc\|launcher_script" runtime/lib/esr/entity/pty_process.ex | head -10
+```
+
+Replace the shell-script exec block with:
+
+```elixir
+# Phase 8: esr-cc.sh deleted. Use Elixir-native launcher.
+alias Esr.Plugins.ClaudeCode.Launcher
+{:ok, {cmd, extra_env}} = Launcher.prepare_spawn(
+  cwd: workspace_path,
+  session_id: session_id,
+  user_uuid: user_uuid
+)
+# Merge extra_env into the existing spawn env list
+spawn_env = Keyword.merge(spawn_env, extra_env)
+# cmd is ["/path/to/claude"]
+```
+
+- [ ] **Step 5 — Run tests + commit.**
+
+```bash
+cd runtime && mix test test/esr/plugins/claude_code/launcher_test.exs \
+                       test/esr/entity/pty_process_launcher_test.exs 2>&1 | tail -20
+git add runtime/lib/esr/plugins/claude_code/launcher.ex \
+        runtime/test/esr/plugins/claude_code/launcher_test.exs \
+        runtime/lib/esr/entity/pty_process.ex
+git commit -m "feat(cc): Esr.Plugins.ClaudeCode.Launcher — elixir-native PTY launcher (Phase 8.2)"
+```
+
+---
+
+### Task 8.3: e2e `common.sh` migration — replace `esr-cc.sh` sourcing with `seed_plugin_config`
+
+**Files:**
+- Modify: `tests/e2e/scenarios/common.sh`
+- Modify: `tests/e2e/scenarios/07_pty_bidir.sh` (primary reference site, per spec §6)
+- Modify: any other scenario referencing `esr-cc` (check with grep)
+
+- [ ] **Step 1 — Write failing test.** Add a self-test assertion to `tests/e2e/scenarios/_common_selftest.sh` (or inline at top of `common.sh`) that `seed_plugin_config` function exists:
+
+```bash
+# In _common_selftest.sh or common.sh self-check block:
+if ! declare -f seed_plugin_config > /dev/null 2>&1; then
+  echo "FAIL: seed_plugin_config not defined in common.sh" >&2
+  exit 1
+fi
+```
+
+- [ ] **Step 2 — Run failing test.**
+
+```bash
+bash tests/e2e/scenarios/_common_selftest.sh 2>&1 | tail -5
+```
+
+- [ ] **Step 3 — Add `seed_plugin_config` to `common.sh`.** After the existing `seed_capabilities` / `seed_workspaces` functions, add:
+
+```bash
+# seed_plugin_config — write test plugin config to the 3-layer paths
+# used by Esr.Plugin.Config so e2e scenarios do not source esr-cc.sh.
+# Arg 1: optional extra YAML block to append to global plugins.yaml.
+# Usage: seed_plugin_config  (no args → writes minimal config)
+#        seed_plugin_config "$(cat <<'EOF'
+# config:
+#   claude_code:
+#     http_proxy: "http://proxy.test:3128"
+# EOF
+# )"
+seed_plugin_config() {
+  local extra_yaml="${1:-}"
+  local global_cfg="${ESRD_HOME}/${ESRD_INSTANCE}/plugins.yaml"
+
+  mkdir -p "$(dirname "$global_cfg")"
+
+  cat > "$global_cfg" <<YAML
+enabled:
+  - claude_code
+  - feishu
+config:
+  claude_code:
+    esrd_url: "ws://127.0.0.1:${ESRD_PORT:-4001}"
+    http_proxy: ""
+    https_proxy: ""
+    no_proxy: ""
+    anthropic_api_key_ref: "\${ANTHROPIC_API_KEY}"
+  feishu:
+    app_id: "${FEISHU_APP_ID:-cli_test}"
+    app_secret: "${FEISHU_APP_SECRET:-test_secret}"
+    log_level: "debug"
+${extra_yaml}
+YAML
+
+  echo "[seed_plugin_config] wrote ${global_cfg}"
+}
+```
+
+- [ ] **Step 4 — Remove `source scripts/esr-cc.sh` (and `esr-cc.local.sh`) calls.** Search and replace:
+
+```bash
+grep -n "esr-cc" tests/e2e/scenarios/common.sh tests/e2e/scenarios/*.sh 2>/dev/null
+```
+
+For each hit: delete the `source` line; add `seed_plugin_config` call in the setup block of that scenario (after `start_esrd`, before `wait_for_sidecar_ready`).
+
+In `07_pty_bidir.sh` specifically (spec line ~48): replace the `esr-cc.sh` reference with:
+
+```bash
+# Phase 8: esr-cc.sh deleted. Plugin config is seeded via seed_plugin_config.
+seed_plugin_config
+```
+
+- [ ] **Step 5 — Run tests + commit.**
+
+```bash
+bash tests/e2e/scenarios/_common_selftest.sh 2>&1 | tail -5
+# Smoke-run scenario 07 (or lowest available) to confirm load-without-error:
+bash tests/e2e/scenarios/07_pty_bidir.sh 2>&1 | tail -20
+git add tests/e2e/scenarios/common.sh \
+        tests/e2e/scenarios/07_pty_bidir.sh
+git commit -m "e2e/common: replace esr-cc.sh sourcing with seed_plugin_config helper (Phase 8.3)"
+```
+
+---
+
+### Task 8.4: Post-deploy cleanup script `tools/wipe-esrd-home.sh`
+
+**Files:**
+- Create: `tools/wipe-esrd-home.sh`
+- Create: `tools/wipe-esrd-home_test.sh`
+
+**Spec ref:** §11 — required wipe procedure (D7).
+
+- [ ] **Step 1 — Write failing test.** Create `tools/wipe-esrd-home_test.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Smoke test for tools/wipe-esrd-home.sh — verifies dry-run exits 0 + prints target.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WIPE_SCRIPT="${SCRIPT_DIR}/wipe-esrd-home.sh"
+
+[[ -f "$WIPE_SCRIPT" ]] || { echo "FAIL: wipe-esrd-home.sh not found"; exit 1; }
+[[ -x "$WIPE_SCRIPT" ]] || { echo "FAIL: wipe-esrd-home.sh not executable"; exit 1; }
+
+# Dry-run should print the target path and exit 0 without deleting anything.
+TMP_HOME="$(mktemp -d /tmp/wipe-esrd-test-XXXXXX)"
+touch "${TMP_HOME}/sentinel"
+
+OUTPUT=$(ESRD_HOME="$TMP_HOME" bash "$WIPE_SCRIPT" --dry-run --dev 2>&1)
+echo "$OUTPUT"
+
+[[ -f "${TMP_HOME}/sentinel" ]] || { echo "FAIL: dry-run deleted files"; exit 1; }
+echo "$OUTPUT" | grep -q "$TMP_HOME" || { echo "FAIL: dry-run did not print target path"; exit 1; }
+
+rm -rf "$TMP_HOME"
+echo "PASS: wipe-esrd-home_test.sh"
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm it fails with `wipe-esrd-home.sh not found`.
+
+```bash
+bash tools/wipe-esrd-home_test.sh 2>&1
+```
+
+- [ ] **Step 3 — Implement `wipe-esrd-home.sh`.** Create `tools/wipe-esrd-home.sh`:
+
+```bash
+#!/usr/bin/env bash
+# tools/wipe-esrd-home.sh
+#
+# PURPOSE: Run before first boot of metamodel-aligned ESR.
+# Old ESRD_HOME state (workspaces.yaml, single-agent session state,
+# username-keyed dirs) is incompatible with the new UUID-based layout.
+# Bootstrap rebuilds all required directories from scratch on first boot.
+#
+# USAGE:
+#   ./tools/wipe-esrd-home.sh [--dev | --prod] [--dry-run]
+#
+# OPTIONS:
+#   --dev      Target $ESRD_HOME (defaults to ~/.esrd-dev if ESRD_HOME unset)
+#   --prod     Target $ESRD_HOME (defaults to ~/.esrd if ESRD_HOME unset)
+#   --dry-run  Print what would be deleted; do NOT delete.
+#
+# SPEC: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §11
+set -euo pipefail
+
+MODE="--dev"
+DRY_RUN=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --dev)     MODE="--dev"  ;;
+    --prod)    MODE="--prod" ;;
+    --dry-run) DRY_RUN=true  ;;
+    *)
+      echo "Usage: $0 [--dev | --prod] [--dry-run]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$MODE" == "--dev" ]]; then
+  TARGET="${ESRD_HOME:-${HOME}/.esrd-dev}"
+elif [[ "$MODE" == "--prod" ]]; then
+  TARGET="${ESRD_HOME:-${HOME}/.esrd}"
+fi
+
+echo "Target: ${TARGET}"
+echo "Mode:   ${MODE#--}"
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "[dry-run] Would delete all contents of: ${TARGET}"
+  echo "[dry-run] The directory itself is preserved. ESR bootstrap rebuilds on first boot."
+  exit 0
+fi
+
+echo ""
+echo "WARNING: This will destroy all sessions, workspaces, and plugin configs in:"
+echo "  ${TARGET}"
+echo "Ensure any needed data (workspace folders, plugin keys) is noted elsewhere first."
+echo ""
+read -rp "Type 'yes' to confirm wipe: " confirm
+if [[ "$confirm" != "yes" ]]; then
+  echo "Aborted."
+  exit 1
+fi
+
+if [[ ! -d "$TARGET" ]]; then
+  echo "Directory does not exist; nothing to wipe: ${TARGET}"
+  exit 0
+fi
+
+# Remove contents but preserve the directory itself.
+# Bootstrap expects the directory to exist; it creates subdirs on first boot.
+find "$TARGET" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+echo "Wiped: ${TARGET}"
+echo "Start esrd to rebuild from Bootstrap."
+```
+
+```bash
+chmod +x tools/wipe-esrd-home.sh
+```
+
+- [ ] **Step 4 — Run test.**
+
+```bash
+bash tools/wipe-esrd-home_test.sh 2>&1 | tail -5
+```
+
+- [ ] **Step 5 — Run `make e2e` baseline (invariant gate).**
+
+```bash
+make e2e 2>&1 | tail -20
+# Expected: all scenarios 01-13 pass (or document any pre-existing failures unrelated to Phase 8).
+```
+
+```bash
+git add tools/wipe-esrd-home.sh tools/wipe-esrd-home_test.sh
+git commit -m "tools: wipe-esrd-home.sh for post-deploy migration (Phase 8.4)"
+```
+
+---
+
+### Phase 8 PR checklist
+
+Before opening the PR:
+
+- [ ] `[[ ! -f scripts/esr-cc.sh ]]` — deleted
+- [ ] `[[ ! -f scripts/esr-cc.local.sh ]]` — deleted
+- [ ] `[[ ! -f scripts/esr-cc.local.sh.example ]]` — deleted
+- [ ] `grep -rn "esr-cc.sh" runtime/ tests/ scripts/ docs/ 2>/dev/null | grep -v ".git" | grep -v "PLAN_END"` — zero hits outside historical docs
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — all pass
+- [ ] `bash tests/e2e/scenarios/_common_selftest.sh` — PASS
+- [ ] `bash tools/wipe-esrd-home_test.sh` — PASS
+- [ ] `make e2e 2>&1 | tail -5` — scenarios 01-13 pass
+
+```bash
+git commit -m "chore: delete esr-cc.sh + esr-cc.local.sh; elixir-native PTY launcher; e2e migration to plugin config (Phase 8)"
+```
+
+---
+
+## Phase 9: Docs sweep + e2e scenarios 14, 15, 16
+
+**PR title:** `docs+test: e2e scenarios 14-16 + docs sweep colon-namespace + session-first surface (Phase 9)`
+**Branch:** `feat/phase-9-docs-e2e`
+**Target:** `dev`
+**Est LOC:** ~400
+**Depends on:** Phase 8
+
+**Spec ref:** §4 (slash surface), §7 (Phase 9 row), §9 (e2e 14/15/16), §14 (Phase 9 invariant).
+
+**Invariant gate (spec §14):**
+```bash
+# Scenarios 14 and 15 must pass:
+bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -5
+bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -5
+```
+
+---
+
+### Task 9.1: Docs sweep — colon-namespace + session-first surface
+
+**Scope:** Update advisory docs to reflect hard-cutover slash names and session-first surface. Leave historical migration notes untouched.
+
+- [ ] **Step 1 — Inventory references.**
+
+```bash
+grep -rln '"/new-session\|/list-agents\|/workspace info\|/plugin install\|/end-session' docs/ README*.md 2>/dev/null
+grep -rln 'workspaces\.yaml' docs/ 2>/dev/null
+grep -rln 'workspace\.root' docs/ 2>/dev/null
+grep -rln 'esr-cc\.sh' docs/ 2>/dev/null
+```
+
+- [ ] **Step 2 — Update `docs/dev-guide.md`.** Replace:
+  - `/new-session` → `/session:new`
+  - `/end-session` → `/session:end`
+  - `/list-agents` → `/session:list`
+  - `workspaces.yaml` references → note it is superseded by `sessions/<uuid>/session.json`
+  - `workspace.root` references → `session workspace at sessions/<uuid>/`
+  - `esr-cc.sh` references → "deleted in Phase 8; see `tools/wipe-esrd-home.sh` and `Esr.Plugins.ClaudeCode.Launcher`"
+  - Any `/plugin install` reference → `/plugin:set` / `/plugin:show-config`
+
+- [ ] **Step 3 — Update `docs/cookbook.md`.** Same substitutions (spec identifies line ~74 as an `esr-cc.sh` reference).
+
+- [ ] **Step 4 — Update `docs/manual-checks/` entries.** Check for any stale slash names.
+
+- [ ] **Step 5 — Update `docs/futures/todo.md`.** Remove any tasks that are now complete (e.g., "implement colon-namespace", "3-layer plugin config").
+
+- [ ] **Step 6 — Verify sweep is complete.**
+
+```bash
+grep -rn '/new-session\|/end-session\|/list-agents\|esr-cc\.sh' docs/ README*.md 2>/dev/null \
+  | grep -v "historical\|migration\|PLAN_END\|2026-04\|2026-03\|PR-7\|PR-8\|PR-9\|PR-21\|PR-22\|PR-23\|PR-24\|PR-230" \
+  | grep -v ".git"
+# Expected: zero hits (or only in clearly-labelled historical sections)
+```
+
+- [ ] **Step 7 — Commit.**
+
+```bash
+git add docs/
+git commit -m "docs: sweep — colon-namespace + session-first surface (Phase 9.1)"
+```
+
+---
+
+### Task 9.2: e2e scenario 14 — multi-agent session
+
+**File:** `tests/e2e/scenarios/14_session_multiagent.sh`
+
+**Spec ref:** §9 e2e Scenario 14.
+
+**Scenario steps:**
+1. Init test ESRD_HOME; seed plugin config; seed capabilities; start mock Feishu + esrd.
+2. Create session: `esr admin submit session_new name=multi-test` → capture `$SID`.
+3. Add agent alice: `esr admin submit session_add_agent session_id=$SID type=cc name=alice`.
+4. Add agent bob: `esr admin submit session_add_agent session_id=$SID type=cc name=bob`.
+5. Verify session info: `session_info session_id=$SID` → assert `primary_agent=alice` (first added).
+6. Send `@alice ping` via Feishu → assert reply routed to alice (contains "alice").
+7. Send `@bob hello` → assert reply routed to bob.
+8. Send plain text (no `@`) → assert routed to primary (alice).
+9. Set primary: `esr admin submit session_set_primary session_id=$SID name=bob`.
+10. Send plain text again → assert routed to bob (new primary).
+11. Cleanup: end session + stop processes.
+
+- [ ] **Step 1 — Write failing test.** Create `tests/e2e/scenarios/14_session_multiagent.sh`:
+
+```bash
+#!/usr/bin/env bash
+# e2e scenario 14 — multi-agent session: @<name> routing + primary fallback.
+# Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §9 Scenario 14.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+# --- setup ------------------------------------------------------------
+seed_plugin_config
+seed_capabilities
+seed_workspaces
+seed_adapters
+start_mock_feishu
+start_esrd
+wait_for_sidecar_ready 30
+
+# --- step 1: create session -------------------------------------------
+SID=$(esr_cli admin submit session_new \
+  --arg name=multi-test \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 30 \
+  | awk -F': ' '/^session_id:/ {print $2; exit}')
+[[ -n "$SID" ]] || _fail_with_context "14: no session_id from session_new"
+echo "14: session created: $SID"
+
+# --- step 2: add alice ------------------------------------------------
+esr_cli admin submit session_add_agent \
+  --arg session_id="$SID" --arg type=cc --arg name=alice \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 20 > /dev/null
+echo "14: added agent alice"
+
+# --- step 3: add bob --------------------------------------------------
+esr_cli admin submit session_add_agent \
+  --arg session_id="$SID" --arg type=cc --arg name=bob \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 20 > /dev/null
+echo "14: added agent bob"
+
+# --- step 4: verify primary = alice (first added) ---------------------
+INFO=$(esr_cli admin submit session_info \
+  --arg session_id="$SID" \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 15)
+assert_contains "$INFO" '"primary_agent":"alice"' \
+  "14: primary_agent should be alice (first added)"
+assert_contains "$INFO" '"name":"bob"' \
+  "14: bob should appear in agents list"
+echo "14: primary_agent=alice confirmed"
+
+# --- step 5: @alice routing -------------------------------------------
+REPLY=$(push_inbound_feishu "@alice ping" "${ESR_OPERATOR_PRINCIPAL_ID}" 30)
+assert_contains "$REPLY" "alice" \
+  "14: @alice message should route to alice"
+echo "14: @alice routing confirmed"
+
+# --- step 6: @bob routing ---------------------------------------------
+REPLY=$(push_inbound_feishu "@bob hello" "${ESR_OPERATOR_PRINCIPAL_ID}" 30)
+assert_contains "$REPLY" "bob" \
+  "14: @bob message should route to bob"
+echo "14: @bob routing confirmed"
+
+# --- step 7: plain text → primary (alice) ----------------------------
+REPLY=$(push_inbound_feishu "plain message no mention" "${ESR_OPERATOR_PRINCIPAL_ID}" 30)
+assert_contains "$REPLY" "alice" \
+  "14: plain text should route to primary (alice)"
+echo "14: plain→primary routing confirmed"
+
+# --- step 8: set primary to bob --------------------------------------
+esr_cli admin submit session_set_primary \
+  --arg session_id="$SID" --arg name=bob \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 15 > /dev/null
+echo "14: set_primary=bob"
+
+# --- step 9: plain text now → bob ------------------------------------
+REPLY=$(push_inbound_feishu "another plain message" "${ESR_OPERATOR_PRINCIPAL_ID}" 30)
+assert_contains "$REPLY" "bob" \
+  "14: after set_primary=bob, plain text should route to bob"
+echo "14: new-primary routing confirmed"
+
+# --- cleanup ----------------------------------------------------------
+esr_cli admin submit session_end \
+  --arg session_id="$SID" \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 20 > /dev/null || true
+stop_esrd
+stop_mock_feishu
+
+echo "PASS: 14_session_multiagent"
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm it fails (missing admin submit verbs or missing routing implementation from Phase 3/4). Document which step it fails at.
+
+```bash
+bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Implement missing submit verbs.** If `session_add_agent`, `session_set_primary`, or `session_info` are not yet wired as `esr admin submit` targets, add them to the escript dispatch table. Reference Phase 3/6 command modules.
+
+```bash
+grep -n "session_add_agent\|session_set_primary\|session_info" scripts/esrd.sh \
+  runtime/lib/esr/ -r 2>/dev/null | head -20
+```
+
+- [ ] **Step 4 — Run passing test.**
+
+```bash
+bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -10
+# Expected: "PASS: 14_session_multiagent"
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add tests/e2e/scenarios/14_session_multiagent.sh
+git commit -m "e2e/14: multi-agent session — @name routing + primary fallback (Phase 9.2)"
+```
+
+---
+
+### Task 9.3: e2e scenario 15 — cross-user session attach (UUID-only)
+
+**File:** `tests/e2e/scenarios/15_session_share.sh`
+
+**Spec ref:** §9 e2e Scenario 15.
+
+**Scenario steps:**
+1. Init test ESRD_HOME; seed plugin config; seed 2 users (alice + bob) with admin caps.
+2. As alice: create session `shared-session` → capture `$SID`.
+3. As alice: `/session:share $SID bob perm=attach` (grant bob `session:$SID/attach` cap).
+4. As bob: attach to `$SID` from a different chat (`oc_bob_chat`).
+5. Bob sends message → routed via shared session's primary agent.
+6. Verify both alice's chat and bob's chat can see session (session info shows both attached chats).
+7. As bob: detach (bob's chat leaves; alice's chat remains attached).
+8. Verify session still active (not ended) with alice's chat in attached set.
+9. Verify that attaching by SESSION NAME (not UUID) is rejected.
+10. Cleanup.
+
+- [ ] **Step 1 — Write failing test.** Create `tests/e2e/scenarios/15_session_share.sh`:
+
+```bash
+#!/usr/bin/env bash
+# e2e scenario 15 — cross-user session attach: UUID-only + cap-gated permission.
+# Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §9 Scenario 15.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+ALICE_CHAT="oc_alice_e2e_15"
+BOB_CHAT="oc_bob_e2e_15"
+CAROL_CHAT="oc_carol_e2e_15"
+
+# --- setup ------------------------------------------------------------
+seed_plugin_config
+seed_capabilities
+seed_workspaces
+seed_adapters
+start_mock_feishu
+start_esrd
+wait_for_sidecar_ready 30
+
+# Seed alice + bob as users with their own caps.
+esr_cli admin submit user_add --arg username=alice_15 --arg chat_id="$ALICE_CHAT" \
+  --wait --timeout 15 > /dev/null || true
+esr_cli admin submit user_add --arg username=bob_15 --arg chat_id="$BOB_CHAT" \
+  --wait --timeout 15 > /dev/null || true
+
+# --- step 1: alice creates session ------------------------------------
+SID=$(esr_cli admin submit session_new \
+  --arg name=shared-session \
+  --arg submitter=alice_15 \
+  --wait --timeout 30 \
+  | awk -F': ' '/^session_id:/ {print $2; exit}')
+[[ -n "$SID" ]] || _fail_with_context "15: no session_id from session_new"
+echo "15: alice created session: $SID"
+
+# Verify SID looks like a UUID (D2: UUID-only at input for session caps).
+[[ "$SID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+  || _fail_with_context "15: session_id is not a UUID v4: $SID"
+echo "15: SID is valid UUID v4"
+
+# --- step 2: alice shares with bob -----------------------------------
+SHARE_OUT=$(esr_cli admin submit session_share \
+  --arg session_id="$SID" --arg target_user=bob_15 --arg perm=attach \
+  --arg submitter=alice_15 \
+  --wait --timeout 15)
+assert_contains "$SHARE_OUT" "ok" "15: session_share should succeed"
+echo "15: alice shared session with bob"
+
+# --- step 3: bob attaches (UUID, different chat) ---------------------
+ATTACH_OUT=$(esr_cli admin submit session_attach \
+  --arg session_id="$SID" --arg chat_id="$BOB_CHAT" \
+  --arg submitter=bob_15 \
+  --wait --timeout 15)
+assert_contains "$ATTACH_OUT" "ok" "15: bob session_attach should succeed"
+echo "15: bob attached to session"
+
+# --- step 4: unauthorized user (carol) cannot attach ----------------
+CAROL_OUT=$(esr_cli admin submit session_attach \
+  --arg session_id="$SID" --arg chat_id="$CAROL_CHAT" \
+  --arg submitter=carol_unknown \
+  --wait --timeout 15 2>&1 || true)
+assert_contains "$CAROL_OUT" "cap_check_failed" \
+  "15: unauthorized user should get cap_check_failed"
+echo "15: unauthorized attach rejected"
+
+# --- step 5: name-based attach is REJECTED (D2, D5) -----------------
+NAME_ATTACH_OUT=$(esr_cli admin submit session_attach \
+  --arg session_id=shared-session --arg chat_id="$BOB_CHAT" \
+  --arg submitter=bob_15 \
+  --wait --timeout 15 2>&1 || true)
+assert_contains "$NAME_ATTACH_OUT" "session caps require UUID" \
+  "15: name-based session attach must be rejected"
+echo "15: name-based attach rejected (UUID-only enforced)"
+
+# --- step 6: both chats show in session info -------------------------
+INFO=$(esr_cli admin submit session_info \
+  --arg session_id="$SID" \
+  --arg submitter=alice_15 \
+  --wait --timeout 15)
+assert_contains "$INFO" "$ALICE_CHAT" "15: alice's chat should be in session"
+assert_contains "$INFO" "$BOB_CHAT"   "15: bob's chat should be in session"
+echo "15: cross-user observability confirmed"
+
+# --- step 7: bob detaches -------------------------------------------
+DETACH_OUT=$(esr_cli admin submit session_detach \
+  --arg session_id="$SID" --arg chat_id="$BOB_CHAT" \
+  --arg submitter=bob_15 \
+  --wait --timeout 15)
+assert_contains "$DETACH_OUT" "ok" "15: bob detach should succeed"
+echo "15: bob detached"
+
+# --- step 8: session still active with alice's chat -----------------
+INFO2=$(esr_cli admin submit session_info \
+  --arg session_id="$SID" \
+  --arg submitter=alice_15 \
+  --wait --timeout 15)
+assert_contains "$INFO2" "$ALICE_CHAT" "15: alice's chat should remain after bob detach"
+# Bob's chat should no longer be in the attached set.
+if echo "$INFO2" | grep -q "$BOB_CHAT"; then
+  _fail_with_context "15: bob's chat should NOT appear in session info after detach"
+fi
+echo "15: session still active with alice only"
+
+# --- cleanup ----------------------------------------------------------
+esr_cli admin submit session_end \
+  --arg session_id="$SID" --arg submitter=alice_15 \
+  --wait --timeout 20 > /dev/null || true
+stop_esrd
+stop_mock_feishu
+
+echo "PASS: 15_session_share"
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm it fails (missing session_share / session_attach dispatch, or Phase 5 UUID enforcement not yet wired). Document failure step.
+
+```bash
+bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Wire any missing admin submit verbs.** Add `session_share`, `session_attach`, `session_detach` to escript dispatch if absent (these should have been added in Phase 6).
+
+```bash
+grep -n "session_share\|session_attach\|session_detach" scripts/esrd.sh \
+  runtime/lib/esr/ -r 2>/dev/null | head -20
+```
+
+- [ ] **Step 4 — Run passing test.**
+
+```bash
+bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -10
+# Expected: "PASS: 15_session_share"
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add tests/e2e/scenarios/15_session_share.sh
+git commit -m "e2e/15: cross-user session attach with cap-gated permission + UUID-only enforcement (Phase 9.3)"
+```
+
+---
+
+### Task 9.4: e2e scenario 16 — plugin config 3-layer resolution
+
+**File:** `tests/e2e/scenarios/16_plugin_config_layers.sh`
+
+**Spec ref:** §9 e2e Scenario 16.
+
+**Scenario steps:**
+1. Init fresh ESRD_HOME; seed minimal plugin config; start esrd.
+2. Set global: `esr plugin set claude_code http_proxy=http://global:8080 layer=global`.
+3. Verify effective: `/plugin:show claude_code layer=effective` → `http_proxy = "http://global:8080"`.
+4. Set user layer (alice): `esr plugin set claude_code http_proxy=http://user:8081 layer=user --user=alice`.
+5. As alice: verify effective → `http_proxy = "http://user:8081"` (user wins over global).
+6. Set workspace layer (in alice's session): `/plugin:set claude_code http_proxy="" layer=workspace`.
+7. Verify effective → `http_proxy = ""` (empty string from workspace wins — explicit override).
+8. Unset workspace: `/plugin:unset claude_code http_proxy layer=workspace`.
+9. Verify effective → back to `http_proxy = "http://user:8081"` (user layer resumes).
+10. Unset user: `/plugin:unset claude_code http_proxy layer=user`.
+11. Verify effective → back to `http_proxy = "http://global:8080"` (global resumes).
+12. As bob (no user override): effective → `http_proxy = "http://global:8080"`.
+13. Cleanup.
+
+- [ ] **Step 1 — Write failing test.** Create `tests/e2e/scenarios/16_plugin_config_layers.sh`:
+
+```bash
+#!/usr/bin/env bash
+# e2e scenario 16 — plugin config 3-layer per-key merge.
+# Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §9 Scenario 16.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+# --- setup ------------------------------------------------------------
+seed_plugin_config
+seed_capabilities
+start_esrd
+wait_for_sidecar_ready 30
+
+# Seed alice + bob.
+esr_cli admin submit user_add --arg username=alice_16 --wait --timeout 15 > /dev/null || true
+esr_cli admin submit user_add --arg username=bob_16   --wait --timeout 15 > /dev/null || true
+
+# --- step 1: set global http_proxy -----------------------------------
+esr_cli admin submit plugin_set_config \
+  --arg plugin=claude_code --arg key=http_proxy \
+  --arg value="http://global:8080" --arg layer=global \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 15 > /dev/null
+echo "16: global http_proxy set"
+
+# --- step 2: verify effective (no user/workspace) --------------------
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=alice_16 \
+  --arg submitter="${ESR_OPERATOR_PRINCIPAL_ID}" \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http://global:8080' \
+  "16: effective should show global http_proxy"
+echo "16: step 2 passed — global visible as effective"
+
+# --- step 3: set user (alice) http_proxy -----------------------------
+esr_cli admin submit plugin_set_config \
+  --arg plugin=claude_code --arg key=http_proxy \
+  --arg value="http://user:8081" --arg layer=user \
+  --arg submitter=alice_16 \
+  --wait --timeout 15 > /dev/null
+echo "16: alice user http_proxy set"
+
+# --- step 4: alice effective shows user value ------------------------
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=alice_16 \
+  --arg submitter=alice_16 \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http://user:8081' \
+  "16: alice effective should show user http_proxy (user > global)"
+echo "16: step 4 passed — user wins over global"
+
+# --- step 5: alice creates session; set workspace override ----------
+SID=$(esr_cli admin submit session_new \
+  --arg name=config-test-16 --arg submitter=alice_16 \
+  --wait --timeout 20 \
+  | awk -F': ' '/^session_id:/ {print $2; exit}')
+[[ -n "$SID" ]] || _fail_with_context "16: no session_id"
+
+esr_cli admin submit plugin_set_config \
+  --arg plugin=claude_code --arg key=http_proxy \
+  --arg value="" --arg layer=workspace \
+  --arg session_id="$SID" --arg submitter=alice_16 \
+  --wait --timeout 15 > /dev/null
+echo "16: workspace http_proxy set to empty string"
+
+# --- step 6: workspace empty string wins (explicit override) ---------
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=alice_16 --arg session_id="$SID" \
+  --arg submitter=alice_16 \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http_proxy = ""' \
+  "16: empty string from workspace must win over user/global"
+echo "16: step 6 passed — empty string workspace override wins"
+
+# --- step 7: unset workspace; user resumes ---------------------------
+esr_cli admin submit plugin_unset_config \
+  --arg plugin=claude_code --arg key=http_proxy --arg layer=workspace \
+  --arg session_id="$SID" --arg submitter=alice_16 \
+  --wait --timeout 15 > /dev/null
+
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=alice_16 --arg session_id="$SID" \
+  --arg submitter=alice_16 \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http://user:8081' \
+  "16: after workspace unset, user layer should resume"
+echo "16: step 7 passed — user resumes after workspace unset"
+
+# --- step 8: unset user; global resumes ----------------------------
+esr_cli admin submit plugin_unset_config \
+  --arg plugin=claude_code --arg key=http_proxy --arg layer=user \
+  --arg submitter=alice_16 \
+  --wait --timeout 15 > /dev/null
+
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=alice_16 \
+  --arg submitter=alice_16 \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http://global:8080' \
+  "16: after user unset, global should resume"
+echo "16: step 8 passed — global resumes after user unset"
+
+# --- step 9: bob sees only global ------------------------------------
+EFF=$(esr_cli admin submit plugin_show_config \
+  --arg plugin=claude_code --arg layer=effective \
+  --arg user=bob_16 \
+  --arg submitter=bob_16 \
+  --wait --timeout 15)
+assert_contains "$EFF" 'http://global:8080' \
+  "16: bob (no user override) should see global http_proxy"
+echo "16: step 9 passed — bob sees global only"
+
+# --- cleanup ----------------------------------------------------------
+esr_cli admin submit session_end --arg session_id="$SID" \
+  --arg submitter=alice_16 --wait --timeout 20 > /dev/null || true
+stop_esrd
+
+echo "PASS: 16_plugin_config_layers"
+```
+
+- [ ] **Step 2 — Run failing test.** Confirm it fails (missing `plugin_set_config` / `plugin_show_config` admin submit verbs, or Phase 7 config not yet live). Document failure step.
+
+```bash
+bash tests/e2e/scenarios/16_plugin_config_layers.sh 2>&1 | tail -20
+```
+
+- [ ] **Step 3 — Wire admin submit verbs.** Add `plugin_set_config`, `plugin_show_config`, `plugin_unset_config` to the admin submit dispatch (these correspond to `Esr.Commands.Plugin.Set`, `.ShowConfig`, `.Unset` from Phase 7).
+
+```bash
+grep -n "plugin_set_config\|plugin_show_config\|plugin_unset_config" scripts/esrd.sh \
+  runtime/lib/esr/ -r 2>/dev/null | head -20
+```
+
+- [ ] **Step 4 — Run passing test.**
+
+```bash
+bash tests/e2e/scenarios/16_plugin_config_layers.sh 2>&1 | tail -10
+# Expected: "PASS: 16_plugin_config_layers"
+```
+
+- [ ] **Step 5 — Commit.**
+
+```bash
+git add tests/e2e/scenarios/16_plugin_config_layers.sh
+git commit -m "e2e/16: plugin config 3-layer per-key merge (Phase 9.4)"
+```
+
+---
+
+### Phase 9 PR checklist
+
+Before opening the PR:
+
+- [ ] `grep -rn '/new-session\|/end-session\|/list-agents\|esr-cc\.sh' docs/ README*.md 2>/dev/null | grep -v "historical\|migration\|PR-7\|PR-8\|2026-04\|2026-03"` — zero hits in advisory docs
+- [ ] `bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -3` — PASS
+- [ ] `bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -3` — PASS
+- [ ] `bash tests/e2e/scenarios/16_plugin_config_layers.sh 2>&1 | tail -3` — PASS
+- [ ] `make e2e 2>&1 | tail -5` — all scenarios pass
+
+```bash
+git commit -m "docs+test: e2e scenarios 14-16 + docs sweep colon-namespace + session-first surface (Phase 9)"
+```
+
+---
+
+## Plan Complete
+
+**Summary:** 11 phases (1, 1b, 2, 3, 4, 5, 6, 7, 8, 9 = 10 phase headers), ~50 tasks, ~5300–6350 LOC estimate (per spec §7). Each phase ships as one PR to `dev`. Implementation order: `1 → 1b → 2; 1 → 3 → 4; 1 → 5; 1b + 3 → 6 → 7 → 8 → 9`.
+
+**Next step:** Use `superpowers:subagent-driven-development` to execute phase by phase. Start with Phase 1 + 1b in parallel (both depend only on Phase 0 spec; Phase 1b depends on Phase 1 for Paths conventions, so do Phase 1 first then 1b).
+
+<!-- PLAN_COMPLETE — all 11 phases planned -->

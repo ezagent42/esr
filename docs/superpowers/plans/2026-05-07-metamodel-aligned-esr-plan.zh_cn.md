@@ -972,4 +972,274 @@ config_schema:
 
 ---
 
-<!-- PLAN_END_PHASE_7 — next subagent: append "## Phase 8" here -->
+## Phase 8：删除 esr-cc.sh + e2e 迁移 + 部署后清理
+
+**PR 标题：** `chore: delete esr-cc.sh + esr-cc.local.sh; elixir-native PTY launcher; e2e migration to plugin config (Phase 8)`
+**分支：** `feat/phase-8-delete-esr-cc-sh`
+**目标分支：** `dev`
+**估算 LOC：** ~300 删除 + ~400 新增
+**依赖：** Phase 7
+
+**Spec 参考：** `docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md` §6（shell-script 删除映射），§7（Phase 8 行），§11（部署后迁移步骤），§14（Phase 8 不变量门控）。
+
+**不变量门控（spec §14）：**
+```bash
+[[ ! -f scripts/esr-cc.sh ]] && echo "PASS: esr-cc.sh 已删除"
+[[ ! -f scripts/esr-cc.local.sh ]] && echo "PASS: esr-cc.local.sh 已删除"
+make e2e 2>&1 | tail -5   # 场景 01-13 全部通过
+```
+
+---
+
+### 任务 8.1：删除 `scripts/esr-cc.sh` + `scripts/esr-cc.local.sh` + `scripts/esr-cc.local.sh.example`
+
+**删除文件：**
+- `scripts/esr-cc.sh`
+- `scripts/esr-cc.local.sh`
+- `scripts/esr-cc.local.sh.example`
+
+**需审查的引用文件（见 spec §6 shell-script 删除映射）：**
+- `runtime/lib/esr/entity/pty_process.ex` — 约第 350 行
+- `runtime/lib/esr/entity/unbound_chat_guard.ex` — 约第 104 行
+- `runtime/test/esr/commands/workspace/info_test.exs` — 约第 22 行
+- `runtime/test/esr/resource/workspace_registry_test.exs` — 约第 20 行
+- `scripts/final_gate.sh` — 约第 342 行
+- `tests/e2e/scenarios/07_pty_bidir.sh` — 约第 48 行
+- `docs/dev-guide.md` — 约第 37、212 行
+- `docs/cookbook.md` — 约第 74 行
+
+- [ ] **Step 1–5**（见英文版 Task 8.1，代码块相同）
+- [ ] **提交**：`chore: delete esr-cc shell scripts (Phase 8.1) — superseded by plugin config (Phase 7)`
+
+---
+
+### 任务 8.2：`Esr.Plugins.ClaudeCode.Launcher` — Elixir 原生 PTY 启动器
+
+**新建文件：**
+- `runtime/lib/esr/plugins/claude_code/launcher.ex`
+- `runtime/test/esr/plugins/claude_code/launcher_test.exs`
+
+**修改文件：**
+- `runtime/lib/esr/entity/pty_process.ex` — 调用 `ClaudeCode.Launcher.build_env/1` 替代 `esr-cc.sh`
+
+**职责迁移（spec §6）：**
+
+| 原在 `esr-cc.sh` | 迁移目标 |
+|---|---|
+| `http_proxy` 等 export | `Esr.Plugin.Config.resolve("claude_code", ...)["http_proxy"]` |
+| `ANTHROPIC_API_KEY` | launchd plist；`anthropic_api_key_ref` 配置项 |
+| `ESR_ESRD_URL` | `Plugin.Config.resolve(...)["esrd_url"]` |
+| `exec claude` + `CLAUDE_FLAGS` | `ClaudeCode.Launcher.spawn_cmd/1` |
+| `session-ids.yaml` resume 查找 | PTY spawn 前 Elixir 查找 |
+| `.mcp.json` 写入 | `ClaudeCode.Launcher.write_mcp_json/1` |
+| workspace trust 写入 `~/.claude.json` | Elixir `File.write/2` |
+| `mkdir -p "$cwd"` | `File.mkdir_p!/1` |
+| `ESR_WORKSPACE`, `ESR_SESSION_ID` | PtyProcess spawn env（BEAM 已设置） |
+
+- [ ] **Step 1–5**（见英文版 Task 8.2，代码块相同）
+- [ ] **提交**：`feat(cc): Esr.Plugins.ClaudeCode.Launcher — elixir-native PTY launcher (Phase 8.2)`
+
+---
+
+### 任务 8.3：e2e `common.sh` 迁移 — 用 `seed_plugin_config` 替换 `esr-cc.sh` sourcing
+
+**修改文件：**
+- `tests/e2e/scenarios/common.sh`
+- `tests/e2e/scenarios/07_pty_bidir.sh`（spec 中指定的主要引用点，约第 48 行）
+- 其余引用 `esr-cc` 的场景（grep 检查）
+
+**新增函数 `seed_plugin_config`：** 写入 `${ESRD_HOME}/${ESRD_INSTANCE}/plugins.yaml`（使用 Phase 7 的 3 层机制），不再 source shell script。
+
+- [ ] **Step 1–5**（见英文版 Task 8.3，代码块相同）
+- [ ] **提交**：`e2e/common: replace esr-cc.sh sourcing with seed_plugin_config helper (Phase 8.3)`
+
+---
+
+### 任务 8.4：部署后清理脚本 `tools/wipe-esrd-home.sh`
+
+**新建文件：**
+- `tools/wipe-esrd-home.sh`
+- `tools/wipe-esrd-home_test.sh`
+
+**Spec 参考：** §11 — 必须执行的清空程序（D7）。
+
+**行为：**
+- `--dev` 模式：目标 `${ESRD_HOME:-~/.esrd-dev}`
+- `--prod` 模式：目标 `${ESRD_HOME:-~/.esrd}`
+- `--dry-run`：打印目标路径，不删除
+- 交互式确认：输入 `yes` 才执行删除
+- 删除目录内容，保留目录本身（Bootstrap 在首次启动时重建）
+
+**脚本头注释（说明用途）：**
+```
+Run before first boot of metamodel-aligned ESR.
+Old ESRD_HOME state (workspaces.yaml, single-agent session state,
+username-keyed dirs) is incompatible — Bootstrap rebuilds from scratch.
+```
+
+- [ ] **Step 1–5**（见英文版 Task 8.4，代码块相同）
+- [ ] **提交**：`tools: wipe-esrd-home.sh for post-deploy migration (Phase 8.4)`
+
+---
+
+### Phase 8 PR 检查清单
+
+- [ ] `[[ ! -f scripts/esr-cc.sh ]]` — 已删除
+- [ ] `[[ ! -f scripts/esr-cc.local.sh ]]` — 已删除
+- [ ] `[[ ! -f scripts/esr-cc.local.sh.example ]]` — 已删除
+- [ ] `grep -rn "esr-cc.sh" runtime/ tests/ scripts/ docs/ 2>/dev/null | grep -v ".git"` — 顾问文档零命中
+- [ ] `cd runtime && mix test 2>&1 | tail -20` — 全部通过
+- [ ] `bash tests/e2e/scenarios/_common_selftest.sh` — PASS
+- [ ] `bash tools/wipe-esrd-home_test.sh` — PASS
+- [ ] `make e2e 2>&1 | tail -5` — 场景 01-13 通过
+
+---
+
+## Phase 9：文档 sweep + e2e 场景 14、15、16
+
+**PR 标题：** `docs+test: e2e scenarios 14-16 + docs sweep colon-namespace + session-first surface (Phase 9)`
+**分支：** `feat/phase-9-docs-e2e`
+**目标分支：** `dev`
+**估算 LOC：** ~400
+**依赖：** Phase 8
+
+**Spec 参考：** §4（slash 表面），§7（Phase 9 行），§9（e2e 14/15/16），§14（Phase 9 不变量门控）。
+
+**不变量门控（spec §14）：**
+```bash
+bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -5  # PASS
+bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -5       # PASS
+```
+
+---
+
+### 任务 9.1：文档 sweep — colon-namespace + session-first 表面
+
+**范围：** 更新顾问文档以反映硬切换 slash 名称和 session-first 表面。保留历史迁移文档不变。
+
+**搜索命令：**
+```bash
+grep -rln '"/new-session\|/list-agents\|/workspace info\|/plugin install\|/end-session' docs/ README*.md 2>/dev/null
+grep -rln 'workspaces\.yaml' docs/ 2>/dev/null
+grep -rln 'workspace\.root' docs/ 2>/dev/null
+grep -rln 'esr-cc\.sh' docs/ 2>/dev/null
+```
+
+**替换规则：**
+
+| 旧内容 | 新内容 |
+|---|---|
+| `/new-session` | `/session:new` |
+| `/end-session` | `/session:end` |
+| `/list-agents` | `/session:list` |
+| `workspaces.yaml` | `sessions/<uuid>/session.json` |
+| `workspace.root` | `session workspace at sessions/<uuid>/` |
+| `esr-cc.sh` | "已在 Phase 8 删除；见 `tools/wipe-esrd-home.sh` 和 `Esr.Plugins.ClaudeCode.Launcher`" |
+| `/plugin install` | `/plugin:set` / `/plugin:show-config` |
+
+**涉及文件：**
+- `docs/dev-guide.md`（spec 指定约第 37、212 行）
+- `docs/cookbook.md`（spec 指定约第 74 行）
+- `docs/manual-checks/` 下的相关条目
+- `docs/futures/todo.md`（移除已完成任务）
+
+**验证：**
+```bash
+grep -rn '/new-session\|/end-session\|/list-agents\|esr-cc\.sh' docs/ README*.md 2>/dev/null \
+  | grep -v "historical\|migration\|PLAN_END\|2026-04\|2026-03\|PR-7\|PR-8\|PR-9\|PR-21\|PR-22\|PR-23\|PR-24\|PR-230" \
+  | grep -v ".git"
+# 预期：顾问文档零命中
+```
+
+- [ ] **Step 1–7**（见英文版 Task 9.1）
+- [ ] **提交**：`docs: sweep — colon-namespace + session-first surface (Phase 9.1)`
+
+---
+
+### 任务 9.2：e2e 场景 14 — 多 agent session
+
+**文件：** `tests/e2e/scenarios/14_session_multiagent.sh`
+
+**Spec 参考：** §9 e2e Scenario 14。
+
+**场景步骤：**
+1. 初始化测试 ESRD_HOME；seed plugin config；seed capabilities；启动 mock Feishu + esrd
+2. 创建 session `multi-test` → 捕获 `$SID`
+3. 添加 agent alice（type=cc）
+4. 添加 agent bob（type=cc）
+5. 验证 session_info：`primary_agent=alice`（第一个添加）；bob 在 agents 列表中
+6. 发送 `@alice ping` → 断言回复包含 "alice"
+7. 发送 `@bob hello` → 断言回复包含 "bob"
+8. 发送纯文本（无 `@`）→ 路由到主 agent（alice）
+9. 设置主 agent 为 bob：`session_set_primary name=bob`
+10. 再次发送纯文本 → 路由到 bob（新主 agent）
+11. 清理：结束 session，停止进程
+
+- [ ] **Step 1–5**（见英文版 Task 9.2，代码块相同）
+- [ ] **提交**：`e2e/14: multi-agent session — @name routing + primary fallback (Phase 9.2)`
+
+---
+
+### 任务 9.3：e2e 场景 15 — 跨用户 session attach（UUID-only）
+
+**文件：** `tests/e2e/scenarios/15_session_share.sh`
+
+**Spec 参考：** §9 e2e Scenario 15。
+
+**场景步骤：**
+1. 初始化测试 ESRD_HOME；seed 2 个用户（alice + bob）并赋予管理权限
+2. alice 创建 session `shared-session` → 捕获 `$SID`（验证为 UUID v4 格式）
+3. alice 共享：`session_share session_id=$SID target_user=bob perm=attach`
+4. bob 从不同 chat（`oc_bob_chat`）执行 `session_attach session_id=$SID`
+5. carol（未授权用户）尝试 attach → 断言 `cap_check_failed`
+6. 以 session 名称（非 UUID）尝试 attach → 断言 `"session caps require UUID"`（D2、D5）
+7. 验证 session_info 显示 alice 和 bob 的 chat 均在 attached set
+8. bob detach → session 仍活跃，仅 alice 在 attached set
+9. 清理
+
+- [ ] **Step 1–5**（见英文版 Task 9.3，代码块相同）
+- [ ] **提交**：`e2e/15: cross-user session attach with cap-gated permission + UUID-only enforcement (Phase 9.3)`
+
+---
+
+### 任务 9.4：e2e 场景 16 — plugin config 三层逐键解析
+
+**文件：** `tests/e2e/scenarios/16_plugin_config_layers.sh`
+
+**Spec 参考：** §9 e2e Scenario 16。
+
+**场景步骤（对应 spec §9 scenario 16 完整流程）：**
+1. 初始化 ESRD_HOME；seed 最小 plugin config；启动 esrd
+2. 设置 global：`plugin_set_config claude_code http_proxy=http://global:8080 layer=global`
+3. 验证 effective（无 user/workspace 层）→ `http_proxy = "http://global:8080"`
+4. 设置 alice 的 user 层：`http_proxy=http://user:8081 layer=user`
+5. alice 的 effective → `http://user:8081`（user > global）
+6. alice 创建 session，设置 workspace 层：`http_proxy="" layer=workspace`
+7. effective → `http_proxy = ""`（workspace 空字符串显式覆盖 user 和 global）
+8. unset workspace 层 → effective 恢复 `http://user:8081`
+9. unset user 层 → effective 恢复 `http://global:8080`
+10. bob（无 user 层覆盖）→ effective = `http://global:8080`
+11. 清理
+
+- [ ] **Step 1–5**（见英文版 Task 9.4，代码块相同）
+- [ ] **提交**：`e2e/16: plugin config 3-layer per-key merge (Phase 9.4)`
+
+---
+
+### Phase 9 PR 检查清单
+
+- [ ] `grep -rn '/new-session\|/end-session\|/list-agents\|esr-cc\.sh' docs/ README*.md 2>/dev/null | grep -v "historical\|migration\|PR-7\|PR-8\|2026-04\|2026-03"` — 顾问文档零命中
+- [ ] `bash tests/e2e/scenarios/14_session_multiagent.sh 2>&1 | tail -3` — PASS
+- [ ] `bash tests/e2e/scenarios/15_session_share.sh 2>&1 | tail -3` — PASS
+- [ ] `bash tests/e2e/scenarios/16_plugin_config_layers.sh 2>&1 | tail -3` — PASS
+- [ ] `make e2e 2>&1 | tail -5` — 所有场景通过
+
+---
+
+## 计划完成
+
+**摘要：** 11 个 phase（1、1b、2、3、4、5、6、7、8、9），约 50 个 task，~5300–6350 LOC 估算（见 spec §7）。每个 phase 以一个 PR 发布到 `dev`。实施顺序：`1 → 1b → 2；1 → 3 → 4；1 → 5；1b + 3 → 6 → 7 → 8 → 9`。
+
+**下一步：** 使用 `superpowers:subagent-driven-development` 按 phase 顺序执行。从 Phase 1 开始（Phase 1b 依赖 Phase 1 的 Paths 规约，所以先做 1 再做 1b）。
+
+<!-- PLAN_COMPLETE — all 11 phases planned -->
