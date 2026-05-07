@@ -178,54 +178,34 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id, chat_id: smoke_chat_id}
   end
 
-  test "/new-session esr-dev name=test root=<tmp> worktree=test succeeds through the full slash path",
-       %{smoke_repo: smoke_repo, app_id: app_id, chat_id: chat_id} do
-    # PR-21θ 2026-04-30: cwd= removed from slash grammar; derived as
-    # `<root>/.worktrees/<branch>`. This smoke test exercises the full
-    # slash → cap check → worktree creation → session spawn path.
-    {:ok, slash} = Esr.Scope.Admin.Process.slash_handler_ref()
+  # Phase 6 colon-namespace cutover: /new-session is now a dead form.
+  # The dispatcher returns a rename hint directing to /session:new.
+  # The full session-creation E2E test will be re-implemented when
+  # Esr.Commands.Session.New is shipped (follow-up phase).
+
+  test "old /new-session returns deprecated-slash hint pointing to /session:new",
+       %{app_id: app_id, chat_id: chat_id} do
     branch = "smoke-#{System.unique_integer([:positive])}"
 
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
-        "text" => "/new-session esr-dev name=test root=#{smoke_repo} worktree=#{branch}",
+        "text" => "/new-session esr-dev name=test root=/tmp/x worktree=#{branch}",
         "args" => %{"app_id" => app_id, "chat_id" => chat_id},
         "chat_id" => chat_id,
         "thread_id" => "om_smoke"
       }
     }
 
-    # PR-21κ Phase 6: dispatch/3 (yaml-driven) replaces the legacy
-    # `:slash_cmd` send. Reply lands ref-tagged.
     ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 2_000
-    assert text =~ "session started:", "expected session-started reply, got: #{text}"
-
-    # Extract the session_id from "session started: <sid>".
-    [_, sid] = Regex.run(~r/session started: (\S+)/, text)
-
-    # Scope.Process came up with the expected args.
-    state = Esr.Scope.Process.state(sid)
-    assert state.agent_name == "cc"
-    # PR-21θ: dir = derived cwd = <root>/.worktrees/<branch>
-    assert state.dir == Path.join([smoke_repo, ".worktrees", branch])
-    assert state.metadata.principal_id == @test_principal
-
-    # PR-8 T4 update: the chat-bound /new-session path now routes through
-    # Scope.Router.create_session/1, which spawns the full pipeline.inbound
-    # (FeishuChatProxy, CCProcess, PtyProcess; CCProxy is a stateless
-    # module). The Session's peers DynamicSupervisor therefore carries the
-    # three Stateful peers.
-    peers_sup = Esr.Scope.supervisor_name(sid)
-    assert DynamicSupervisor.count_children(peers_sup).active == 3
+    assert text =~ "/session:new",
+           "expected deprecated-slash hint mentioning /session:new, got: #{text}"
   end
 
-  test "/new-session without --agent returns a readable error reply",
+  test "old /new-session (error variant) also returns deprecated-slash hint",
        %{app_id: app_id, chat_id: chat_id} do
-    {:ok, _slash} = Esr.Scope.Admin.Process.slash_handler_ref()
-
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
@@ -239,17 +219,12 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 1_000
-    # PR-21κ: dispatch's `parse_route_args` rejects required-arg miss
-    # for `name`. Pre-PR-21κ the legacy parser also rejected `cwd=`
-    # explicitly — both paths surface a hint at user-typed keys.
-    assert text =~ "name",
-           "expected name missing error, got: #{text}"
+    assert text =~ "/session:new",
+           "expected deprecated-slash hint, got: #{text}"
   end
 
-  test "/new-session without matching capability returns an error reply",
+  test "old /new-session (no-cap variant) also returns deprecated-slash hint",
        %{app_id: app_id, chat_id: chat_id} do
-    {:ok, _slash} = Esr.Scope.Admin.Process.slash_handler_ref()
-
     envelope = %{
       "principal_id" => @test_principal_nocap,
       "payload" => %{
@@ -263,16 +238,10 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     ref = SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 1_000
-
-    # Dispatcher rejects the cast before Session.New runs (see
-    # module-level "Drift from expansion doc"); text carries the
-    # Dispatcher's "unauthorized" marker rather than AgentNew's
-    # "missing_capabilities". Either way, the user gets a structured
-    # error — never a crash — which is the spec §P2-13 intent.
-    assert text =~ "error:", "expected an error reply, got: #{text}"
-
-    assert text =~ "unauthorized" or text =~ "missing_capabilities",
-           "expected unauthorized/missing_capabilities, got: #{text}"
+    # Phase 6: /new-session is dead — dispatcher returns a rename hint
+    # before any cap check or command execution.
+    assert text =~ "/session:new",
+           "expected deprecated-slash hint, got: #{text}"
   end
 
   # Borrowed verbatim from `Esr.Admin.DispatcherTest` — tests that

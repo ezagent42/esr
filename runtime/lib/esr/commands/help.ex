@@ -47,6 +47,9 @@ defmodule Esr.Commands.Help do
   defp category_order("Workspace"), do: 1
   defp category_order("Sessions"), do: 2
   defp category_order("Agents"), do: 3
+  defp category_order("PTY"), do: 4
+  defp category_order("Plugins"), do: 5
+  defp category_order("Capabilities"), do: 6
   defp category_order("其他"), do: 99
   defp category_order(_), do: 50
 

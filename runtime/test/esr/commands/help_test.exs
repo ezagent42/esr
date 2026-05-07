@@ -30,7 +30,7 @@ defmodule Esr.Commands.HelpTest do
   test "execute/1 returns text under :ok tuple" do
     load_snapshot([
       route("/help", "help", category: "诊断", description: "show command reference"),
-      route("/sessions", "session_list", category: "Sessions", description: "list sessions")
+      route("/session:list", "session_list", category: "Sessions", description: "list sessions")
     ])
 
     assert {:ok, %{"text" => text}} = Help.execute(%{})
@@ -40,7 +40,7 @@ defmodule Esr.Commands.HelpTest do
 
   test "groups by category and orders 诊断 before Sessions" do
     load_snapshot([
-      route("/sessions", "session_list", category: "Sessions"),
+      route("/session:list", "session_list", category: "Sessions"),
       route("/help", "help", category: "诊断")
     ])
 
@@ -53,19 +53,19 @@ defmodule Esr.Commands.HelpTest do
 
   test "renders required and optional args differently" do
     load_snapshot([
-      route("/new-session", "session_new",
+      route("/session:add-agent", "session_add_agent",
         category: "Sessions",
-        description: "create",
+        description: "add agent",
         args: [
-          %{name: "name", required: true},
-          %{name: "root", required: false}
+          %{name: "type", required: true},
+          %{name: "name", required: false}
         ]
       )
     ])
 
     {:ok, %{"text" => text}} = Help.execute(%{})
-    assert text =~ "name=<…>"
-    assert text =~ "[root=<…>]"
+    assert text =~ "type=<…>"
+    assert text =~ "[name=<…>]"
   end
 
   test "uncategorized routes go to 其他 last" do
