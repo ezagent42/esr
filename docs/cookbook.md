@@ -7,9 +7,9 @@
 > pattern — that pattern was P3-13-dead anyway (`Esr.Topology`
 > deleted). Equivalents:
 >
->   - **session lifecycle**: `/session:add-agent type=<t> name=<tag>` to
->     add an agent; `/session:set-primary name=<tag>` to set primary
->     (Phase 6: `/new-session` → `/session:new`, `/end-session` → `/session:end`).
+>   - **session lifecycle**: `/session:new name=<n>` to create; `/session:add-agent type=<t> name=<tag>` to
+>     add an agent; `/session:set-primary name=<tag>` to set primary;
+>     `/session:end session_id=<uuid>` to end.
 >   - **actors / trace / deadletter / debug**: `runtime/esr actors
 >     list`, `runtime/esr trace`, `runtime/esr deadletter list`,
 >     `runtime/esr debug pause <actor_id>` etc.

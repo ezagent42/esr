@@ -39,7 +39,7 @@ the time comes.
 
 - `feishu_app_proxy` — receives Feishu `msg_received` events for one app,
   routes them to the current thread's `feishu_thread_proxy`, or handles
-  `/new-thread` / `/new-session` meta-commands.
+  `/new-thread` / `/session:new` meta-commands.
 - `feishu_thread_proxy` — one per active CC thread; notifies the CC
   session of inbound messages; sends CC outbound as Feishu replies.
 - The `reply` / `react` / `send_file` / `_echo` MCP tools — all implicitly
