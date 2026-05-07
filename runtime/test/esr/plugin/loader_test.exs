@@ -20,6 +20,10 @@ defmodule Esr.Plugin.LoaderTest do
   setup do
     File.rm_rf!(@tmp_dir)
     File.mkdir_p!(@tmp_dir)
+    # HR-1: ensure the ConfigSnapshot ETS table exists before any
+    # start_plugin/2 call (Application.start/2 normally does this;
+    # unit tests bypass Application).
+    :ok = Esr.Plugin.ConfigSnapshot.create_table()
     on_exit(fn -> File.rm_rf!(@tmp_dir) end)
     :ok
   end
