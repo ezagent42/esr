@@ -1,4 +1,4 @@
-.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-14 e2e-15 e2e-escript e2e-cli
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-14 e2e-15 e2e-16 e2e-17 e2e-escript e2e-cli
 
 test: test-py test-ex
 
@@ -62,6 +62,16 @@ e2e-14:
 
 e2e-15:
 	$(E2E_RUN) tests/e2e/scenarios/15_session_share.sh
+
+e2e-16:
+	$(E2E_RUN) tests/e2e/scenarios/16_plugin_config_layers.sh
+
+# HR-4: hot-reload env propagation via mock-claude binary (2026-05-07).
+# Spawns esrd with claude_binary=tests/e2e/fixtures/mock-claude.sh,
+# validates that plugin_reload + agent restart propagates HTTP_PROXY.
+# Does NOT require a real Anthropic API key or network access.
+e2e-17:
+	$(E2E_RUN) tests/e2e/scenarios/17_plugin_config_hot_reload.sh
 
 # Phase A — CLI dual-rail (2026-05-05). `make e2e-cli` exercises the
 # CLI-touching scenarios (08 + 11) on whichever rail RUN_VIA selects;

@@ -60,3 +60,8 @@ config_schema:
     type: string
     description: "WebSocket URL of the esrd host. Controls the HTTP MCP endpoint."
     default: "ws://127.0.0.1:4001"
+
+  claude_binary:
+    type: string
+    description: "Path to the claude binary (or a mock binary for e2e tests). Defaults to the system 'claude' found at compile time."
+    default: ""

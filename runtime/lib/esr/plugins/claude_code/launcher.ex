@@ -22,7 +22,7 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
 
   alias Esr.Plugin.Config
 
-  @claude_binary System.find_executable("claude") || "claude"
+  @default_claude_binary System.find_executable("claude") || "claude"
 
   @doc """
   Build the OS environment keyword list to pass to PtyProcess.
@@ -103,14 +103,23 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
 
   ## Options
 
-    * `:cwd`  — workspace directory (used for `--add-dir`). Optional.
-    * `:role` — workspace role string (used for `--settings` if a role
-                settings file exists). Optional.
+    * `:cwd`           — workspace directory (used for `--add-dir`). Optional.
+    * `:role`          — workspace role string (used for `--settings` if a role
+                         settings file exists). Optional.
+    * `:claude_binary` — override the binary path (e.g. a mock script for e2e tests).
+                         When absent or empty, falls back to the compile-time
+                         `System.find_executable("claude")` value. Optional.
   """
   @spec spawn_cmd(keyword()) :: [String.t()]
   def spawn_cmd(opts) do
     cwd  = Keyword.get(opts, :cwd)
     role = Keyword.get(opts, :role, "dev")
+
+    binary =
+      case Keyword.get(opts, :claude_binary) do
+        b when is_binary(b) and b != "" -> b
+        _ -> @default_claude_binary
+      end
 
     flags = [
       "--permission-mode", "auto",
@@ -131,7 +140,7 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         :error      -> flags
       end
 
-    [@claude_binary | flags]
+    [binary | flags]
   end
 
   @doc """
@@ -168,7 +177,7 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
              session_id: session_id
            ) do
       env = build_env(plugin_config: config, session_id: session_id)
-      cmd = spawn_cmd(Keyword.take(opts, [:cwd, :role]))
+      cmd = spawn_cmd(Keyword.take(opts, [:cwd, :role]) ++ [claude_binary: config["claude_binary"]])
       {:ok, {cmd, env}}
     end
   end

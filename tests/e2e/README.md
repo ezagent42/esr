@@ -26,7 +26,10 @@ Each recipe has a `timeout 300` wrapper so a hung esrd cannot hold CI.
 | `scenarios/05_topology_routing.sh` | `<channel reachable=…>` + BGP-style reachable_set learn. |
 | `scenarios/06_pty_attach.sh` | PTY actor attach — xterm WS frames; PR-22 canonical green anchor. |
 | `scenarios/07_pty_bidir.sh` | PTY actor bidirectional — keystroke → process → frame round-trip. |
+| `scenarios/16_plugin_config_layers.sh` | Plugin config 3-layer merge (global < user < workspace). |
+| `scenarios/17_plugin_config_hot_reload.sh` | HR-4: hot-reload env propagation via mock-claude binary. Proves `plugin_set` + `plugin_reload` + agent restart delivers updated `HTTP_PROXY` to new subprocess. No real Anthropic API needed. |
 | `fixtures/probe_file.txt` | 1 KB probe for `send_file`. |
+| `fixtures/mock-claude.sh` | Synthetic claude binary for scenario 17. Echoes env state to a side-channel dump file on startup. |
 | `scenarios/_common_selftest.sh` | Self-test for `common.sh`; run in CI before the real scenarios. |
 
 ## Design spec
