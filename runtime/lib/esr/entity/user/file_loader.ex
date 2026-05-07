@@ -22,6 +22,18 @@ defmodule Esr.Entity.User.FileLoader do
 
   Load is non-destructive on parse failure: the prior snapshot is kept
   and the caller sees the specific error.
+
+  UUID population (fix/user-name-index-population):
+  After building the snapshot from YAML, the loader also scans the
+  `users/` directory for `<uuid>/user.json` files to build a
+  `%{username => uuid}` map. This map is passed to
+  `Registry.load_snapshot_with_uuids/2` so that
+  `Esr.Entity.User.NameIndex` is populated at boot time, enabling
+  `/session:share user=<username>` to resolve usernames → UUIDs.
+
+  When `users.yaml` is absent (pre-migration or clean state) the loader
+  falls back to scanning the `users/` directory directly so that the
+  NameIndex is still populated from persisted `user.json` files.
   """
 
   @behaviour Esr.Role.Control
@@ -34,15 +46,20 @@ defmodule Esr.Entity.User.FileLoader do
 
   @spec load(Path.t()) :: :ok | {:error, term()}
   def load(path) do
+    users_dir = Path.dirname(path) |> Path.join("users")
+
     cond do
       not File.exists?(path) ->
-        Registry.load_snapshot(%{})
+        # No users.yaml — load from users/ directory directly if it exists.
+        {snapshot, uuids} = load_from_users_dir(users_dir)
+        Registry.load_snapshot_with_uuids(snapshot, uuids)
         :ok
 
       true ->
         with {:ok, yaml} <- parse(path),
              {:ok, snapshot} <- build_snapshot(yaml) do
-          Registry.load_snapshot(snapshot)
+          uuids = read_uuids_from_dir(users_dir)
+          Registry.load_snapshot_with_uuids(snapshot, uuids)
           Logger.info("users: loaded #{map_size(snapshot)} users from #{path}")
           :ok
         else
@@ -55,6 +72,10 @@ defmodule Esr.Entity.User.FileLoader do
         end
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
 
   defp parse(path) do
     case YamlElixir.read_from_file(path) do
@@ -88,4 +109,72 @@ defmodule Esr.Entity.User.FileLoader do
   end
 
   defp build_snapshot(_), do: {:error, {:malformed, "top level must be a map"}}
+
+  # Scan `<inst>/users/<uuid>/user.json` files and return a `%{username => uuid}` map.
+  # Non-fatal: missing directory or malformed JSON entries are skipped with a warning.
+  @spec read_uuids_from_dir(Path.t()) :: %{String.t() => String.t()}
+  def read_uuids_from_dir(users_dir) do
+    if File.dir?(users_dir) do
+      users_dir
+      |> File.ls!()
+      |> Enum.reduce(%{}, fn entry, acc ->
+        json_path = Path.join([users_dir, entry, "user.json"])
+
+        case read_user_json(json_path) do
+          {:ok, %{"username" => username, "id" => uuid}}
+          when is_binary(username) and is_binary(uuid) ->
+            Map.put(acc, username, uuid)
+
+          _ ->
+            acc
+        end
+      end)
+    else
+      %{}
+    end
+  rescue
+    e ->
+      Logger.warning("users: failed to scan users dir #{users_dir}: #{inspect(e)}")
+      %{}
+  end
+
+  # Load from users/ directory when no users.yaml exists (post-migration state).
+  # Returns {snapshot, uuids} where snapshot is built from user.json files.
+  @spec load_from_users_dir(Path.t()) :: {%{String.t() => User.t()}, %{String.t() => String.t()}}
+  defp load_from_users_dir(users_dir) do
+    if File.dir?(users_dir) do
+      users_dir
+      |> File.ls!()
+      |> Enum.reduce({%{}, %{}}, fn entry, {snap, uuids} ->
+        json_path = Path.join([users_dir, entry, "user.json"])
+
+        case read_user_json(json_path) do
+          {:ok, %{"username" => username, "id" => uuid} = doc}
+          when is_binary(username) and is_binary(uuid) ->
+            feishu_ids = Map.get(doc, "feishu_ids", [])
+            user = %User{username: username, feishu_ids: feishu_ids}
+            {Map.put(snap, username, user), Map.put(uuids, username, uuid)}
+
+          _ ->
+            {snap, uuids}
+        end
+      end)
+    else
+      {%{}, %{}}
+    end
+  rescue
+    e ->
+      Logger.warning("users: failed to load from users dir #{users_dir}: #{inspect(e)}")
+      {%{}, %{}}
+  end
+
+  defp read_user_json(path) do
+    with true <- File.exists?(path),
+         {:ok, content} <- File.read(path),
+         {:ok, parsed} <- Jason.decode(content) do
+      {:ok, parsed}
+    else
+      _ -> :error
+    end
+  end
 end

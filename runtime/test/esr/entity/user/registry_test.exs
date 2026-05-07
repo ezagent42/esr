@@ -3,10 +3,21 @@ defmodule Esr.Entity.User.RegistryTest do
 
   alias Esr.Entity.User.Registry
   alias Esr.Entity.User.Registry.User
+  alias Esr.Entity.User.NameIndex
 
   setup do
+    # NameIndex must start before Registry so load_snapshot_with_uuids can populate it.
+    case :ets.info(:esr_user_name_index_name_to_id) do
+      :undefined -> start_supervised!({NameIndex, []})
+      _ -> :ok
+    end
+
     if Process.whereis(Registry) == nil, do: start_supervised!(Registry)
+
+    # Clear both Registry and NameIndex state between tests.
     Registry.load_snapshot(%{})
+    :ets.delete_all_objects(:esr_user_name_index_name_to_id)
+    :ets.delete_all_objects(:esr_user_name_index_id_to_name)
     :ok
   end
 
@@ -114,6 +125,51 @@ defmodule Esr.Entity.User.RegistryTest do
     test "existing lookup_by_name still works after UUID load" do
       assert {:ok, user} = Esr.Entity.User.Registry.get("linyilun")
       assert user.username == "linyilun"
+    end
+  end
+
+  # fix/user-name-index-population — NameIndex wiring
+
+  describe "NameIndex population via load_snapshot_with_uuids" do
+    test "id_for_name resolves username after boot load" do
+      snapshot = %{
+        "linyilun" => %User{username: "linyilun", feishu_ids: []},
+        "alice" => %User{username: "alice", feishu_ids: []}
+      }
+      uuids = %{"linyilun" => "uuid-lyl-100", "alice" => "uuid-alice-200"}
+
+      :ok = Registry.load_snapshot_with_uuids(snapshot, uuids)
+
+      assert {:ok, "uuid-lyl-100"} = NameIndex.id_for_name("linyilun")
+      assert {:ok, "uuid-alice-200"} = NameIndex.id_for_name("alice")
+    end
+
+    test "id_for_name returns :not_found for user without UUID in map" do
+      snapshot = %{"ghost" => %User{username: "ghost", feishu_ids: []}}
+      # ghost is in the snapshot but has no UUID assigned
+      :ok = Registry.load_snapshot_with_uuids(snapshot, %{})
+
+      assert :not_found = NameIndex.id_for_name("ghost")
+    end
+
+    test "reload clears stale NameIndex entries" do
+      :ok =
+        Registry.load_snapshot_with_uuids(
+          %{"old" => %User{username: "old", feishu_ids: []}},
+          %{"old" => "uuid-old-111"}
+        )
+
+      assert {:ok, "uuid-old-111"} = NameIndex.id_for_name("old")
+
+      # Second load replaces entire snapshot — old entry must be gone.
+      :ok =
+        Registry.load_snapshot_with_uuids(
+          %{"new" => %User{username: "new", feishu_ids: []}},
+          %{"new" => "uuid-new-222"}
+        )
+
+      assert :not_found = NameIndex.id_for_name("old")
+      assert {:ok, "uuid-new-222"} = NameIndex.id_for_name("new")
     end
   end
 end

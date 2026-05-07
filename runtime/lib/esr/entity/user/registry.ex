@@ -14,14 +14,23 @@ defmodule Esr.Entity.User.Registry do
 
   Snapshot replacement is atomic (load_snapshot/1 deletes both tables
   and refills) so callers never observe a half-loaded state.
+
+  NameIndex population (fix/user-name-index-population):
+  Both load handlers also clear and repopulate
+  `Esr.Entity.User.NameIndex` so that `/session:share user=<username>`
+  can resolve usernames → UUIDs at runtime. Only users that have a UUID
+  entry (present in the `uuids` map for `load_snapshot_with_uuids`, or
+  in the `@by_uuid` table for `load_snapshot`) are indexed.
   """
 
   @behaviour Esr.Role.State
   use GenServer
+  require Logger
 
   @by_name :esr_users_by_name
   @by_feishu_id :esr_users_by_feishu_id
   @by_uuid :esr_users_by_uuid
+  @name_index :esr_user_name_index
 
   defmodule User do
     @moduledoc """
@@ -124,6 +133,8 @@ defmodule Esr.Entity.User.Registry do
     :ets.delete_all_objects(@by_name)
     :ets.delete_all_objects(@by_feishu_id)
 
+    clear_name_index()
+
     Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
       :ets.insert(@by_name, {username, user})
       Enum.each(ids, fn id -> :ets.insert(@by_feishu_id, {id, username}) end)
@@ -138,16 +149,51 @@ defmodule Esr.Entity.User.Registry do
     :ets.delete_all_objects(@by_feishu_id)
     :ets.delete_all_objects(@by_uuid)
 
+    clear_name_index()
+
     Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
       :ets.insert(@by_name, {username, user})
       Enum.each(ids, fn id -> :ets.insert(@by_feishu_id, {id, username}) end)
 
       case Map.get(uuids, username) do
-        nil -> :ok
-        uuid -> :ets.insert(@by_uuid, {uuid, user})
+        nil ->
+          :ok
+
+        uuid ->
+          :ets.insert(@by_uuid, {uuid, user})
+          populate_name_index(username, uuid)
       end
     end)
 
     {:reply, :ok, state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — NameIndex population
+  # ---------------------------------------------------------------------------
+
+  # Clear all entries from NameIndex ETS tables. Safe to call even when
+  # NameIndex GenServer is not running (direct ETS access; tables are :public).
+  # Falls back to a warning if the tables don't exist yet (boot-order edge).
+  defp clear_name_index do
+    try do
+      :ets.delete_all_objects(:"#{@name_index}_name_to_id")
+      :ets.delete_all_objects(:"#{@name_index}_id_to_name")
+    rescue
+      ArgumentError ->
+        Logger.warning("User.Registry: NameIndex ETS tables not yet available; skipping clear")
+    end
+  end
+
+  defp populate_name_index(username, uuid) do
+    case Esr.Entity.User.NameIndex.put(@name_index, username, uuid) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "User.Registry: NameIndex.put failed for #{inspect(username)} / #{inspect(uuid)}: #{inspect(reason)}"
+        )
+    end
   end
 end
