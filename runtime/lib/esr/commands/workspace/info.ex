@@ -29,7 +29,6 @@ defmodule Esr.Commands.Workspace.Info do
         "transient" => false,
         "location"  => "esr:<dir>" | "repo:<path>",
         "role"      => "dev",                  # from settings["_legacy.role"]
-        "neighbors" => [],                     # from settings["_legacy.neighbors"]
         "metadata"  => %{},                    # from settings["_legacy.metadata"]
         "topology"  => %{...} | nil            # <folders[0].path>/.esr/topology.yaml
       }}
@@ -122,7 +121,6 @@ defmodule Esr.Commands.Workspace.Info do
 
     # Surface legacy-stashed fields
     role = Map.get(settings, "_legacy.role", "dev")
-    neighbors = Map.get(settings, "_legacy.neighbors", [])
     metadata = Map.get(settings, "_legacy.metadata", %{})
 
     # Serialise chats to string-keyed maps
@@ -158,7 +156,6 @@ defmodule Esr.Commands.Workspace.Info do
       "transient" => ws.transient || false,
       "location" => location,
       "role" => role,
-      "neighbors" => neighbors,
       "metadata" => metadata,
       "topology" => topology
     }
@@ -177,7 +174,6 @@ defmodule Esr.Commands.Workspace.Info do
       "transient" => false,
       "location" => nil,
       "role" => w.role || "dev",
-      "neighbors" => w.neighbors || [],
       "metadata" => w.metadata || %{},
       "topology" => nil
     }

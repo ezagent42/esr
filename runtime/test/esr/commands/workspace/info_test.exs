@@ -22,7 +22,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
         start_cmd: "claude",
         chats: [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}],
         env: %{},
-        neighbors: ["workspace:other-ws"],
         metadata: %{"purpose" => "test"}
       })
 
@@ -33,9 +32,10 @@ defmodule Esr.Commands.Workspace.InfoTest do
     assert info["owner"] == "linyilun"
     # PR-22: workspace no longer carries `root:` — repo is per-session.
     refute Map.has_key?(info, "root")
+    # M-3.6: neighbors field deleted from struct + info output.
+    refute Map.has_key?(info, "neighbors")
     assert info["role"] == "dev"
     assert info["chats"] == [%{"chat_id" => "oc_a", "app_id" => "cli_x", "kind" => "dm"}]
-    assert info["neighbors"] == ["workspace:other-ws"]
     assert info["metadata"] == %{"purpose" => "test"}
   end
 
@@ -79,7 +79,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
           settings: %{
             "cc.model" => "claude-sonnet-4-6",
             "_legacy.role" => "dev",
-            "_legacy.neighbors" => [],
             "_legacy.metadata" => %{}
           },
           env: %{"FOO" => "bar"},
@@ -103,7 +102,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
       # _legacy.* keys must NOT appear in settings
       refute Map.has_key?(info["settings"], "_legacy.role")
-      refute Map.has_key?(info["settings"], "_legacy.neighbors")
       refute Map.has_key?(info["settings"], "_legacy.metadata")
 
       # Non-legacy settings are preserved
@@ -120,7 +118,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
           start_cmd: "",
           chats: [],
           env: %{},
-          neighbors: ["workspace:esr-kanban"],
           metadata: %{"purpose" => "kanban board"}
         })
 
@@ -128,7 +125,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
       assert {:ok, info} = WorkspaceInfo.execute(cmd)
       assert info["role"] == "kanban"
-      assert info["neighbors"] == ["workspace:esr-kanban"]
       assert info["metadata"] == %{"purpose" => "kanban board"}
     end
 
@@ -140,7 +136,6 @@ defmodule Esr.Commands.Workspace.InfoTest do
           role: "dev",
           chats: [],
           env: %{},
-          neighbors: [],
           metadata: %{}
         })
 

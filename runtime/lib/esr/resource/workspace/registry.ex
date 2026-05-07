@@ -52,7 +52,6 @@ defmodule Esr.Resource.Workspace.Registry do
       start_cmd: "",
       chats: [],
       env: %{},
-      neighbors: [],
       metadata: %{}
     ]
 
@@ -215,7 +214,6 @@ defmodule Esr.Resource.Workspace.Registry do
               role: row["role"] || "dev",
               chats: row["chats"] || [],
               env: row["env"] || %{},
-              neighbors: row["neighbors"] || [],
               metadata: row["metadata"] || %{}
             }
 
@@ -584,7 +582,6 @@ defmodule Esr.Resource.Workspace.Registry do
           Map.merge(base, extra)
         end),
       env: ws.env,
-      neighbors: Map.get(ws.settings, "_legacy.neighbors", []),
       metadata: Map.get(ws.settings, "_legacy.metadata", %{})
     }
   end
@@ -601,7 +598,6 @@ defmodule Esr.Resource.Workspace.Registry do
       settings: %{
         "_legacy.role" => legacy.role || "dev",
         "_legacy.start_cmd" => legacy.start_cmd || "",
-        "_legacy.neighbors" => legacy.neighbors || [],
         "_legacy.metadata" => legacy.metadata || %{}
       },
       env: legacy.env || %{},

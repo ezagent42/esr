@@ -32,8 +32,8 @@ defmodule Esr.Resource.Workspace.RegistryTest do
     # PR-22: ws struct no longer has :root field. Accessing it would
     # raise KeyError.
     refute Map.has_key?(ws, :root)
-    # PR-C: workspaces without `neighbors` parse with an empty list.
-    assert ws.neighbors == []
+    # M-3.6: :neighbors field deleted from %Workspace{} struct.
+    refute Map.has_key?(ws, :neighbors)
   end
 
   test "load_from_file/1 silently ignores legacy `root:` in yaml (PR-22)", %{path: path} do
@@ -104,7 +104,7 @@ defmodule Esr.Resource.Workspace.RegistryTest do
     assert workspaces["ws_minimal"].metadata == %{}
   end
 
-  test "load_from_file/1 parses neighbors list (PR-C)", %{path: path} do
+  test "load_from_file/1 silently ignores legacy `neighbors:` in yaml (M-3.6)", %{path: path} do
     File.write!(path, """
     schema_version: 1
     workspaces:
@@ -116,27 +116,15 @@ defmodule Esr.Resource.Workspace.RegistryTest do
           - {chat_id: oc_dev_dm, app_id: cli_dev, kind: dm}
         neighbors:
           - workspace:ws_kanban
-          - chat:oc_legal_special
-          - user:ou_admin
-      ws_kanban:
-        owner: linyilun
-        root: /tmp/kanban
-        chats:
-          - {chat_id: oc_kanban, app_id: cli_kanban, kind: group}
     """)
 
     {:ok, workspaces} = Registry.load_from_file(path)
     ws_dev = workspaces["ws_dev"]
-    assert ws_dev.neighbors == [
-             "workspace:ws_kanban",
-             "chat:oc_legal_special",
-             "user:ou_admin"
-           ]
-    # Optional `name` field on chats survives the parse.
+    # neighbors field deleted; reading it would raise KeyError.
+    refute Map.has_key?(ws_dev, :neighbors)
+    # Other fields unaffected.
     [%{"name" => "dev-room"} = first | _] = ws_dev.chats
     assert first["chat_id"] == "oc_dev"
-    # ws_kanban omits neighbors → defaults to [].
-    assert workspaces["ws_kanban"].neighbors == []
   end
 
   describe "workspace_for_chat/2 (PR-9 T11b.1)" do
