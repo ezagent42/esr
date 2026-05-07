@@ -57,3 +57,19 @@ declares:
   startup:
     module: Esr.Plugins.Feishu.Bootstrap
     function: bootstrap
+
+config_schema:
+  app_id:
+    type: string
+    description: "Feishu app ID (cli_xxx). Required for Feishu API calls."
+    default: ""
+
+  app_secret:
+    type: string
+    description: "Feishu app secret. Required for Feishu API calls. Set via /plugin:set feishu key=app_secret or in global plugins.yaml — do not commit to repo."
+    default: ""
+
+  log_level:
+    type: string
+    description: "Log verbosity for the feishu adapter (debug|info|warning|error)."
+    default: "info"

@@ -486,4 +486,47 @@ defmodule Esr.Entity.FeishuAppAdapter do
   end
 
   defp maybe_emit_un_react(_, state), do: state
+
+  # ------------------------------------------------------------------
+  # Phase 7.6: Plugin.Config-first app credential reads.
+  # Phase 8 removes the System.get_env fallbacks.
+  # ------------------------------------------------------------------
+
+  @doc """
+  Read the Feishu app_id from plugin config first (global layer), then
+  fall back to the `FEISHU_APP_ID` environment variable.
+
+  Accepts optional keyword `opts` to override the global_path (for tests).
+  """
+  def get_app_id(opts \\ []) do
+    config_val =
+      Esr.Plugin.Config.get("feishu", "app_id",
+        [global_path: Esr.Paths.global_plugins_yaml()] ++ opts
+      )
+
+    if is_binary(config_val) and config_val != "" do
+      config_val
+    else
+      System.get_env("FEISHU_APP_ID", "")
+    end
+  end
+
+  @doc """
+  Read the Feishu app_secret from plugin config first (global layer), then
+  fall back to the `FEISHU_APP_SECRET` environment variable.
+
+  Accepts optional keyword `opts` to override the global_path (for tests).
+  """
+  def get_app_secret(opts \\ []) do
+    config_val =
+      Esr.Plugin.Config.get("feishu", "app_secret",
+        [global_path: Esr.Paths.global_plugins_yaml()] ++ opts
+      )
+
+    if is_binary(config_val) and config_val != "" do
+      config_val
+    else
+      System.get_env("FEISHU_APP_SECRET", "")
+    end
+  end
 end
