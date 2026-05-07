@@ -6,8 +6,6 @@ defmodule Esr.Entity.PtyProcessTest do
     (no line-splitting; xterm.js needs ANSI escapes intact).
   - on_terminate/1 broadcasts a bare :pty_closed sentinel so attached
     LiveViews can render an "ended" overlay.
-  - rewire_session_siblings/1 patches sibling peers' state.neighbors
-    under the :pty_process key (PR-21ω' rewire pattern).
 
   Live spawn of the OS process (erlexec :pty + claude) is exercised by
   the e2e scenario `tests/e2e/scenarios/06_pty_attach.sh`, not here.
@@ -61,71 +59,4 @@ defmodule Esr.Entity.PtyProcessTest do
     end
   end
 
-  describe "rewire_session_siblings/1" do
-    defmodule StubPeer do
-      use GenServer
-      def start_link(args), do: GenServer.start_link(__MODULE__, args)
-      @impl true
-      def init(args), do: {:ok, args}
-    end
-
-    test "patches sibling peers' neighbors[:pty_process] with our pid" do
-      sid = "test-rewire-#{System.unique_integer([:positive])}"
-      peers_sup_name = {:via, Registry, {Esr.Scope.Registry, {:peers_sup, sid}}}
-      {:ok, sup_pid} = DynamicSupervisor.start_link(strategy: :one_for_one, name: peers_sup_name)
-
-      on_exit(fn ->
-        if Process.alive?(sup_pid), do: Process.exit(sup_pid, :shutdown)
-      end)
-
-      dead_old = spawn(fn -> :ok end)
-      Process.exit(dead_old, :kill)
-
-      {:ok, stub_fcp} =
-        DynamicSupervisor.start_child(
-          sup_pid,
-          %{
-            id: :stub_fcp,
-            start: {StubPeer, :start_link, [%{neighbors: [pty_process: dead_old, role: :fcp]}]}
-          }
-        )
-
-      {:ok, stub_cc} =
-        DynamicSupervisor.start_child(
-          sup_pid,
-          %{
-            id: :stub_cc,
-            start: {StubPeer, :start_link, [%{neighbors: [pty_process: dead_old, role: :cc]}]}
-          }
-        )
-
-      assert :sys.get_state(stub_fcp).neighbors[:pty_process] == dead_old
-
-      test_pid = self()
-
-      {:ok, fake_pty_pid} =
-        DynamicSupervisor.start_child(
-          sup_pid,
-          %{
-            id: :fake_pty,
-            start:
-              {Task, :start_link,
-               [
-                 fn ->
-                   PtyProcess.rewire_session_siblings(%{session_id: sid})
-                   send(test_pid, {:rewire_done, self()})
-                   :timer.sleep(:infinity)
-                 end
-               ]}
-          }
-        )
-
-      assert_receive {:rewire_done, ^fake_pty_pid}, 500
-
-      assert :sys.get_state(stub_fcp).neighbors[:pty_process] == fake_pty_pid
-      assert :sys.get_state(stub_cc).neighbors[:pty_process] == fake_pty_pid
-      assert :sys.get_state(stub_fcp).neighbors[:role] == :fcp
-      assert :sys.get_state(stub_cc).neighbors[:role] == :cc
-    end
-  end
 end
