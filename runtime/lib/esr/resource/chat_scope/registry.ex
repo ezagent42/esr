@@ -29,6 +29,26 @@ defmodule Esr.Resource.ChatScope.Registry do
   chat routing, URI claims). R5 split the agents.yaml concern to
   `Esr.Entity.Agent.Registry`; chat + URI concerns live here.
 
+  ## Phase 2: Multi-session attach/detach state (chat→[sessions])
+
+  The `@ets_table` now stores TWO entry shapes:
+    - Old (register_session/3): `{key, sid, refs}` 3-tuple — preserves legacy
+      callers that pattern-match `%{feishu_chat_proxy: pid}` from refs.
+    - New (attach/detach API): `{key, %{current: sid | nil, attached: MapSet.t()}}`
+
+  New public API:
+    - `attach_session/3`    — attach a session UUID; sets as current if first
+    - `detach_session/3`    — remove from attached set; promotes next if current
+    - `current_session/2`   — return current session UUID or :not_found
+    - `attached_sessions/2` — list all attached session UUIDs
+    - `reload/0`            — re-read from disk (used in tests + boot)
+
+  `lookup_by_chat/2` handles both ETS shapes as a backward-compat shim.
+
+  Attached state is persisted to `$ESRD_HOME/$ESR_INSTANCE/chat_attached.yaml`
+  on every attach/detach when `ESRD_HOME` is explicitly set. This guard prevents
+  test runs (which share the default ~/.esrd path) from polluting disk state.
+
   ## ETS layout
 
   Four named, protected `:set` tables, owned by this GenServer.
@@ -54,8 +74,10 @@ defmodule Esr.Resource.ChatScope.Registry do
   use GenServer
   require Logger
 
-  # ETS index for (chat_id, app_id) → {session_id, refs}. PR-21λ
-  # collapsed the historic thread_id slot — see moduledoc.
+  # ETS index for (chat_id, app_id) → session entry.
+  # Two shapes coexist:
+  #   Old (register_session/3): {key, sid, refs}
+  #   New (attach/detach API):  {key, %{current: sid | nil, attached: MapSet.t()}}
   @ets_table :esr_chat_scope_chat_index
 
   # PR-21g: D8 uniqueness — additional ETS indexes on
@@ -73,6 +95,82 @@ defmodule Esr.Resource.ChatScope.Registry do
 
   def register_session(session_id, chat_thread_key, peer_refs),
     do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
+
+  @doc """
+  Phase 2: Attach a session UUID to this `(chat_id, app_id)` scope.
+
+  If this is the first attached session, it becomes the current session.
+  Re-attaching an already-attached UUID is idempotent. State is persisted
+  to disk after every attach when ESRD_HOME is set.
+  """
+  @spec attach_session(String.t(), String.t(), String.t()) :: :ok
+  def attach_session(chat_id, app_id, session_uuid)
+      when is_binary(chat_id) and is_binary(app_id) and is_binary(session_uuid) do
+    GenServer.call(__MODULE__, {:attach_session, chat_id, app_id, session_uuid})
+  end
+
+  @doc """
+  Phase 2: Detach a session UUID from this `(chat_id, app_id)` scope.
+
+  If the detached session was current, the next remaining session becomes
+  current (order undefined). If the set is empty after detach, current
+  becomes nil. Idempotent on unknown UUIDs. State is persisted to disk when ESRD_HOME is set.
+  """
+  @spec detach_session(String.t(), String.t(), String.t()) :: :ok
+  def detach_session(chat_id, app_id, session_uuid)
+      when is_binary(chat_id) and is_binary(app_id) and is_binary(session_uuid) do
+    GenServer.call(__MODULE__, {:detach_session, chat_id, app_id, session_uuid})
+  end
+
+  @doc """
+  Phase 2: Return the current (attached-current) session UUID for this chat.
+
+  Direct ETS read — runs in the caller process with no GenServer hop.
+  Returns `{:ok, sid}` when a current session is set, `:not_found` otherwise.
+  Also handles legacy entries written by `register_session/3`.
+  """
+  @spec current_session(String.t(), String.t()) :: {:ok, String.t()} | :not_found
+  def current_session(chat_id, app_id) do
+    case :ets.lookup(@ets_table, {chat_id, app_id}) do
+      [{_, %{current: nil}}] -> :not_found
+      [{_, %{current: sid}}] when is_binary(sid) -> {:ok, sid}
+      # Legacy format written by register_session/3
+      [{_k, sid, _refs}] when is_binary(sid) -> {:ok, sid}
+      [] -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Phase 2: Return the list of all attached session UUIDs for this chat.
+
+  Direct ETS read — runs in the caller process with no GenServer hop.
+  Order of returned list is undefined (MapSet iteration order).
+  For legacy entries written by register_session/3, returns [sid].
+  """
+  @spec attached_sessions(String.t(), String.t()) :: [String.t()]
+  def attached_sessions(chat_id, app_id) do
+    case :ets.lookup(@ets_table, {chat_id, app_id}) do
+      [{_, %{attached: set}}] -> MapSet.to_list(set)
+      # Legacy format written by register_session/3
+      [{_k, sid, _refs}] when is_binary(sid) -> [sid]
+      [] -> []
+    end
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc """
+  Phase 2: Reload attached state from disk. Clears the `@ets_table` entries
+  and repopulates from `chat_attached.yaml`.
+
+  Called when `ESRD_HOME` is set and used in persistence tests.
+  """
+  @spec reload() :: :ok
+  def reload do
+    GenServer.call(__MODULE__, :reload)
+  end
 
   @doc """
   PR-21g D8: claim a session URI tuple. Atomically inserts both the
@@ -131,18 +229,25 @@ defmodule Esr.Resource.ChatScope.Registry do
   end
 
   @doc """
-  Direct ETS lookup — runs in the caller process with no GenServer hop.
-  See `@ets_table` docstring above for the read/write split rationale.
+  Phase 2 backward-compat shim. Returns the current session in the old
+  `{:ok, sid, refs}` format so existing callers don't break.
 
-  Returns the chat-current session for `(chat_id, app_id)`. PR-21λ
-  collapsed the prior 3-tuple `(chat_id, app_id, thread_id)` key —
-  see moduledoc.
+  Handles both ETS shapes:
+    - New shape (attach/detach): returns `{:ok, current_sid, %{}}`
+    - Old shape (register_session/3): returns `{:ok, sid, refs}` with original refs
+
+  Direct ETS lookup — runs in the caller process with no GenServer hop.
   """
   def lookup_by_chat(chat_id, app_id) do
     case :ets.lookup(@ets_table, {chat_id, app_id}) do
-      [{_k, sid, refs}] -> {:ok, sid, refs}
+      [{_, %{current: nil}}] -> :not_found
+      [{_, %{current: sid}}] when is_binary(sid) -> {:ok, sid, %{}}
+      # Old format written by register_session/3 — preserve original refs
+      [{_k, sid, refs}] when is_binary(sid) -> {:ok, sid, refs}
       [] -> :not_found
     end
+  rescue
+    ArgumentError -> :not_found
   end
 
   def unregister_session(session_id),
@@ -182,6 +287,7 @@ defmodule Esr.Resource.ChatScope.Registry do
   end
 
   # GenServer callbacks
+
   @impl true
   def init(_opts) do
     :ets.new(@ets_table, [:named_table, :set, :protected, read_concurrency: true])
@@ -189,7 +295,29 @@ defmodule Esr.Resource.ChatScope.Registry do
     :ets.new(@ets_worktree_index, [:named_table, :set, :protected, read_concurrency: true])
     :ets.new(@ets_default_workspace, [:named_table, :set, :protected, read_concurrency: true])
 
-    {:ok, %{sessions: %{}, chat_to_session: %{}, chat_to_default_workspace_id: %{}}}
+    state = %{sessions: %{}, chat_to_session: %{}, chat_to_default_workspace_id: %{}}
+
+    # Phase 2.4: load persisted attached-set from disk on boot.
+    # Guard on ESRD_HOME being explicitly set — prevents test runs sharing
+    # the default ~/.esrd path from loading stale state written by prior runs.
+    if System.get_env("ESRD_HOME") do
+      load_attached_from_disk()
+    end
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call(:reload, _from, state) do
+    # Clear only the chat-index entries (not URI indexes or default workspace),
+    # then reload from disk. Only meaningful when ESRD_HOME is set.
+    :ets.delete_all_objects(@ets_table)
+
+    if System.get_env("ESRD_HOME") do
+      load_attached_from_disk()
+    end
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -216,6 +344,8 @@ defmodule Esr.Resource.ChatScope.Registry do
         )
     end
 
+    # Write old-format 3-tuple so callers that pattern-match
+    # %{feishu_chat_proxy: pid} from refs keep working (lookup_by_chat handles both).
     :ets.insert(@ets_table, {{c, a}, session_id, refs})
 
     state =
@@ -223,6 +353,47 @@ defmodule Esr.Resource.ChatScope.Registry do
       |> put_in([:sessions, session_id], %{key: key, refs: refs})
       |> put_in([:chat_to_session, {c, a}], session_id)
 
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:attach_session, chat_id, app_id, uuid}, _from, state) do
+    key = {chat_id, app_id}
+
+    slot =
+      case :ets.lookup(@ets_table, key) do
+        [{_, %{} = s}] -> s
+        _ -> %{current: nil, attached: MapSet.new()}
+      end
+
+    new_attached = MapSet.put(slot.attached, uuid)
+    new_current = slot.current || uuid
+    :ets.insert(@ets_table, {key, %{current: new_current, attached: new_attached}})
+
+    persist_attached_to_disk()
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:detach_session, chat_id, app_id, uuid}, _from, state) do
+    key = {chat_id, app_id}
+
+    case :ets.lookup(@ets_table, key) do
+      [{_, %{} = slot}] ->
+        new_attached = MapSet.delete(slot.attached, uuid)
+
+        new_current =
+          cond do
+            slot.current != uuid -> slot.current
+            MapSet.size(new_attached) == 0 -> nil
+            true -> MapSet.to_list(new_attached) |> List.first()
+          end
+
+        :ets.insert(@ets_table, {key, %{current: new_current, attached: new_attached}})
+
+      _ ->
+        :ok
+    end
+
+    persist_attached_to_disk()
     {:reply, :ok, state}
   end
 
@@ -293,6 +464,58 @@ defmodule Esr.Resource.ChatScope.Registry do
     :ets.delete(@ets_default_workspace, {c, a})
     state = update_in(state, [:chat_to_default_workspace_id], &Map.delete(&1, {c, a}))
     {:reply, :ok, state}
+  end
+
+  # Phase 2.4: persistence helpers
+
+  defp persist_path do
+    Path.join(Esr.Paths.runtime_home(), "chat_attached.yaml")
+  end
+
+  defp load_attached_from_disk do
+    path = persist_path()
+
+    case Esr.Resource.ChatScope.FileLoader.load(path) do
+      {:ok, entries} ->
+        Enum.each(entries, fn %{chat_id: c, app_id: a, sessions: sids, current: cur} ->
+          attached = MapSet.new(sids)
+          :ets.insert(@ets_table, {{c, a}, %{current: cur, attached: attached}})
+        end)
+
+      {:error, reason} ->
+        Logger.warning("chat_scope_registry: failed to load #{path}: #{inspect(reason)}")
+    end
+
+    :ok
+  end
+
+  defp persist_attached_to_disk do
+    # Only persist when ESRD_HOME is explicitly configured — prevents test runs
+    # (which share the default ~/.esrd path) from writing stale state to disk
+    # and polluting subsequent test runs via init/1's load_attached_from_disk.
+    if System.get_env("ESRD_HOME") do
+      entries =
+        :ets.tab2list(@ets_table)
+        |> Enum.flat_map(fn
+          {{c, a}, %{current: cur, attached: set}} ->
+            [%{chat_id: c, app_id: a, sessions: MapSet.to_list(set), current: cur}]
+
+          _ ->
+            []
+        end)
+
+      path = persist_path()
+
+      case Esr.Resource.ChatScope.FileLoader.write(path, entries) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("chat_scope_registry: failed to persist #{path}: #{inspect(reason)}")
+      end
+    else
+      :ok
+    end
   end
 
   defp drop_uri_rows_for(sid) do
