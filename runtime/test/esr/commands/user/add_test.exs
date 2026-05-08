@@ -150,4 +150,44 @@ defmodule Esr.Commands.User.AddTest do
       assert result["default_workspace"] == "#{name}-default"
     end
   end
+
+  describe "rollback on partial failure (yellow-fix #2 / spec §9 invariant 5)" do
+    setup do
+      on_exit(fn -> Esr.Test.WorkspaceFixture.reset!() end)
+      :ok
+    end
+
+    test "set_default_workspace failure undoes every prior write" do
+      name = "rb-#{System.unique_integer([:positive])}"
+      cmd = %{"args" => %{"name" => name}}
+
+      stub_set_default = fn _username, _ws_id -> {:error, :forced_fail} end
+
+      assert {:error, %{"type" => "write_failed"}} =
+               Esr.Commands.User.Add.execute(cmd, set_default_fn: stub_set_default)
+
+      users_yaml_path = Esr.Paths.users_yaml()
+
+      if File.exists?(users_yaml_path) do
+        {:ok, users_doc} = YamlElixir.read_from_file(users_yaml_path)
+        users = Map.get(users_doc, "users", %{})
+        refute Map.has_key?(users, name), "users.yaml still contains #{name} after rollback"
+      end
+
+      assert :not_found =
+               Esr.Resource.Workspace.NameIndex.id_for_name(
+                 :esr_workspace_name_index,
+                 "#{name}-default"
+               )
+    end
+
+    test "post-rollback /user:add <same-name> succeeds (no spurious already_exists)" do
+      name = "rb2-#{System.unique_integer([:positive])}"
+      stub_fail = fn _u, _w -> {:error, :boom} end
+
+      assert {:error, _} = Esr.Commands.User.Add.execute(%{"args" => %{"name" => name}}, set_default_fn: stub_fail)
+      assert {:ok, %{"text" => text}} = Esr.Commands.User.Add.execute(%{"args" => %{"name" => name}})
+      assert text =~ "added"
+    end
+  end
 end
