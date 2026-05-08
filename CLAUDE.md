@@ -27,6 +27,18 @@ This file is loaded as context for any Claude Code session that runs
 | cc_mcp Python bridge | `(cd adapters/cc_mcp && uv run --with pytest --with pytest-asyncio pytest)` | Never bare `python` / `pytest` |
 | E2E scenario | `bash tests/e2e/scenarios/0X_*.sh` | Index in [`README.md`](README.md) §"E2E test scenarios" |
 
+## ⚠️ After every feature PR merges to `dev` — promote to `main`
+
+> **Rule (per [`docs/dev-flow.md`](docs/dev-flow.md)):** every `gh pr merge` against `dev` must be followed in the **same session** by promoting `dev → main`. Skipping accumulates SHA divergence; the 2026-05-08 reconciliation (PR #264) was a one-shot recovery from 8 days of skipped promotions.
+
+```bash
+bash scripts/promote-dev-to-main.sh                            # opens promotion PR ($N)
+git fetch origin && git push origin origin/dev:main            # fast-forward, preserves SHAs
+gh pr close $N -c "Fast-forwarded via direct push (preserves SHAs across dev/main)."
+```
+
+**Do NOT** use `gh pr merge --rebase` or `gh pr merge --squash` on a `dev → main` PR — both rewrite SHAs and re-create the divergence the FF flow exists to prevent.
+
 ## E2E scenarios — single index
 
 E2E coverage lives in [`tests/e2e/scenarios/`](tests/e2e/scenarios/).
