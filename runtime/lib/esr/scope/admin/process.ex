@@ -29,9 +29,9 @@ defmodule Esr.Scope.Admin.Process do
 
   @doc """
   Return `[{name, pid}, ...]` for all currently registered admin peers.
-  Used by legacy callers (e.g. `Esr.Plugins.Feishu.Commands.Notify`) that need
-  to iterate to find a matching peer — post-P2-16 replacement for
-  `Esr.AdapterHub.Registry.list/0`.
+  Used by callers that iterate to find a matching peer (e.g. plugin
+  command modules looking for their adapter sidecar) — post-P2-16
+  replacement for `Esr.AdapterHub.Registry.list/0`.
   """
   def list_admin_peers, do: GenServer.call(__MODULE__, :list_admin_peers)
 
