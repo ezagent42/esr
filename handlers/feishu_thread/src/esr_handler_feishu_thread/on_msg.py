@@ -1,6 +1,6 @@
 """Feishu thread-proxy handler (v0.2 §3.3).
 
-Primary path switched from tmux send-keys (v0.1) to esr-channel
+Primary path switched from inbound-then-fanout (v0.1) to esr-channel
 notification (v0.2). The v0.1 `feishu_msg_received` branch was dead
 code — adapter emits `msg_received`. This rewrite:
 

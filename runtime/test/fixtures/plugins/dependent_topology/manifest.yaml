@@ -1,0 +1,24 @@
+# Dependent topology plugin — covers Spec B §二 "Topology fragment"
+# type: wiring declarations that reference an upstream plugin's
+# components. Tests `depends_on.plugins` topo-sort + cross-plugin
+# coexistence in core registries.
+#
+# Depends on `bare_component` so the loader must order
+# bare_component → dependent_topology when both are enabled. Provides
+# its own cap + sidecar to verify two plugins' contributions live
+# side-by-side without overwriting each other.
+name: dependent_topology
+version: 0.0.1
+description: Topology-shape plugin with a depends_on edge into bare_component.
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins:
+    - bare_component
+
+declares:
+  capabilities:
+    - dependent_topology/echo
+  python_sidecars:
+    - adapter_type: dependent_topology_adapter
+      python_module: dependent_topology_runner

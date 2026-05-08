@@ -2,7 +2,7 @@ defmodule Esr.Persistence.Supervisor do
   @moduledoc """
   Supervises ETS-backed actor-state persistence (PRD 01 F18, spec §3.1).
   Hosts `Esr.Persistence.Ets` keyed by table `:esr_actor_states`.
-  PeerServer reads/writes this table; restart-survival (Track G-4)
+  Entity.Server reads/writes this table; restart-survival (Track G-4)
   re-hydrates from disk via `Esr.Persistence.Ets.load_from_disk/2`.
   """
   use Supervisor

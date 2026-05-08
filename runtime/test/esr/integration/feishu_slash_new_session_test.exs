@@ -18,19 +18,19 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
        `SessionRegistry.lookup_by_chat_thread/3` — proving the binding loop.
 
   The integration test uses the production SlashHandler started by
-  `Esr.AdminSession.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
+  `Esr.Scope.Admin.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
   full command path runs through `Esr.Admin.Dispatcher` → `Session.New`.
 
   ## PR-8 T4 update
 
   Post-T4, `Session.New` delegates the chat-bound branch to
-  `Esr.SessionRouter.create_session/1`, which spawns the full
-  `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, TmuxProcess)
+  `Esr.Scope.Router.create_session/1`, which spawns the full
+  `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, PtyProcess)
   and registers the session with refs carrying each spawned peer pid.
   This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
   returns the newly-created session); the T4-specific assertion —
   that `refs.feishu_chat_proxy` is a live pid — lives in
-  `Esr.Admin.Commands.Session.NewTest`'s `:t4_session_router` describe
+  `Esr.Commands.Scope.NewTest`'s `:t4_session_router` describe
   block rather than here, to keep each test focused.
   """
   use ExUnit.Case, async: false
@@ -41,9 +41,8 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
   import Esr.TestSupport.AppSingletons, only: [assert_with_grants: 1]
   import Esr.TestSupport.SessionsCleanup, only: [wipe_sessions_on_exit: 1]
-  import Esr.TestSupport.TmuxIsolation, only: [isolated_tmux_socket: 1]
 
-  alias Esr.Peers.SlashHandler
+  alias Esr.Entity.SlashHandler
 
   @test_principal "ou_t3_flow"
   @chat_id "oc_slashsession"
@@ -51,47 +50,27 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
   setup :assert_with_grants
   setup :wipe_sessions_on_exit
-  # PR-8 T4: Session.New now routes through SessionRouter, which spawns
-  # the full pipeline — including TmuxProcess. Pin a throwaway socket so
-  # the integration test doesn't touch the user's default tmux socket.
-  setup :isolated_tmux_socket
 
-  setup %{tmux_socket: sock} do
+  setup do
     ensure_admin_dispatcher()
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    # PR-8 T4: SessionRouter must be up for the chat-bound Session.New
-    # path to succeed. The router is not (yet) an Esr.Application child,
-    # so tests stand it up under the ExUnit supervisor when absent.
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
-
-    # TmuxProcess.spawn_args/1 picks up :tmux_socket_override from app
-    # env when no explicit :tmux_socket is threaded through — Session.New
-    # has no dedicated tmux_socket arg, so route via the app env.
-    prior_tmux_override = Application.get_env(:esr, :tmux_socket_override)
-    Application.put_env(:esr, :tmux_socket_override, sock)
-
-    on_exit(fn ->
-      case prior_tmux_override do
-        nil -> Application.delete_env(:esr, :tmux_socket_override)
-        v -> Application.put_env(:esr, :tmux_socket_override, v)
-      end
-    end)
 
     :ok = Esr.TestSupport.Grants.with_grants(%{@test_principal => ["*"]})
 
     # PR-8 T1: SlashHandler is auto-started by
-    # `Esr.AdminSession.bootstrap_slash_handler/0` at application boot,
+    # `Esr.Scope.Admin.bootstrap_slash_handler/0` at application boot,
     # so we only need to re-spawn if a sibling torched it.
     slash_pid =
-      case Esr.AdminSessionProcess.slash_handler_ref() do
+      case Esr.Scope.Admin.Process.slash_handler_ref() do
         {:ok, pid} ->
           pid
 
@@ -108,11 +87,11 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       end
 
     on_exit(fn ->
-      # PR-A T1: SessionRouter defaults app_id to "default" when the
+      # PR-A T1: Scope.Router defaults app_id to "default" when the
       # slash flow doesn't carry one (T3 will surface app_id explicitly).
-      Esr.SessionRegistry.lookup_by_chat(@chat_id, "default")
+      Esr.Resource.ChatScope.Registry.lookup_by_chat(@chat_id, "default")
       |> case do
-        {:ok, sid, _} -> Esr.SessionRegistry.unregister_session(sid)
+        {:ok, sid, _} -> Esr.Resource.ChatScope.Registry.unregister_session(sid)
         _ -> :ok
       end
     end)
@@ -135,18 +114,18 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     # production-equivalent dispatch path.
     test_app_id = "default"
 
-    workspace = %Esr.Workspaces.Registry.Workspace{
-      name: "esr-dev",
-      owner: "t3_user",
-      role: "dev",
-      chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}],
-      metadata: %{}
-    }
+    workspace =
+      Esr.Test.WorkspaceFixture.build(
+        name: "esr-dev",
+        owner: "t3_user",
+        role: "dev",
+        chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}]
+      )
 
-    Esr.Workspaces.Registry.put(workspace)
+    Esr.Resource.Workspace.Registry.put(workspace)
 
-    Esr.Users.Registry.load_snapshot(%{
-      "t3_user" => %Esr.Users.Registry.User{
+    Esr.Entity.User.Registry.load_snapshot(%{
+      "t3_user" => %Esr.Entity.User.Registry.User{
         username: "t3_user",
         feishu_ids: [@test_principal]
       }
@@ -155,12 +134,14 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id}
   end
 
-  test "slash /new-session binds session in SessionRegistry; 2nd inbound resolves to it",
+  # Phase 6 colon-namespace cutover: /new-session is now a dead form.
+  # The full E2E session-creation test will be re-implemented when
+  # Esr.Commands.Session.New ships (follow-up phase).
+  # For now, verify the old form returns a deprecated-slash hint.
+  test "old /new-session returns deprecated-slash hint pointing to /session:new",
        %{smoke_repo: smoke_repo, app_id: app_id} do
-    {:ok, slash} = Esr.AdminSessionProcess.slash_handler_ref()
     branch = "t3-#{System.unique_integer([:positive])}"
 
-    # Step 1: inbound slash envelope, shaped as FeishuChatProxy would build it.
     envelope = %{
       "principal_id" => @test_principal,
       "payload" => %{
@@ -171,48 +152,21 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
       }
     }
 
-    # Step 2 + 3 + 4: SlashHandler.dispatch/3 → Dispatcher → Session.New.
-    # (PR-21κ Phase 6: legacy `:slash_cmd` send replaced by yaml-driven
-    # dispatch/3.)
-    _ = slash
-    ref = Esr.Peers.SlashHandler.dispatch(envelope, self(), make_ref())
+    ref = Esr.Entity.SlashHandler.dispatch(envelope, self(), make_ref())
 
     assert_receive {:reply, text, ^ref}, 2_000
-
-    assert text =~ "session started:",
-           "expected session-started reply, got: #{inspect(text)}"
-
-    [_, sid] = Regex.run(~r/session started: (\S+)/, text)
-
-    # Step 5: a second inbound for the same (chat_id, app_id, thread_id)
-    # resolves to the newly-created session — the binding loop is closed.
-    # PR-A T1: slash flow doesn't yet supply app_id so SessionRouter
-    # defaults to "default".
-    assert {:ok, ^sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(@chat_id, "default"),
-           "SessionRegistry.lookup_by_chat_thread/3 must return the session " <>
-             "created by the slash command"
-
-    assert is_map(refs)
-
-    # SessionProcess actually stored the chat_thread_key too (T2 behaviour,
-    # double-checked here so T3 failures are easy to diagnose).
-    state = Esr.SessionProcess.state(sid)
-
-    # PR-21λ: chat_thread_key narrowed to the (chat_id, app_id) routing key.
-    assert state.chat_thread_key == %{chat_id: @chat_id, app_id: "default"}
-
-    assert state.metadata.principal_id == @test_principal
+    assert text =~ "/session:new",
+           "expected deprecated-slash hint mentioning /session:new, got: #{inspect(text)}"
   end
 
   # Borrowed from Esr.Integration.NewSessionSmokeTest — tests that restart
   # the Admin.Supervisor may race against siblings.
   defp ensure_admin_dispatcher do
     if Process.whereis(Esr.Admin.Dispatcher) == nil do
-      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Admin.Supervisor)
+      _ = Supervisor.restart_child(Esr.Supervisor, Esr.Slash.Supervisor)
 
       if Process.whereis(Esr.Admin.Dispatcher) == nil do
-        {:ok, _} = Esr.Admin.Supervisor.start_link([])
+        {:ok, _} = Esr.Slash.Supervisor.start_link([])
       end
     end
 

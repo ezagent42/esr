@@ -10,7 +10,17 @@ defmodule Esr.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      # Phase 2 PR-2.5: Elixir-native CLI escript. Built via
+      # `mix escript.build`; produces a self-contained `esr` binary
+      # that talks to a running esrd via the schema dump endpoint
+      # (PR-2.1) and the admin queue (PR-2.3b).
+      escript: [
+        main_module: Esr.Cli.Main,
+        name: "esr",
+        path: "esr",
+        app: nil
+      ]
     ]
   end
 
@@ -60,6 +70,8 @@ defmodule Esr.MixProject do
       # bidirectional stdin/stdout + BEAM-exit cleanup, all in one.
       # Migration history: docs/notes/erlexec-migration.md.
       {:erlexec, "~> 2.2"},
+      {:elixir_uuid, "~> 1.2", hex: :uuid_utils},
+      {:ex_json_schema, "~> 0.11", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
@@ -79,7 +91,11 @@ defmodule Esr.MixProject do
       # with SIGKILL and asserts no tmux orphans within 10 s. Excluded from
       # default `mix test` via `:os_cleanup` tag in test_helper.exs; runs
       # only when this alias (or `mix test --only os_cleanup`) is invoked.
-      "test.e2e.os_cleanup": ["test --only os_cleanup"]
+      "test.e2e.os_cleanup": ["test --only os_cleanup"],
+      # PR-24 follow-up: standard Phoenix alias so prod releases /
+      # operators bundling without dev-mode watchers get a fresh,
+      # minified app.js / app.css. Run via `MIX_ENV=prod mix assets.deploy`.
+      "assets.deploy": ["esbuild default --minify", "phx.digest"]
     ]
   end
 end

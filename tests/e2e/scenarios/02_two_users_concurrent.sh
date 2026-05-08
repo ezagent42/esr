@@ -67,7 +67,7 @@ assert_not_contains "$B_BODY" "ack-alpha-uniq" "user-step 7: beta contaminated w
 
 # --- user-step 8: end both sessions ----------------------------------
 # Capture the two auto-created session_ids from the live actor list.
-ACTORS_OUT=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null)
+ACTORS_OUT=$(esr_cli actors list 2>/dev/null)
 # macOS /bin/bash is 3.2 (no readarray/mapfile). Build the array with
 # a portable while-read loop fed by process substitution.
 SIDS=()
@@ -78,14 +78,13 @@ done < <(echo "$ACTORS_OUT" | awk '/^thread:/ { sub("thread:", "", $1); print $1
   || _fail_with_context "user-step 8: expected 2 thread:<sid> actors, saw ${#SIDS[@]}"
 
 for sid in "${SIDS[@]}"; do
-  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+  esr_cli admin submit session_end \
     --arg "session_id=${sid}" \
     --wait --timeout 30
 done
 
 for _ in $(seq 1 50); do
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   if ! echo "$out" | grep -q "^thread:"; then
     break
   fi

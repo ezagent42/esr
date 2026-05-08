@@ -31,7 +31,7 @@ def test_generic_adapter_runner_accepts_any_adapter() -> None:
     """No allowlist → any adapter passes --dry-run validation."""
     from generic_adapter_runner.__main__ import main
 
-    for name in ("feishu", "cc_tmux", "cc_mcp", "some_new_thing"):
+    for name in ("feishu", "cc_mcp", "some_new_thing"):
         exit_code = main([
             "--adapter", name,
             "--instance-id", "x1",

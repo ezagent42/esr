@@ -2,7 +2,7 @@ defmodule Esr.TestSupport.Grants do
   @moduledoc """
   Shared ExUnit setup helper for tests that need to grant test
   principals capabilities without leaking the grant into sibling
-  tests. Snapshots the current `Esr.Capabilities.Grants` ETS table,
+  tests. Snapshots the current `Esr.Resource.Capability.Grants` ETS table,
   merges the requested grants on top, and registers an `on_exit`
   that restores the prior snapshot.
 
@@ -24,7 +24,7 @@ defmodule Esr.TestSupport.Grants do
   The helpers return `:ok` so they compose with other setup blocks.
 
   Why read ETS directly rather than use a `snapshot/0` API on
-  `Esr.Capabilities.Grants`? The GenServer doesn't expose one — every
+  `Esr.Resource.Capability.Grants`? The GenServer doesn't expose one — every
   integration test currently reaches into `:esr_capabilities_grants`
   with `:ets.tab2list/1` to preserve prior state. Consolidating that
   convention here keeps the pattern in one place; if a public
@@ -49,7 +49,7 @@ defmodule Esr.TestSupport.Grants do
   Merge `grants` (a map of `principal_id => held_list`) onto the
   current grants snapshot; restore the prior snapshot on exit.
 
-  `held_list` follows the same shape `Esr.Capabilities.Grants`
+  `held_list` follows the same shape `Esr.Resource.Capability.Grants`
   stores in ETS — a list of permission strings, or `["*"]` for
   wildcard, or `[]` for an intentionally empty grant (e.g. to
   exercise the unauthorized branch).
@@ -57,8 +57,8 @@ defmodule Esr.TestSupport.Grants do
   @spec with_grants(%{optional(String.t()) => [String.t()]}) :: :ok
   def with_grants(grants) when is_map(grants) do
     prior = snapshot()
-    :ok = Esr.Capabilities.Grants.load_snapshot(Map.merge(prior, grants))
-    on_exit(fn -> Esr.Capabilities.Grants.load_snapshot(prior) end)
+    :ok = Esr.Resource.Capability.Grants.load_snapshot(Map.merge(prior, grants))
+    on_exit(fn -> Esr.Resource.Capability.Grants.load_snapshot(prior) end)
     :ok
   end
 

@@ -1,16 +1,42 @@
 # ESR v0.2 Developer Guide
 
+## CLI installation (Phase 2, post-PR-2.5/2.6)
+
+The `esr` CLI is now an Elixir-native escript built from `runtime/`.
+
+```sh
+cd runtime
+mix escript.build
+# Produces ./esr — copy to a directory on $PATH:
+cp esr ~/.local/bin/esr     # or wherever your $PATH points
+```
+
+Or install system-wide via:
+```sh
+mix escript.install path/to/runtime
+```
+
+The escript talks to a running `esrd` over HTTP (`/admin/slash_schema.json`)
+and through the admin queue files. No Python dependency required for the
+core CLI surface: `esr exec`, `esr help`, `esr describe-slashes`,
+`esr daemon`, `esr admin submit`, `esr notify`.
+
+Migration note: 2026-05-06 — Python click CLI fully deleted. The
+escript at `runtime/esr` (or `./esr.sh` wrapper) is the only operator
+surface. Adapter / workspace registration runs via slash commands
+through the admin queue.
+
 ## Getting started
 
 1. Ensure a Feishu app exists and its bot is a member of the chat(s) you
    want to drive CC sessions from. Copy `app_id` and `app_secret`.
 2. `bash scripts/esrd.sh start --instance=default`
-3. `uv run --project py esr adapter add feishu-prod --type feishu \
-       --app-id <app_id> --app-secret <app_secret>`
-4. `uv run --project py esr workspace add esr-dev \
-       --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
-       --role dev --chat <chat_id>:<app_id>:dm`
-5. In Feishu, DM the bot: `/new-session esr-dev name=root`
+3. `runtime/esr exec adapter_start type=feishu instance_id=feishu-prod \
+       app_id=<app_id> app_secret=<app_secret>` (or `./esr.sh ...`).
+4. `runtime/esr exec workspace_new name=esr-dev role=dev \
+       start_cmd=claude \
+       chat_id=<chat_id> app_id=<app_id>`
+5. In Feishu, DM the bot: `/workspace:new name=esr-dev` (then use `/session:add-agent` etc.)
 6. A tmux window `smoke-root` appears hosting a CC session with
    `esr-channel` MCP loaded. Subsequent messages to the bot (or with
    `@root <message>` prefix) get routed into that session's prompt.
@@ -98,7 +124,8 @@ def hello() -> None:
     )
 ```
 
-Invoke it via `esr cmd run hello --param name=world`.
+Invoke via `/session:add-agent` (the topology DSL `esr cmd run` was P3-13-deleted
+along with `Esr.Topology`; sessions are spawned via slash routes now).
 
 ## Debugging
 
@@ -156,7 +183,7 @@ For business-topology context (purpose, pipeline position, downstream
 hand-off, expected format), CC calls
 `mcp__esr-channel__describe_topology` — parameter-less; cc_mcp injects
 `ESR_WORKSPACE` server-side. Operators populate
-`workspaces.yaml` `metadata:` to feed it. Spec
+the workspace's `metadata:` field to feed it. Spec
 `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`.
 
 ## CC session prompt prelude
@@ -173,18 +200,21 @@ ESR repo itself** (test commands, gotchas, links). Don't conflate.
 
 ## Common gotchas
 
-- `workspaces.yaml` lives at `~/.esrd/default/workspaces.yaml`; v0.2 is
-  not yet per-instance-aware in the CLI.
+- Workspace config is stored per-workspace under
+  `~/.esrd/<inst>/workspaces/<name>/workspace.json` (ESR-bound) or
+  `<repo>/.esr/workspace.json` (repo-bound). See
+  `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`.
 - `cc_tmux.new_session` start_cmd is relative to `adapter_runner` cwd
   (repo root); absolute paths are clearer.
 - MCP connection failures show as `tool_result.error.type=esrd_disconnect`
   in the CC tool output; retry is the operator's job.
 - `claude --resume <session_id>` requires the session id to exist in
-  `~/.esrd/default/session-ids.yaml` — `esr-cc.sh` writes this on first
-  spawn and reads it on restart.
-- `metadata:` in `workspaces.yaml` is exposed verbatim to the LLM via
-  `describe_topology` — never put secrets there. Use `env:` (filtered
-  at the response boundary) or `cwd:` (also filtered).
+  `~/.esrd/default/session-ids.yaml` — `Esr.Plugins.ClaudeCode.Launcher`
+  writes this on first spawn and reads it on restart (`scripts/esr-cc.sh`
+  was deleted in Phase 8; the Launcher module is now the sole entry point).
+- `metadata:` in a workspace's `workspace.json` is exposed verbatim to
+  the LLM via `describe_topology` — never put secrets there. Use `env:`
+  (filtered at the response boundary) or `cwd:` (also filtered).
 - `notifications/claude/channel` only forwards attributes matching
   `[A-Za-z0-9_]+`. Nested children are silently dropped; encode list
   attrs as JSON strings (`reachable=` precedent).

@@ -30,8 +30,7 @@ wait_for_sidecar_ready 30
 # E2E RCA (2026-04-23): v1.0 used `esr cmd run "/new-session ..."` but that
 # CLI is for .compiled/<name>.yaml artefacts, not slash commands. The
 # correct admin-side path is `esr admin submit session_new --arg ...`.
-SESSION_CREATE_OUT=$(ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_new \
+SESSION_CREATE_OUT=$(esr_cli admin submit session_new \
   --arg agent=cc \
   --arg dir=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/workdir-single \
   --wait --timeout 30)
@@ -100,7 +99,7 @@ assert_mock_feishu_file_sha "oc_mock_single" "$EXPECTED_SHA"
 # tag from a pre-T11b architecture no longer exists). We use this
 # session_id both for the step-5 persistence check and the step-6
 # `/end-session` argument.
-LIVE_SESSION_ID=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+LIVE_SESSION_ID=$(esr_cli actors list 2>/dev/null \
   | awk '/^thread:/ { sub("thread:", "", $1); print $1; exit }')
 [[ -n "$LIVE_SESSION_ID" ]] \
   || _fail_with_context "user-step 5: no thread:<sid> actor found after inbound"
@@ -119,12 +118,11 @@ assert_actors_list_has "thread:${LIVE_SESSION_ID}" \
 # T12-comms-3j: `esr cmd run` resolves `.compiled/<name>.yaml` artifacts,
 # not slash commands — same trap the step-1 RCA warns about. The
 # admin-side path for session_end is `esr admin submit session_end`.
-ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-  uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+esr_cli admin submit session_end \
   --arg "session_id=${LIVE_SESSION_ID}" \
   --wait --timeout 30
 for _ in $(seq 1 50); do
-  if ! uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null \
+  if ! esr_cli actors list 2>/dev/null \
          | grep -q "thread:${LIVE_SESSION_ID}"; then
     break
   fi

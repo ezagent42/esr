@@ -5,7 +5,7 @@ defmodule EsrWeb.ChannelCase do
   Tests using this case get `Phoenix.ChannelTest` helpers imported
   and the `@endpoint` attribute bound to `EsrWeb.Endpoint`. Channels
   run against the live application-started supervision tree, so any
-  PeerRegistry bindings set up in tests are visible to channel
+  Entity.Registry bindings set up in tests are visible to channel
   callbacks (they share Registry state). The legacy
   `Esr.AdapterHub.Registry` was removed in P2-16.
   """

@@ -26,7 +26,15 @@ config :esr, EsrWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "KOdrsW/zedLNm8KEHDUojb3QkxZEkwnN5l0J/xKaVI9y0gfvzFIqRy9b+Fk0ce8h",
-  watchers: []
+  # esbuild as a Phoenix watcher: rebuild priv/static/assets/app.js
+  # whenever assets/js/* changes, with --watch for incremental rebuilds.
+  # Pre-PR-24: empty watchers meant the bundle was built once (manually
+  # or in mix.exs deps fetch) and stayed stale across dev edits — operators
+  # restarted esrd and didn't see their JS changes until they ran
+  # `mix esbuild default` by hand. The watcher entry here closes that gap.
+  watchers: [
+    esbuild: {Esbuild, :install_and_run, [:default, ~w(--watch)]}
+  ]
 
 # ## SSL Support
 #

@@ -24,7 +24,7 @@ set -Eeuo pipefail
 : "${ESR_OPERATOR_PRINCIPAL_ID:=ou_admin}"
 
 # PR-9 T11b.0a — first-boot capabilities fallback + ChannelChannel default.
-# Esr.Capabilities.Supervisor seeds capabilities.yaml from this principal
+# Esr.Resource.Capability.Supervisor seeds capabilities.yaml from this principal
 # when the file is absent; EsrWeb.ChannelChannel uses it as the default
 # principal_id on tool_invoke arriving before session_register. Held
 # identical to ESR_OPERATOR_PRINCIPAL_ID so the same ou_admin row seeded by
@@ -40,6 +40,37 @@ mkdir -p "${ESR_E2E_BARRIER_DIR}" "${ESRD_HOME}" "$(dirname "${ESR_E2E_TMUX_SOCK
 # --- repo root (for paths inside helpers) ----------------------------
 _E2E_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 export _E2E_REPO_ROOT
+
+# --- CLI dual-rail (Phase A 2026-05-05) ------------------------------
+# Run esr via either Python click-CLI (default) or Elixir-native escript.
+# Toggle with `RUN_VIA=escript` to exercise the migration target.
+#
+# Why dual-rail: pre-Phase-A every e2e exercised only the Python rail,
+# so the "escript replaces Python CLI" Phase 2 claim was never verified.
+# A failing escript rail IS the honest signal of which commands need
+# porting before PR-4.6 / PR-4.7 can land. See
+# `docs/notes/2026-05-05-cli-dual-rail.md`.
+#
+# Both rails read the same `${ESRD_HOME}/${ESR_INSTANCE}/esrd.port` file
+# for endpoint discovery; escript needs ESR_HOST exported (it does not
+# yet auto-discover from the port file — Phase B follow-up).
+# 2026-05-06 cli-deletion: dual-rail (python|escript) collapsed to
+# escript-only — the Python click CLI was deleted alongside its
+# yaml-scenario runner. The `RUN_VIA=python` path produced no value
+# beyond divergence-detection while both rails existed.
+esr_cli() {
+  local port_file="${ESRD_HOME}/${ESR_INSTANCE}/esrd.port"
+  local host="127.0.0.1:4001"
+  if [[ -r "${port_file}" ]]; then
+    host="127.0.0.1:$(cat "${port_file}")"
+  fi
+  ESR_HOST="${host}" \
+  ESR_INSTANCE="${ESR_INSTANCE}" \
+  ESRD_HOME="${ESRD_HOME}" \
+  ESR_OPERATOR_PRINCIPAL_ID="${ESR_OPERATOR_PRINCIPAL_ID}" \
+    "${_E2E_REPO_ROOT}/runtime/esr" "$@"
+}
+export -f esr_cli
 
 # --- traps ------------------------------------------------------------
 trap '_on_err $? $LINENO' ERR
@@ -198,14 +229,14 @@ barrier_wait() {
 assert_actors_list_has() {
   local substr=$1 ctx=${2:-"assert_actors_list_has"}
   local out
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   assert_contains "$out" "$substr" "${ctx} [actors list]"
 }
 
 assert_actors_list_lacks() {
   local substr=$1 ctx=${2:-"assert_actors_list_lacks"}
   local out
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   assert_not_contains "$out" "$substr" "${ctx} [actors list]"
 }
 
@@ -382,6 +413,47 @@ workspaces:
 EOF
 }
 
+# seed_plugin_config — write test plugin config to the 3-layer paths used by
+# Esr.Plugin.Config so e2e scenarios do not source esr-cc.sh (deleted Phase 8).
+#
+# Writes a minimal global plugins.yaml under ${ESRD_HOME}/${ESRD_INSTANCE}/
+# that enables claude_code + feishu with defaults suitable for local e2e runs.
+#
+# Usage:
+#   seed_plugin_config             # minimal config, no extra block
+#   seed_plugin_config "$(cat <<'EXTRA'
+#   config:
+#     claude_code:
+#       http_proxy: "http://proxy.test:3128"
+#   EXTRA
+#   )"
+seed_plugin_config() {
+  local extra_yaml="${1:-}"
+  local global_cfg="${ESRD_HOME}/${ESRD_INSTANCE}/plugins.yaml"
+
+  mkdir -p "$(dirname "$global_cfg")"
+
+  cat > "$global_cfg" <<YAML
+enabled:
+  - claude_code
+  - feishu
+config:
+  claude_code:
+    esrd_url: "ws://127.0.0.1:${ESRD_PORT:-4001}"
+    http_proxy: ""
+    https_proxy: ""
+    no_proxy: ""
+    anthropic_api_key_ref: "\${ANTHROPIC_API_KEY}"
+  feishu:
+    app_id: "${FEISHU_APP_ID:-cli_test}"
+    app_secret: "${FEISHU_APP_SECRET:-test_secret}"
+    log_level: "debug"
+${extra_yaml}
+YAML
+
+  echo "[seed_plugin_config] wrote ${global_cfg}"
+}
+
 start_esrd() {
   # Leaves ESR_E2E_TMUX_SOCK exported so application.ex's boot reader
   # picks it up (J1).
@@ -461,8 +533,7 @@ register_feishu_adapter() {
   # this helper). If a future test needs `base_url=http://127.0.0.1:…`
   # wired into the adapter config, add it via `esr adapter add` here
   # and drop this shell comment.
-  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit register_adapter \
+  esr_cli admin submit register_adapter \
       --arg type=feishu \
       --arg name=feishu_app_e2e-mock \
       --arg app_id=e2e-mock \

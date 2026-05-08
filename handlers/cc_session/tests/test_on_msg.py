@@ -11,7 +11,7 @@ def test_cc_output_reverse_routes_to_parent_thread() -> None:
 
     s = CcSessionState(session_name="sess-A", parent_thread="threadA")
     event = Event(
-        source="esr://x/actor/tmux_proxy.sess-A",
+        source="esr://x/actor/cc_proxy.sess-A",
         event_type="cc_output",
         args={"text": "claude output", "session": "sess-A"},
     )

@@ -5,22 +5,36 @@ spec at `docs/superpowers/specs/2026-04-27-actor-topology-routing.md`
 to the operational surface area: yaml shape, log lines, what to grep,
 how hot-reload behaves in practice.
 
+**2026-05-06 update**: workspace storage moved from a single
+`~/.esrd/<inst>/workspaces.yaml` to per-workspace `workspace.json`
+files (ESR-bound or repo-bound). `Workspace.Watcher` was removed; the
+CLI invalidates the Registry inline. Workspaces now have `folders[]`
+instead of a single `root`. See
+`docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`.
+Operator recipes below reflect the pre-redesign yaml shape and are kept
+as historical reference for the topology/neighbours behaviour, which is
+otherwise unchanged.
+
 ## What changed for operators
 
-Three additions to the daily operator surface:
+Three additions to the daily operator surface (as of PR-B/C/D):
 
-1. **`workspaces.yaml`** gains an optional `neighbors:` list per
-   workspace and an optional `name:` field per chat.
+1. **Workspace config** gains an optional `neighbors:` list per
+   workspace and an optional `name:` field per chat. (Post-2026-05-06:
+   each workspace stores this in its own `workspace.json` rather than a
+   shared `workspaces.yaml`.)
 2. **The `<channel>` tag** that CC sees in its prompt now carries
    three new attributes: `workspace=`, `user_id=`, and (when there
    are neighbours) `reachable=` (JSON-encoded list of `{uri, name}`
    pairs).
-3. **`workspaces.yaml` is hot-reloadable** — no esrd restart needed
-   to add or revoke neighbours. (Removals are lazy: existing sessions
-   keep the URI in their reachable_set; the cap gate handles the
-   actual revocation at send time.)
+3. **Workspace config changes take effect immediately** — the CLI
+   invalidates the Registry inline; no esrd restart needed. (The old
+   `Workspace.Watcher` GenServer was removed in the 2026-05-06
+   redesign. Removals are still lazy: existing sessions keep the URI in
+   their reachable_set; the cap gate handles the actual revocation at
+   send time.)
 
-## Authoring `workspaces.yaml`
+## Authoring workspace config (pre-2026-05-06 `workspaces.yaml` format)
 
 ```yaml
 schema_version: 1
@@ -113,22 +127,12 @@ Expected lines:
 If neither appears after editing yaml, the watcher didn't pick up the
 change — see "Watcher not reacting" below.
 
-### "Watcher not reacting to yaml edits"
+### "Workspace edit not reflected in Registry"
 
-```bash
-grep "workspaces:" stdout.log | head
-```
-
-Expected on boot:
-- `workspaces: file not present at <path>; will not watch` (only when
-  yaml is missing — the watcher initialises on the next yaml write).
-
-If the watcher is up but edits don't trigger reload:
-- macOS `:file_system` library uses FSEvents. Editing under
-  `/private/var/...` symlinked to `/var/...` works (basename match),
-  but editor-side temp-file swap can trigger only `:stop` events.
-  `vim`-style atomic writes are confirmed working; some editors that
-  rename + delete are not.
+`Workspace.Watcher` was removed in the 2026-05-06 redesign. The CLI
+now invalidates the Registry inline after every write. If a workspace
+change is not reflected, verify the CLI command completed successfully
+(check exit code); a stale Registry entry after a CLI write is a bug.
 
 ### "Operator edited yaml but neighbour shows as still missing in tag"
 
@@ -142,9 +146,9 @@ re-runs `build_channel_notification/2` with the current reachable_set.
 
 ## End-to-end verification
 
-Manual smoke check after a yaml edit:
+Manual smoke check after a workspace config edit:
 
-1. `cd $ESRD_HOME/$ESR_INSTANCE && cat workspaces.yaml` — confirm the
+1. `runtime/esr exec /workspace info name=<ws>` — confirm the
    new `neighbors:` entry parsed correctly.
 2. Send an inbound to one of the workspace's chats from Feishu.
 3. `grep '"reachable"' stdout.log | tail -1` — confirm the JSON-string
@@ -160,7 +164,7 @@ Automated coverage (counts as of 2026-04-28):
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` | 22 |
 | `describe_topology` injection (PR-F) | `adapters/cc_mcp/tests/test_describe_topology_invoke.py` | 5 |
 | `Workspaces.Registry` neighbours / metadata round-trip | `runtime/test/esr/workspaces_registry_test.exs` | 8 |
-| FS watcher hot-reload | `runtime/test/esr/workspaces/watcher_test.exs` | 4 |
+| Registry inline invalidation (post-2026-05-06) | `runtime/test/esr/workspaces_registry_test.exs` | (see test suite) |
 | Path-style URI parser (PR-B) | `runtime/test/esr/uri_test.exs` | 23 |
 | Compose C1-C5 chain | `runtime/test/esr/topology_integration_test.exs` | 1 |
 | End-to-end (mock_feishu → CC) | `tests/e2e/scenarios/05_topology_routing.sh` | 8 assertions |
@@ -172,7 +176,6 @@ Run them all:
                         test/esr/peers/cc_process_test.exs \
                         test/esr_web/cli_channel_test.exs \
                         test/esr/workspaces_registry_test.exs \
-                        test/esr/workspaces/watcher_test.exs \
                         test/esr/topology_integration_test.exs \
                         test/esr/uri_test.exs)
 
@@ -196,7 +199,7 @@ path-style migration is what `Esr.Topology.chat_uri/2` emits).
   `hand_off_to`, ...) and the LLM reads it on demand without code
   changes. See spec
   `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`
-  and the §"Authoring workspaces.yaml" → `metadata:` section above.
+  and the §"Authoring workspace config" → `metadata:` section above.
 - **`<reachable>` is a JSON-string attribute, not a nested element**.
   `notifications/claude/channel` (Claude Code's experimental channel
   injection API) only forwards flat attributes matching
@@ -229,6 +232,7 @@ path-style migration is what `Esr.Topology.chat_uri/2` emits).
 
 - Spec: `docs/superpowers/specs/2026-04-27-actor-topology-routing.md`
 - Architecture: `docs/architecture.md` §"Topology + reachable_set"
+- Workspace redesign: `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`
 - Flaky-tests cleanup: GitHub issue #57
 - PR-B URI migration: PR #56 (merged)
 - PR-C topology + reachable_set: PR #59 (merged, replaced PR #58)

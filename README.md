@@ -47,11 +47,11 @@ bash scripts/esrd.sh start --instance=default
 
 # 4. Register a workspace
 ./esr.sh workspace add esr-dev \
-    --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
+    --cwd ~/Workspace/esr \
     --role dev --chat <chat_id>:<app_id>:dm
 
-# 5. In Feishu, DM the bot:  /new-session esr-dev tag=root
-#    A tmux window appears hosting a Claude Code session with esr-channel MCP loaded.
+# 5. In Feishu, DM the bot:  /session:new name=esr-dev
+#    A Claude Code session starts via Esr.Plugins.ClaudeCode.Launcher with esr-channel MCP loaded.
 ```
 
 See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern authoring.
@@ -73,10 +73,9 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 |---|---|
 | `runtime/` | Elixir/OTP runtime — peers, supervisors, session router, capability gates |
 | `adapters/cc_mcp/` | Python MCP bridge for Claude Code; renders inbound as `<channel>` tags |
-| `adapters/feishu/`, `adapters/cc_tmux/` | Per-channel sidecars |
+| `adapters/feishu/` | Per-channel sidecar |
 | `handlers/` | Pure-function `(state, event) → (state, actions)` handlers |
-| `patterns/` | Declarative command patterns (DSL → yaml) |
-| `py/` | `esr` CLI + shared Python helpers |
+| `py/` | Adapter / handler SDK + IPC sidecar helpers (no operator CLI — see `runtime/esr` escript) |
 | `scripts/` | `esrd.sh`, scenario spawners, daemoniser |
 | `tests/e2e/scenarios/` | End-to-end shell scenarios (mock_feishu driven) |
 | `roles/{dev,diagnostic}/CLAUDE.md` | Per-role CC session prompt prelude |
@@ -97,7 +96,7 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 **Operations**
 - [`docs/operations/dev-prod-isolation.md`](docs/operations/dev-prod-isolation.md) — running dev + prod side by side
 - [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md) — pre-existing test flakes
-- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) — operator note for topology / `workspaces.yaml`
+- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) — operator note for topology / workspace config
 
 **Specs (per PR)**
 - See [`docs/superpowers/specs/`](docs/superpowers/specs/) — every shipped feature has a `YYYY-MM-DD-<topic>.md` spec.
@@ -115,9 +114,10 @@ discovering live flows.
 |---|---|---|
 | [`01_single_user_create_and_end.sh`](tests/e2e/scenarios/01_single_user_create_and_end.sh) | Single user — create / use / end session | [`docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md`](docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md) |
 | [`02_two_users_concurrent.sh`](tests/e2e/scenarios/02_two_users_concurrent.sh) | Two users in parallel — isolation + capability gating | same |
-| [`03_tmux_attach_edit.sh`](tests/e2e/scenarios/03_tmux_attach_edit.sh) | Operator attaches to tmux pane mid-session | same |
 | [`04_multi_app_routing.sh`](tests/e2e/scenarios/04_multi_app_routing.sh) | Cross-app forward — `app_id` propagation, capability denial | [`docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md`](docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md) |
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set learn | [`docs/superpowers/specs/2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
+| [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach — browser xterm renders cc TUI via WS | [`docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
+| [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor bidirectional — keystroke → process → frame round-trip | same |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).
@@ -190,11 +190,11 @@ bash scripts/esrd.sh start --instance=default
 
 # 4. 注册 workspace
 ./esr.sh workspace add esr-dev \
-    --cwd ~/Workspace/esr --start-cmd scripts/esr-cc.sh \
+    --cwd ~/Workspace/esr \
     --role dev --chat <chat_id>:<app_id>:dm
 
-# 5. 在 Feishu 给 bot 发：  /new-session esr-dev tag=root
-#    会出现一个 tmux 窗口，里面是带 esr-channel MCP 的 Claude Code 会话。
+# 5. 在 Feishu 给 bot 发：  /session:new name=esr-dev
+#    Claude Code 通过 Esr.Plugins.ClaudeCode.Launcher 启动，加载 esr-channel MCP。
 ```
 
 详见 [`docs/dev-guide.md`](docs/dev-guide.md)（handler / adapter / pattern 写法）。
@@ -216,10 +216,9 @@ bash scripts/esrd.sh start --instance=default
 |---|---|
 | `runtime/` | Elixir/OTP runtime —— peers / supervisors / session router / 能力门 |
 | `adapters/cc_mcp/` | Claude Code 的 Python MCP 桥；inbound 渲染成 `<channel>` 标签 |
-| `adapters/feishu/`、`adapters/cc_tmux/` | 各 channel sidecar |
+| `adapters/feishu/` | channel sidecar |
 | `handlers/` | 纯函数 `(state, event) → (state, actions)` |
-| `patterns/` | 声明式命令模板（DSL → yaml） |
-| `py/` | `esr` CLI + Python 共享 helper |
+| `py/` | adapter / handler SDK + IPC sidecar helpers（操作员 CLI 见 `runtime/esr` escript） |
 | `scripts/` | `esrd.sh`、scenario spawner、daemoniser |
 | `tests/e2e/scenarios/` | 端到端 shell scenario（基于 mock_feishu 驱动） |
 | `roles/{dev,diagnostic}/CLAUDE.md` | 每个 role 的 CC 会话起手 prompt |
@@ -240,7 +239,7 @@ bash scripts/esrd.sh start --instance=default
 **运维**
 - [`docs/operations/dev-prod-isolation.md`](docs/operations/dev-prod-isolation.md) —— dev / prod 并行运行
 - [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md) —— 已知 flaky 测试
-- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) —— 拓扑 / `workspaces.yaml` 运维笔记
+- [`docs/notes/actor-topology-routing.md`](docs/notes/actor-topology-routing.md) —— 拓扑 / workspace 配置运维笔记
 
 **Spec（按 PR）**
 - 详见 [`docs/superpowers/specs/`](docs/superpowers/specs/)。每个落地特性都有 `YYYY-MM-DD-<topic>.md`。
@@ -257,9 +256,10 @@ E2E 覆盖在 [`tests/e2e/scenarios/`](tests/e2e/scenarios/)。**新增 scenario
 |---|---|---|
 | [`01_single_user_create_and_end.sh`](tests/e2e/scenarios/01_single_user_create_and_end.sh) | 单用户 create / use / end | [`2026-04-23-pr7-e2e-feishu-to-cc-design.md`](docs/superpowers/specs/2026-04-23-pr7-e2e-feishu-to-cc-design.md) |
 | [`02_two_users_concurrent.sh`](tests/e2e/scenarios/02_two_users_concurrent.sh) | 两用户并发 —— 隔离 + cap 门 | 同上 |
-| [`03_tmux_attach_edit.sh`](tests/e2e/scenarios/03_tmux_attach_edit.sh) | 运维中途 attach tmux pane | 同上 |
 | [`04_multi_app_routing.sh`](tests/e2e/scenarios/04_multi_app_routing.sh) | 跨 app forward —— `app_id` 传递 / cap deny | [`2026-04-25-pr-a-multi-app-design.md`](docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md) |
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set 学习 | [`2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
+| [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach —— 浏览器 xterm 渲染 cc TUI（WS） | [`2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
+| [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor 双向 —— keystroke → process → frame 回环 | 同上 |
 
 > 添加新 scenario 时：在本表登记，**并**在
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md) 里记一笔。

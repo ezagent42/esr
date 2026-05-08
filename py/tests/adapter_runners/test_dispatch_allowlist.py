@@ -12,7 +12,6 @@ The parametrised matrix:
 adapter name             feishu_ar    cc_ar        generic_ar
 =======================  ===========  ===========  ==========
 feishu                   accept (0)   reject (2)   accept (0)
-cc_tmux                  reject (2)   accept (0)   accept (0)
 cc_mcp                   reject (2)   accept (0)   accept (0)
 new_unknown              reject (2)   reject (2)   accept (0)
 =======================  ===========  ===========  ==========
@@ -38,12 +37,10 @@ ACCEPT, REJECT = 0, 2
     [
         # feishu sidecar: only feishu
         (feishu_main, "feishu", ACCEPT),
-        (feishu_main, "cc_tmux", REJECT),
         (feishu_main, "cc_mcp", REJECT),
         (feishu_main, "new_unknown", REJECT),
-        # cc sidecar: cc_tmux + cc_mcp
+        # cc sidecar: cc_mcp
         (cc_main, "feishu", REJECT),
-        (cc_main, "cc_tmux", ACCEPT),
         (cc_main, "cc_mcp", ACCEPT),
         (cc_main, "new_unknown", REJECT),
         # generic sidecar: accepts everything (no allowlist)

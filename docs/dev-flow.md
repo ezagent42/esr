@@ -9,7 +9,7 @@
 ## Branches
 
 - `main` — what prod esrd runs. Linear history. Updated only by `dev → main` fast-forward.
-- `dev` — what dev esrd runs (`.claude/worktrees/dev/` checks out this branch). Linear history. Each commit on `dev` corresponds to one merged feature PR.
+- `dev` — what dev esrd runs (`.worktrees/dev/` checks out this branch). Linear history. Each commit on `dev` corresponds to one merged feature PR.
 - `feature/*` — short-lived branches. PRs target `dev`, never `main`.
 
 ## Flow
@@ -49,13 +49,13 @@ gh pr close $N -c "Fast-forwarded via direct push (preserves SHAs across dev/mai
 
 ```
 ~/Workspace/esr/                              ← primary worktree, branch: main
-~/Workspace/esr/.claude/worktrees/dev/        ← dev worktree, branch: dev
+~/Workspace/esr/.worktrees/dev/        ← dev worktree, branch: dev
 ```
 
 After a feature PR merges to dev, sync the dev worktree:
 
 ```bash
-( cd ~/Workspace/esr/.claude/worktrees/dev && git fetch origin && git pull --ff-only origin dev )
+( cd ~/Workspace/esr/.worktrees/dev && git fetch origin && git pull --ff-only origin dev )
 launchctl kickstart -k gui/$(id -u)/com.ezagent.esrd-dev
 ```
 

@@ -3,13 +3,12 @@ defmodule Esr.TestSupport.AppSingletons do
   Shared ExUnit setup helper: assert the Esr.Application-booted
   singletons are up before the test body runs. Intended as
   `setup :assert_app_singletons` in integration tests that depend
-  on the app-level `SessionRegistry` / `AdminSessionProcess` /
-  `SessionsSupervisor` / `Session.Registry`.
+  on the app-level `Entity.Agent.Registry` / `Resource.ChatScope.Registry`
+  / `Scope.Admin.Process` / `Scope.Supervisor` / `Scope.Registry`.
 
-  Mirror of the `Esr.TestSupport.TmuxIsolation` pattern. When a test
-  needs to load the capabilities Grants registry specifically, pass
-  `setup {Esr.TestSupport.AppSingletons, :assert_with_grants}` to
-  also verify the Grants process.
+  When a test needs to load the capabilities Grants registry
+  specifically, pass `setup {Esr.TestSupport.AppSingletons,
+  :assert_with_grants}` to also verify the Grants process.
   """
 
   import ExUnit.Assertions, only: [assert: 2]
@@ -17,10 +16,11 @@ defmodule Esr.TestSupport.AppSingletons do
   @spec assert_app_singletons(map()) :: :ok
   def assert_app_singletons(_ctx) do
     for mod <- [
-          Esr.SessionRegistry,
-          Esr.AdminSessionProcess,
-          Esr.SessionsSupervisor,
-          Esr.Session.Registry
+          Esr.Entity.Agent.Registry,
+          Esr.Resource.ChatScope.Registry,
+          Esr.Scope.Admin.Process,
+          Esr.Scope.Supervisor,
+          Esr.Scope.Registry
         ] do
       assert is_pid(Process.whereis(mod)),
              "Esr.Application singleton #{inspect(mod)} not running"
@@ -33,8 +33,8 @@ defmodule Esr.TestSupport.AppSingletons do
   def assert_with_grants(ctx) do
     :ok = assert_app_singletons(ctx)
 
-    assert is_pid(Process.whereis(Esr.Capabilities.Grants)),
-           "Esr.Capabilities.Grants not running"
+    assert is_pid(Process.whereis(Esr.Resource.Capability.Grants)),
+           "Esr.Resource.Capability.Grants not running"
 
     :ok
   end

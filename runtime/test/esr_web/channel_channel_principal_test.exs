@@ -4,7 +4,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
   ChannelChannel captures ``principal_id`` + ``workspace_name`` on the
   ``session_register`` envelope, stashes them on the socket, and
   forwards ``principal_id`` into the arity-6 ``{:tool_invoke, ...}``
-  tuple sent to the bound PeerServer.
+  tuple sent to the bound Entity.Server.
 
   Lane B enforcement (denying based on the principal's grants) lands
   in CAP-4 — these tests only verify the plumbing.
@@ -12,7 +12,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
 
   setup do
     # Guard against a stale env var leaking in from other tests in the
@@ -45,7 +45,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup(sid)
+    {:ok, row} = AdapterSocketRegistry.lookup(sid)
     assert row.principal_id == "ou_alice"
     assert row.workspace_name == "proj-a"
   end
@@ -54,9 +54,9 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
     sid = "princ-tool-#{System.unique_integer([:positive])}"
     actor_id = "thread:" <> sid
 
-    # Register self() as the "PeerServer" so assert_receive catches the
+    # Register self() as the "Entity.Server" so assert_receive catches the
     # tuple the ChannelChannel sends.
-    {:ok, _} = Registry.register(Esr.PeerRegistry, actor_id, nil)
+    {:ok, _} = Registry.register(Esr.Entity.Registry, actor_id, nil)
 
     {:ok, _reply, socket} =
       EsrWeb.ChannelSocket
@@ -82,7 +82,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
     })
 
     # Arity 6: principal_id is the 6th element. CAP-3 only threads it
-    # through — the current PeerServer clause ignores the value.
+    # through — the current Entity.Server clause ignores the value.
     assert_receive {:tool_invoke, "r1", "reply", %{"text" => "hi"}, _reply_pid,
                     "ou_alice"},
                    500
@@ -91,7 +91,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
   test "tool_invoke without prior session_register defaults to ESR_BOOTSTRAP_PRINCIPAL_ID" do
     sid = "princ-boot-#{System.unique_integer([:positive])}"
     actor_id = "thread:" <> sid
-    {:ok, _} = Registry.register(Esr.PeerRegistry, actor_id, nil)
+    {:ok, _} = Registry.register(Esr.Entity.Registry, actor_id, nil)
 
     System.put_env("ESR_BOOTSTRAP_PRINCIPAL_ID", "ou_bootstrap_admin")
 
@@ -129,7 +129,7 @@ defmodule EsrWeb.ChannelChannelPrincipalTest do
 
     Process.sleep(50)
 
-    {:ok, row} = SessionSocketRegistry.lookup(sid)
+    {:ok, row} = AdapterSocketRegistry.lookup(sid)
     assert row.principal_id == "ou_bootstrap_admin"
     assert row.workspace_name == nil
   end

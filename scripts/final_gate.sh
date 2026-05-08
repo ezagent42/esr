@@ -52,8 +52,19 @@ if ! bash scripts/loopguard.sh >/tmp/fg.lg.log 2>&1; then
   echo "FAIL"; tail -20 /tmp/fg.lg.log; fail=1
 fi
 
-section "4/13 scenario run e2e-esr-channel (mock)"
-if ! uv run --project py esr scenario run e2e-esr-channel >/tmp/fg.scn.log 2>&1; then
+section "4/13 plugin core-only boot e2e (replaces fossil scenario yamls)"
+# 2026-05-06: was `esr scenario run e2e-esr-channel` against
+# scenarios/e2e-esr-channel.yaml — that yaml's primary verbs were
+# all P3-13-dead (`esr cmd run/stop/drain feishu-thread-session`),
+# so it had been silently producing fail=1 without breaking the
+# gate (since `if !` only sets a marker, not exit). Replaced with
+# the modern `tests/e2e/scenarios/08_plugin_core_only.sh` which
+# exercises the slash-command pipeline end-to-end (CommandQueue
+# Watcher → Dispatcher → SlashRoute.Registry → /help, /plugin
+# list) on a clean core-only boot — the load-bearing assertion
+# that catches structural regressions in plugin loader / yaml
+# parsing / boot supervision.
+if ! bash tests/e2e/scenarios/08_plugin_core_only.sh >/tmp/fg.scn.log 2>&1; then
   echo "FAIL"; tail -20 /tmp/fg.scn.log; fail=1
 fi
 
@@ -286,9 +297,22 @@ trap 'scripts/esrd.sh stop --instance='"$instance"' >/dev/null 2>&1 || true;
 # Give restore_state_from_disk time to re-instantiate feishu-app-session.
 sleep 5
 
-l0_adapters=$(uv run --project py esr adapters list 2>/tmp/fg.live.l0a.log \
+# 2026-05-05 cli-channel→slash migration: L0a/L0b switched to the
+# Elixir escript. `runtime/esr <kind> [args...]` routes through the
+# admin_queue → slash dispatch (no more cli:* WS topic). Both
+# ESR_INSTANCE + ESRD_HOME are exported per call so the escript's
+# admin_queue path matches the running esrd's queue:
+#   - escript's `cmd_exec_kind` defaults ESRD_HOME → `~/.esrd-dev`,
+#   - the runtime's `Esr.Paths.esrd_home/0` defaults to `~/.esrd`,
+#   - and esrd.sh starts the runtime with ESRD_HOME=$HOME/.esrd unless
+#     overridden. The two defaults disagree, so leaving either env var
+#     unset would silently route the queue file to a path the daemon
+#     watcher isn't subscribed to (L0a would time out waiting for
+#     completed/<id>.yaml). Explicit exports avoid the trap.
+export ESRD_HOME="${ESRD_HOME:-$HOME/.esrd}"
+l0_adapters=$(ESR_INSTANCE="$instance" runtime/esr adapters list 2>/tmp/fg.live.l0a.log \
               | grep -F "$FEISHU_APP_ID" | head -1 || true)
-l0_actor=$(uv run --project py esr actors list 2>/tmp/fg.live.l0b.log \
+l0_actor=$(ESR_INSTANCE="$instance" runtime/esr actors list 2>/tmp/fg.live.l0b.log \
            | grep -F "feishu-app:$FEISHU_APP_ID" | head -1 || true)
 if [[ -z "$l0_adapters" ]]; then
   echo "FAIL — L0a: esr adapters list does not show the feishu instance"
@@ -306,11 +330,18 @@ echo "  L0b actor line    : $(echo "$l0_actor" | head -c 120)"
 
 # Register the diagnostic workspace (required by /new-session esr-dev).
 section "8/13 live L0 — workspace add esr-dev (role=diagnostic)"
-uv run --project py esr workspace add esr-dev \
-    --cwd "$HOME/Workspace/esr" \
-    --start-cmd scripts/esr-cc.sh \
-    --role diagnostic \
-    --chat "$FEISHU_TEST_CHAT_ID:$FEISHU_APP_ID:dm" \
+# 2026-05-05 cli-channel→slash migration: workspace registration goes
+# through `/new-workspace` slash command via the escript, not the
+# deleted `cli:workspace/register` WS topic. The slash command is
+# idempotent — `action: created` first run, `action: added_chat` /
+# `already_bound` thereafter — so this step survives a re-run without
+# manual workspaces.yaml cleanup.
+ESR_INSTANCE="$instance" runtime/esr exec /new-workspace \
+    name=esr-dev \
+    role=diagnostic \
+    start_cmd=claude \
+    chat_id="$FEISHU_TEST_CHAT_ID" \
+    app_id="$FEISHU_APP_ID" \
     >/tmp/fg.live.ws.log 2>&1 || {
   echo "FAIL to add workspace"; cat /tmp/fg.live.ws.log; exit 1; }
 
@@ -381,40 +412,33 @@ fi
 echo "  L2 ack message_id  : $l2_ack_id"
 echo "  L2 tool_invoke log : $(echo "$l2_tool_log" | head -c 140)"
 
-# -------------------- L5: esr cmd stop → session_killed --------------------
-section "11/13 live L5 — esr cmd stop feishu-thread-session thread_id=$tag"
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=$tag" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=$tag" \
+# -------------------- L5: /end-session → session_killed --------------------
+# 2026-05-06: was `uv run --project py esr cmd stop feishu-thread-session ...`
+# — that Python CLI sub-command was P3-13-dead since Esr.Topology was
+# deleted, and the click CLI itself was deleted in this PR. Replaced
+# with the live `/end-session` slash command via the Elixir escript;
+# /end-session triggers the same Esr.Scope.End teardown path that the
+# old `cmd stop` was supposed to drive once it stopped being a stub.
+section "11/13 live L5 — /end-session $tag (esrd-side teardown)"
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="$tag" \
     >/tmp/fg.live.l5.log 2>&1 || {
-  echo "FAIL — L5 esr cmd stop returned non-zero"
+  echo "FAIL — L5 /end-session returned non-zero"
   cat /tmp/fg.live.l5.log; exit 1; }
 
 deadline=$(( $(date +%s) + 10 ))
-l5_log_line="" l5_tmux_gone=""
+l5_log_line=""
 while (( $(date +%s) < deadline )); do
   [[ -z "$l5_log_line" ]] && \
     l5_log_line=$(grep -F "session_killed published session_id=$tag" $log_glob \
                   2>/dev/null | tail -1 || true)
-  if [[ -z "$l5_tmux_gone" ]]; then
-    if ! tmux list-windows -a 2>/dev/null | grep -qF ":$tag "; then
-      l5_tmux_gone="yes"
-    fi
-  fi
-  [[ -n "$l5_log_line" && -n "$l5_tmux_gone" ]] && break
+  [[ -n "$l5_log_line" ]] && break
   sleep 1
 done
 if [[ -z "$l5_log_line" ]]; then
   echo "FAIL — L5: esrd log missing 'session_killed published session_id=$tag'"
   exit 1
 fi
-if [[ -z "$l5_tmux_gone" ]]; then
-  echo "FAIL — L5: tmux window '$tag' still present after stop"
-  tmux list-windows -a 2>/dev/null | grep -F "$tag" || true
-  exit 1
-fi
 echo "  L5 esrd log line : $(echo "$l5_log_line" | head -c 140)"
-echo "  L5 tmux window   : removed"
 
 # -------------------- L6: parallel isolation via @-addressing --------------------
 section "12/13 live L6 — parallel @${tag}-a vs @${tag}-b isolation"
@@ -488,13 +512,10 @@ echo "  L6a log contains   : $only_a_nonce (ok)"
 echo "  L6b log excludes   : $only_a_nonce (ok)"
 
 # Best-effort cleanup of the L6 sessions (EXIT trap stops esrd either way).
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=${tag}-a" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=${tag}-a" \
+# 2026-05-06: Python CLI deleted; using /end-session via the escript.
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="${tag}-a" \
     >/dev/null 2>&1 || true
-uv run --project py esr cmd stop feishu-thread-session \
-    --param "thread_id=${tag}-b" --param "chat_id=$FEISHU_TEST_CHAT_ID" \
-    --param "workspace=esr-dev" --param "tag=${tag}-b" \
+ESR_INSTANCE="$instance" runtime/esr exec /end-session name="${tag}-b" \
     >/dev/null 2>&1 || true
 # Kill mock_cc_workers
 kill "$(cat "/tmp/mock_cc.${tag}-a.pid" 2>/dev/null)" 2>/dev/null || true
@@ -511,7 +532,6 @@ echo "  L1 actor log line   : cc:$tag present"
 echo "  L2 ack reply        : $l2_ack_id"
 echo "  L2 tool_invoke log  : _echo args.nonce=\"$nonce\""
 echo "  L5 session_killed   : session_id=$tag"
-echo "  L5 tmux window      : $tag removed"
 echo "  L6a ack reply       : $l6a_ack_id (only-a-$nonce)"
 echo "  L6b isolation       : mock_cc.${tag}-b.log free of only-a-$nonce"
 

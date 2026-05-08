@@ -11,7 +11,10 @@ def test_esr_imports_and_reports_version() -> None:
 
 
 def test_subpackages_import() -> None:
-    """Each declared subpackage is importable."""
-    import esr.cli  # noqa: F401
+    """Each declared subpackage is importable.
+
+    `esr.cli` was removed 2026-05-06 alongside the Python click CLI;
+    operator surface is the Elixir escript at `runtime/esr` now.
+    """
     import esr.ipc  # noqa: F401
     import esr.verify  # noqa: F401

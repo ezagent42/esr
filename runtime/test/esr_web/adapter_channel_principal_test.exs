@@ -6,12 +6,12 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
   ``principal_id`` + ``workspace_name`` onto the envelope that flows
   into the peer chain.
 
-  Post-P2-17: the legacy `Esr.AdapterHub.Registry` → PeerServer routing
+  Post-P2-17: the legacy `Esr.AdapterHub.Registry` → Entity.Server routing
   was removed (P2-16) and the `USE_NEW_PEER_CHAIN` feature flag was
   removed in P2-17 (migration complete; no current caller activates it).
   These tests exercise the sole path:
   `adapter:feishu/<app_id>` topics route through
-  `AdminSessionProcess.admin_peer(:feishu_app_adapter_<app_id>)` → pid
+  `Scope.Admin.Process.admin_peer(:feishu_app_adapter_<app_id>)` → pid
   which `send`s the envelope as `{:inbound_event, envelope}`. The test
   registers the caller pid as a stand-in for that adapter, so
   assertions ride on the caller's mailbox directly (no Dynamic-
@@ -29,9 +29,9 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
 
     # Register the caller pid as a stand-in FeishuAppAdapter — the
-    # AdminSessionProcess monitors the pid and auto-clears the entry
+    # Scope.Admin.Process monitors the pid and auto-clears the entry
     # on exit, so no on_exit cleanup is needed.
-    :ok = Esr.AdminSessionProcess.register_admin_peer(sym, self())
+    :ok = Esr.Scope.Admin.Process.register_admin_peer(sym, self())
 
     %{topic: topic, app_id: app_id}
   end

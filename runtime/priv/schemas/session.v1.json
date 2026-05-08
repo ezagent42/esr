@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esr.local/schema/session.v1.json",
+  "title": "ESR session.json (v1)",
+  "type": "object",
+  "required": ["schema_version", "id", "name", "owner_user", "workspace_id", "agents", "primary_agent", "attached_chats", "created_at", "transient"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "owner_user": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "workspace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "name", "config"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "config": { "type": "object" }
+        }
+      }
+    },
+    "primary_agent": { "type": "string" },
+    "attached_chats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chat_id", "app_id", "attached_by", "attached_at"],
+        "additionalProperties": false,
+        "properties": {
+          "chat_id": { "type": "string" },
+          "app_id": { "type": "string" },
+          "attached_by": { "type": "string" },
+          "attached_at": { "type": "string" }
+        }
+      }
+    },
+    "created_at": { "type": "string" },
+    "transient": { "type": "boolean", "default": false }
+  }
+}

@@ -1,0 +1,99 @@
+# Feishu plugin manifest (Track 2, plugin extraction Phase 1).
+#
+# Phase 1 (this commit): manifest declares what's already in core.
+# Modules listed below currently live under runtime/lib/esr/entity/
+# and py/src/feishu_*. Operators see this plugin in `/plugin list`.
+#
+# Phase 2 (deferred): physical code move + remove feishu-specific
+# modules from core's compile path. The feishu sidecar mapping
+# (`feishu → feishu_adapter_runner`) currently lives in core as a
+# Phase-1 fallback in Esr.Application.start/2; Phase 2 moves it here
+# and removes the fallback.
+#
+# Spec: docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md §四.
+
+name: feishu
+version: 0.1.0
+hot_reloadable: true
+description: |
+  Feishu (Lark) chat platform integration. Provides webhook adapter
+  (FeishuAppAdapter), per-chat proxy (FeishuChatProxy), per-app proxy
+  (FeishuAppProxy), and the feishu_adapter_runner Python sidecar.
+
+depends_on:
+  core: ">= 0.1.0"
+  plugins: []
+
+declares:
+  # Injection #5 — Entity modules.
+  #
+  # Phase D-1 (2026-05-05): FeishuChatProxy reclassified `proxy` →
+  # `stateful` to match its actual implementation (`use GenServer`,
+  # `use Esr.Entity.Stateful` — per-session pid, not a stateless
+  # forwarding shim). Pre-fix the mis-classification was masked by a
+  # hardcoded `StatefulRegistry.register/1` call in core's
+  # `Esr.Application.start/2`; the same PR deletes that fallback so
+  # the Loader is the canonical source for ALL of feishu's stateful
+  # peers, no core hardcode behind it.
+  entities:
+    - module: Esr.Entity.FeishuAppAdapter
+      kind: stateful
+    - module: Esr.Entity.FeishuChatProxy
+      kind: stateful
+    - module: Esr.Entity.FeishuAppProxy
+      kind: proxy
+
+  # Injection #12 — python sidecar. Phase 1 keeps the fallback
+  # registration in core's Application.start/2; documenting here so
+  # Phase 2 can flip the source-of-truth without surface churn.
+  python_sidecars:
+    - adapter_type: feishu
+      python_module: feishu_adapter_runner
+
+  # PR-3.4 (2026-05-05): startup hook. `Esr.Plugin.Loader.run_startup/0`
+  # invokes this after `restore_adapters_from_disk/1` at boot. Both
+  # `module:` and `function:` are required (no defaults — manifest typos
+  # raise during register_startup/1). The function spawns one
+  # FeishuAppAdapter peer per `type: feishu` row in adapters.yaml.
+  startup:
+    module: Esr.Plugins.Feishu.Bootstrap
+    function: bootstrap
+
+  capabilities:
+    - feishu/notify-send
+    - feishu/user-bind
+
+  # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+  # 3 plugin-owned commands migrated from core under the rev-3 naming
+  # contract (kind names rename to <plugin>_<verb>; cap names rename
+  # to <plugin>/<rest>). Old kind names: notify, user_bind_feishu,
+  # user_unbind_feishu. New: feishu_notify, feishu_bind, feishu_unbind.
+  slash_routes:
+    schema_version: 1
+    slashes: {}
+    internal_kinds:
+      feishu_notify:
+        permission: "feishu/notify-send"
+        command_module: "Esr.Plugins.Feishu.Commands.Notify"
+      feishu_bind:
+        permission: "feishu/user-bind"
+        command_module: "Esr.Plugins.Feishu.Commands.BindUser"
+      feishu_unbind:
+        permission: "feishu/user-bind"
+        command_module: "Esr.Plugins.Feishu.Commands.UnbindUser"
+
+config_schema:
+  app_id:
+    type: string
+    description: "Feishu app ID (cli_xxx). Required for Feishu API calls."
+    default: ""
+
+  app_secret:
+    type: string
+    description: "Feishu app secret. Required for Feishu API calls. Set via /plugin:set feishu key=app_secret or in global plugins.yaml — do not commit to repo."
+    default: ""
+
+  log_level:
+    type: string
+    description: "Log verbosity for the feishu adapter (debug|info|warning|error)."
+    default: "info"

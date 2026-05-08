@@ -197,7 +197,7 @@
         "connect": "accepts any params; id/1=nil (no forced disconnect handle)",
         "topic_patterns": ["adapter:*"],
         "clients": "Python adapter_runner processes (one WS per adapter instance)",
-        "role": "PRD 01 F09 — inbound events from integrations (Feishu, tmux, etc.) and directive_ack replies. Routes via Esr.AdapterHub.Registry -> Esr.PeerRegistry to send {:inbound_event|:directive_ack, envelope} to the bound PeerServer."
+        "role": "PRD 01 F09 — inbound events from integrations (Feishu, tmux, etc.) and directive_ack replies. Routes via Esr.AdapterHub.Registry -> Esr.Entity.Registry to send {:inbound_event|:directive_ack, envelope} to the bound PeerServer."
       },
       {
         "mount": "/handler_hub/socket",
@@ -269,17 +269,17 @@
           "cli_call — synchronous RPC: payload dispatched to CliChannel.dispatch(topic, payload) and the return value is the phx_reply"
         ],
         "dispatch_table": {
-          "cli:actors/list": "Esr.PeerRegistry.list_all -> [%{actor_id, pid}]",
+          "cli:actors/list": "Esr.Entity.Registry.list_all -> [%{actor_id, pid}]",
           "cli:actors/tree": "Esr.Topology.Registry.list_all -> topologies with peer_ids",
           "cli:actors/inspect": "PeerServer.describe + SessionRegistry.lookup merges chat_ids/default_chat_id",
           "cli:run/<name>": "Topology.Registry.put_artifact + Instantiator.instantiate -> handle",
           "cli:stop/<name>": "Topology.Registry.lookup + deactivate",
           "cli:drain": "deactivate all handles",
           "cli:debug/pause|resume": "PeerServer.pause/resume",
-          "cli:deadletter/list|flush": "Esr.DeadLetter.list/clear",
+          "cli:deadletter/list|flush": "Esr.Resource.DeadLetter.Queue.list/clear",
           "cli:adapter/start/<type>": "WorkerSupervisor.ensure_adapter(type, instance_id, config, ws_url) — auto-spawns a Python adapter_runner pointed at ws://127.0.0.1:<phoenix_port>/adapter_hub/socket/websocket?vsn=2.0.0",
           "cli:trace": "Esr.Telemetry.Buffer.query(:default, duration_seconds: N)",
-          "cli:workspace/register": "Esr.Workspaces.Registry.put",
+          "cli:workspace/register": "Esr.Resource.Workspace.Registry.put",
           "<fallback>": "%{data: %{error: \"unknown_topic: <topic>\"}}"
         }
       }
@@ -294,12 +294,12 @@
     ],
     "internal_runtime": [
       "Esr.AdapterHub.Registry (topic <-> actor_id binding ETS, shared across tests)",
-      "Esr.PeerRegistry (actor_id -> PID; looked up by AdapterChannel.forward and ChannelChannel.tool_invoke)",
-      "Esr.PeerServer (receives {:inbound_event, _}, {:directive_ack, _}, {:tool_invoke, ...})",
+      "Esr.Entity.Registry (actor_id -> PID; looked up by AdapterChannel.forward and ChannelChannel.tool_invoke)",
+      "Esr.Entity.Server (receives {:inbound_event, _}, {:directive_ack, _}, {:tool_invoke, ...})",
       "Esr.SessionRegistry (ChannelChannel stores ws_pid, marks offline on terminate)",
       "Esr.HandlerRouter (subscribes to handler_reply:<id> on Phoenix.PubSub)",
       "Esr.Topology.Registry + Esr.Topology.Instantiator (cli:run/<name>, cli:stop/<name>, cli:drain)",
-      "Esr.DeadLetter, Esr.Telemetry.Buffer, Esr.Workspaces.Registry, Esr.WorkerSupervisor (CliChannel dispatches)"
+      "Esr.Resource.DeadLetter.Queue, Esr.Telemetry.Buffer, Esr.Resource.Workspace.Registry, Esr.WorkerSupervisor (CliChannel dispatches)"
     ]
   },
   "test_results": {
@@ -325,7 +325,7 @@
         "name": "tool_invoke reply round-trips through feishu fake adapter",
         "asserts": [
           "setup clears any stray adapter:feishu/* bindings in the shared HubRegistry ETS so emit_topic_for(\"feishu\", ...) resolves to the test-created topic",
-          "start_supervised a real Esr.PeerServer under actor_id=\"thread:<sid>\" with actor_type=feishu_thread_proxy, handler_module=feishu_thread, initial_state={chat_id: oc_int}",
+          "start_supervised a real Esr.Entity.Server under actor_id=\"thread:<sid>\" with actor_type=feishu_thread_proxy, handler_module=feishu_thread, initial_state={chat_id: oc_int}",
           "Bind adapter_topic \"adapter:feishu/feishu-app:cli_int_<unique>\" -> actor_id in HubRegistry",
           "EsrWeb.Endpoint.subscribe(adapter_topic) so the test process receives the broadcast",
           "Join ChannelChannel at cli:channel/<sid>",

@@ -8,10 +8,10 @@ defmodule EsrWeb.AdapterChannel do
      adapter workers connect before the peer chain is up.
    - Inbound ``event`` messages on an ``adapter:feishu/<app_id>`` topic
      are forwarded unconditionally into the new peer chain via
-     `forward_to_new_chain/2` → `Esr.AdminSessionProcess.admin_peer/1`
-     → `Esr.Peers.FeishuAppAdapter`.
+     `forward_to_new_chain/2` → `Esr.Scope.Admin.Process.admin_peer/1`
+     → `Esr.Entity.FeishuAppAdapter`.
    - Non-Feishu topics receiving `:inbound_event` get an explicit error
-     reply; the legacy `AdapterHub.Registry → PeerRegistry` path was
+     reply; the legacy `AdapterHub.Registry → Entity.Registry` path was
      deleted in P2-16 (peer chain migration complete; the transitional
      `USE_NEW_PEER_CHAIN` feature flag that gated this migration in
      early drafts was removed in P2-17).
@@ -21,7 +21,7 @@ defmodule EsrWeb.AdapterChannel do
 
   @impl Phoenix.Channel
   def join("adapter:" <> _rest = topic, _payload, socket) do
-    # Join succeeds regardless of whether a PeerServer is bound yet —
+    # Join succeeds regardless of whether a Entity.Server is bound yet —
     # Python adapter workers are spawned *before* topology instantiation
     # so they can be on the topic when init_directive broadcasts. Routing
     # (forward/2) looks up the binding fresh at send time; an unbound
@@ -73,7 +73,7 @@ defmodule EsrWeb.AdapterChannel do
   # happens to have loaded declared. Adapters typically load no handler
   # modules, so the list is usually empty — but when non-empty (tests,
   # future colocated workers) the names get registered in the same
-  # Esr.Permissions.Registry the handler channel uses.
+  # Esr.Resource.Permission.Registry the handler channel uses.
   def handle_in("envelope", %{"kind" => "handler_hello"} = envelope, socket) do
     perms =
       envelope
@@ -90,9 +90,9 @@ defmodule EsrWeb.AdapterChannel do
 
   def handle_in("directive_ack", %{"id" => id} = envelope, socket) do
     # Dual-publish: broadcast to directive_ack:<id> so the original
-    # issuer (Instantiator for init_directive F13b, PeerServer for
+    # issuer (Instantiator for init_directive F13b, Entity.Server for
     # regular Emits) can correlate; and deliver to the bound
-    # PeerServer as a fallback tag so F09's routing stays intact.
+    # Entity.Server as a fallback tag so F09's routing stays intact.
     Phoenix.PubSub.broadcast(
       EsrWeb.PubSub,
       "directive_ack:" <> id,
@@ -112,7 +112,7 @@ defmodule EsrWeb.AdapterChannel do
 
   defp register_permissions(perms, declared_by) when is_list(perms) do
     for perm <- perms, is_binary(perm) do
-      Esr.Permissions.Registry.register(perm, declared_by: declared_by)
+      Esr.Resource.Permission.Registry.register(perm, declared_by: declared_by)
     end
 
     :ok
@@ -123,7 +123,7 @@ defmodule EsrWeb.AdapterChannel do
   # Inbound Feishu frames flow unconditionally through the new chain
   # (post-P2-17). The topic is `adapter:feishu/<app_id>`; non-feishu
   # topics receiving `:inbound_event` get an explicit error reply
-  # (legacy `AdapterHub.Registry → PeerRegistry` was deleted in P2-16).
+  # (legacy `AdapterHub.Registry → Entity.Registry` was deleted in P2-16).
   defp forward(socket, {:inbound_event, envelope}) do
     topic = socket.assigns.topic
 
@@ -157,11 +157,11 @@ defmodule EsrWeb.AdapterChannel do
 
   @doc """
   Forward an inbound Feishu envelope to the new-chain peer
-  `Esr.Peers.FeishuAppAdapter` for `app_id` (parsed from `topic`).
+  `Esr.Entity.FeishuAppAdapter` for `app_id` (parsed from `topic`).
 
   Returns `:ok` when the envelope was delivered (as `{:inbound_event, envelope}`
   to the adapter's mailbox), `:error` when no adapter is registered under
-  `:feishu_app_adapter_<app_id>` in `Esr.AdminSessionProcess`.
+  `:feishu_app_adapter_<app_id>` in `Esr.Scope.Admin.Process`.
 
   Exposed for direct unit testing of the routing path without spinning
   up a Phoenix.Channel socket.
@@ -170,7 +170,7 @@ defmodule EsrWeb.AdapterChannel do
   def forward_to_new_chain("adapter:feishu/" <> app_id, envelope) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
 
-    case Esr.AdminSessionProcess.admin_peer(sym) do
+    case Esr.Scope.Admin.Process.admin_peer(sym) do
       {:ok, pid} ->
         send(pid, {:inbound_event, envelope})
         :ok

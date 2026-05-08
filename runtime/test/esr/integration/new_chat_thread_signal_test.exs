@@ -1,6 +1,6 @@
 defmodule Esr.Integration.NewChatThreadSignalTest do
   @moduledoc """
-  P3-7 — end-to-end test of the `FeishuAppAdapter → SessionRouter`
+  P3-7 — end-to-end test of the `FeishuAppAdapter → Scope.Router`
   signal bridge for new (chat_id, thread_id) pairs.
 
   Flow under test:
@@ -9,7 +9,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
     2. `SessionRegistry.lookup_by_chat_thread/3` returns `:not_found`.
     3. FAA broadcasts `{:new_chat_thread, app_id, chat_id, thread_id,
        envelope}` on the `session_router` PubSub topic.
-    4. SessionRouter receives the broadcast and calls
+    4. Scope.Router receives the broadcast and calls
        `do_create/1` (auto-spawn).
     5. A new session exists in `SessionRegistry.lookup_by_chat_thread/3`.
 
@@ -31,10 +31,10 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
   setup do
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
-    :ok = Esr.SessionRegistry.load_agents(@fixture_path)
+    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
-    if Process.whereis(Esr.SessionRouter) == nil do
-      start_supervised!(Esr.SessionRouter)
+    if Process.whereis(Esr.Scope.Router) == nil do
+      start_supervised!(Esr.Scope.Router)
     end
 
     {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one, name: :p3_7_sup)
@@ -46,13 +46,13 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
     :ok
   end
 
-  test "FAA lookup-miss → :new_chat_thread → SessionRouter auto-creates session" do
+  test "FAA lookup-miss → :new_chat_thread → Scope.Router auto-creates session" do
     app_id = "pr3_auto_#{System.unique_integer([:positive])}"
 
     {:ok, faa} =
       DynamicSupervisor.start_child(
         :p3_7_sup,
-        {Esr.Peers.FeishuAppAdapter,
+        {Esr.Entity.FeishuAppAdapter,
          %{app_id: app_id, neighbors: [], proxy_ctx: %{}}}
       )
 
@@ -88,7 +88,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
     # SessionRegistry now knows about the (chat_id, app_id, thread_id) mapping.
     assert {:ok, sid, refs} =
-             Esr.SessionRegistry.lookup_by_chat(chat_id, app_id)
+             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
 
     assert sid == meta.session_id
     assert is_pid(refs.feishu_chat_proxy)

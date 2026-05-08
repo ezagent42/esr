@@ -4,13 +4,13 @@ defmodule Esr.Admin do
 
   The Admin subsystem is the execution engine for runtime-mutating
   commands submitted either from the CLI (via the file-based command
-  queue watched by `Esr.Admin.CommandQueue.Watcher`) or from the
-  Feishu slash-command path (via `Esr.Peers.SlashHandler`, the
+  queue watched by `Esr.Slash.QueueWatcher`) or from the
+  Feishu slash-command path (via `Esr.Entity.SlashHandler`, the
   session-scoped slash-parser peer introduced in PR-2; the legacy
   `Esr.Routing.SlashHandler` was removed in PR-3 P3-14).
 
   This module also declares the subsystem-intrinsic permissions. They
-  are registered at boot by `Esr.Permissions.Bootstrap` alongside
+  are registered at boot by `Esr.Resource.Permission.Bootstrap` alongside
   handler-declared permissions (see spec §6.2). The `permissions/0`
   callback shape mirrors the `Esr.Handler` behaviour's optional
   `permissions/0` callback so the bootstrap iteration is uniform.
@@ -28,7 +28,9 @@ defmodule Esr.Admin do
   @spec permissions() :: [String.t()]
   def permissions do
     [
-      "notify.send",
+      # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+      # `notify.send` migrated to feishu plugin as `feishu/notify-send`,
+      # declared by runtime/lib/esr/plugins/feishu/manifest.yaml.
       "runtime.reload",
       "adapter.register",
       "session.create",

@@ -19,7 +19,7 @@ from esr.verify.purity import scan_imports
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-HANDLERS = ("feishu_app", "feishu_thread", "tmux_proxy", "cc_session")
+HANDLERS = ("feishu_app", "feishu_thread", "cc_session")
 
 
 def _state_class(name: str) -> type[BaseModel]:

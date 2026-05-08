@@ -108,9 +108,9 @@ async def directive_loop(
 async def event_loop(adapter: Any, pusher: AdapterPusher) -> None:
     """Consume ``adapter.emit_events()`` and push each as an event envelope.
 
-    Not every adapter emits events proactively (e.g. cc_tmux drives itself
-    via directives; feishu's WS listener is optional in mock mode). If the
-    adapter does not implement ``emit_events``, the loop exits immediately.
+    Not every adapter emits events proactively (e.g. feishu's WS listener
+    is optional in mock mode). If the adapter does not implement
+    ``emit_events``, the loop exits immediately.
     """
     emit = getattr(adapter, "emit_events", None)
     if emit is None:

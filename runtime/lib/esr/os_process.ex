@@ -8,8 +8,8 @@ defmodule Esr.OSProcess do
   erlexec simultaneously provides:
 
     1. **Native pseudo-terminal (PTY) support** — required by
-       `tmux -C` control mode, which on macOS exits immediately when
-       spawned without a controlling TTY.
+       programs that exit immediately when spawned without a
+       controlling TTY (e.g. interactive shells, `claude`).
     2. **Bidirectional stdin/stdout** — `:exec.send/2` writes to the
        child's stdin without the muontrap `--capture-output` ack-channel
        constraint (see the historical skill
@@ -25,10 +25,10 @@ defmodule Esr.OSProcess do
   Pass `wrapper: :pty` or `wrapper: :plain` to `use Esr.OSProcess`.
 
     * `:pty` — child is spawned with a pseudo-terminal attached. Use
-      this for programs that require a controlling TTY (tmux control
-      mode, interactive shells, anything that calls `isatty(0)` and
-      changes behavior based on it). PTY output is line-buffered with
-      `\\r\\n` terminators; we normalize to `\\n` before dispatching.
+      this for programs that require a controlling TTY (interactive
+      shells, anything that calls `isatty(0)` and changes behavior
+      based on it). PTY output is line-buffered with `\\r\\n`
+      terminators; we normalize to `\\n` before dispatching.
 
     * `:plain` — child is spawned without a PTY. Use for pure
       stdin/stdout line-protocol sidecars (JSON-lines, Python RPC,
@@ -103,11 +103,10 @@ defmodule Esr.OSProcess do
         def init(init_args) do
           # T12-comms-3m (2026-04-25): trap exits so the supervisor's
           # shutdown signal reaches our terminate/2 callback, which is
-          # what invokes the parent peer's on_terminate (e.g.
-          # TmuxProcess.on_terminate → `tmux kill-session`). Without
-          # this flag, supervisors terminate us with a plain
+          # what invokes the parent peer's on_terminate. Without this
+          # flag, supervisors terminate us with a plain
           # Process.exit(:shutdown) and terminate/2 never runs —
-          # leaving tmux sessions + mcp-config files orphaned after
+          # leaving child processes + mcp-config files orphaned after
           # session_end.
           Process.flag(:trap_exit, true)
 
@@ -153,10 +152,18 @@ defmodule Esr.OSProcess do
         end
 
         # PR-22: SIGWINCH propagation for PTY-wrapped processes.
-        # xterm.js → AttachLive → PtyProcess.resize/3 → here.
+        # xterm.js → PtySocket → PtyProcess.resize/3 → here.
+        #
+        # erlexec spec is `:exec.winsz(OsPid, Rows, Cols)` (rows first;
+        # see deps/erlexec/src/exec.erl:603-608). Earlier this called
+        # `:exec.winsz(os_pid, cols, rows)` — silent ROWS↔COLS swap.
+        # Browser at 190×49 became Rows=190 / Cols=49 inside the kernel,
+        # so claude (Ink reads stdout.columns via TIOCGWINSZ) rendered
+        # at 49 cols. ~1/3 of the actual viewport, exactly matching
+        # the symptom that started this debug.
         def handle_cast({:winsz, cols, rows}, %{os_pid: os_pid} = s)
             when is_integer(cols) and is_integer(rows) and cols > 0 and rows > 0 do
-          if os_pid, do: :exec.winsz(os_pid, cols, rows)
+          if os_pid, do: :exec.winsz(os_pid, rows, cols)
           {:noreply, s}
         end
 
@@ -232,14 +239,14 @@ defmodule Esr.OSProcess do
         # Any other message is treated as a downstream peer event and
         # routed through the parent's `handle_downstream/2` callback.
         # This is the integration path used by upstream peers (e.g.
-        # `Esr.Peers.CCProcess`'s `:send_input` action targeted at
-        # `Esr.Peers.TmuxProcess`): the upstream peer calls
-        # `send(tmux_pid, {:send_input, text})`, and the wrapping
-        # OSProcessWorker dispatches the message into
-        # `TmuxProcess.handle_downstream/2`, which writes to the child
-        # process's stdin. Introduced in P3-10 to unblock the full E2E
+        # `Esr.Entity.CCProcess`'s `:send_input` action targeted at
+        # the PTY peer): the upstream peer calls
+        # `send(pty_pid, {:send_input, text})`, and the wrapping
+        # OSProcessWorker dispatches the message into the parent's
+        # `handle_downstream/2`, which writes to the child process's
+        # stdin. Introduced in P3-10 to unblock the full E2E
         # integration test (and to make the Peer.Stateful contract
-        # hold for every OSProcess-backed peer, not just TmuxProcess).
+        # hold for every OSProcess-backed peer).
         def handle_info(msg, s) do
           if function_exported?(s.parent, :handle_downstream, 2) do
             case s.parent.handle_downstream(msg, s.state) do
@@ -266,8 +273,8 @@ defmodule Esr.OSProcess do
 
           # `:exec.stop/1` does SIGTERM → wait kill_timeout → SIGKILL.
           # We swallow errors because the child may already be gone
-          # (e.g. `on_terminate` ran `tmux kill-session` which also
-          # kills the client).
+          # (e.g. `on_terminate` ran a cleanup command that also killed
+          # the child).
           try do
             _ = :exec.stop(os_pid)
           rescue
@@ -360,8 +367,8 @@ defmodule Esr.OSProcess do
   Split a chunk of stdout bytes into `{complete_lines, trailing_partial}`.
 
   Lines include their terminating `\\n`. PTY-origin `\\r\\n` sequences
-  are normalized to plain `\\n` (the parser in `TmuxProcess.parse_event/1`
-  handles either form, but normalizing keeps logs tidy).
+  are normalized to plain `\\n` (peer parsers tend to handle either
+  form, but normalizing keeps logs tidy).
 
   Used by the generated `OSProcessWorker.handle_info/2` to emulate the
   `{:line, 4096}` framing the old `Port.open` pipeline provided for free.

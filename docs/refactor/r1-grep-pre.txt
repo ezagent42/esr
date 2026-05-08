@@ -1,0 +1,13 @@
+# R1 Session→Scope rename — pre-rename grep counts (baseline: 2026-05-03T12:21:59Z)
+
+Generated from a4989ef713048b0fcd69bbb355f4a49d3c40eb1c on branch refactor/r1-session-to-scope.
+
+Esr\.Session: 116 hits
+Esr\.SessionProcess: 46 hits
+Esr\.SessionRouter: 110 hits
+Esr\.SessionsSupervisor: 74 hits
+Esr\.SessionSocketRegistry: 31 hits
+Esr\.SessionRegistry: 274 hits
+Esr\.AdminSession: 74 hits
+Esr\.AdminSessionProcess: 113 hits
+Esr\.Admin\.Commands\.Session: 91 hits

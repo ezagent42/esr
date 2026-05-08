@@ -1,4 +1,4 @@
-.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-03 e2e-04 e2e-05
+.PHONY: test test-py test-ex lint fmt run-runtime clean e2e e2e-ci e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07 e2e-08 e2e-11 e2e-14 e2e-15 e2e-16 e2e-17 e2e-18 e2e-19 e2e-escript e2e-cli
 
 test: test-py test-ex
 
@@ -31,7 +31,7 @@ clean:
 E2E_TIMEOUT ?= 420
 E2E_RUN = perl -e 'alarm shift; exec @ARGV' $(E2E_TIMEOUT) bash
 
-e2e: e2e-01 e2e-02 e2e-03 e2e-04 e2e-05
+e2e: e2e-01 e2e-02 e2e-04 e2e-05 e2e-06 e2e-07
 
 e2e-01:
 	$(E2E_RUN) tests/e2e/scenarios/01_single_user_create_and_end.sh
@@ -39,14 +39,63 @@ e2e-01:
 e2e-02:
 	$(E2E_RUN) tests/e2e/scenarios/02_two_users_concurrent.sh
 
-e2e-03:
-	$(E2E_RUN) tests/e2e/scenarios/03_tmux_attach_edit.sh
-
 e2e-04:
 	$(E2E_RUN) tests/e2e/scenarios/04_multi_app_routing.sh
 
 e2e-05:
 	$(E2E_RUN) tests/e2e/scenarios/05_topology_routing.sh
+
+e2e-06:
+	$(E2E_RUN) tests/e2e/scenarios/06_pty_attach.sh
+
+e2e-07:
+	$(E2E_RUN) tests/e2e/scenarios/07_pty_bidir.sh
+
+e2e-08:
+	$(E2E_RUN) tests/e2e/scenarios/08_plugin_core_only.sh
+
+e2e-11:
+	$(E2E_RUN) tests/e2e/scenarios/11_plugin_cli_surface.sh
+
+e2e-14:
+	$(E2E_RUN) tests/e2e/scenarios/14_session_multiagent.sh
+
+e2e-15:
+	$(E2E_RUN) tests/e2e/scenarios/15_session_share.sh
+
+e2e-16:
+	$(E2E_RUN) tests/e2e/scenarios/16_plugin_config_layers.sh
+
+# HR-4: hot-reload env propagation via mock-claude binary (2026-05-07).
+# Spawns esrd with claude_binary=tests/e2e/fixtures/mock-claude.sh,
+# validates that plugin_reload + agent restart propagates HTTP_PROXY.
+# Does NOT require a real Anthropic API key or network access.
+e2e-17:
+	$(E2E_RUN) tests/e2e/scenarios/17_plugin_config_hot_reload.sh
+
+# M-5.2: multi-CC atomic spawn via /session:add-agent (2026-05-08).
+# Verifies M-2.7 add_instance_and_spawn returns actor_ids.cc/.pty
+# UUID v4 pair per agent, that multi-instance subtrees coexist
+# without collision, and that duplicate-name fires before spawn.
+e2e-18:
+	$(E2E_RUN) tests/e2e/scenarios/18_multi_cc_atomic_spawn.sh
+
+# M-5: session-first default resolution. Verifies user-default replaces
+# system "default" workspace, /user:use changes the user-default, and
+# /workspace:add-folder name= falls back through the chain.
+e2e-19:
+	$(E2E_RUN) tests/e2e/scenarios/19_session_first_default.sh
+
+# Phase A — CLI dual-rail (2026-05-05). `make e2e-cli` exercises the
+# CLI-touching scenarios (08 + 11) on whichever rail RUN_VIA selects;
+# `make e2e-escript` is the shorthand for the escript rail. Both reuse
+# the same scenario scripts via the `esr_cli` helper in common.sh.
+# A failing escript rail IS the migration progress signal — see
+# docs/notes/2026-05-05-cli-dual-rail.md.
+e2e-cli: e2e-08 e2e-11
+
+e2e-escript:
+	RUN_VIA=escript $(MAKE) e2e-cli
 
 # CI variant: absolute cleanup (§7.2). Same scripts, different env.
 e2e-ci:

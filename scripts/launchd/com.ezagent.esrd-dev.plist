@@ -23,8 +23,6 @@
     <key>MIX_ENV</key><string>dev</string>
     <key>ESR_BOOTSTRAP_PRINCIPAL_ID</key>
     <string>ou_6b11faf8e93aedfb9d3857b9cc23b9e7</string>
-    <key>ESR_TMUX_SOCKET</key>
-    <string>__ESRD_HOME__/default/tmux.sock</string>
   </dict>
 </dict>
 </plist>

@@ -3,8 +3,8 @@ defmodule Esr.Application do
   OTP Application entry. Starts the supervision tree declared in
   `docs/superpowers/specs/2026-04-18-esr-extraction-design.md` §3.1.
 
-  Child order matters: PubSub and PeerRegistry must be up before any
-  PeerServer or adapter/handler subsystem can register itself.
+  Child order matters: PubSub and Entity.Registry must be up before any
+  Entity.Server or adapter/handler subsystem can register itself.
 
   PRD 01 F02. Strategy `:one_for_one` — one subsystem's failure must
   not cascade to siblings (this is how Track D session-isolation is
@@ -15,10 +15,6 @@ defmodule Esr.Application do
 
   @impl Application
   def start(_type, _args) do
-    # PR-22: tmux socket override removed alongside TmuxProcess.
-    # PtyProcess runs claude directly under erlexec PTY (no tmux server).
-    :ok
-
     # PR-21β 2026-04-30: per-boot random token injected into every
     # worker subprocess via Esr.Workers.{AdapterProcess,HandlerProcess}.
     # Python-side guards refuse to start when the env var is missing,
@@ -44,14 +40,21 @@ defmodule Esr.Application do
       # 2. Message bus — everything else may publish/subscribe.
       {Phoenix.PubSub, name: EsrWeb.PubSub},
 
-      # 3. Actor registry before any PeerServer can register itself.
-      {Registry, keys: :unique, name: Esr.PeerRegistry},
+      # 3a. (M-1) IndexWatcher owns the ETS tables backing
+      # Esr.Entity.Registry.register_attrs/2 (Index 2: `{session_id, name}`,
+      # Index 3: `{session_id, role}`). Started BEFORE the Elixir.Registry
+      # below so that any peer's init/1 — which routinely registers in
+      # Index 1 and may also call register_attrs/2 — finds the tables ready.
+      Esr.Entity.Registry.IndexWatcher,
+
+      # 3. Actor registry before any Entity.Server can register itself.
+      {Registry, keys: :unique, name: Esr.Entity.Registry},
 
       # 4. Dynamic supervisor that hosts live PeerServers.
-      Esr.PeerSupervisor,
+      Esr.Entity.Supervisor,
 
       # 4b. Dead-letter queue — started before peers so enqueue never misses.
-      {Esr.DeadLetter, name: Esr.DeadLetter},
+      {Esr.Resource.DeadLetter.Queue, name: Esr.Resource.DeadLetter.Queue},
 
       # 4c. Python worker launcher — on-demand adapter_runner /
       # handler_worker subprocesses for live topology instantiation
@@ -59,61 +62,98 @@ defmodule Esr.Application do
       Esr.WorkerSupervisor,
 
       # 4d. Session registry for CC ↔ WS bindings (PRD v0.2 §3.2).
-      Esr.SessionSocketRegistry,
-      {Esr.SessionRegistry, []},
+      Esr.Resource.AdapterSocket.Registry,
+
+      # 4d.0 Sidecar.Registry — adapter_type → python_module dispatch table.
+      # Replaces WorkerSupervisor's hardcoded @sidecar_dispatch (Track 0
+      # plugin work). Plugins register their sidecar mappings via manifest.
+      {Esr.Resource.Sidecar.Registry, []},
+
+      # 4d.0b Stateful Entity registry (PR-3.2): tracks which modules
+      # AgentSpawner should spawn per-session vs treat as stateless
+      # proxy markers. Core registers PtyProcess at boot; plugins
+      # register their stateful peers via manifest `entities:` blocks
+      # with `kind: stateful`. Started before Esr.Entity.Agent.Registry
+      # which AgentSpawner already depends on.
+      {Esr.Entity.Agent.StatefulRegistry, []},
+
+      # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
+      # agents.yaml-compiled definitions cache + hot-reload. Started before
+      # Scope.Admin since admin commands (e.g. session_new) validate the
+      # requested agent name against this registry.
+      {Esr.Entity.Agent.Registry, []},
+
+      # 4d.2 Agent InstanceRegistry (Phase 3): per-session ETS backing the
+      # multi-agent model. Single global instance — session UUID+name key
+      # provides the per-session isolation. Started before Session.Registry
+      # since add_agent_to_session delegates to it at write time.
+      {Esr.Entity.Agent.InstanceRegistry, []},
+
+      # 4d.3 Session.Registry (Phase 1): ETS-backed session UUID+name index
+      # rebuilt from disk at boot. Wraps session.json I/O via FileLoader +
+      # JsonWriter. Phase 3 adds add_agent_to_session write-through.
+      {Esr.Resource.Session.Registry, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
-      # Must come BEFORE AdminSession (which calls Esr.Session.supervisor_name/1
-      # via PeerFactory.spawn_peer_bootstrap/4 if it ever spawns admin-scope
-      # peers via Session.supervisor_name) and before SessionsSupervisor.
-      {Registry, keys: :unique, name: Esr.Session.Registry},
+      # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
+      # via Entity.Factory.spawn_peer_bootstrap/3 if it ever spawns admin-scope
+      # peers via Session.supervisor_name) and before Scope.Supervisor.
+      {Registry, keys: :unique, name: Esr.Scope.Registry},
 
-      # 4e.2 AdminSession — permanent supervisor hosting admin-scope peers.
-      # Risk F: started BEFORE SessionRouter (not in PR-2 yet) and BEFORE
-      # SessionsSupervisor.
-      Esr.AdminSession,
+      # 4e.2 Scope.Admin — permanent supervisor hosting admin-scope peers.
+      # Risk F: started BEFORE Scope.Router (not in PR-2 yet) and BEFORE
+      # Scope.Supervisor.
+      Esr.Scope.Admin,
 
-      # 4e.3 SessionsSupervisor (DynamicSupervisor, max_children=128).
-      Esr.SessionsSupervisor,
+      # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
+      Esr.Scope.Supervisor,
 
-      # 4e.4 SessionRouter (PR-8 T4): control-plane GenServer that
+      # 4e.3b ChatScope.Registry (R5 split from legacy SessionRegistry):
+      # `(chat_id, app_id) → session_id` chat-current routing + URI-claim
+      # uniqueness indexes. Started just before Scope.Router since the
+      # router is the primary writer (register_session on success path,
+      # unregister_session on session end) and FeishuAppAdapter / admin
+      # commands are the primary readers.
+      {Esr.Resource.ChatScope.Registry, []},
+
+      # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
-      # the agents.yaml pipeline. Depends on SessionRegistry,
-      # SessionsSupervisor, and Session.Registry (all earlier
+      # the agents.yaml pipeline. Depends on ChatScope.Registry,
+      # Scope.Supervisor, and Session.Registry (all earlier
       # children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
-      Esr.SessionRouter,
+      Esr.Scope.Router,
+
+      # 4d.5 Workspace name↔id index — must come before Workspace.Registry
+      # since Registry calls into NameIndex on every put/rename/delete.
+      {Esr.Resource.Workspace.NameIndex, []},
 
       # 4e. Workspaces registry (PRD v0.2 §3.6).
-      Esr.Workspaces.Registry,
+      Esr.Resource.Workspace.Registry,
 
-      # 4e.1 Workspaces fs watcher (PR-C 2026-04-27 actor-topology-routing
-      # §6.1 + §7). Loads workspaces.yaml on init + reloads on file_event,
-      # broadcasting `{:topology_neighbour_added, ws, uri}` via
-      # `EsrWeb.PubSub` so active CC peers can grow their reachable_set
-      # without restarting. Must sit AFTER Workspaces.Registry; the
-      # watcher reuses Registry's ETS table.
-      {Esr.Workspaces.Watcher, path: Esr.Paths.workspaces_yaml()},
+      # 4e.1 First-boot tasks: delete legacy workspaces.yaml + ensure
+      # default workspace. restart=:transient — Task exits :ok on success.
+      Esr.Resource.Workspace.Bootstrap,
 
-      # 4e.2 SlashRoutes subsystem (PR-21κ 2026-04-30) — yaml-driven
+      # 4e.2 SlashRouteRegistry subsystem (PR-21κ 2026-04-30) — yaml-driven
       # slash command routing + dispatcher kind→{permission, command_module}
       # lookup. Independent of Workspaces and Capabilities (stores
       # references to caps as strings; doesn't validate against Permissions
       # Registry). Loaded BEFORE Admin.Supervisor since Dispatcher consumes it.
-      Esr.SlashRoutes,
-      {Esr.SlashRoutes.Watcher, path: Esr.Paths.slash_routes_yaml()},
+      Esr.Resource.SlashRoute.Registry,
+      {Esr.Resource.SlashRoute.Registry.Watcher, path: Esr.Paths.slash_routes_yaml()},
 
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
       # FileLoader can cross-check workspace names during validation.
-      Esr.Capabilities.Supervisor,
+      Esr.Resource.Capability.Supervisor,
 
       # 4f.1 Users subsystem (PR-21a) — Registry (ETS) + fs watcher on
       # users.yaml. feishu_id → esr-username binding consumed by inbound
       # envelope construction (PR-21b will wire callers). Independent of
       # Workspaces / Capabilities; ordering is informational only.
-      Esr.Users.Supervisor,
+      Esr.Entity.User.Supervisor,
 
       # 4f.2 PendingActionsGuard (PR-21e) — TTL state machine for two-step
       # destructive confirms (D12/D15). Inbound message interception
@@ -121,32 +161,47 @@ defmodule Esr.Application do
       EsrWeb.PendingActionsGuard,
 
       # 4f.3 Inbound onboarding guards (PR-21w). Both extracted from
-      # `Esr.Peers.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
+      # `Esr.Entity.FeishuAppAdapter` per `docs/notes/actor-role-vocabulary.md`
       # migration plan. Each owns its own per-key rate-limit Map and
       # exposes a single `check/3` entry point the FAA `handle_upstream`
       # path consults before further routing.
-      Esr.Peers.UnboundChatGuard,
-      Esr.Peers.UnboundUserGuard,
+      Esr.Entity.UnboundChatGuard,
+      Esr.Entity.UnboundUserGuard,
 
       # 4f.4 Lane B inbound capability guard (PR-21x). Extracted from
-      # `Esr.PeerServer.handle_info({:inbound_event, _})` + FAA's
+      # `Esr.Entity.Server.handle_info({:inbound_event, _})` + FAA's
       # `{:dispatch_deny_dm}` rate-limit. Owns the per-principal deny-DM
-      # rate-limit Map; PeerServer calls `CapGuard.check_inbound/3`
+      # rate-limit Map; Entity.Server calls `CapGuard.check_inbound/3`
       # before invoking the handler. On deny, CapGuard emits telemetry
       # and dispatches an `{:outbound, ...}` to the source FAA peer.
-      Esr.Peers.CapGuard,
+      Esr.Entity.CapGuard,
+
+      # 4g.0 Slash subsystem — CleanupRendezvous (PR-2.3a). Tracks
+      # session_id → task_pid for `/end-session` Tasks blocking on
+      # MCP-side `session.signal_cleanup` ack. Started BEFORE
+      # Esr.Slash.Supervisor so callsites in BranchEnd / Server can
+      # find it during the same boot pass. Runs in parallel to the
+      # legacy Dispatcher path until PR-2.3b deletes Dispatcher.
+      Esr.Slash.CleanupRendezvous,
+
+      # 4g.1 SlashHandler bootstrap (PR-2.3b-2). One-shot init child
+      # whose `init/1` brings up SlashHandler under Scope.Admin's
+      # children sup, then returns :ignore. Placed BEFORE
+      # Esr.Slash.Supervisor so the Watcher's dispatch of pending
+      # orphans at boot lands on a live :slash_handler peer.
+      Esr.Slash.HandlerBootstrap,
 
       # 4g. Admin subsystem — Dispatcher + CommandQueue.Watcher
       # (dev-prod-isolation spec §6.1). Sits AFTER Capabilities
       # (Dispatcher checks grants during authorization) and AFTER
       # Workspaces.Registry (register_adapter validates workspace
       # names). Watcher's init mkdir_p's the admin_queue/ subdirs.
-      Esr.Admin.Supervisor,
+      Esr.Slash.Supervisor,
 
       # 4h. Routing subsystem (P3-14): Esr.Routing.Supervisor +
       # Esr.Routing.SlashHandler removed. The new slash-parsing path
-      # is Esr.Peers.SlashHandler, spawned per-Session under
-      # AdminSessionProcess / SessionProcess (spec §3.5). The old
+      # is Esr.Entity.SlashHandler, spawned per-Session under
+      # Scope.Admin.Process / Scope.Process (spec §3.5). The old
       # top-level subsystem was PR-0 scaffolding that got stranded
       # once the peer/session refactor moved slash parsing into the
       # peer graph.
@@ -154,7 +209,8 @@ defmodule Esr.Application do
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
       # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
-      # by Esr.SessionRegistry.lookup_by_chat_thread/3 in the new peer chain.
+      # by Esr.Resource.ChatScope.Registry.lookup_by_chat/2 in the new
+      # peer chain (post-R5).
       Esr.HandlerRouter.Supervisor,
       Esr.Persistence.Supervisor,
       Esr.Telemetry.Supervisor,
@@ -166,9 +222,9 @@ defmodule Esr.Application do
     opts = [strategy: :one_for_one, name: Esr.Supervisor]
     result = Supervisor.start_link(children, opts)
 
-    # P4a-7: bring up the voice pools under AdminSession's children
+    # P4a-7: bring up the voice pools under Scope.Admin's children
     # supervisor. Must happen after Supervisor.start_link/2 because the
-    # bootstrap resolves the `AdminSession.ChildrenSupervisor` via its
+    # bootstrap resolves the `Scope.Admin.ChildrenSupervisor` via its
     # registered name. Failures are logged but non-fatal — the rest of
     # the tree keeps running with voice paths degraded.
     #
@@ -178,31 +234,45 @@ defmodule Esr.Application do
     # command path, not the rest of the tree.
     case result do
       {:ok, _} ->
-        case Esr.AdminSession.bootstrap_voice_pools(Esr.Paths.pools_yaml()) do
-          :ok ->
-            :ok
+        # PR-3.1: fallback sidecar mappings (feishu/cc_mcp) removed.
+        # `Esr.Plugin.Loader` registers them from the plugin manifests
+        # (`runtime/lib/esr/plugins/{feishu,claude_code}/manifest.yaml`)
+        # via `load_enabled_plugins/0` below. Default-enabled list
+        # (when no operator plugins.yaml exists) is `["feishu",
+        # "claude_code"]` per `Esr.Plugin.EnabledList`.
 
-          {:error, reason} ->
-            require Logger
+        # Phase D-1 (2026-05-05): only `Esr.Entity.PtyProcess` is
+        # genuinely core-shipped. All plugin stateful peers
+        # (FeishuChatProxy / FeishuAppAdapter / CCProcess) are now
+        # registered by `Esr.Plugin.Loader.register_entities/1` from
+        # the manifests of enabled plugins. Pre-Phase-D-1 those three
+        # were ALSO hardcoded here as "transitional fallbacks" — but
+        # PR-3.3/PR-3.6 had already shipped, so the fallback was dead
+        # weight that contradicted the "Loader is canonical" claim.
+        # See docs/notes/2026-05-05-cli-dual-rail.md for the dual-rail
+        # discipline that surfaced this gap; the corrected status doc
+        # at docs/notes/2026-05-05-phase-3-4-status.md (zh_cn parallel)
+        # called it out explicitly.
+        :ok = Esr.Entity.Agent.StatefulRegistry.register(Esr.Entity.PtyProcess)
 
-            Logger.warning(
-              "admin_session: bootstrap_voice_pools failed: #{inspect(reason)}; " <>
-                "voice peers will be unavailable until restart"
-            )
-        end
+        # PR-2.3b-2: SlashHandler is now bootstrapped via the
+        # Esr.Slash.HandlerBootstrap supervision child (placed before
+        # Esr.Slash.Supervisor so Watcher orphan-recovery lands on a
+        # live peer). No post-start work needed here.
 
-        case Esr.AdminSession.bootstrap_slash_handler() do
-          :ok ->
-            :ok
+        # HR-1: create the config snapshot ETS table before loading plugins
+        # so ConfigSnapshot.init/2 (called from Loader.start_plugin/2) has
+        # a table to write into.
+        :ok = Esr.Plugin.ConfigSnapshot.create_table()
 
-          {:error, reason} ->
-            require Logger
-
-            Logger.warning(
-              "admin_session: bootstrap_slash_handler failed: #{inspect(reason)}; " <>
-                "slash commands will be unavailable until restart"
-            )
-        end
+        # Plugin loader (Track 0 Task 0.4). Phase 0: zero plugins on
+        # disk → no-op. Once `runtime.exs` populates `:enabled_plugins`
+        # (Task 0.5) and plugins materialize under
+        # `runtime/lib/esr/plugins/`, this fans out to register their
+        # contributions in core registries (Phase-1 covers
+        # python_sidecars; capabilities/slash routes/agents follow as
+        # those registries gain register/3 APIs).
+        load_enabled_plugins()
 
       _ ->
         :ok
@@ -213,7 +283,6 @@ defmodule Esr.Application do
       # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /
       # ESR_INSTANCE directly, so the passed value is effectively
       # advisory — set ESRD_HOME to override.
-      _ = load_workspaces_from_disk(Esr.Paths.esrd_home())
       _ = load_agents_from_disk()
 
       # PR-21β 2026-04-30: cleanup_orphans is gone. erlexec owns
@@ -222,13 +291,15 @@ defmodule Esr.Application do
 
       _ = restore_adapters_from_disk(Esr.Paths.esrd_home())
 
-      # PR-9 T10: spawn one FeishuAppAdapter (Elixir admin peer) per
-      # `type: feishu` instance in adapters.yaml. Must come AFTER
-      # restore_adapters_from_disk so the Python sidecar and the Elixir
-      # consumer are both up by the time anything pushes inbound. Without
-      # this, adapter_channel logs "no FeishuAppAdapter for app_id=..."
-      # and every inbound frame is silently dropped.
-      _ = Esr.AdminSession.bootstrap_feishu_app_adapters()
+      # PR-3.4 (2026-05-05): plugin startup callbacks. Each enabled
+      # plugin's manifest `startup:` block runs here in plugin-enable
+      # order. feishu's startup spawns one FeishuAppAdapter per
+      # `type: feishu` row in adapters.yaml — see
+      # `Esr.Plugins.Feishu.Bootstrap.bootstrap/0`. No try/rescue
+      # by design: a startup failure crashes esrd boot loudly rather
+      # than degrading silently (the bootstrap-miss → silent-dropped-
+      # frames anti-pattern PR-K/L chased).
+      :ok = Esr.Plugin.Loader.run_startup()
 
       # PR-9 T11a: spawn a Python handler_worker for every handler
       # module referenced by any agents.yaml `capabilities_required`
@@ -244,11 +315,55 @@ defmodule Esr.Application do
   end
 
   @doc """
-  Load `<runtime_home>/agents.yaml` into `Esr.SessionRegistry` at boot.
-  Mirrors `load_workspaces_from_disk/1` — missing file is not an error,
-  parse failures are logged. Exists so e2e scenarios (which drop an
-  agents.yaml at the instance root before `scripts/esrd.sh start`) don't
-  have to reach into ExUnit test support to load agents manually.
+  Discover plugins under `runtime/lib/esr/plugins/`, topo-sort the
+  enabled subset (from `Application.get_env(:esr, :enabled_plugins)`),
+  and register each plugin's contributions in core registries.
+
+  Phase 0 default: enabled list empty → no plugins started. Failures
+  are logged but non-fatal so an on-disk plugin with a bad manifest
+  doesn't take down the rest of the runtime.
+
+  Track 0 Task 0.4. Spec:
+  `docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md` §五.
+  """
+  @spec load_enabled_plugins() :: :ok
+  def load_enabled_plugins do
+    require Logger
+    enabled = Application.get_env(:esr, :enabled_plugins, []) |> Enum.map(&to_string/1)
+
+    with {:ok, discovered} <- Esr.Plugin.Loader.discover(),
+         {:ok, ordered} <- Esr.Plugin.Loader.topo_sort_enabled(discovered, enabled) do
+      for {name, manifest} <- ordered do
+        case Esr.Plugin.Loader.start_plugin(name, manifest) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "plugin loader: start_plugin(#{name}) failed: #{inspect(reason)}; " <>
+                "plugin will be unavailable until next restart"
+            )
+        end
+      end
+
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "plugin loader: discovery / topo-sort failed: #{inspect(reason)}; " <>
+            "no plugins started"
+        )
+
+        :ok
+    end
+  end
+
+  @doc """
+  Load `<runtime_home>/agents.yaml` into `Esr.Entity.Agent.Registry` at
+  boot. Mirrors `load_workspaces_from_disk/1` — missing file is not an
+  error, parse failures are logged. Exists so e2e scenarios (which drop
+  an agents.yaml at the instance root before `scripts/esrd.sh start`)
+  don't have to reach into ExUnit test support to load agents manually.
   """
   @spec load_agents_from_disk() :: :ok
   def load_agents_from_disk do
@@ -256,7 +371,7 @@ defmodule Esr.Application do
     path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
 
     if File.exists?(path) do
-      case Esr.SessionRegistry.load_agents(path) do
+      case Esr.Entity.Agent.Registry.load_agents(path) do
         :ok ->
           Logger.info("agents.yaml: loaded from #{path}")
           :ok
@@ -268,28 +383,6 @@ defmodule Esr.Application do
     else
       Logger.info("agents.yaml: absent at #{path}; skipping")
       :ok
-    end
-  end
-
-  @doc """
-  Load `<home>/default/workspaces.yaml` into
-  `Esr.Workspaces.Registry`. v0.2 uses instance="default". Missing
-  file is not an error — returns :ok.
-  """
-  @spec load_workspaces_from_disk(Path.t()) :: :ok
-  def load_workspaces_from_disk(_esrd_home) do
-    path = Esr.Paths.workspaces_yaml()
-
-    case Esr.Workspaces.Registry.load_from_file(path) do
-      {:ok, workspaces} ->
-        for {_name, ws} <- workspaces do
-          :ok = Esr.Workspaces.Registry.put(ws)
-        end
-
-        :ok
-
-      _ ->
-        :ok
     end
   end
 
@@ -410,7 +503,7 @@ defmodule Esr.Application do
   # module names referenced by any `capabilities_required` entry shaped
   # `"handler:<module>/<action>"`. Malformed capabilities (unknown
   # prefix, missing slash) are silently skipped — the
-  # `Esr.Capabilities.Grants` validator catches schema errors at grant
+  # `Esr.Resource.Capability.Grants` validator catches schema errors at grant
   # time; this pass only cares about the well-formed handler refs.
   @spec extract_handler_modules(Path.t()) :: [String.t()]
   def extract_handler_modules(agents_yaml_path) do

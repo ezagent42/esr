@@ -12,7 +12,7 @@ defmodule Esr.Workers.HandlerProcess do
 
   @behaviour Esr.Role.Boundary
 
-  use Esr.Peer.Stateful
+  use Esr.Entity.Stateful
   use Esr.OSProcess, kind: :handler, wrapper: :plain
 
   require Logger
@@ -63,7 +63,7 @@ defmodule Esr.Workers.HandlerProcess do
 
   def init(args), do: {:ok, args}
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_upstream({:os_stdout, line}, state) do
     Logger.info("[handler #{state.module}/#{state.worker_id}] #{line}")
     {:forward, [], state}
@@ -76,7 +76,7 @@ defmodule Esr.Workers.HandlerProcess do
 
   def handle_upstream(_msg, state), do: {:forward, [], state}
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_downstream(_msg, state), do: {:forward, [], state}
 
   defp python_bin do

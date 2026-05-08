@@ -1,8 +1,0 @@
-# ESR adapter manifest (PRD 04 F04)
-name = "cc_tmux"
-version = "0.1.0"
-module = "esr_cc_tmux.adapter"
-entry = "CcTmuxAdapter"
-
-[allowed_io]
-subprocess = ["tmux"]

@@ -50,13 +50,13 @@ agents:
       # 一个 IM 消息 → FCP → CCProxy → CCProcess → TmuxProcess
       inbound:
         - name: feishu_chat_proxy        # 局部别名（在本 agent 内引用）
-          impl: Esr.Peers.FeishuChatProxy  # 实际 Elixir 模块
+          impl: Esr.Entities.FeishuChatProxy  # 实际 Elixir 模块
         - name: cc_proxy
-          impl: Esr.Peers.CCProxy
+          impl: Esr.Entities.CCProxy
         - name: cc_process
-          impl: Esr.Peers.CCProcess
+          impl: Esr.Entities.CCProcess
         - name: tmux_process
-          impl: Esr.Peers.TmuxProcess
+          impl: Esr.Entities.TmuxProcess
 
       # 4b) outbound — 发消息时的反向路径（CC 的 reply 走这条）
       outbound:
@@ -70,7 +70,7 @@ agents:
     # 但每个 session 都需要往它发消息 → 用一个 Proxy 模块代理。
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Peers.FeishuAppProxy
+        impl: Esr.Entities.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"  # ${app_id} 来自 params
 
     # 6) Params — 创建 session 时必填/可选参数
@@ -210,11 +210,11 @@ self.actor_id` 加到 envelope）一直传到 cc_mcp 的
     `forward_reply_pass_through` 维持 reply_to_message_id /
     un_react bookkeeping
   - `app_id != home app` → FCP 走跨 app 分发：
-    1. `Esr.Workspaces.Registry.workspace_for_chat(chat_id, app_id)`
+    1. `Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id)`
        拿目标 workspace
-    2. `Esr.Capabilities.has?(state.principal_id,
+    2. `Esr.Resource.Capability.has?(state.principal_id,
        "workspace:<target_ws>/msg.send")` 校验 cap
-    3. `Registry.lookup(Esr.PeerRegistry,
+    3. `Registry.lookup(Esr.Entity.Registry,
        "feishu_app_adapter_<app_id>")` 找目标 FAA peer
     4. `send(target_pid, {:outbound, %{"kind" => "reply",
        "args" => %{"chat_id" => ..., "text" => ...}}})` 把
@@ -223,7 +223,7 @@ self.actor_id` 加到 envelope）一直传到 cc_mcp 的
 3 种结构化失败（FCP 都通过 `Logger.info "FCP cross-app deny
 type=..."` 给运维暴露同一信号）：
 
-  - `unknown_chat_in_app` — workspaces.yaml 没该 (chat, app)
+  - `unknown_chat_in_app` — workspace config 没该 (chat, app)
     映射，CC 写错了 chat_id 或 workspace 没配置
   - `forbidden` — principal 没目标 ws 的 `msg.send`
   - `unknown_app` — 没注册对应的 FAA peer（typo / app 没启动）
@@ -284,15 +284,15 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Peers.FeishuChatProxy   # 复用
+          impl: Esr.Entities.FeishuChatProxy   # 复用
         - name: kb_process
-          impl: Esr.Peers.KBProcess         # 你新写的
+          impl: Esr.Entities.KBProcess         # 你新写的
       outbound:
         - kb_process
         - feishu_chat_proxy
     proxies:
       - name: feishu_app_proxy
-        impl: Esr.Peers.FeishuAppProxy
+        impl: Esr.Entities.FeishuAppProxy
         target: "admin::feishu_app_adapter_${app_id}"
     params:
       - name: app_id
@@ -307,21 +307,21 @@ agents:
 `runtime/lib/esr/peers/kb_process.ex`，看现有 peer 当模板：
 
 ```elixir
-defmodule Esr.Peers.KBProcess do
-  use Esr.Peer.Stateful
+defmodule Esr.Entities.KBProcess do
+  use Esr.Entity.Stateful
 
-  @impl Esr.Peer
+  @impl Esr.Entity
   def spawn_args(params) do
     %{
-      kb_id: Esr.Peer.get_param(params, :kb_id),
-      session_id: Esr.Peer.get_param(params, :session_id)
+      kb_id: Esr.Entity.get_param(params, :kb_id),
+      session_id: Esr.Entity.get_param(params, :session_id)
     }
   end
 
   @impl GenServer
   def init(args), do: {:ok, args |> Map.put(:neighbors, []) |> Map.put(:history, [])}
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_upstream({:text, text, _meta}, state) do
     # 1. 调 LLM（同步或异步皆可，本例同步）
     answer = call_kb_llm(text, state.kb_id, state.history)
@@ -352,15 +352,19 @@ principals:
       - workspace:e2e/msg.send  # Feishu inbound 的鉴权门
 ```
 
-`workspaces.yaml`：
+Workspace config（`~/.esrd/<inst>/workspaces/customer-service/workspace.json`
+或 repo-bound `<repo>/.esr/workspace.json`）：
 
-```yaml
-workspaces:
-  customer-service:
-    cwd: "/tmp/kb"   # KBProcess 不用 tmux 时随便填
-    chats:
-      - {chat_id: oc_xxx, app_id: cli_xxx, kind: dm}
+```json
+{
+  "id": "<uuid>",
+  "name": "customer-service",
+  "folders": ["/tmp/kb"],
+  "chats": [{"chat_id": "oc_xxx", "app_id": "cli_xxx", "kind": "dm"}]
+}
 ```
+
+（也可以用 `runtime/esr exec /workspace add name=customer-service` 创建，再用 `/workspace add-folder` 添加目录。）
 
 ### 步骤 4：测试
 
@@ -414,7 +418,7 @@ agents.yaml 里用 `proxies` 加一个 `target: "admin::my_singleton"` 引用
 
 - [ ] `agents.yaml` 里 agent 已声明
 - [ ] `capabilities.yaml` 里调用方有所需 cap
-- [ ] `workspaces.yaml` 里 chat 绑定到 workspace
+- [ ] workspace 的 `workspace.json` 里 chat 绑定到 workspace（用 `/workspace bind-chat` 或手动编辑）
 - [ ] `adapters.yaml` 里 IM 实例的 `app_id` / `app_secret` / `base_url` 配好
 - [ ] runtime 已重启或 hot-reload 把新配置吃进去（`SessionRegistry.load_agents/1`）
 - [ ] 跑一条最窄 inbound 端到端验证
@@ -473,23 +477,27 @@ agents.yaml 里用 `proxies` 加一个 `target: "admin::my_singleton"` 引用
 
 ### 9.1 `metadata:` 字段（声明端）
 
-`workspaces.yaml` 每个 workspace 可以挂一段自由格式的 `metadata:`，
-LLM 通过 `describe_topology` 工具按需读取：
+每个 workspace 的 `workspace.json` 可以挂一段自由格式的 `metadata:`，
+LLM 通过 `describe_topology` 工具按需读取（post-2026-05-06 hybrid
+storage；旧的 `workspaces.yaml` 已拆分为 per-workspace 文件，见
+`docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`）：
 
-```yaml
-workspaces:
-  ws_dev:
-    cwd: /workspaces/dev
-    role: dev
-    chats: [...]
-    neighbors:
-      - workspace:ws_kanban
-    metadata:
-      purpose: "Engineering team's day-to-day discussion"
-      pipeline_position: 1
-      hand_off_to: "ws_kanban"
-      output_format: "markdown with code blocks"
-      not_my_job: "task tracking — that's ws_kanban"
+```json
+{
+  "id": "<uuid>",
+  "name": "ws_dev",
+  "folders": ["/workspaces/dev"],
+  "role": "dev",
+  "chats": [],
+  "neighbors": ["workspace:ws_kanban"],
+  "metadata": {
+    "purpose": "Engineering team's day-to-day discussion",
+    "pipeline_position": 1,
+    "hand_off_to": "ws_kanban",
+    "output_format": "markdown with code blocks",
+    "not_my_job": "task tracking — that's ws_kanban"
+  }
+}
 ```
 
 | 常用字段 | 含义 |
@@ -559,7 +567,7 @@ cc_mcp 桥（`adapters/cc_mcp/src/esr_cc_mcp/channel.py:_invoke_tool`）
 - [ ] 下游期望的格式写在 `output_format` 里
 - [ ] 边界（什么事不该自己干）写在 `not_my_job` 里
 - [ ] 不含 secret / 不重复 chats[] 已有的 PII
-- [ ] 测试时验证返回值符合预期 —— 没有专门的 CLI 子命令；要验证就在
+- [ ] 测试时验证返回值符合预期 —— 可用 `runtime/esr exec /workspace info name=<ws>` 查看，或在
   CC 会话里直接让 LLM 调 `mcp__esr-channel__describe_topology`，或写
   Elixir 单元测试打 `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", %{"arg" => "ws_dev"})`
   （参考 `runtime/test/esr_web/cli_channel_test.exs`）。
@@ -567,7 +575,7 @@ cc_mcp 桥（`adapters/cc_mcp/src/esr_cc_mcp/channel.py:_invoke_tool`）
 ### 9.4 相关文件
 
 - 设计 spec — `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`
-- 运维笔记 — `docs/notes/actor-topology-routing.md` §"Authoring workspaces.yaml" → `metadata:`
+- 运维笔记 — `docs/notes/actor-topology-routing.md` §"Authoring workspace config" → `metadata:`
 - 运行时端点 — `runtime/lib/esr_web/cli_channel.ex` `dispatch("cli:workspaces/describe", …)`
 - cc_mcp 工具 schema — `adapters/cc_mcp/src/esr_cc_mcp/tools.py` `_DESCRIBE_TOPOLOGY`
 - 单元测试 — `runtime/test/esr_web/cli_channel_test.exs`、`adapters/cc_mcp/tests/test_describe_topology_invoke.py`

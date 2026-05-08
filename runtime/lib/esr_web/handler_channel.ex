@@ -75,7 +75,7 @@ defmodule EsrWeb.HandlerChannel do
 
   defp register_permissions(perms, declared_by) when is_list(perms) do
     for perm <- perms, is_binary(perm) do
-      Esr.Permissions.Registry.register(perm, declared_by: declared_by)
+      Esr.Resource.Permission.Registry.register(perm, declared_by: declared_by)
     end
 
     :ok

@@ -215,20 +215,19 @@ assert_not_contains "$LEARNED_AFTER" "esr://localhost/users/ou_admin" \
 # --------------------------------------------------------------------
 # Cleanup
 # --------------------------------------------------------------------
-ACTORS_OUT=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>/dev/null)
+ACTORS_OUT=$(esr_cli actors list 2>/dev/null)
 SIDS=()
 while IFS= read -r sid; do
   [[ -n "$sid" ]] && SIDS+=("$sid")
 done < <(echo "$ACTORS_OUT" | awk '/^thread:/ { sub("thread:", "", $1); print $1 }')
 
 for sid in "${SIDS[@]}"; do
-  ESR_INSTANCE="${ESRD_INSTANCE}" ESRD_HOME="${ESRD_HOME}" \
-    uv run --project "${_E2E_REPO_ROOT}/py" esr admin submit session_end \
+  esr_cli admin submit session_end \
     --arg "session_id=${sid}" --wait --timeout 30
 done
 
 for _ in $(seq 1 50); do
-  out=$(uv run --project "${_E2E_REPO_ROOT}/py" esr actors list 2>&1 || true)
+  out=$(esr_cli actors list 2>&1 || true)
   if ! echo "$out" | grep -q "^thread:"; then break; fi
   sleep 0.1
 done

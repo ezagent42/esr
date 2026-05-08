@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# tools/esr-debug — reusable debug helpers for ESR live-session work.
+#
+# Bundles the patterns that recurred during today's RCA cycles
+# (2026-05-04, Feishu thread with linyilun) so we don't keep
+# inline-duplicating them: spawn a session, screenshot the attach
+# page, inject a notification, send keystrokes to the PTY, snapshot
+# the rendered terminal text.
+#
+# Usage:
+#
+#   esr-debug spawn  [agent=cc] [chat_id=debug_chat] [app_id=debug_app] [dir=/tmp/esr-debug]
+#       Submit a session_new admin command. Echoes the assigned sid
+#       on stdout. Sets the operator principal to `linyilun` (the
+#       admin escape hatch from capabilities.yaml).
+#
+#   esr-debug attach <sid>
+#       Open the /sessions/<sid>/attach page in agent-browser. Returns
+#       once the page has loaded (no screenshot taken yet).
+#
+#   esr-debug shoot <sid> [out=/tmp/esr-debug-shoot.png]
+#       Take a screenshot of whatever's currently rendered in the
+#       agent-browser session. Implies a wait if you need it (the
+#       caller is expected to time their wait).
+#
+#   esr-debug term-text <sid>
+#       Print the xterm-rendered terminal text via
+#       `agent-browser get text .xterm-screen`. Use this as a faster
+#       grep-able alternative to a binary screenshot when you only
+#       care what claude printed.
+#
+#   esr-debug inject <sid> <text>
+#       POST to /debug/inject_notification/<sid>. Same effect as a
+#       feishu inbound landing on cli:channel/<sid>.
+#
+#   esr-debug send-keys <sid> <text>
+#       POST to /debug/pty_send/<sid>. Writes raw bytes to the PTY's
+#       stdin via `Esr.Entity.PtyProcess.write/2`. Control bytes pass
+#       through (e.g. `$'1\r'` answers a yes/no dialog; `$'\e[A'` is
+#       up-arrow).
+#
+#   esr-debug end <sid>
+#       Submit session_end via admin queue.
+#
+#   esr-debug help
+#       Print this header.
+#
+# Env knobs:
+#   ESRD_HOME    default: ~/.esrd-dev
+#   ESR_INSTANCE default: default
+#   ESR_HOST     default: 127.0.0.1
+#   ESR_PORT     default: 4001
+#   ESR_PUBLIC_HOST default: ESR_HOST (use 100.64.0.27 for Tailnet remote)
+
+set -uo pipefail
+
+ESRD_HOME="${ESRD_HOME:-$HOME/.esrd-dev}"
+ESR_INSTANCE="${ESR_INSTANCE:-default}"
+ESR_HOST="${ESR_HOST:-127.0.0.1}"
+ESR_PORT="${ESR_PORT:-4001}"
+ESR_PUBLIC_HOST="${ESR_PUBLIC_HOST:-$ESR_HOST}"
+QUEUE="${ESRD_HOME}/${ESR_INSTANCE}/admin_queue"
+BASE_URL="http://${ESR_HOST}:${ESR_PORT}"
+ATTACH_BASE_URL="http://${ESR_PUBLIC_HOST}:${ESR_PORT}"
+
+die() { echo "esr-debug: $*" >&2; exit 1; }
+
+cmd_spawn() {
+  local agent="${1:-cc}"
+  local chat_id="${2:-debug_chat}"
+  local app_id="${3:-debug_app}"
+  local dir="${4:-/tmp/esr-debug-$(date +%s)}"
+  mkdir -p "$dir"
+
+  local admin_id
+  admin_id=$(uv run python3 -c "import uuid; print(uuid.uuid4().hex[:26].upper())" 2>/dev/null) ||
+    die "uv run python3 failed (need uv installed)"
+
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
+
+  mkdir -p "$QUEUE/pending" "$QUEUE/completed"
+
+  cat > "$QUEUE/pending/${admin_id}.yaml" <<EOF
+id: ${admin_id}
+kind: session_new
+submitted_by: linyilun
+submitted_at: "${ts}"
+args:
+  agent: ${agent}
+  dir: ${dir}
+  chat_id: ${chat_id}
+  app_id: ${app_id}
+EOF
+
+  # Wait for completion (60s).
+  local i sid=""
+  for i in $(seq 1 120); do
+    if [[ -f "$QUEUE/completed/${admin_id}.yaml" ]]; then
+      sid=$(grep -E "^[[:space:]]+session_id:" "$QUEUE/completed/${admin_id}.yaml" | head -1 | awk '{print $2}' | tr -d '"')
+      break
+    fi
+    sleep 0.5
+  done
+
+  [[ -n "$sid" ]] || die "session_new did not complete within 60s (admin_id=$admin_id)"
+  echo "$sid"
+}
+
+cmd_attach() {
+  local sid="${1:?usage: esr-debug attach <sid>}"
+  command -v agent-browser >/dev/null 2>&1 || die "agent-browser not on PATH"
+  agent-browser open "${ATTACH_BASE_URL}/sessions/${sid}/attach" >&2
+}
+
+cmd_shoot() {
+  local sid="${1:?usage: esr-debug shoot <sid> [out]}"
+  local out="${2:-/tmp/esr-debug-shoot.png}"
+  command -v agent-browser >/dev/null 2>&1 || die "agent-browser not on PATH"
+  agent-browser screenshot "$out" >&2
+  echo "$out"
+}
+
+cmd_term_text() {
+  local sid="${1:?usage: esr-debug term-text <sid>}"
+  command -v agent-browser >/dev/null 2>&1 || die "agent-browser not on PATH"
+  agent-browser get text ".xterm-screen" 2>/dev/null
+}
+
+cmd_inject() {
+  local sid="${1:?usage: esr-debug inject <sid> <text>}"
+  local text="${2:?usage: esr-debug inject <sid> <text>}"
+  curl -sS -G --data-urlencode "text=${text}" \
+    "${BASE_URL}/debug/inject_notification/${sid}"
+  echo
+}
+
+cmd_send_keys() {
+  local sid="${1:?usage: esr-debug send-keys <sid> <text>}"
+  local text="${2:?usage: esr-debug send-keys <sid> <text>}"
+  curl -sS -X POST -G --data-urlencode "text=${text}" \
+    "${BASE_URL}/debug/pty_send/${sid}"
+  echo
+}
+
+cmd_end() {
+  local sid="${1:?usage: esr-debug end <sid>}"
+  local admin_id
+  admin_id=$(uv run python3 -c "import uuid; print(uuid.uuid4().hex[:26].upper())" 2>/dev/null) ||
+    die "uv run python3 failed"
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
+  mkdir -p "$QUEUE/pending"
+  cat > "$QUEUE/pending/${admin_id}.yaml" <<EOF
+id: ${admin_id}
+kind: session_end
+submitted_by: linyilun
+submitted_at: "${ts}"
+args:
+  session_id: ${sid}
+EOF
+  echo "submitted session_end ${admin_id} sid=${sid}" >&2
+}
+
+cmd_help() {
+  sed -n '2,/^set -uo pipefail/p' "$0" | sed 's/^# \?//' | head -n -2
+}
+
+case "${1:-help}" in
+  spawn)      shift; cmd_spawn "$@" ;;
+  attach)     shift; cmd_attach "$@" ;;
+  shoot)      shift; cmd_shoot "$@" ;;
+  term-text)  shift; cmd_term_text "$@" ;;
+  inject)     shift; cmd_inject "$@" ;;
+  send-keys)  shift; cmd_send_keys "$@" ;;
+  end)        shift; cmd_end "$@" ;;
+  help|-h|--help) cmd_help ;;
+  *) die "unknown subcommand: $1 (try: esr-debug help)" ;;
+esac

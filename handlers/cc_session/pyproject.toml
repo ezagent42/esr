@@ -1,7 +1,7 @@
 [project]
 name = "esr-handler-cc-session"
 version = "0.1.0"
-description = "ESR v0.1 handler for cc_proxy actors (tmux-hosted CC sessions)"
+description = "ESR v0.1 handler for cc_proxy actors (PTY-hosted CC sessions)"
 requires-python = ">=3.11"
 dependencies = ["esr"]
 

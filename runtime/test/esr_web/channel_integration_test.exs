@@ -1,7 +1,7 @@
 defmodule EsrWeb.ChannelIntegrationTest do
   use EsrWeb.ChannelCase, async: false
 
-  alias Esr.SessionSocketRegistry
+  alias Esr.Resource.AdapterSocket.Registry, as: AdapterSocketRegistry
   alias Esr.TestSupport.AuthContext
 
   setup do
@@ -25,11 +25,11 @@ defmodule EsrWeb.ChannelIntegrationTest do
     sid = "int-sid-#{System.unique_integer([:positive])}"
     actor_id = "thread:" <> sid
 
-    # Start a real PeerServer under the test supervisor so it registers
-    # in Esr.PeerRegistry under the actor_id that ChannelChannel looks up.
+    # Start a real Entity.Server under the test supervisor so it registers
+    # in Esr.Entity.Registry under the actor_id that ChannelChannel looks up.
     {:ok, _pid} =
       start_supervised(
-        {Esr.PeerServer,
+        {Esr.Entity.Server,
          [
            actor_id: actor_id,
            actor_type: "feishu_thread_proxy",
@@ -61,7 +61,7 @@ defmodule EsrWeb.ChannelIntegrationTest do
       "args" => %{"chat_id" => "oc_int", "text" => "hello"}
     })
 
-    # The emit_and_track in PeerServer broadcasts to the adapter topic.
+    # The emit_and_track in Entity.Server broadcasts to the adapter topic.
     # Receive the directive envelope and extract the id.
     assert_receive %Phoenix.Socket.Broadcast{event: "envelope", payload: env}, 2_000
     directive_id = env["id"]
@@ -82,7 +82,7 @@ defmodule EsrWeb.ChannelIntegrationTest do
        }}
     )
 
-    # PeerServer sends {:tool_result, req_id, result} to the ChannelChannel
+    # Entity.Server sends {:tool_result, req_id, result} to the ChannelChannel
     # process, which pushes an "envelope" back over the MCP socket.
     assert_receive %Phoenix.Socket.Message{
                      event: "envelope",
@@ -95,19 +95,19 @@ defmodule EsrWeb.ChannelIntegrationTest do
                    3_000
   end
 
-  test "notify_session pushes an inbound envelope via SessionSocketRegistry" do
+  test "notify_session pushes an inbound envelope via AdapterSocketRegistry" do
     sid = "notify-sid-#{System.unique_integer([:positive])}"
 
-    # Joining registers the session in SessionSocketRegistry with ws_pid = channel pid.
+    # Joining registers the session in AdapterSocketRegistry with ws_pid = channel pid.
     {:ok, _, _ch_socket} =
       EsrWeb.ChannelSocket
       |> socket("mcp-client-2", %{})
       |> subscribe_and_join(EsrWeb.ChannelChannel, "cli:channel/" <> sid)
 
-    # SessionSocketRegistry.notify_session sends {:push_envelope, envelope} to
+    # AdapterSocketRegistry.notify_session sends {:push_envelope, envelope} to
     # the ChannelChannel process, which pushes it back over the socket.
     :ok =
-      SessionSocketRegistry.notify_session(sid, %{
+      AdapterSocketRegistry.notify_session(sid, %{
         "kind" => "notification",
         "content" => "direct-notify-" <> sid
       })

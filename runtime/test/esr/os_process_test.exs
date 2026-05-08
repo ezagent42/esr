@@ -4,15 +4,15 @@ defmodule Esr.OSProcessTest do
   @moduletag :integration
 
   defmodule SleepPeer do
-    use Esr.Peer.Stateful
+    use Esr.Entity.Stateful
     use Esr.OSProcess, kind: :test_sleep
 
-    @impl Esr.Peer.Stateful
+    @impl Esr.Entity.Stateful
     def init(%{} = args), do: {:ok, %{dur: args[:dur] || 30}}
 
-    @impl Esr.Peer.Stateful
+    @impl Esr.Entity.Stateful
     def handle_upstream(_, state), do: {:forward, [], state}
-    @impl Esr.Peer.Stateful
+    @impl Esr.Entity.Stateful
     def handle_downstream(_, state), do: {:forward, [], state}
 
     @impl Esr.OSProcess

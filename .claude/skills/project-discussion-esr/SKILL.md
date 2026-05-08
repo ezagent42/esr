@@ -100,12 +100,10 @@ If the current discussion *is* about an eval-doc or issue (Phase 7 bug-triage fl
 | **py-ipc** | `py/src/esr/ipc/` | Envelope schema; Phoenix Channel v2 client; adapter_runner + handler_worker subprocess entrypoints | `test-py-ipc.sh` | 75/75 ✅ (1 skip: live) | infra |
 | **py-verify** | `py/src/esr/verify/` | Handler purity scanner + adapter capability declaration (CI-time) | `test-py-verify.sh` | 32/32 ✅ | infra |
 | **adapter-feishu** | `adapters/feishu/` | Feishu (Lark) adapter — 6 directives (send_message, react, send_card, pin, unpin, download_file); emits `msg_received` | `test-adapter-feishu.sh` | 40/40 ✅ | 3 |
-| **adapter-cc-tmux** | `adapters/cc_tmux/` | tmux+CC adapter — 4 directives (new_session, send_keys, kill_session, capture_pane); emits `cc_output` via `[esr-cc] ` sentinel | `test-adapter-cc-tmux.sh` | 23/23 ✅ | 3 |
 | **adapter-cc-mcp** | `adapters/cc_mcp/` | v0.2 MCP-over-WS CC adapter — tools: reply/react/send_file + _echo (diagnostic role) | `test-adapter-cc-mcp.sh` | 7/7 ✅ ⚠️ (CC-MCP-1) | 3 |
 | **handler-feishu-app** | `handlers/feishu_app/` | Pure handler: receives `msg_received`, routes via `@<tag>` / fallback chat_id, spawns threads via `InvokeCommand` | `test-handler-feishu-app.sh` | 12/12 ✅ | 2 |
 | **handler-feishu-thread** | `handlers/feishu_thread/` | Pure handler: per-thread binding (thread_id↔chat_id↔CC); dedup set cap 1000; notify_session via esr-channel | `test-handler-feishu-thread.sh` | 11/11 ✅ | 2 |
 | **handler-cc-session** | `handlers/cc_session/` | Pure handler: routes CC output back to parent thread (reverse direction) | `test-handler-cc-session.sh` | 4/4 ✅ | 2 |
-| **handler-tmux-proxy** | `handlers/tmux_proxy/` | Pure handler: transparent proxy between tmux adapter and `cc:<session>` actor | `test-handler-tmux-proxy.sh` | 4/4 ✅ | 2 |
 | **patterns-roles-scenarios** | `patterns/`, `roles/`, `scenarios/` | Declarative artifacts: 2 patterns (feishu-app-session, feishu-thread-session), 2 roles (dev, diagnostic), 2 scenarios (e2e-feishu-cc v0.1, e2e-esr-channel v0.2) | `test-patterns-roles-scenarios.sh` | n/a (indirect) | 4 |
 | **scripts** | `scripts/` | Mock services (mock_feishu, mock_cc, mock_mcp_ctl), `final_gate.sh` v2 (13 checks), loopguard infrastructure, verify_* PRD/ledger/CLI utilities | `test-scripts.sh` | 32/33 ⚠️ (SCRIPTS-1) + bash 6/6 ✅ | infra |
 | **runtime-core** | `runtime/lib/esr/` | Elixir OTP core: Application tree, PeerServer, PeerSupervisor, PeerRegistry, SessionRegistry, WorkerSupervisor, DeadLetter, URI | `test-runtime-core.sh` | 73/73 ✅ | 1 |
@@ -118,7 +116,7 @@ Full details in `references/module-details.md`.
 
 | User flow | Entry point | Modules involved | E2E covered |
 |---|---|---|---|
-| Feishu inbound → CC session reply (v0.1) | `adapters/feishu/src/esr_feishu/adapter.py` (emit_events) | adapter-feishu → handler-feishu-app → InvokeCommand(feishu-thread-session) → handler-feishu-thread → cc_tmux → handler-cc-session → back to feishu | `scenarios/e2e-feishu-cc.yaml` ✅ |
+| Feishu inbound → CC session reply (v0.2) | `adapters/feishu/src/esr_feishu/adapter.py` (emit_events) | adapter-feishu → handler-feishu-app → InvokeCommand(feishu-thread-session) → handler-feishu-thread → notify_session via esr-channel → adapter-cc-mcp → CC | `scenarios/e2e-esr-channel.yaml` ✅ |
 | Feishu inbound → CC MCP channel (v0.2) | same feishu emit_events | feishu-thread → notify_session via `esr-channel` → SessionRegistry → ChannelChannel → adapter-cc-mcp → CC | `scenarios/e2e-esr-channel.yaml` ✅ |
 | `/new-session <workspace> tag=<tag>` | `handlers/feishu_app/src/esr_handler_feishu_app/on_msg.py` | handler-feishu-app → InvokeCommand("feishu-thread-session") → Topology.Instantiator | final_gate L1 ✅ |
 | `@<tag> <body>` addressing | same | handler-feishu-app → Route(target="thread:<tag>") | test_at_addressing ✅ |
@@ -140,7 +138,7 @@ When Skill 3 writes pytest code for ESR, it needs:
 - **E2E scenario runner:** `esr scenario run <name>` (backed by YAML scenario manifest). See `scenarios/e2e-esr-channel.yaml` for the canonical shape.
 - **Conftest:** `py/tests/conftest.py` (single root); individual adapter/handler packages have their own `conftest.py` under their `tests/` dir if needed.
 - **Import mode:** `importlib` (supports duplicate test-file basenames across adapter/handler packages — see `py/pyproject.toml:46`).
-- **testpaths:** `tests`, `../adapters/feishu/tests`, `../adapters/cc_tmux/tests`, `../handlers/{feishu_app,feishu_thread,tmux_proxy,cc_session}/tests`. NOTE: `adapters/cc_mcp/tests` is intentionally NOT included (CC-MCP-1 gap).
+- **testpaths:** `tests`, `../adapters/feishu/tests`, `../handlers/{feishu_app,feishu_thread,cc_session,cc_adapter_runner}/tests`. NOTE: `adapters/cc_mcp/tests` is intentionally NOT included (CC-MCP-1 gap).
 - **Naming:** `test_*.py`; pytest auto-discovers. For cross-cutting handler tests use `test_handlers_cross_cutting.py` style.
 - **Fixtures pattern:** small inline fixtures in each test file; a few shared live-capture JSON fixtures in `adapters/feishu/tests/fixtures/live-capture/`. No DB fixtures.
 - **Evidence collection:** scenarios emit `ledger` events; `scripts/ledger_append.py` writes append-only log. `asciinema` is optional (2.4.0 installed, for pre-release walkthroughs only).

@@ -20,7 +20,7 @@ defmodule Esr.PyProcess do
 
   @behaviour Esr.Role.State
 
-  use Esr.Peer.Stateful
+  use Esr.Entity.Stateful
   use Esr.OSProcess, kind: :python, wrapper: :plain
 
   @doc """
@@ -60,7 +60,7 @@ defmodule Esr.PyProcess do
      }}
   end
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_upstream({:os_stdout, line}, state) do
     case Jason.decode(line) do
       {:ok, map} ->
@@ -75,7 +75,7 @@ defmodule Esr.PyProcess do
 
   def handle_upstream(_msg, state), do: {:forward, [], state}
 
-  @impl Esr.Peer.Stateful
+  @impl Esr.Entity.Stateful
   def handle_downstream(_msg, state), do: {:forward, [], state}
 
   @impl Esr.OSProcess

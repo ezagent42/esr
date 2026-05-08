@@ -8,12 +8,12 @@ from that spec to code on disk. PRs are tracked under
 ## Elixir runtime (`runtime/lib/esr/`)
 
 ### Peer behaviours
-- `esr/peer.ex` — `Esr.Peer` base behaviour. Every peer declares its `peer_kind` (`:proxy` or `:stateful`).
-- `esr/peer/proxy.ex` — `Esr.Peer.Proxy` for request-forwarding peers. Compile-time callback-ban ensures no state.
-- `esr/peer/stateful.ex` — `Esr.Peer.Stateful` for state-owning peers. Declares `handle_upstream/2`, `handle_downstream/2`; init belongs to the host GenServer / OSProcess.
+- `esr/peer.ex` — `Esr.Entity` base behaviour. Every peer declares its `peer_kind` (`:proxy` or `:stateful`).
+- `esr/peer/proxy.ex` — `Esr.Entity.Proxy` for request-forwarding peers. Compile-time callback-ban ensures no state.
+- `esr/peer/stateful.ex` — `Esr.Entity.Stateful` for state-owning peers. Declares `handle_upstream/2`, `handle_downstream/2`; init belongs to the host GenServer / OSProcess.
 
 ### OS-process底座
-- `esr/os_process.ex` — `Esr.OSProcess` macro layering `erlexec` (PTY + bidirectional stdio + BEAM-exit cleanup) over `Esr.Peer.Stateful`. See `docs/notes/erlexec-migration.md`.
+- `esr/os_process.ex` — `Esr.OSProcess` macro layering `erlexec` (PTY + bidirectional stdio + BEAM-exit cleanup) over `Esr.Entity.Stateful`. See `docs/notes/erlexec-migration.md`.
 
 ### Per-chain peers (`runtime/lib/esr/peers/`)
 - `feishu_app_adapter.ex` + `feishu_chat_proxy.ex` — Feishu inbound chain (PR-2).
@@ -38,13 +38,12 @@ from that spec to code on disk. PRs are tracked under
 - See `docs/superpowers/specs/2026-04-25-pr-a-multi-app-design.md`.
 
 ### Single-lane authentication (Lane A drop, 2026-04-26)
-- Pre-Lane-A removal had two enforcement lanes (Python adapter + Elixir runtime) which drifted. Now: `Esr.PeerServer` `handle_info({:inbound_event, _})` is the single gate; checks `workspace:<ws>/msg.send`; on deny, dispatches a deny-DM directive via the FAA peer.
+- Pre-Lane-A removal had two enforcement lanes (Python adapter + Elixir runtime) which drifted. Now: `Esr.Entity.Server` `handle_info({:inbound_event, _})` is the single gate; checks `workspace:<ws>/msg.send`; on deny, dispatches a deny-DM directive via the FAA peer.
 - See `docs/notes/auth-lane-a-removal.md` (migration); `docs/notes/lane-a-rca.md` (why dual-lane existed).
 
 ### Topology + reachable_set (PR-C 2026-04-27)
 - `esr/topology.ex` — yaml-driven actor topology. `initial_seed/3` produces a CC peer's bootstrap reachable_set (own chat + adapter + symmetric closure of yaml-declared neighbours). `neighbour_set/1` exposes the closure for any workspace.
-- `esr/workspaces/registry.ex` — extended with `neighbors: [String.t()]` field per workspace + optional `chats[].name` for display-name resolution.
-- `esr/workspaces/watcher.ex` — fs_watch on `workspaces.yaml`. Eager-add: broadcasts `{:topology_neighbour_added, ws, uri}` on `topology:<ws>` PubSub for active CC peers to merge into their reachable_set. Lazy-remove: cap gate is the authoritative revocation layer.
+- `esr/workspaces/registry.ex` — extended with `neighbors: [String.t()]` field per workspace + optional `chats[].name` for display-name resolution. Workspaces are stored as `workspace.json` files (ESR-bound: `~/.esrd/<inst>/workspaces/<name>/workspace.json`; repo-bound: `<repo>/.esr/workspace.json`). `Workspace.Watcher` was removed in the 2026-05-06 redesign — the CLI invalidates the Registry inline. See `docs/superpowers/specs/2026-05-06-workspace-vs-code-redesign.md`.
 - `esr/peers/cc_process.ex` — owns per-actor `reachable_set: MapSet`. `learn_uris_from_event/2` performs BGP-style propagation (inbound `meta.source` + `meta.principal_id` → reachable_set). `build_channel_notification/2` emits `reachable` (JSON-string per spec §8 attribute-only constraint), `workspace`, and `user_id` on the `<channel>` tag.
 - See `docs/superpowers/specs/2026-04-27-actor-topology-routing.md` and `docs/notes/actor-topology-routing.md`.
 
@@ -58,14 +57,14 @@ from that spec to code on disk. PRs are tracked under
 - Runtime endpoint: `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", …)` returns `{current_workspace, neighbor_workspaces}` filtered by an allowlist (`name`, `role`, `chats`, `neighbors_declared`, `metadata`). Operational fields (`cwd`, `env`, `start_cmd`) and secrets stay out.
 - `Workspaces.Registry.Workspace` gains a `metadata: map()` free-form sub-tree — operators populate `purpose`, `pipeline_position`, `hand_off_to`, `output_format`, `not_my_job`, … without code changes. Schema is open.
 - Tool is intended to be called when the LLM needs pipeline context (its role, downstream stages, expected output format) — not on every turn.
-- See `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`, `docs/notes/actor-topology-routing.md` §"Authoring workspaces.yaml" → `metadata:`.
+- See `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`, `docs/notes/actor-topology-routing.md` §"Authoring workspace config" → `metadata:`.
 
 ### Python subprocess supervision
 - `esr/worker_supervisor.ex` — spawns / tracks `python -m <sidecar>` processes. `sidecar_module/1` dispatch table routes adapter names to their per-type sidecar module (`feishu_adapter_runner`, `cc_adapter_runner`, generic fallback).
 
 ### Capabilities
 - `esr/capabilities.ex` + `esr/capabilities/grants.ex` — canonical `prefix:name/perm` permission model. Diff-based `{:grants_changed, principal_id}` PubSub drives session-scoped projection.
-- Single enforcement lane (post 2026-04-26 Lane A drop): `Esr.PeerServer` `handle_info({:inbound_event, _}, _)` gates inbound on `workspace:<ws>/msg.send`, dispatches a deny-DM directive via the FAA peer on deny. See `docs/notes/auth-lane-a-removal.md` for the migration; `docs/notes/lane-a-rca.md` for why dual-lane existed and how to prevent it next time.
+- Single enforcement lane (post 2026-04-26 Lane A drop): `Esr.Entity.Server` `handle_info({:inbound_event, _}, _)` gates inbound on `workspace:<ws>/msg.send`, dispatches a deny-DM directive via the FAA peer on deny. See `docs/notes/auth-lane-a-removal.md` for the migration; `docs/notes/lane-a-rca.md` for why dual-lane existed and how to prevent it next time.
 
 ## Python code (`py/src/`)
 
@@ -114,9 +113,10 @@ from that spec to code on disk. PRs are tracked under
 |---|---|
 | Single-user create / use / end | `tests/e2e/scenarios/01_single_user_create_and_end.sh` |
 | Concurrent users + cap gating | `tests/e2e/scenarios/02_two_users_concurrent.sh` |
-| Tmux pane operator attach | `tests/e2e/scenarios/03_tmux_attach_edit.sh` |
 | Multi-app `app_id` propagation + cross-app deny | `tests/e2e/scenarios/04_multi_app_routing.sh` |
 | Topology `<channel reachable=…>` + BGP learn | `tests/e2e/scenarios/05_topology_routing.sh` |
+| PTY actor attach (xterm WS frames) | `tests/e2e/scenarios/06_pty_attach.sh` |
+| PTY actor bidirectional roundtrip | `tests/e2e/scenarios/07_pty_bidir.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |
@@ -141,7 +141,7 @@ the registered type set if needed, never inventing a new scheme. See
 practical reference (grammar, every existing emit site, builder
 examples, when to add a new type).
 
-The reachable_set ACL in `Esr.PeerServer` keys off these URIs to
+The reachable_set ACL in `Esr.Entity.Server` keys off these URIs to
 enforce cross-boundary routing per spec §6.
 
 ## Cross-references

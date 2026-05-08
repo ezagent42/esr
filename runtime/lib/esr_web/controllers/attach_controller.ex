@@ -25,19 +25,41 @@ defmodule EsrWeb.AttachController do
         <title>ESR · attach #{sid}</title>
         <link rel="stylesheet" href="/assets/app.css" />
         <style>
+          /* Verbatim copy of ttyd's flow-based layout
+             (html/src/style/index.scss). Don't deviate — every
+             previous variant (`position: fixed; inset: 0`,
+             `width: 100% !important` overrides on xterm internals)
+             produced the wrong rendered width. xterm.js's bundled
+             CSS already positions `.xterm-viewport` absolute
+             top:0/right:0/bottom:0/left:0; ttyd just gives it a
+             flow-sized parent and lets xterm do its thing. */
           html, body {
+            height: 100%;
+            width: 100%;
+            min-height: 100%;
             margin: 0;
-            padding: 0;
+            overflow: hidden;
             background: #1e1e1e;
             color: #d4d4d4;
-            font-family: 'SF Mono', Menlo, Monaco, monospace;
-            height: 100vh;
-            overflow: hidden;
+            font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace;
           }
+          /* Explicit viewport-relative size on the term container
+             (vs ttyd's `width: auto` which depends on body cascading
+             100% from html). Avoids any block-width-lazy-resolution
+             where the container measures at less-than-viewport at the
+             moment xterm.js's `term.open` runs. */
           #term {
-            position: fixed;
-            inset: 0;
-            padding: 4px;
+            width: 100vw;
+            height: 100vh;
+            padding: 0;
+            margin: 0;
+            box-sizing: border-box;
+          }
+          #term .xterm,
+          #term .terminal {
+            height: 100%;
+            padding: 5px;
+            box-sizing: border-box;
           }
           #ended-banner {
             position: fixed;

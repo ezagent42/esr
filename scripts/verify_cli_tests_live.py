@@ -65,8 +65,11 @@ def _tests_added_since_baseline() -> list[Path]:
         return []
     baseline = baseline_file.read_text().strip()
     try:
+        # `--diff-filter=AM` skips deleted files — without it, LG-9 false-
+        # alarms on test_cli_*.py removals (e.g. the 2026-05-06 Python CLI
+        # purge), since check_file flags missing paths as violations.
         diff = subprocess.run(
-            ["git", "-C", str(repo), "diff", "--name-only", baseline,
+            ["git", "-C", str(repo), "diff", "--name-only", "--diff-filter=AM", baseline,
              "--", "py/tests/test_cli_cmd_*.py"],
             capture_output=True, text=True, check=True,
         )

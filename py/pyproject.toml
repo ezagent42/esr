@@ -1,24 +1,26 @@
 [project]
 name = "esr"
 version = "0.1.0"
-description = "ESR v0.1 Python SDK + CLI"
+description = "ESR v0.1 Python SDK (sidecar IPC + adapter SDK)"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "ESR contributors" }
 ]
+# 2026-05-06: `esr` click CLI deleted. Operator surface is the Elixir
+# escript at `runtime/esr` + slash commands. The Python package is
+# now scoped to: (1) sidecar IPC helpers (`esr.ipc.handler_worker`),
+# (2) handler/adapter SDK decorators (`esr.handler`, `esr.adapter`),
+# (3) workspace yaml + capabilities loaders consumed by the feishu
+# adapter sidecar. `click` dependency dropped with the CLI.
 dependencies = [
     "pydantic>=2.5",
     "aiohttp>=3.9",
-    "click>=8.1",
     "pyyaml>=6.0",
     "anyio>=4.0",
     "ruamel.yaml>=0.18",
     "python-ulid>=3.0",
 ]
-
-[project.scripts]
-esr = "esr.cli.main:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -43,32 +45,26 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # importlib import mode supports duplicate test-file basenames across
-# different test directories (e.g. adapters/feishu/tests/test_registration.py
-# and adapters/cc_tmux/tests/test_registration.py).
+# different test directories.
 addopts = "--import-mode=importlib"
 testpaths = [
     "tests",
-    "tests/voice",
     "tests/adapter_runners",
     "../adapters/feishu/tests",
-    "../adapters/cc_tmux/tests",
-    "../adapters/cc_mcp/tests",
     "../handlers/feishu_app/tests",
     "../handlers/feishu_thread/tests",
-    "../handlers/tmux_proxy/tests",
     "../handlers/cc_session/tests",
     "../handlers/cc_adapter_runner/tests",
 ]
 
 [tool.uv.sources]
 esr-adapter-feishu = { path = "../adapters/feishu", editable = true }
-esr-adapter-cc-tmux = { path = "../adapters/cc_tmux", editable = true }
 esr-handler-feishu-app = { path = "../handlers/feishu_app", editable = true }
 esr-handler-feishu-thread = { path = "../handlers/feishu_thread", editable = true }
-esr-handler-tmux-proxy = { path = "../handlers/tmux_proxy", editable = true }
 esr-handler-cc-session = { path = "../handlers/cc_session", editable = true }
 esr-handler-cc-adapter-runner = { path = "../handlers/cc_adapter_runner", editable = true }
-esr-cc-mcp = { path = "../adapters/cc_mcp", editable = true }
+# PR-3.5 (2026-05-05): esr-cc-mcp source removed; the MCP server is
+# now esrd-hosted. See docs/superpowers/specs/2026-05-05-pr-3-5-http-mcp-transport.md.
 
 [dependency-groups]
 dev = [
@@ -79,11 +75,8 @@ dev = [
     "mypy>=1.7",
     "types-pyyaml>=6.0.12.20260408",
     "esr-adapter-feishu",
-    "esr-adapter-cc-tmux",
     "esr-handler-feishu-app",
     "esr-handler-feishu-thread",
-    "esr-handler-tmux-proxy",
     "esr-handler-cc-session",
     "esr-handler-cc-adapter-runner",
-    "esr-cc-mcp",
 ]

@@ -14,7 +14,7 @@ set -u
 
 env_target="${1:---env=both}"
 
-DEV_WORKTREE="${HOME}/Workspace/esr/.claude/worktrees/dev"
+DEV_WORKTREE="${HOME}/Workspace/esr/.worktrees/dev"
 
 uninstall_one() {
   local name="$1"                 # esrd | esrd-dev

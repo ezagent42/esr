@@ -8,9 +8,9 @@
 #
 # Flow:
 #   1. Submit a session_new via the admin queue (bypasses Feishu).
-#   2. Run scripts/cc-bootstrap.sh to answer the
-#      `--dangerously-load-development-channels` warning dialog so
-#      cc_mcp boots and joins `cli:channel/<sid>`.
+#   2. Wait for FCP's in-process boot bridge (PR-186) to auto-confirm
+#      the `--dangerously-load-development-channels` dialog so cc_mcp
+#      boots and joins `cli:channel/<sid>`. No external helper needed.
 #   3. Verify cc_mcp's session_register envelope arrived in the BEAM log.
 #   4. Inject a `notification` envelope via the dev-only HTTP debug
 #      endpoint (Direction 2: BEAM → claude). The injected text asks
@@ -19,7 +19,7 @@
 #      with the expected args (Direction 1: claude → BEAM).
 #
 # Requires: a running esrd-dev (default port 4001), admin queue under
-# `$ESRD_HOME/<instance>/admin_queue/`, websocat on PATH, jq on PATH.
+# `$ESRD_HOME/<instance>/admin_queue/`, jq on PATH.
 
 set -Eeuo pipefail
 
@@ -31,24 +31,12 @@ ESRD_INSTANCE="${ESRD_INSTANCE:-default}"
 QUEUE_DIR="${ESRD_HOME}/${ESRD_INSTANCE}/admin_queue"
 LOG_FILE="${ESRD_HOME}/${ESRD_INSTANCE}/logs/launchd-stdout.log"
 
-# Prefer the dev worktree the running esrd is running out of (set in
-# the launchd plist as ESR_REPO_DIR), so this scenario can run against
-# in-flight changes on a feature branch before they're merged back to
-# the main repo's `scripts/` directory.
-REPO_ROOT="${ESR_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-BOOTSTRAP="${REPO_ROOT}/scripts/cc-bootstrap.sh"
-
-for tool in websocat jq curl uv; do
+for tool in jq curl uv; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "FAIL: required tool '$tool' not on PATH" >&2
     exit 2
   fi
 done
-
-if [[ ! -x "$BOOTSTRAP" ]]; then
-  echo "FAIL: scripts/cc-bootstrap.sh not found or not executable at $BOOTSTRAP" >&2
-  exit 2
-fi
 
 echo "[07_pty_bidir] esrd target: ${BASE_URL}, queue: ${QUEUE_DIR}"
 
@@ -57,6 +45,8 @@ admin_id=$(uv run python3 -c "import uuid; print(uuid.uuid4().hex[:26].upper())"
 submitted_at=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
 
 mkdir -p "$QUEUE_DIR/pending" "$QUEUE_DIR/completed" "$QUEUE_DIR/failed"
+# session dir must exist before the Launcher tries to chdir into it (Phase 8: esr-cc.sh deleted)
+mkdir -p /tmp/scenario-07-pty-bidir
 yaml_path="$QUEUE_DIR/pending/${admin_id}.yaml"
 
 cat > "$yaml_path" <<EOF
@@ -111,15 +101,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Step 2: bootstrap (answer dev-channels dialog) ------------------
-# Give claude a moment to actually spawn its TUI before the bootstrap
-# tries to answer the dialog; cc-bootstrap.sh has its own 4s sleep
-# inside the WS session, but the WS itself can't open until the
-# session's PtyProcess has registered with PeerRegistry. 2s here
-# matches the gap we saw in PR-24 live-debug between admin-completed
-# and the dialog rendering on stdout.
+# --- Step 2: wait for FCP boot-bridge to auto-confirm ----------------
+# FCP's boot-bridge (PR-186, 2026-05-04) watches `pty:<sid>` for the
+# dev-channels dialog text and answers "1\r" via PtyProcess.write/2.
+# Just wait a beat for that to land before checking cc_mcp join.
 sleep 2
-"$BOOTSTRAP" "$sid" >/dev/null 2>&1 || true
 
 # --- Step 3: verify cc_mcp joined ------------------------------------
 deadline=$(( $(date +%s) + 30 ))
@@ -169,8 +155,14 @@ seen_tool_invoke=0
 # in the reply tool's `chat_id` arg — finding it on a `tool_invoke`
 # line proves both that the inject went out and that claude routed a
 # correctly-shaped reply call back through cc_mcp.
+#
+# IMPORTANT: use `grep -a` (treat as text). Phoenix's millisecond
+# logger emits the µ sigil as raw `\xc2\xb5` bytes; once a single such
+# line lands in the log, plain `grep` decides the file is binary and
+# silently returns no matches even when the pattern is present. Cost
+# us a full RCA cycle 2026-05-04 — see the fix-flow notes in this PR.
 while (( $(date +%s) < deadline )); do
-  if grep -F 'tool_invoke' "$LOG_FILE" | grep -qF 'scenario07_chat'; then
+  if grep -aF 'tool_invoke' "$LOG_FILE" | grep -qaF 'scenario07_chat'; then
     seen_tool_invoke=1
     break
   fi
@@ -180,7 +172,7 @@ done
 if (( seen_tool_invoke == 0 )); then
   echo "FAIL: claude did not call mcp__esr-channel__reply within 60s" >&2
   echo "--- last tool_invoke lines (any session) ---" >&2
-  grep -F 'tool_invoke' "$LOG_FILE" 2>/dev/null | tail -5 >&2 || true
+  grep -aF 'tool_invoke' "$LOG_FILE" 2>/dev/null | tail -5 >&2 || true
   echo "--- log tail ---" >&2
   tail -40 "$LOG_FILE" >&2
   exit 1

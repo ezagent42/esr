@@ -7,7 +7,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
   Bootstrap adjustments from the plan's Step-3 skeleton:
 
     * The plan's skeleton sends `{:inbound_event, env}` to
-      `Esr.SessionRouter`, but `SessionRouter` is the **control-plane**
+      `Esr.Scope.Router`, but `Scope.Router` is the **control-plane**
       GenServer (create/end session, peer-crash monitor) and does NOT
       handle `:inbound_event` — those messages would hit the Risk-E
       "dropped unexpected info" clause and no relay would ever fire.
@@ -20,25 +20,24 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       here, mirroring the wiring in
       `runtime/test/esr/integration/n2_sessions_test.exs`.
 
-    * The stub tmux peer is registered as `tmux_process` for parity with
-      the plan text, but the observed message shape is
-      `{:feishu_inbound, _}` (FCP relay), not `{:tmux_output, _}`. The
-      plan's "POSSIBLE ISSUES" note anticipates this.
+    * The stub PTY peer is registered as `pty_process`, but the
+      observed message shape is `{:feishu_inbound, _}` (FCP relay), not
+      a stdout event.
 
-  Stubs tmux by registering a plain-pid subscriber in place of a real
-  tmux-owning peer, so the measurement excludes erlexec / port-dial
-  cost; the number we capture is the pure-Elixir dispatch cost through
-  the control-plane.
+  Stubs the PTY peer by registering a plain-pid subscriber in place of
+  a real OS-process-owning peer, so the measurement excludes erlexec /
+  port-dial cost; the number we capture is the pure-Elixir dispatch
+  cost through the control-plane.
 
   Tagged `:perf` — excluded from the default `mix test` profile.
   Invoke with `mix test --only perf` to gather numbers.
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Peers.FeishuAppAdapter
+  alias Esr.Entity.FeishuAppAdapter
 
   @tag :perf
-  test "SessionRouter dispatch latency: 1000 iterations, record p50 / p99" do
+  test "Scope.Router dispatch latency: 1000 iterations, record p50 / p99" do
     # App-level singletons (booted by Esr.Application).
     :ok = Esr.TestSupport.AppSingletons.assert_app_singletons(%{})
 
@@ -46,7 +45,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # agent_def if any downstream code consults it. Mirrors the setup
     # in `runtime/test/esr/integration/n2_sessions_test.exs`.
     :ok =
-      Esr.SessionRegistry.load_agents(
+      Esr.Entity.Agent.Registry.load_agents(
         Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
       )
 
@@ -57,13 +56,13 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
 
     test_pid = self()
 
-    # Stub "tmux" / relay: a plain pid that forwards every message back
-    # to the test process tagged `:relay`, so we can distinguish the
-    # dispatch observation from unrelated noise.
+    # Stub PTY peer / relay: a plain pid that forwards every message
+    # back to the test process tagged `:relay`, so we can distinguish
+    # the dispatch observation from unrelated noise.
     stub_relay = spawn_link(fn -> relay_loop(test_pid) end)
 
     {:ok, session_sup} =
-      Esr.SessionsSupervisor.start_session(%{
+      Esr.Scope.Supervisor.start_session(%{
         session_id: session_id,
         agent_name: "cc",
         dir: "/tmp",
@@ -78,7 +77,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # forwards `{:feishu_inbound, envelope}` here on
     # lookup_by_chat_thread hit.
     :ok =
-      Esr.SessionRegistry.register_session(
+      Esr.Resource.ChatScope.Registry.register_session(
         session_id,
         # PR-A T1: app_id mirrors instance_id so the FAA fallback path
         # (state.instance_id when args["app_id"] absent) hits this row.
@@ -87,7 +86,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     # Per-test FeishuAppAdapter under a scoped DynamicSupervisor so we
-    # don't leak into app-level AdminSession children.
+    # don't leak into app-level Scope.Admin children.
     {:ok, fab_sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     {:ok, _fab} =
@@ -97,15 +96,15 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     {:ok, fab_pid} =
-      Esr.AdminSessionProcess.admin_peer(
+      Esr.Scope.Admin.Process.admin_peer(
         String.to_atom("feishu_app_adapter_#{app_id}")
       )
 
     on_exit(fn ->
-      Esr.SessionRegistry.unregister_session(session_id)
+      Esr.Resource.ChatScope.Registry.unregister_session(session_id)
 
       if Process.alive?(session_sup) do
-        Esr.SessionsSupervisor.stop_session(session_sup)
+        Esr.Scope.Supervisor.stop_session(session_sup)
       end
 
       if Process.alive?(fab_sup), do: Process.exit(fab_sup, :shutdown)
@@ -139,7 +138,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     p99 = Enum.at(sorted, div(n * 99, 100))
 
     IO.puts(
-      "perf: SessionRouter dispatch latency (n=#{n}) p50=#{p50}µs p99=#{p99}µs"
+      "perf: Scope.Router dispatch latency (n=#{n}) p50=#{p50}µs p99=#{p99}µs"
     )
 
     # Only regression-guard the p99; p50 is purely informational.

@@ -25,11 +25,7 @@ defmodule Esr.PubSubAuditTest do
     ~r/^cli:channel\//,
     ~r/^cc_mcp_ready\//,
     ~r/^session_router$/,
-    ~r/^grants_changed:/,
-    # PR-C 2026-04-27 actor-topology-routing §7: workspaces.yaml
-    # hot-reload broadcasts `{:topology_neighbour_added, ws, uri}` on
-    # `topology:<ws>` (per-workspace) and `topology:events` (global).
-    ~r/^topology:/
+    ~r/^grants_changed:/
   ]
 
   # Dynamic-topic call-sites — the broadcast's first-string arg is a
@@ -37,14 +33,14 @@ defmodule Esr.PubSubAuditTest do
   # expected files so a silent refactor that turns a dynamic topic into
   # a new literal shape can't slip past the allow-list.
   @expected_dynamic_sites [
-    "lib/esr/admin/commands/notify.ex",
-    "lib/esr/admin/commands/session/branch_end.ex",
+    "lib/esr/commands/notify.ex",
+    "lib/esr/commands/scope/branch_end.ex",
     "lib/esr/handler_router.ex",
-    "lib/esr/peer_server.ex",
+    "lib/esr/entity/server.ex",
     "lib/esr_web/handler_channel.ex",
     "lib/esr_web/adapter_channel.ex",
-    "lib/esr/peers/feishu_app_adapter.ex",
-    "lib/esr/capabilities/grants.ex"
+    "lib/esr/entity/feishu_app_adapter.ex",
+    "lib/esr/resource/capability/grants.ex"
   ]
 
   @broadcast_call_re ~r/(?:Phoenix\.PubSub\.broadcast|EsrWeb\.Endpoint\.broadcast)/

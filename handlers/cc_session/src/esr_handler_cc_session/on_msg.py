@@ -1,9 +1,9 @@
 """cc_session handler (PRD 05 F18 / F19).
 
-Lives at the CC session end of the tmux-proxy-bridge. When the
-cc_tmux adapter yields a ``cc_output`` event, this handler
-reverse-routes it up to the feishu_thread actor that owns this
-session — closing the loop back to Feishu.
+Lives at the CC session end of the proxy bridge. When the cc_mcp
+adapter yields a ``cc_output`` event, this handler reverse-routes
+it up to the feishu_thread actor that owns this session — closing
+the loop back to Feishu.
 """
 
 from __future__ import annotations

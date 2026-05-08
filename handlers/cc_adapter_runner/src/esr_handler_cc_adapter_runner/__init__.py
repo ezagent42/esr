@@ -11,7 +11,7 @@ decorator in `on_msg.py` registers the function under
 This placeholder's job: respond to the `text` event with a `reply`
 action so e2e scenario-01 step 2's `sent_messages 'ack'` assertion
 passes, proving the full inbound→outbound routing chain. The real CC
-pipeline (claude CLI running in tmux, cc_mcp stdio bridge, MCP `reply`
+pipeline (claude CLI under a PTY, cc_mcp stdio bridge, MCP `reply`
 tool → esr-channel WS → FCP downstream) lands in T11b.
 """
 __version__ = "0.1.0"

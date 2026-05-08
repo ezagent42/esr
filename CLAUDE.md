@@ -102,13 +102,14 @@ Long-form rationale lives in the linked notes.
   [`docs/notes/README.md`](docs/notes/README.md). Keep one note per topic.
 - Pre-existing flakes are tracked, not silenced — see
   [`docs/operations/known-flakes.md`](docs/operations/known-flakes.md).
-- **CLI surface auto-docs**: after touching `py/src/esr/cli/**` or any
-  `dispatch/2` clause in `runtime/lib/esr_web/cli_channel.ex`, run
-  `bash scripts/gen-docs.sh` and commit the regenerated
-  [`docs/cli-reference.md`](docs/cli-reference.md) +
-  [`docs/runtime-channel-reference.md`](docs/runtime-channel-reference.md)
-  in the same PR. The script walks the click tree and parses Elixir
-  dispatch comments — no manual editing of those two files.
+- **CLI surface**: the operator CLI is the Elixir escript at
+  `runtime/esr` (built via `mix escript.build`). The live source-of-
+  truth for slash commands is `runtime/priv/slash-routes.default.yaml`
+  + the `EsrWeb.SlashSchemaController` HTTP endpoint that `runtime/esr
+  describe-slashes` queries. The previous Python click CLI + its
+  auto-generated `docs/cli-reference.md` and
+  `docs/runtime-channel-reference.md` were deleted on 2026-05-06 —
+  `cli_channel.ex` is now an empty 30-line protocol shell.
 
 ## Things to look up rather than memorise
 

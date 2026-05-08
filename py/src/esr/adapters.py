@@ -1,7 +1,7 @@
 """Adapter factory loader (Phase 8a/8b).
 
 Adapter packages ship as ``esr_<name>`` (e.g. ``esr_feishu``,
-``esr_cc_tmux``). Importing the package triggers ``@adapter(name=...)``
+``esr_cc_mcp``). Importing the package triggers ``@adapter(name=...)``
 registration into :data:`esr.adapter.ADAPTER_REGISTRY`. This module
 exposes a single function, :func:`load_adapter_factory`, that takes a
 name string and returns the adapter class's ``factory`` staticmethod.
@@ -23,7 +23,7 @@ def load_adapter_factory(name: str) -> Callable[..., Any]:
     """Import ``esr_<name>`` and return the registered adapter's factory.
 
     Name normalisation: hyphens in ``name`` become underscores in the
-    package (``cc-tmux`` → ``esr_cc_tmux``). If the package cannot be
+    package (``cc-mcp`` → ``esr_cc_mcp``). If the package cannot be
     imported OR the registry does not contain ``name`` after import,
     :class:`AdapterNotFound` is raised with the looked-up package path
     so operators can diagnose.

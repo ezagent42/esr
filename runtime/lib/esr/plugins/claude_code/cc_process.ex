@@ -1,0 +1,511 @@
+defmodule Esr.Entity.CCProcess do
+  @moduledoc """
+  Per-Session `Peer.Stateful` holding CC business state. Invokes Python
+  handler code via `Esr.HandlerRouter.call/3` on upstream messages and
+  translates handler actions into downstream messages for the PTY peer
+  neighbor (`:send_input`) or upward replies to the upstream chat proxy
+  via `CCProxy` (`:reply`).
+
+  State:
+
+    * `:session_id` — session this peer belongs to (spec §3.1)
+    * `:handler_module` — the Python handler module string (e.g.
+      `"cc_adapter_runner"`) passed verbatim as the first argument to
+      `HandlerRouter.call/3`
+    * `:cc_state` — the handler's opaque state blob, threaded through
+      each invocation (`payload["state"]` in, `new_state` out)
+    * `:proxy_ctx` — shared context snapshot (principal_id, etc.) used
+      by downstream Peer.Proxy ctx hooks
+    * `:handler_override` — optional 3-arity fun for tests to stub the
+      HandlerRouter round-trip without a running Phoenix worker
+      channel; set via `put_handler_override/2`
+
+  Peer.Stateful protocol (spec §3.1):
+
+    * `handle_upstream({:text, bytes}, state)` — from `CCProxy`; invoke
+      handler, dispatch resulting actions
+    * `handle_downstream(_, state)` — no-op in PR-3 (the upward path is
+      handled via direct dispatch of `:reply` actions to the `cc_proxy`
+      neighbor; no downstream message arrives here today)
+
+  Spec §4.1 CCProcess card, §5.1 data flow; expansion P3-2.
+  """
+
+  @behaviour Esr.Role.State
+  use Esr.Entity.Stateful
+  use GenServer
+  require Logger
+
+  # M-1.5: compile-time role constant. Consumed by `register_attrs/2`
+  # in init/1 below so callers can resolve this peer via
+  # `Esr.ActorQuery.list_by_role(sid, :cc_process)` without grepping
+  # for a string literal.
+  @role :cc_process
+
+  @default_timeout 5_000
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  # start_link/1 inherits the dual-shape (map | keyword) default from
+  # Esr.Entity.Stateful (PR-6 B1). All current callers pass %{}.
+
+  @impl Esr.Entity
+  def spawn_args(params) do
+    %{handler_module: Esr.Entity.get_param(params, :handler_module) || "cc_adapter_runner"}
+  end
+
+  @doc """
+  Installs a 3-arity fun `(handler_module, payload, timeout)` that
+  replaces the real `HandlerRouter.call/3` call inside this peer. Used
+  by tests to stub the handler round-trip deterministically. The
+  override lives in the peer's own process state, so it is scoped to
+  this pid only and does not leak across tests.
+  """
+  @spec put_handler_override(pid(), (String.t(), map(), pos_integer() -> term())) :: :ok
+  def put_handler_override(pid, fun) when is_pid(pid) and is_function(fun, 3) do
+    GenServer.call(pid, {:put_handler_override, fun})
+  end
+
+  # ------------------------------------------------------------------
+  # Peer.Stateful callbacks
+  # ------------------------------------------------------------------
+
+  @impl GenServer
+  def init(args) do
+    sid = Map.fetch!(args, :session_id)
+
+    # PR-9 T12-comms-3c: subscribe to the cc_mcp-ready control topic so
+    # we can flush buffered send_input notifications as soon as cc_mcp
+    # joins cli:channel/<sid>. Phoenix.PubSub drops broadcasts with no
+    # subscribers, so dispatch_action(send_input) fired during the
+    # ~10s window between pipeline spawn and cc_mcp join would be lost
+    # — scenario 01's first user inbound was vanishing this way.
+    # See docs/notes/cc-mcp-pubsub-race.md.
+    _ = maybe_subscribe("cc_mcp_ready/" <> sid)
+
+    proxy_ctx = Map.get(args, :proxy_ctx, %{})
+
+    name = Map.get(args, :name) || ("cc-" <> sid)
+
+    # M-1.5: register in Index 2 (`{sid, name}`) and Index 3
+    # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
+    # `list_by_role/2` resolve this peer. Best-effort guard: unit tests
+    # that bypass the application supervisor (no IndexWatcher / no ETS
+    # tables) must keep working — the rest of CCProcess does not depend
+    # on the indexes being present (those callers arrive in M-2+).
+    _ =
+      try do
+        Esr.Entity.Registry.register_attrs("cc:" <> sid, %{
+          session_id: sid,
+          name: name,
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
+    {:ok,
+     %{
+       session_id: sid,
+       handler_module: Map.fetch!(args, :handler_module),
+       cc_state: Map.get(args, :initial_state, %{}),
+       proxy_ctx: proxy_ctx,
+       handler_override: nil,
+       pending_notifications: [],
+       cc_mcp_ready: false,
+       name: name
+     }}
+  end
+
+  # Phoenix.PubSub isn't running in every unit-test setup (some call
+  # init/1 directly without booting EsrWeb.PubSub). Swallow the
+  # :not_running-style errors so tests keep working.
+  defp maybe_subscribe(topic) do
+    case Process.whereis(EsrWeb.PubSub) do
+      nil -> :ok
+      _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
+    end
+  end
+
+  @impl Esr.Entity.Stateful
+  def handle_upstream({:text, _bytes} = msg, state), do: invoke_and_dispatch(msg, state)
+  # PR-9 T11b.6a: FCP now sends `{:text, text, meta}` (3-tuple) carrying
+  # message_id/sender_id/thread_id so T11b.6's pubsub notification can
+  # populate the `<channel>` meta attributes. Legacy 2-tuple still accepted
+  # for backward compat with unit tests that haven't migrated yet.
+  def handle_upstream({:text, _bytes, _meta} = msg, state), do: invoke_and_dispatch(msg, state)
+
+  def handle_upstream(_other, state), do: {:drop, :unknown_upstream, state}
+
+  # handle_downstream/2 inherits the no-op `{:forward, [], state}` default
+  # from Esr.Entity.Stateful (PR-6 B1). PR-3 did not wire a downstream
+  # message through here — upward `:reply` dispatch goes direct to the
+  # cc_proxy neighbor.
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl GenServer
+  def handle_call({:put_handler_override, fun}, _from, state) do
+    {:reply, :ok, %{state | handler_override: fun}}
+  end
+
+  # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
+  # IndexWatcher monitor still cleans up if we crash before this hook
+  # runs, so this is purely an optimization that closes the stale-entry
+  # window between shutdown signal and DOWN delivery.
+  @impl GenServer
+  def terminate(_reason, %{session_id: sid} = state) when is_binary(sid) and sid != "" do
+    _ =
+      try do
+        Esr.Entity.Registry.deregister_attrs("cc:" <> sid, %{
+          session_id: sid,
+          name: Map.get(state, :name) || ("cc-" <> sid),
+          role: @role
+        })
+      catch
+        _, _ -> :ok
+      end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  @impl GenServer
+  def handle_info({:text, _} = msg, state),
+    do: Esr.Entity.Stateful.dispatch_upstream(msg, state, __MODULE__)
+
+  def handle_info({:text, _, _meta} = msg, state),
+    do: Esr.Entity.Stateful.dispatch_upstream(msg, state, __MODULE__)
+
+  # T12-comms-3c: ChannelChannel's join-for-this-session broadcasts
+  # {:cc_mcp_ready, session_id} on the "cc_mcp_ready/<sid>" topic.
+  # When we receive it, flush every buffered send_input envelope that
+  # couldn't broadcast earlier (no subscribers) and flip the state
+  # flag so subsequent send_input actions broadcast immediately.
+  def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
+    # pending_notifications was prepended (O(1)); reverse to preserve
+    # the original `send_input` order on flush.
+    for envelope <- Enum.reverse(state.pending_notifications) do
+      broadcast_notification(sid, envelope)
+    end
+
+    {:noreply, %{state | pending_notifications: [], cc_mcp_ready: true}}
+  end
+
+  def handle_info(_other, state), do: {:noreply, state}
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  defp invoke_and_dispatch(event, state) do
+    # PR-9 T11b.6: capture the upstream meta into cc_state so dispatch
+    # actions (SendInput / Reply) can reference per-event attribution
+    # (message_id, sender_id, thread_id) when building their envelopes.
+    # Handler implementations don't need to echo them back.
+    state = stash_upstream_meta(state, event)
+
+    payload = %{
+      "handler" => state.handler_module <> ".on_msg",
+      "state" => state.cc_state,
+      "event" => event_to_map(event)
+    }
+
+    case call_handler(state, payload, @default_timeout) do
+      {:ok, new_state, actions} when is_map(new_state) and is_list(actions) ->
+        dispatched_state = dispatch_actions(actions, state)
+        {:forward, [], %{dispatched_state | cc_state: new_state}}
+
+      {:error, :handler_timeout} ->
+        Logger.warning(
+          "cc_process: handler timeout session_id=#{state.session_id}"
+        )
+
+        :telemetry.execute([:esr, :cc_process, :handler_timeout], %{}, %{
+          session_id: state.session_id
+        })
+
+        {:drop, :handler_timeout, state}
+
+      {:error, other} ->
+        Logger.warning(
+          "cc_process: handler error #{inspect(other)} session_id=#{state.session_id}"
+        )
+
+        :telemetry.execute([:esr, :cc_process, :handler_error], %{}, %{
+          session_id: state.session_id,
+          reason: other
+        })
+
+        {:drop, :handler_error, state}
+    end
+  end
+
+  defp call_handler(%{handler_override: fun}, payload, timeout) when is_function(fun, 3) do
+    fun.(payload["handler"] |> strip_fn_suffix(), payload, timeout)
+  end
+
+  defp call_handler(state, payload, timeout) do
+    # P3-10: Application-env override reaches across process boundaries
+    # for integration tests that spawn CCProcess indirectly (via
+    # Scope.Router/Entity.Factory) and therefore don't have the pid handy
+    # at start to call `put_handler_override/2`. The override, when set,
+    # takes precedence over the real HandlerRouter round-trip. Scoped to
+    # `Mix.env() == :test`-style usage; prod leaves the env unset.
+    case Application.get_env(:esr, :handler_module_override) do
+      {:test_fun, fun} when is_function(fun, 3) ->
+        fun.(strip_fn_suffix(payload["handler"]), payload, timeout)
+
+      _ ->
+        Esr.HandlerRouter.call(state.handler_module, payload, timeout)
+    end
+  end
+
+  # The payload threads the handler module as "<mod>.on_msg" (matching
+  # Entity.Server's invoke_handler convention), but the override callback
+  # receives the bare module string — strip the "on_msg" suffix so test
+  # stubs can assert on the canonical module name.
+  defp strip_fn_suffix(handler_fqn) do
+    case String.split(handler_fqn, ".", parts: 2) do
+      [mod, _fn] -> mod
+      [mod] -> mod
+    end
+  end
+
+  # Every `dispatch_action/2` clause returns the (possibly updated)
+  # state — keeps the reduce trivial. Only `send_input` actually
+  # mutates state today (buffering when cc_mcp hasn't joined yet).
+  defp dispatch_actions(actions, state),
+    do: Enum.reduce(actions, state, &dispatch_action/2)
+
+  # PR-9 T11b.6: SendInput now broadcasts a `notifications/claude/channel`-shaped
+  # envelope on Phoenix topic `cli:channel/<session_id>` instead of sending
+  # `{:send_input, text}` to the PTY peer's stdin. User principle
+  # (2026-04-24): CC reply path goes through esr-channel, not stdout
+  # capture — symmetrically, CC inbound arrives via the MCP channel
+  # notification stream, not stdin. cc_mcp's `_handle_inbound` receives
+  # this envelope and injects the `<channel>` tag into CC's context.
+  #
+  # Envelope shape matches cc_mcp channel.py's consumer: `kind: "notification"`
+  # + `source`, `chat_id`, `message_id`, `user`, `ts`, `thread_id`, `content`.
+  # cc_mcp's inbound handler re-maps these into the `notifications/claude/channel`
+  # params/meta shape CC's channels listener expects.
+  defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
+    if state.cc_mcp_ready do
+      envelope = build_channel_notification(state, text)
+      broadcast_notification(state.session_id, envelope)
+      state
+    else
+      # PR-24 step 2: route Feishu inbound directly to claude's PTY
+      # stdin during the boot bridge window. Operator becomes their
+      # own channel: their text in chat → keystrokes in claude TUI →
+      # FCP's `:pty_stdout` mirror sends claude's response back into
+      # the same chat. Once cc_mcp_ready fires, all future inbounds
+      # take the normal `notifications/claude/channel` path above.
+      #
+      # Pre-PR-24, this branch buffered into `pending_notifications`
+      # for cc_mcp to flush on ready (T12-comms-3c). The buffer was
+      # the right model when cc_mcp was guaranteed to come up — but
+      # claude can hang at boot dialogs (live-debugged 2026-05-02:
+      # `--dangerously-load-development-channels` warning). Routing
+      # to PTY directly lets the operator unblock claude themselves
+      # via Feishu, no `/attach` required for the simple cases.
+      keystrokes = text <> "\r"
+      _ = Esr.Entity.PtyProcess.write(state.session_id, keystrokes)
+      state
+    end
+  end
+
+  defp dispatch_action(%{"type" => "reply", "text" => text} = action, state) do
+    # PR-9 T5c: propagate the optional `reply_to_message_id` so
+    # FeishuChatProxy can un-react the referenced inbound message before
+    # forwarding the reply. When absent (legacy CC handler, or reply
+    # unrelated to a specific inbound) the 2-tuple {:reply, text} is
+    # preserved for backward compat.
+    msg =
+      case Map.get(action, "reply_to_message_id") do
+        mid when is_binary(mid) and mid != "" ->
+          {:reply, text, %{reply_to_message_id: mid}}
+
+        _ ->
+          {:reply, text}
+      end
+
+    # M-2.2: ActorQuery replaces state.neighbors. Prefer any
+    # `*_chat_proxy` role (the production upstream-reply target — the
+    # role atom is registered by each plugin's chat-proxy peer in init).
+    # Fall back to `:cc_proxy` for unit tests that inject a raw test pid
+    # via the `:cc_proxy` role index.
+    case find_reply_target(state.session_id) do
+      {:ok, pid} ->
+        send(pid, msg)
+
+      :not_found ->
+        Logger.warning(
+          "cc_process: :reply with no *_chat_proxy or cc_proxy via ActorQuery " <>
+            "session_id=#{state.session_id}"
+        )
+    end
+
+    state
+  end
+
+  defp dispatch_action(unknown, state) do
+    :telemetry.execute([:esr, :cc_process, :unknown_action], %{}, %{
+      session_id: state.session_id,
+      action: unknown
+    })
+
+    state
+  end
+
+  # M-2.2: ActorQuery-based reply-target resolution. Order:
+  #   1. `:feishu_chat_proxy` — production upstream-reply target (any
+  #      *_chat_proxy role can be added here as more plugins land —
+  #      atoms are checked explicitly so we never pick a wrong role).
+  #   2. `:cc_proxy` — unit-test fallback (tests register their relay
+  #      in the role index under `:cc_proxy`).
+  defp find_reply_target(session_id) do
+    case Esr.ActorQuery.list_by_role(session_id, :feishu_chat_proxy) do
+      [pid | _] ->
+        {:ok, pid}
+
+      [] ->
+        case Esr.ActorQuery.list_by_role(session_id, :cc_proxy) do
+          [pid | _] -> {:ok, pid}
+          [] -> :not_found
+        end
+    end
+  end
+
+  # `{:notification, envelope}` matches the existing admin-side
+  # precedent in `Esr.Commands.Scope.BranchEnd` — ChannelChannel
+  # handle_info/2 routes both `{:push_envelope, _}` and
+  # `{:notification, _}` identically, and sticking with the admin
+  # convention keeps the ops + logs consistent.
+  defp broadcast_notification(session_id, envelope) do
+    # Emit one log line per dispatch so e2e harnesses can grep for
+    # "channel notification dispatched" alongside the expected
+    # workspace, without standing up a subscriber from bash.
+    Logger.info(
+      "cc_process: channel notification dispatched session_id=#{session_id} " <>
+        "workspace=#{inspect(envelope["workspace"])}"
+    )
+
+    Phoenix.PubSub.broadcast(
+      EsrWeb.PubSub,
+      "cli:channel/" <> session_id,
+      {:notification, envelope}
+    )
+
+    :ok
+  end
+
+  @doc false
+  # Public only so cc_process_test.exs can assert envelope shape directly.
+  # Pure helper exposed to tests as `@doc false def` rather than pulled
+  # apart into a behaviour. Not part of the stable API; the only
+  # in-module caller is `dispatch_action(send_input)` above.
+  def build_channel_notification(state, text) do
+    ctx = state.proxy_ctx || %{}
+    last = Map.get(state, :last_meta, %{})
+
+    chat_id =
+      Map.get(last, :chat_id) || Map.get(ctx, :chat_id) || Map.get(ctx, "chat_id") || ""
+
+    app_id =
+      Map.get(last, :app_id) || Map.get(ctx, :app_id) || Map.get(ctx, "app_id") || ""
+
+    sender_id = Map.get(last, :sender_id) || ""
+
+    base = %{
+      "kind" => "notification",
+      # PR-3.7: source is the inbound channel's adapter family (set by
+      # AgentSpawner from agents.yaml's pipeline). No hardcoded
+      # "feishu" fallback — empty string communicates "unknown" to
+      # downstream cc_mcp, which can render the <channel> tag accordingly.
+      "source" => Map.get(ctx, "channel_adapter") || Map.get(ctx, :channel_adapter) || "",
+      # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
+      # authoritative for this specific inbound. Fall back to proxy_ctx
+      # only for legacy callers that hadn't threaded it through yet.
+      "chat_id" => chat_id,
+      # PR-3.7: app_id surfaces the originating channel's app_id so
+      # cc_mcp renders it on the <channel> tag and claude echoes it
+      # on reply (the source family — feishu, telegram, etc — comes
+      # via "source" above).
+      "app_id" => app_id,
+      "thread_id" =>
+        Map.get(last, :thread_id) || Map.get(ctx, :thread_id) || Map.get(ctx, "thread_id") || "",
+      "message_id" => Map.get(last, :message_id) || "",
+      # PR-C C5 (spec §8.1): `"user"` carries the open_id today (semantic
+      # alias of `"user_id"`). The spec calls for `"user"` to become the
+      # display name in v2 once the FAA → cc_process display-name cache
+      # threading lands; for v1 cc_mcp keeps reading `"user"` so the
+      # existing prompt template stays compatible. New consumers should
+      # prefer `"user_id"`.
+      "user" => sender_id,
+      "user_id" => sender_id,
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "content" => text
+    }
+
+    base
+    |> maybe_put_workspace(chat_id, app_id)
+  end
+
+  # PR-C C5: workspace name attribute, looked up from
+  # Esr.Resource.Workspace.Registry.workspace_for_chat. Omitted when the
+  # registry has no entry — keeps the tag stable for tests that don't
+  # boot the registry GenServer.
+  defp maybe_put_workspace(envelope, chat_id, app_id)
+       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+      {:ok, ws} -> Map.put(envelope, "workspace", ws)
+      _ -> envelope
+    end
+  rescue
+    # Workspaces.Registry GenServer not started in some unit tests.
+    ArgumentError -> envelope
+  end
+
+  defp maybe_put_workspace(envelope, _, _), do: envelope
+
+  # PR-9 T11b.6: pull message_id/sender_id/thread_id off the upstream
+  # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
+  # builds the notification envelope with real attribution instead of
+  # empty strings.
+  defp stash_upstream_meta(state, {:text, _bytes, meta}) when is_map(meta) do
+    Map.put(state, :last_meta, meta)
+  end
+
+  defp stash_upstream_meta(state, _other), do: state
+
+  # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
+  # the event dict must carry `event_type` + `args`. Earlier versions of this
+  # module emitted `%{kind, text}` which handler_worker rejected as
+  # MalformedEnvelope('event_type'). PR-9 T11a aligns the shapes.
+  #
+  # T11b.6a: 3-tuple `{:text, bytes, meta}` carries upstream
+  # message_id/sender_id/thread_id so the handler (and downstream
+  # SendInput/Reply actions in T11b.6) has real attribution.
+  defp event_to_map({:text, bytes}),
+    do: %{"event_type" => "text", "args" => %{"text" => bytes}}
+
+  defp event_to_map({:text, bytes, meta}) when is_map(meta),
+    do: %{
+      "event_type" => "text",
+      "args" =>
+        %{"text" => bytes}
+        |> Map.merge(
+          meta
+          |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+          |> Enum.map(fn {k, v} -> {Atom.to_string(k), v} end)
+          |> Map.new()
+        )
+    }
+end

@@ -1,0 +1,30 @@
+# Composite session plugin — covers Spec B §二 "Session declaration"
+# type: a full bundle of components + caps + sidecars + entity refs,
+# representing the realistic shape of a production plugin like cc or
+# feishu.
+#
+# Multiple caps + multiple sidecars + an entity reference (uses
+# Esr.Entity.Server which always exists in core, so module-existence
+# validation passes). Verifies the loader handles a fully-loaded
+# manifest end-to-end without per-field assumptions.
+name: composite_session
+version: 0.0.1
+description: Realistic Session-declaration shape (multi-cap, multi-sidecar, entity).
+
+depends_on:
+  core: ">= 0.0.0"
+  plugins: []
+
+declares:
+  capabilities:
+    - composite_session/cmd1
+    - composite_session/cmd2
+    - composite_session/admin
+  python_sidecars:
+    - adapter_type: composite_session_alpha
+      python_module: composite_session_runner_alpha
+    - adapter_type: composite_session_beta
+      python_module: composite_session_runner_beta
+  entities:
+    - module: Esr.Entity.Server
+      kind: stateful

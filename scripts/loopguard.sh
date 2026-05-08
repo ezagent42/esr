@@ -23,10 +23,10 @@ check() {
   rm -f /tmp/loopguard.$$.out
 }
 
-check LG-1  "scenario YAML well-formed + live-signature"  \
-    uv run --project py python scripts/loopguard_scenario.py \
-        --scenario scenarios/e2e-feishu-cc.yaml \
-        --signatures scripts/live_signatures.txt
+# LG-1 ("scenario YAML well-formed + live-signature") removed
+# 2026-05-06 — scenarios/ deleted in scenarios+python-cli-removal
+# PR. The check existed only to gate scenarios/*.yaml shape; the
+# tests/e2e/ bash scripts at PR-7+ era are the live e2e harness now.
 
 check LG-2  "no soft stubs in entry bodies"  \
     uv run --project py python scripts/verify_entry_bodies.py
@@ -41,8 +41,9 @@ check LG-5  "acceptance manifest match + ticked"  \
     uv run --project py python scripts/verify_prd_acceptance.py \
         --manifest docs/superpowers/prds/acceptance-manifest.yaml
 
-check LG-6  "scenarios/ allowlist"  \
-    uv run --project py python scripts/loopguard_scenarios_allowlist.py --dir scenarios
+# LG-6 ("scenarios/ allowlist") removed 2026-05-06 — scenarios/
+# directory deleted. Adding new e2e scenarios goes through
+# tests/e2e/scenarios/*.sh which has its own conventions.
 
 check LG-7  "ledger append-only + enum"  \
     uv run --project py python scripts/verify_ledger_append_only.py
