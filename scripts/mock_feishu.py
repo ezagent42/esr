@@ -235,7 +235,10 @@ class MockFeishu:
                 raise ValueError("bytes_data required for image inbound")
             file_key = "file_mock_" + secrets.token_hex(8)
             self._inbound_resources[(msg_id, file_key)] = bytes_data
-            content = json.dumps({"image_key": file_key}, ensure_ascii=False)
+            img_content: dict[str, str] = {"image_key": file_key}
+            if file_name:
+                img_content["file_name"] = file_name
+            content = json.dumps(img_content, ensure_ascii=False)
         elif msg_type == "file":
             if bytes_data is None:
                 raise ValueError("bytes_data required for file inbound")
@@ -287,11 +290,31 @@ class MockFeishu:
             },
         }
         data = json.dumps(envelope, ensure_ascii=False)
-        for ws in list(self._ws_clients.get(app_id, [])):
+        bucket = self._ws_clients.get(app_id, [])
+        open_count = sum(1 for ws in bucket if not ws.closed)
+        print(
+            f"push_inbound: app_id={app_id!r} bucket_size={len(bucket)} "
+            f"open_count={open_count} "
+            f"all_buckets={list(self._ws_clients.keys())} msg_type={msg_type} "
+            f"data_len={len(data)} t={time.time():.3f}",
+            flush=True,
+        )
+        tasks_created = 0
+
+        async def _do_send(ws: web.WebSocketResponse, data: str) -> None:
+            try:
+                await ws.send_str(data)
+                print(f"push_inbound: send_str OK len={len(data)} ws_id={id(ws)}", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"push_inbound: send_str FAILED {exc} ws_id={id(ws)}", flush=True)
+
+        for ws in list(bucket):
             if not ws.closed:
                 # Schedule the send without awaiting — callers use this
                 # from sync test code.
-                asyncio.create_task(ws.send_str(data))  # noqa: RUF006
+                asyncio.create_task(_do_send(ws, data))  # noqa: RUF006
+                tasks_created += 1
+        print(f"push_inbound: tasks_created={tasks_created}", flush=True)
         return msg_id
 
     # -- handlers -------------------------------------------------------
@@ -371,6 +394,8 @@ class MockFeishu:
         await ws.prepare(request)
         app_id = request.query.get("app_id", "default")
         self._ws_clients.setdefault(app_id, []).append(ws)
+        peer = request.transport.get_extra_info("peername") if request.transport else "?"
+        print(f"ws_connect: app_id={app_id!r} ws_id={id(ws)} peer={peer} t={time.time():.3f}", flush=True)
         try:
             async for _msg in ws:  # keep the connection open; discard inbound
                 pass
@@ -378,6 +403,7 @@ class MockFeishu:
             bucket = self._ws_clients.get(app_id)
             if bucket is not None and ws in bucket:
                 bucket.remove(ws)
+            print(f"ws_connect: closed app_id={app_id!r} ws_id={id(ws)} t={time.time():.3f}", flush=True)
         return ws
 
     async def _on_get_ws_clients(self, _request: web.Request) -> web.Response:
@@ -434,6 +460,9 @@ class MockFeishu:
                 file_name=file_name,
                 app_id=explicit_app_id,
             )
+            # Yield control so the send tasks created by push_inbound
+            # have a chance to run before the response is returned.
+            await asyncio.sleep(0)
             return web.json_response({"ok": True, "message_id": msg_id})
 
         # Fanout: drop into every bucket that has at least one client.
@@ -464,6 +493,9 @@ class MockFeishu:
                 app_id=app_id,
             )
 
+        # Yield control so the send tasks created by push_inbound
+        # have a chance to run before the response is returned.
+        await asyncio.sleep(0)
         return web.json_response({"ok": True, "message_id": msg_id})
 
     async def _on_register_membership(self, request: web.Request) -> web.Response:

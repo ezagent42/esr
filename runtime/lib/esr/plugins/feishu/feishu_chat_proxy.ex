@@ -915,18 +915,35 @@ defmodule Esr.Entity.FeishuChatProxy do
   # react is no longer a CC MCP tool (PR-9 T5 D4).
   defp emit_to_feishu_app_proxy(envelope, state) do
     # M-2.1: ActorQuery replaces state.neighbors.
+    #
+    # FeishuAppProxy is a stateless Esr.Entity.Proxy module — it has no
+    # init/1 and therefore never registers itself in the ActorQuery role
+    # index. The FAA (Feishu inbound/outbound door) IS registered under
+    # "feishu_app_adapter_<app_id>" in Esr.Entity.Registry (FAA init/1
+    # lines 77-78). Fall back to that registry when ActorQuery returns []
+    # so the directive reaches the FAA directly.
     case Esr.ActorQuery.list_by_role(state.session_id, :feishu_app_proxy) do
       [pid | _] ->
         send(pid, {:outbound, envelope})
         :ok
 
       [] ->
-        Logger.warning(
-          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
-            "via ActorQuery session_id=#{state.session_id}"
-        )
+        faa_key = "feishu_app_adapter_#{state.app_id}"
 
-        {:drop, :no_app_proxy_neighbor}
+        case Esr.Entity.Registry.lookup(faa_key) do
+          {:ok, pid} ->
+            send(pid, {:outbound, envelope})
+            :ok
+
+          :error ->
+            Logger.warning(
+              "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
+                "via ActorQuery session_id=#{state.session_id} " <>
+                "and no FAA at #{inspect(faa_key)}"
+            )
+
+            {:drop, :no_app_proxy_neighbor}
+        end
     end
   end
 

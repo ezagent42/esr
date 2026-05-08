@@ -13,6 +13,16 @@ set -Eeuo pipefail
 # the same per-instance port file under ${ESRD_HOME}/${ESR_INSTANCE}.
 : "${ESR_INSTANCE:=${ESRD_INSTANCE}}"
 : "${ESRD_HOME:=/tmp/esrd-${ESR_E2E_RUN_ID}}"
+# Assign a free ephemeral port per run so orphan feishu_adapter_runner
+# processes from previous ESR_E2E_KEEP_LOGS=1 runs (which hardcode
+# base_url pointing at their original port) cannot connect to this
+# run's mock_feishu. The default 8201 fallback is only used when an
+# explicit port is passed externally (e.g. scenario 04's two-mock setup).
+if [[ -z "${MOCK_FEISHU_PORT:-}" ]]; then
+  MOCK_FEISHU_PORT=$(uv run --project py python -c \
+    "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" \
+    2>/dev/null) || MOCK_FEISHU_PORT=8201
+fi
 : "${MOCK_FEISHU_PORT:=8201}"
 : "${ESR_E2E_BARRIER_DIR:=/tmp/esr-e2e-${ESR_E2E_RUN_ID}/barriers}"
 : "${ESR_E2E_UPLOADS_DIR:=${ESRD_HOME}/default/uploads}"
@@ -88,6 +98,32 @@ _on_err() {
 _on_exit() {
   # Idempotent teardown — safe to run twice.
   _e2e_teardown || true
+}
+
+_kill_stale_e2e_instances() {
+  # Kill all leftover esrd instances from previous e2e runs of this worktree.
+  # Needed when ESR_E2E_KEEP_LOGS=1 was used: those runs preserve state dirs
+  # but do NOT kill esrd/feishu_adapter_runner orphans, which then connect
+  # to the new run's mock_feishu and poison the ws_clients readiness probe.
+  #
+  # Scope: only pidfiles under /tmp/esrd-pr7-* that are NOT this run.
+  # Each run stores its pidfile at
+  #   /tmp/esrd-${RUN_ID}/${INSTANCE}/esrd.pid
+  # We iterate over all pr7 pidfiles, read the pid, and send SIGTERM.
+  # Safe: these processes are owned by the current OS user (the e2e runner).
+  local pidfile pid
+  for pidfile in /tmp/esrd-pr7-*/*/esrd.pid; do
+    [[ -f "$pidfile" ]] || continue
+    # Skip this run.
+    [[ "$pidfile" == *"${ESR_E2E_RUN_ID}"* ]] && continue
+    pid=$(cat "$pidfile" 2>/dev/null) || continue
+    [[ -n "$pid" ]] || continue
+    kill "$pid" 2>/dev/null || true
+    # Give it 1 s to exit, then SIGKILL.
+    sleep 0.2
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    rm -f "$pidfile" 2>/dev/null || true
+  done
 }
 
 _e2e_teardown() {
@@ -300,6 +336,10 @@ assert_baseline_clean() {
 
 # --- one-shot setup helpers (bodies filled in by Tasks F/G/H/I) ------
 start_mock_feishu() {
+  # Pre-clean any leftover e2e esrd instances from previous runs so their
+  # feishu_adapter_runner orphans can't connect to the new mock_feishu and
+  # poison the ws_clients readiness probe.
+  _kill_stale_e2e_instances
   local log="/tmp/mock-feishu-${ESR_E2E_RUN_ID}.log"
   local pidf="/tmp/mock-feishu-${ESR_E2E_RUN_ID}.pid"
   ( cd "${_E2E_REPO_ROOT}" && \
@@ -389,15 +429,26 @@ EOF
 }
 
 seed_workspaces() {
-  # Write a minimal workspaces.yaml at default/ (Feishu adapter reads
-  # ${ESRD_HOME}/default/workspaces.yaml regardless of ESR_INSTANCE —
-  # see adapter.py:168). Maps the e2e chat_ids to a single "e2e"
-  # workspace so the Feishu adapter's auth gate has something to
-  # resolve against.
+  # Write workspace state at two paths:
   #
-  # Schema (py/src/esr/workspaces.py): chats is a list of
-  # `{chat_id, app_id, kind}` dicts — raw strings crash the adapter at
-  # `_load_workspace_map` (`.get` on str). PR-9 T9 e2e RCA.
+  # 1. ${ESRD_HOME}/default/workspaces.yaml — legacy flat YAML that the
+  #    Python feishu adapter reads at ${ESRD_HOME}/default/workspaces.yaml
+  #    regardless of ESR_INSTANCE (adapter.py:168). Maps the e2e chat_ids
+  #    to a single "e2e" workspace so _load_workspace_map succeeds.
+  #    Schema: chats is a list of {chat_id, app_id, kind} dicts — raw
+  #    strings crash the adapter at `_load_workspace_map` (`.get` on str).
+  #    PR-9 T9 e2e RCA.
+  #    app_id must be the ESR instance_id ("feishu_app_e2e-mock"), which is
+  #    what args["app_id"] carries per PR-A T1 semantics.
+  #
+  # 2. ${ESRD_HOME}/${ESRD_INSTANCE}/workspaces/e2e/workspace.json — the
+  #    per-workspace JSON format that Esr.Resource.Workspace.Registry loads
+  #    at esrd boot (scan_esr_bound walks ${ESRD_HOME}/${ESRD_INSTANCE}/workspaces/).
+  #    Must be written BEFORE start_esrd so the Elixir registry boots with
+  #    the workspace loaded; without it, Esr.Entity.UnboundChatGuard calls
+  #    workspace_for_chat → :not_found → emits guide DM and drops the
+  #    inbound, preventing new_chat_thread from firing.
+  #    FileLoader invariant: doc["name"] must equal the directory basename.
   mkdir -p "${ESRD_HOME}/default"
   cat > "${ESRD_HOME}/default/workspaces.yaml" <<'EOF'
 workspaces:
@@ -405,11 +456,36 @@ workspaces:
     start_cmd: ""
     role: "dev"
     chats:
-      - {chat_id: oc_mock_single,       app_id: e2e-mock, kind: dm}
-      - {chat_id: oc_mock_concurrent_a, app_id: e2e-mock, kind: dm}
-      - {chat_id: oc_mock_concurrent_b, app_id: e2e-mock, kind: dm}
-      - {chat_id: oc_mock_tmux,         app_id: e2e-mock, kind: dm}
+      - {chat_id: oc_mock_single,       app_id: feishu_app_e2e-mock, kind: dm}
+      - {chat_id: oc_mock_concurrent_a, app_id: feishu_app_e2e-mock, kind: dm}
+      - {chat_id: oc_mock_concurrent_b, app_id: feishu_app_e2e-mock, kind: dm}
+      - {chat_id: oc_mock_tmux,         app_id: feishu_app_e2e-mock, kind: dm}
     env: {}
+EOF
+
+  local ws_dir="${ESRD_HOME}/${ESRD_INSTANCE}/workspaces/e2e"
+  mkdir -p "${ws_dir}"
+  local ws_uuid
+  ws_uuid=$(uv run --project py python -c "import uuid; print(str(uuid.uuid4()))" 2>/dev/null) \
+    || ws_uuid="e2e00000-0000-4000-8000-$(printf '%012x' "$$")"
+  cat > "${ws_dir}/workspace.json" <<EOF
+{
+  "schema_version": 1,
+  "id": "${ws_uuid}",
+  "name": "e2e",
+  "owner": "admin",
+  "agent": "cc",
+  "settings": {},
+  "env": {},
+  "transient": false,
+  "folders": [],
+  "chats": [
+    {"chat_id": "oc_mock_single",       "app_id": "feishu_app_e2e-mock", "kind": "dm"},
+    {"chat_id": "oc_mock_concurrent_a", "app_id": "feishu_app_e2e-mock", "kind": "dm"},
+    {"chat_id": "oc_mock_concurrent_b", "app_id": "feishu_app_e2e-mock", "kind": "dm"},
+    {"chat_id": "oc_mock_tmux",         "app_id": "feishu_app_e2e-mock", "kind": "dm"}
+  ]
+}
 EOF
 }
 
