@@ -63,4 +63,14 @@ defmodule Esr.Plugins.ClaudeCode.Commands.TuiTest do
 
     assert {:error, %{"type" => "not_found"}} = Tui.execute(cmd)
   end
+
+  test "missing name arg: returns invalid_args" do
+    cmd = %{"submitted_by" => "linyilun", "args" => %{"chat_id" => "c", "app_id" => "a"}}
+    assert {:error, %{"type" => "invalid_args"}} = Tui.execute(cmd)
+  end
+
+  test "missing chat context: returns invalid_args" do
+    cmd = %{"submitted_by" => "linyilun", "args" => %{"name" => "alice"}}
+    assert {:error, %{"type" => "invalid_args"}} = Tui.execute(cmd)
+  end
 end
