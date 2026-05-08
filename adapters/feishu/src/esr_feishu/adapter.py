@@ -88,6 +88,7 @@ def _extract_text(raw_content: str, msg_type: str) -> str:
         "urllib": ["127.0.0.1", "localhost"],
         "base64": "*",
         "hashlib": "*",
+        "tempfile": "*",
     },
 )
 class FeishuAdapter:
@@ -531,19 +532,27 @@ class FeishuAdapter:
         return _lark_failure(response, "unpin failed")
 
     def _download_file(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Download a message's file/image/audio to the uploads dir (PRD 04 F14).
+        """Download a message's file/image/audio bytes from Lark and store
+        content-addressed via esr.resource.media.store.
 
-        Layout: <uploads_dir>/<chat_id>/<file_name>. The uploads_dir is
-        taken from AdapterConfig.uploads_dir (falling back to
-        ~/.esrd/<instance>/uploads).
+        Per spec docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md
+        §2 + PR-2 §4.2 row B: replaces PRD §F14's uploads/<chat_id>/<file_name>
+        path with content-addressed resources/<media_type>/<sha256>.<ext>.
+
+        Returns {ok, result: {uri, sha256, path}}.
         """
         import lark_oapi.api.im.v1 as im_v1
+        import os
+        import tempfile
+
+        from esr.resource.media import EsrResourceError
+        from esr.resource.media import store as media_store
 
         msg_id = args["msg_id"]
         file_key = args["file_key"]
         file_name = args["file_name"]
         msg_type = args["msg_type"]
-        chat_id = args["chat_id"]
+        chat_id = args.get("chat_id", "")
 
         request = (
             im_v1.GetMessageResourceRequest.builder()
@@ -556,20 +565,41 @@ class FeishuAdapter:
         if not response.success():
             return _lark_failure(response, "download failed")
 
-        uploads_dir = self._uploads_dir()
-        target = uploads_dir / chat_id / file_name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(response.file.read())
-        return {"ok": True, "result": {"path": str(target)}}
+        bytes_data = response.file.read()
 
-    def _uploads_dir(self) -> Path:
-        """Resolve the uploads directory — config override or the default."""
-        configured = getattr(self._config, "uploads_dir", None) if (
-            hasattr(self._config, "uploads_dir")
-        ) else None
-        if configured:
-            return Path(configured)
-        return Path.home() / ".esrd" / "default" / "uploads"
+        # Write to a tmp file with the original ext so media_store's
+        # extension detection works correctly.
+        suffix = Path(file_name).suffix or self._default_ext_for(msg_type)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+            tf.write(bytes_data)
+            tmp_path = tf.name
+
+        try:
+            result = media_store(
+                msg_type,
+                tmp_path,
+                {
+                    "adapter": "feishu",
+                    "instance": getattr(self, "_instance_id", ""),
+                    "msg_id": msg_id,
+                    "file_key": file_key,
+                    "file_name": file_name,
+                    "chat_id": chat_id,
+                },
+            )
+        except EsrResourceError as e:
+            return {"ok": False, "error": f"store_failed: {e}"}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return {"ok": True, "result": result}
+
+    def _default_ext_for(self, msg_type: str) -> str:
+        """Fallback extension when file_name has no suffix."""
+        return {"image": ".png", "file": ".bin", "audio": ".opus"}.get(msg_type, ".bin")
 
     def _send_file(self, args: dict[str, Any]) -> dict[str, Any]:
         """α wire shape (spec §6.1): base64 in-band + sha256 check."""
