@@ -71,6 +71,9 @@ class MockFeishu:
         self._chat_membership: dict[str, set[str]] = {}
         self._uploaded_files: list[dict[str, Any]] = []
         self._files_dir: Path | None = None  # set in start()
+        # multimedia-pipeline: inbound image/file bytes keyed by
+        # (msg_id, file_key); served by _on_get_message_resource.
+        self._inbound_resources: dict[tuple[str, str], bytes] = {}
 
     # -- public API -----------------------------------------------------
 
@@ -139,6 +142,12 @@ class MockFeishu:
         app.router.add_get("/un_reactions", self._on_get_un_reactions)
         app.router.add_post("/open-apis/im/v1/files", self._on_upload_file)
         app.router.add_get("/sent_files", self._on_get_sent_files)
+        # multimedia-pipeline: Lark message_resource.get endpoint used by
+        # the Feishu adapter's _download_file (Task 2.2).
+        app.router.add_get(
+            "/open-apis/im/v1/messages/{msg_id}/resources/{file_key}",
+            self._on_get_message_resource,
+        )
         app.router.add_get("/ws", self._on_ws_connect)
         app.router.add_get("/ws_clients", self._on_get_ws_clients)
         app.router.add_post("/push_inbound", self._on_push_inbound)
@@ -191,6 +200,8 @@ class MockFeishu:
         sender_open_id: str,
         msg_type: str = "text",
         content_text: str = "",
+        bytes_data: bytes | None = None,
+        file_name: str | None = None,
         app_id: str = "default",
         tenant_key: str = "16a9e2384317175f",
     ) -> str:
@@ -207,9 +218,42 @@ class MockFeishu:
         T6 partitions routing on `app_id`: only WS clients that subscribed
         with matching `?app_id=<value>` receive the envelope. Clients
         that didn't pass the query land in the "default" bucket.
+
+        multimedia-pipeline: bytes_data + file_name support image/file/audio
+        msg_types. Bytes are stored under (msg_id, file_key) in
+        self._inbound_resources and served by _on_get_message_resource,
+        mirroring Lark's im/v1/messages/<msg_id>/resources/<file_key>.
         """
         msg_id = _new_message_id()
         now_ms = str(int(time.time() * 1000))
+
+        # Build the message content JSON, branching on msg_type.
+        if msg_type == "text":
+            content = json.dumps({"text": content_text}, ensure_ascii=False)
+        elif msg_type == "image":
+            if bytes_data is None:
+                raise ValueError("bytes_data required for image inbound")
+            file_key = "file_mock_" + secrets.token_hex(8)
+            self._inbound_resources[(msg_id, file_key)] = bytes_data
+            content = json.dumps({"image_key": file_key}, ensure_ascii=False)
+        elif msg_type == "file":
+            if bytes_data is None:
+                raise ValueError("bytes_data required for file inbound")
+            file_key = "file_mock_" + secrets.token_hex(8)
+            self._inbound_resources[(msg_id, file_key)] = bytes_data
+            content = json.dumps(
+                {"file_key": file_key, "file_name": file_name or "unknown"},
+                ensure_ascii=False,
+            )
+        elif msg_type == "audio":
+            if bytes_data is None:
+                raise ValueError("bytes_data required for audio inbound")
+            file_key = "file_mock_" + secrets.token_hex(8)
+            self._inbound_resources[(msg_id, file_key)] = bytes_data
+            content = json.dumps({"file_key": file_key, "duration": 0}, ensure_ascii=False)
+        else:
+            content = json.dumps({"text": content_text}, ensure_ascii=False)
+
         envelope = {
             "schema": "2.0",
             "header": {
@@ -237,7 +281,7 @@ class MockFeishu:
                     "chat_id": chat_id,
                     "chat_type": "p2p",
                     "message_type": msg_type,
-                    "content": json.dumps({"text": content_text}, ensure_ascii=False),
+                    "content": content,
                     "user_agent": "Mozilla/5.0 (mock_feishu) MockFeishuClient/1.0",
                 },
             },
@@ -370,14 +414,24 @@ class MockFeishu:
         body = await request.json()
         chat_id = body.get("chat_id", "")
         sender_open_id = body.get("user", "ou_test")
+        msg_type = body.get("msg_type", "text")
         content_text = body.get("text", "")
+        file_name = body.get("file_name")
+        bytes_b64 = body.get("bytes_b64")
+
+        bytes_data: bytes | None = None
+        if bytes_b64:
+            bytes_data = base64.b64decode(bytes_b64)
 
         explicit_app_id = body.get("app_id")
         if explicit_app_id:
             msg_id = self.push_inbound(
                 chat_id=chat_id,
                 sender_open_id=sender_open_id,
+                msg_type=msg_type,
                 content_text=content_text,
+                bytes_data=bytes_data,
+                file_name=file_name,
                 app_id=explicit_app_id,
             )
             return web.json_response({"ok": True, "message_id": msg_id})
@@ -403,7 +457,10 @@ class MockFeishu:
             msg_id = self.push_inbound(
                 chat_id=chat_id,
                 sender_open_id=sender_open_id,
+                msg_type=msg_type,
                 content_text=content_text,
+                bytes_data=bytes_data,
+                file_name=file_name,
                 app_id=app_id,
             )
 
@@ -579,6 +636,31 @@ class MockFeishu:
     async def _on_get_sent_files(self, _request: web.Request) -> web.Response:
         linked = [f for f in self._uploaded_files if f["chat_id"]]
         return web.json_response(linked)
+
+    async def _on_get_message_resource(self, request: web.Request) -> web.Response:
+        """GET /open-apis/im/v1/messages/<msg_id>/resources/<file_key>
+
+        Returns the bytes stored under (msg_id, file_key) by push_inbound.
+        Mirrors Lark's message_resource.get endpoint. The Feishu adapter
+        sidecar's _download_file (Task 2.2) calls this path to fetch
+        inbound image/file/audio content.
+
+        Returns 404 with a plain-text body when no resource is found.
+        """
+        msg_id = request.match_info["msg_id"]
+        file_key = request.match_info["file_key"]
+
+        bytes_data = self._inbound_resources.get((msg_id, file_key))
+        if bytes_data is None:
+            return web.Response(
+                status=404,
+                text=f"resource not found: msg_id={msg_id} file_key={file_key}",
+            )
+
+        return web.Response(
+            body=bytes_data,
+            content_type="application/octet-stream",
+        )
 
     async def _on_list_messages(self, request: web.Request) -> web.Response:
         """GET /open-apis/im/v1/messages — list chat history."""
