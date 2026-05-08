@@ -88,6 +88,14 @@ Audit task 1 (per memory) replaced the stale references in `Esr.Commands.Doctor`
 
 ---
 
+### Session-first default resolution — **CLOSED 2026-05-08**
+
+PR (this branch) implements the `2026-05-08-session-first-default-resolution.md` spec:
+per-user default workspace replaces the system "default" workspace, `/user:add` auto-creates
+`<username>-default`, new `/user:use` slash, and `/workspace:add-folder name=` falls back through
+the same chain. Audit step 9's session-first 1-2-3 path (`/session:new` → `/workspace:add-folder` →
+`/session:add-agent`) now works without ever typing a workspace name. Verified by e2e scenario 19.
+
 ## Newly-surfaced gaps (post multi-instance routing cleanup)
 
 These are gaps introduced or exposed *by* the multi-instance work itself.

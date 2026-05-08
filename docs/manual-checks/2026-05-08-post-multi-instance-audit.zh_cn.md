@@ -87,6 +87,14 @@ audit task 1（按记忆）替换了 `Esr.Commands.Doctor` 里的 stale 引用�
 
 ---
 
+### Session-first 默认解析 — **2026-05-08 闭合**
+
+PR（本分支）落地 `2026-05-08-session-first-default-resolution.md` spec：
+per-user default workspace 替代 system "default"；`/user:add` 自动建 `<username>-default`；
+新增 `/user:use` slash；`/workspace:add-folder name=` 走同一 fallback 链。审计 step 9 的
+session-first 1-2-3 路径（`/session:new` → `/workspace:add-folder` → `/session:add-agent`）
+现在不敲 workspace 名也能跑通。e2e scenario 19 验证。
+
 ## 多实例路由清理后新冒出的 gap
 
 这些是被多实例工作 *引入或暴露* 的 gap。
