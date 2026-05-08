@@ -103,8 +103,9 @@ defmodule Esr.Commands.User.AddTest do
       {:ok, doc} = Jason.decode(File.read!(json_path))
 
       assert Map.has_key?(doc, "default_workspace_id")
-      # Phase 2 placeholder: nil. Phase 4 will populate with real ws id.
-      assert doc["default_workspace_id"] == nil
+      # Phase 4 (M-5/D3) populates this with the real auto-created
+      # `<username>-default` workspace UUID.
+      assert is_binary(doc["default_workspace_id"])
     end
   end
 
