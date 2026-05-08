@@ -261,8 +261,8 @@ slashes:
     args:
       - { name: workspace, required: true }
 
-  # /workspace:sessions DROPPED — workspace must not depend on session (Rule 6)
-  # Use /session:list (not yet wired — deferred to follow-up phase; see below).
+  # /workspace:sessions DROPPED — workspace must not depend on session (Rule 6).
+  # Use /session:list instead (wired below).
 
   "/session:add-agent":
     kind: session_add_agent
@@ -345,7 +345,41 @@ slashes:
       - { name: user, required: true }
       - { name: perm, required: false, default: "attach" }
 
-  # /session:end, /session:list, /session:bind-workspace, /session:info — deferred
+  "/session:list":
+    kind: session_list
+    permission: "session:default/read"
+    command_module: "Esr.Commands.Session.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "列当前 chat 绑定的 session（无 workspace=）；带 workspace= 时按 workspace 列"
+    args:
+      - { name: workspace, required: false }
+
+  "/session:switch":
+    kind: session_switch
+    permission: null
+    command_module: "Esr.Commands.Session.Switch"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "切换 chat 当前 session（不解绑其它）；session=<uuid>"
+    args:
+      - { name: session, required: true }
+
+  "/session:end":
+    kind: session_end
+    permission: "session:default/end"
+    command_module: "Esr.Commands.Session.End"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "销毁 session；session=<uuid> 或 name=<n>"
+    args:
+      - { name: session, required: false }
+      - { name: name, required: false }
+
+  # /session:bind-workspace, /session:info — deferred
   # (command modules not yet implemented; will land as Esr.Commands.Session.*)
 
   "/agent:list":

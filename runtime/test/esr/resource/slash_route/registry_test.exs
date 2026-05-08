@@ -499,4 +499,30 @@ defmodule Esr.SlashRoutesTest do
       assert route.command_module == Esr.Commands.Plugin.Reload
     end
   end
+
+  describe "Phase B: /session:list, /session:switch, /session:end" do
+    setup do
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      FileLoader.load(priv)
+      :ok
+    end
+
+    test "/session:list resolves to Esr.Commands.Session.List" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:list")
+      assert route.command_module == Esr.Commands.Session.List
+      assert route.kind == "session_list"
+    end
+
+    test "/session:switch resolves" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:switch session=abc")
+      assert route.command_module == Esr.Commands.Session.Switch
+      assert route.kind == "session_switch"
+    end
+
+    test "/session:end resolves" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:end")
+      assert route.command_module == Esr.Commands.Session.End
+      assert route.kind == "session_end"
+    end
+  end
 end

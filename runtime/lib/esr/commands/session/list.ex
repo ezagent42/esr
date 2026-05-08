@@ -76,6 +76,29 @@ defmodule Esr.Commands.Session.List do
     end
   end
 
+  def execute(%{
+        "submitted_by" => submitter,
+        "args" => %{"chat_id" => chat_id, "app_id" => app_id}
+      })
+      when is_binary(submitter) and is_binary(chat_id) and chat_id != "" and
+             is_binary(app_id) and app_id != "" do
+    sessions =
+      case Esr.Session.ChatRouting.Registry.list_sessions(chat_id, app_id) do
+        sids when is_list(sids) ->
+          Enum.map(sids, fn sid -> %{"session_id" => sid} end)
+
+        _ ->
+          []
+      end
+
+    {:ok,
+     %{
+       "chat_id" => chat_id,
+       "app_id" => app_id,
+       "sessions" => sessions
+     }}
+  end
+
   def execute(%{"submitted_by" => submitter}) when is_binary(submitter) do
     routing = read_yaml(routing_yaml_path())
     branches = read_yaml(branches_yaml_path())
