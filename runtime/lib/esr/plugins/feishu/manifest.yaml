@@ -59,6 +59,15 @@ declares:
     module: Esr.Plugins.Feishu.Bootstrap
     function: bootstrap
 
+  # Audit #6 (2026-05-08-plugin-command-registration spec §7b):
+  # Phase 5 + Phase 6 of the plan land the actual migrated commands
+  # (notify, bind_user, unbind_user) here. The empty block ships first
+  # as a sanity gate that the validator accepts a no-op manifest.
+  slash_routes:
+    schema_version: 1
+    slashes: {}
+    internal_kinds: {}
+
 config_schema:
   app_id:
     type: string
