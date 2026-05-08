@@ -121,7 +121,7 @@ SESSION_OUT=$(esr_cli admin submit session_new \
 echo "17: session_new: ${SESSION_OUT}"
 assert_contains "${SESSION_OUT}" "ok: true" "17: session_new returned ok"
 
-SID=$(echo "${SESSION_OUT}" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID=$(echo "${SESSION_OUT}" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "${SID}" ]] || _fail_with_context "17: no session_id from session_new"
 echo "17: session created: ${SID}"
 
@@ -209,7 +209,7 @@ SESSION2_OUT=$(esr_cli admin submit session_new \
 echo "17: session_new (2nd): ${SESSION2_OUT}"
 assert_contains "${SESSION2_OUT}" "ok: true" "17: session_new (2nd) returned ok"
 
-SID2=$(echo "${SESSION2_OUT}" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID2=$(echo "${SESSION2_OUT}" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "${SID2}" ]] || _fail_with_context "17: no session_id from 2nd session_new"
 echo "17: second session created: ${SID2}"
 

@@ -98,7 +98,7 @@ SESSION_OUT=$(esr_cli admin submit session_new \
 echo "session_new: ${SESSION_OUT}"
 assert_contains "$SESSION_OUT" "ok: true" "15: session_new ok"
 
-SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "$SID" ]] || _fail_with_context "15: no session_id from session_new"
 echo "15: alice created session: ${SID}"
 

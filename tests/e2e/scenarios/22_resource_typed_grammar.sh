@@ -68,7 +68,7 @@ SESS_OUT=$(esr_cli admin submit session_new \
   --arg submitter_username="${USERNAME}" \
   --wait --timeout 30)
 
-SID=$(echo "$SESS_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID=$(echo "$SESS_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "$SID" ]] || _fail_with_context "22: no session_id"
 echo "22: session created: ${SID} (bound to chat ${CHAT_ID})"
 
