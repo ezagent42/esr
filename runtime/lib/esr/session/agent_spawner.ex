@@ -231,9 +231,11 @@ defmodule Esr.Session.AgentSpawner do
     end
   end
 
-  # ULID-ish — 96 bits encoded base32 (no padding). Good enough for
-  # session identity; callers get an opaque binary id.
-  defp gen_id, do: :crypto.strong_rand_bytes(12) |> Base.encode32(padding: false)
+  # Phase 5 D2: session ids must be UUID v4 (cap routing validates the
+  # format). Pre-2026-05-08 this emitted ULID-ish base32, breaking
+  # scenarios 14/15/17/22 once cap-aware paths kicked in. Surfaced
+  # during Phase F (resource-typed grammar) e2e renames.
+  defp gen_id, do: UUID.uuid4()
 
   defp start_session_sup(sid, agent_name, params, agent_def) do
     chat_id = get_param(params, :chat_id) || ""

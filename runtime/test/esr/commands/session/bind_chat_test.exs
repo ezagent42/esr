@@ -1,7 +1,7 @@
-defmodule Esr.Commands.Session.AttachTest do
+defmodule Esr.Commands.Session.BindChatTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Session.Attach
+  alias Esr.Commands.Session.BindChat
   alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
@@ -34,15 +34,15 @@ defmodule Esr.Commands.Session.AttachTest do
     end
 
     # Per-test unique chat slot so tests don't share attach state
-    chat_id = "chat-attach-#{:rand.uniform(9_999_999)}"
-    app_id = "app-attach-#{:rand.uniform(9_999_999)}"
+    chat_id = "chat-bind-chat-#{:rand.uniform(9_999_999)}"
+    app_id = "app-bind-chat-#{:rand.uniform(9_999_999)}"
 
     # Seed a real session in the registry
     data_dir = Esr.Paths.runtime_home()
 
     {:ok, session_id} =
       SessionRegistry.create_session(data_dir, %{
-        name: "attach-test-session-#{:rand.uniform(99_999)}",
+        name: "bind-chat-test-session-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""
       })
@@ -61,7 +61,7 @@ defmodule Esr.Commands.Session.AttachTest do
   # Happy path
   # ---------------------------------------------------------------------------
 
-  test "success: attaches session and returns result", %{
+  test "success: /session:bind-chat binds session and returns result", %{
     session_id: sid,
     chat_id: chat_id,
     app_id: app_id
@@ -71,12 +71,12 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => sid, "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:ok, result} = Attach.execute(cmd)
+    assert {:ok, result} = BindChat.execute(cmd)
     assert result["session_id"] == sid
     assert result["attached"] == true
   end
 
-  test "success: session becomes current after attach", %{
+  test "success: /session:bind-chat — session becomes current after binding", %{
     session_id: sid,
     chat_id: chat_id,
     app_id: app_id
@@ -86,7 +86,7 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => sid, "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    {:ok, _} = Attach.execute(cmd)
+    {:ok, _} = BindChat.execute(cmd)
     assert {:ok, ^sid} = ChatScopeRegistry.current_session(chat_id, app_id)
   end
 
@@ -94,7 +94,7 @@ defmodule Esr.Commands.Session.AttachTest do
   # UUID-only contract (Phase 5 D2 + D5)
   # ---------------------------------------------------------------------------
 
-  test "error: name input instead of UUID returns invalid_session_uuid", %{
+  test "error: /session:bind-chat — name input instead of UUID returns invalid_session_uuid", %{
     chat_id: chat_id,
     app_id: app_id
   } do
@@ -103,23 +103,29 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => "my-session-name", "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:error, %{"type" => "invalid_session_uuid"}} = Attach.execute(cmd)
+    assert {:error, %{"type" => "invalid_session_uuid"}} = BindChat.execute(cmd)
   end
 
-  test "error: empty session arg returns invalid_args", %{chat_id: chat_id, app_id: app_id} do
+  test "error: /session:bind-chat — empty session arg returns invalid_args", %{
+    chat_id: chat_id,
+    app_id: app_id
+  } do
     cmd = %{
       "submitted_by" => @submitter,
       "args" => %{"session" => "", "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:error, %{"type" => "invalid_args"}} = Attach.execute(cmd)
+    assert {:error, %{"type" => "invalid_args"}} = BindChat.execute(cmd)
   end
 
   # ---------------------------------------------------------------------------
   # Session not found
   # ---------------------------------------------------------------------------
 
-  test "error: unknown UUID returns unknown_session", %{chat_id: chat_id, app_id: app_id} do
+  test "error: /session:bind-chat — unknown UUID returns unknown_session", %{
+    chat_id: chat_id,
+    app_id: app_id
+  } do
     unknown = "ffffffff-ffff-4fff-bfff-ffffffffffff"
 
     # Grant cap for the unknown session so the cap check passes and we reach not-found
@@ -130,14 +136,14 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => unknown, "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:error, %{"type" => "unknown_session"}} = Attach.execute(cmd)
+    assert {:error, %{"type" => "unknown_session"}} = BindChat.execute(cmd)
   end
 
   # ---------------------------------------------------------------------------
   # Cap check rejection
   # ---------------------------------------------------------------------------
 
-  test "error: submitter without cap returns not_authorized", %{
+  test "error: /session:bind-chat — submitter without cap returns not_authorized", %{
     session_id: sid,
     chat_id: chat_id,
     app_id: app_id
@@ -150,10 +156,10 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => sid, "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:error, %{"type" => "not_authorized"}} = Attach.execute(cmd)
+    assert {:error, %{"type" => "not_authorized"}} = BindChat.execute(cmd)
   end
 
-  test "success: admin cap is accepted in lieu of attach cap", %{
+  test "success: /session:bind-chat — admin cap is accepted in lieu of attach cap", %{
     session_id: sid,
     chat_id: chat_id,
     app_id: app_id
@@ -165,14 +171,14 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => sid, "chat_id" => chat_id, "app_id" => app_id}
     }
 
-    assert {:ok, _} = Attach.execute(cmd)
+    assert {:ok, _} = BindChat.execute(cmd)
   end
 
   # ---------------------------------------------------------------------------
   # Missing chat context
   # ---------------------------------------------------------------------------
 
-  test "error: missing chat context returns invalid_args", %{session_id: sid} do
+  test "error: /session:bind-chat — missing chat context returns invalid_args", %{session_id: sid} do
     :ok = Grants.load_snapshot(%{@submitter => ["session:#{sid}/attach"]})
 
     cmd = %{
@@ -180,6 +186,6 @@ defmodule Esr.Commands.Session.AttachTest do
       "args" => %{"session" => sid}
     }
 
-    assert {:error, %{"type" => "invalid_args"}} = Attach.execute(cmd)
+    assert {:error, %{"type" => "invalid_args"}} = BindChat.execute(cmd)
   end
 end

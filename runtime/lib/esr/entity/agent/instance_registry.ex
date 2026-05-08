@@ -135,6 +135,20 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @doc """
+  Rename `name` → `new_name` in `session_id`. Atomic via the GenServer
+  call so the (session_id, name) ETS key swap is collision-checked.
+
+  Returns `:ok`, `{:error, :not_found}`, or
+  `{:error, :duplicate_agent_name}`.
+  """
+  @spec rename_instance(GenServer.server(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :duplicate_agent_name}
+  def rename_instance(server \\ __MODULE__, session_id, name, new_name)
+      when is_binary(session_id) and is_binary(name) and is_binary(new_name) do
+    GenServer.call(server, {:rename_instance, session_id, name, new_name})
+  end
+
+  @doc """
   Return the primary agent name for `session_id`.
 
   Returns `{:ok, name}` or `:not_found`.
@@ -152,6 +166,28 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   @spec names_for_session(GenServer.server(), String.t()) :: [String.t()]
   def names_for_session(server \\ __MODULE__, session_id) when is_binary(session_id) do
     list(server, session_id) |> Enum.map(& &1.name)
+  end
+
+  @doc """
+  Look up the PTY actor id for `(session_id, name)`.
+
+  Returns `{:ok, pty_actor_id}` or `:not_found`. Used by `/claude_code:tui` and
+  `/pty:list` to resolve agent name → PTY id without going through the
+  side-channel `add_instance_and_spawn/2` return.
+  """
+  @spec pty_actor_id_for(GenServer.server(), String.t(), String.t()) ::
+          {:ok, String.t()} | :not_found
+  def pty_actor_id_for(server \\ __MODULE__, session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    tab = GenServer.call(server, :table_name)
+
+    case :ets.lookup(tab, {session_id, name}) do
+      [{_, %Instance{actor_ids: %{pty: pty_id}}}] when is_binary(pty_id) ->
+        {:ok, pty_id}
+
+      _ ->
+        :not_found
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -235,6 +271,49 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @impl true
+  def handle_call({:rename_instance, sid, name, new_name}, _from, state) do
+    cond do
+      name == new_name ->
+        {:reply, :ok, state}
+
+      :ets.lookup(state.table, {sid, new_name}) != [] ->
+        {:reply, {:error, :duplicate_agent_name}, state}
+
+      true ->
+        case :ets.lookup(state.table, {sid, name}) do
+          [{_, %Instance{} = inst}] ->
+            new_inst = %{inst | name: new_name}
+            :ets.delete(state.table, {sid, name})
+            :ets.insert(state.table, {{sid, new_name}, new_inst})
+
+            # Also update primary pointer if this was the primary.
+            case :ets.lookup(state.table, {sid, :__primary__}) do
+              [{_, ^name}] ->
+                :ets.insert(state.table, {{sid, :__primary__}, new_name})
+
+              _ ->
+                :ok
+            end
+
+            # Mirror agent_sup_via key if it exists (per Esr.Session.AgentSupervisor convention)
+            case :ets.lookup(state.table, {:instance_sup, sid, name}) do
+              [{_, sup_pid}] ->
+                :ets.delete(state.table, {:instance_sup, sid, name})
+                :ets.insert(state.table, {{:instance_sup, sid, new_name}, sup_pid})
+
+              _ ->
+                :ok
+            end
+
+            {:reply, :ok, state}
+
+          [] ->
+            {:reply, {:error, :not_found}, state}
+        end
+    end
+  end
+
+  @impl true
   def handle_call({:add_instance_and_spawn, attrs}, _from, state) do
     session_id = Map.fetch!(attrs, :session_id)
     name = Map.fetch!(attrs, :name)
@@ -249,7 +328,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
         cc_actor_id = uuid_v4()
         pty_actor_id = uuid_v4()
 
-        cc_args = build_cc_args(session_id, name, cc_actor_id, type, config)
+        cc_args = build_cc_args(session_id, name, cc_actor_id, pty_actor_id, type, config)
         pty_args = build_pty_args(session_id, name, pty_actor_id, config)
 
         agent_sup_via =
@@ -278,7 +357,8 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
               type: type,
               name: name,
               config: config,
-              created_at: iso_now()
+              created_at: iso_now(),
+              actor_ids: %{cc: cc_actor_id, pty: pty_actor_id}
             }
 
             :ets.insert(state.table, {{session_id, name}, inst})
@@ -313,11 +393,12 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     DateTime.utc_now() |> DateTime.to_iso8601()
   end
 
-  defp build_cc_args(session_id, name, actor_id, type, config) do
+  defp build_cc_args(session_id, name, actor_id, pty_actor_id, type, config) do
     %{
       session_id: session_id,
       name: name,
       actor_id: actor_id,
+      pty_actor_id: pty_actor_id,
       handler_module: resolve_handler_module(type, config),
       proxy_ctx: %{session_id: session_id}
     }

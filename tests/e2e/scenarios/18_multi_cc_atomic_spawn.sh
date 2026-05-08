@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# e2e scenario 18 — multi-CC atomic spawn via /session:add-agent.
+# e2e scenario 18 — multi-CC atomic spawn via /agent:add.
 #
 # Spec: docs/superpowers/specs/2026-05-07-multi-instance-routing-cleanup.md §11.
 # Phase: M-5.2 of multi-instance routing cleanup.
+#       (kind name updated 2026-05-08 to match resource-typed grammar
+#        rev-3 §4.2 D1 hard-cutover: session_add_agent renamed to agent_add.)
 #
 # WHAT THIS TEST PROVES:
-#   - /session:add-agent (admin-submit kind: session_add_agent) goes through
+#   - /agent:add (admin-submit kind: agent_add) goes through
 #     Esr.Entity.Agent.InstanceRegistry.add_instance_and_spawn/2 (M-2.7),
 #     not the legacy metadata-only add_instance/2 path.
 #   - Successful spawn returns the new structured payload that M-2.8 added:
@@ -54,12 +56,12 @@ SESSION_OUT=$(esr_cli admin submit session_new \
 echo "18 session_new output: ${SESSION_OUT}"
 assert_contains "$SESSION_OUT" "ok: true" "18: session_new returned ok"
 
-SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "$SID" ]] || _fail_with_context "18: no session_id from session_new"
 echo "18: session created: ${SID}"
 
 # --- step 2: spawn alice + assert actor_ids fields --------------------
-ADD_ALICE=$(esr_cli admin submit session_add_agent \
+ADD_ALICE=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=alice \
@@ -87,7 +89,7 @@ echo "18: alice cc actor_id = ${ALICE_CC}"
 echo "18: alice pty actor_id = ${ALICE_PTY}"
 
 # --- step 3: spawn bob — second instance in the same session ----------
-ADD_BOB=$(esr_cli admin submit session_add_agent \
+ADD_BOB=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=bob \
@@ -108,7 +110,7 @@ fi
 echo "18: bob spawned with distinct actor_ids — multi-instance subtree confirmed"
 
 # --- step 4: spawn carol — three concurrent agents under one session ---
-ADD_CAROL=$(esr_cli admin submit session_add_agent \
+ADD_CAROL=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=carol \
@@ -125,7 +127,7 @@ fi
 echo "18: carol spawned — three sibling subtrees coexist"
 
 # --- step 5: duplicate name guard fires before spawn ------------------
-DUP_OUT=$(esr_cli admin submit session_add_agent \
+DUP_OUT=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=alice \

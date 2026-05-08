@@ -93,20 +93,20 @@ defmodule Esr.SlashRoutesTest do
       load_fixture(
         slashes: %{
           "/help" => Map.put(simple_route("help", "Esr.Test.NoopCommand"), "permission", nil),
-          "/session:add-agent" =>
+          "/agent:add" =>
             Map.put(
-              simple_route("session_add_agent", "Esr.Test.NoopCommand"),
+              simple_route("agent_add", "Esr.Test.NoopCommand"),
               "permission",
-              "session:default/add-agent"
+              "session:default/spawn"
             )
         }
       )
 
       assert nil == SlashRouteRegistry.permission_for("help")
-      assert "session:default/add-agent" == SlashRouteRegistry.permission_for("session_add_agent")
+      assert "session:default/spawn" == SlashRouteRegistry.permission_for("agent_add")
 
       assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("help")
-      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("session_add_agent")
+      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("agent_add")
     end
 
     test "covers internal_kinds" do
@@ -263,8 +263,9 @@ defmodule Esr.SlashRoutesTest do
       assert length(list) >= 8
       # Help should resolve (bare meta command — stays bare)
       assert {:ok, _} = SlashRouteRegistry.lookup("/help")
-      # Colon-form session commands resolve
-      assert {:ok, _} = SlashRouteRegistry.lookup("/session:add-agent")
+      # Colon-form session/agent commands resolve. Phase C renamed
+      # /session:add-agent → /agent:add (rev-3 §4.2 D1 hard-cutover).
+      assert {:ok, _} = SlashRouteRegistry.lookup("/agent:add")
       assert {:ok, _} = SlashRouteRegistry.lookup("/workspace:list")
       assert {:ok, _} = SlashRouteRegistry.lookup("/user:whoami")
       # Old-form slashes do NOT resolve after cutover
@@ -497,6 +498,43 @@ defmodule Esr.SlashRoutesTest do
       assert route.kind == "plugin_reload"
       assert route.permission == "plugin/manage"
       assert route.command_module == Esr.Commands.Plugin.Reload
+    end
+  end
+
+  describe "Phase B: /session:list, /session:switch, /session:end" do
+    setup do
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+      FileLoader.load(priv)
+      :ok
+    end
+
+    test "/session:list resolves to Esr.Commands.Session.List" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:list")
+      assert route.command_module == Esr.Commands.Session.List
+      assert route.kind == "session_list"
+    end
+
+    test "/session:switch resolves" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:switch session=abc")
+      assert route.command_module == Esr.Commands.Session.Switch
+      assert route.kind == "session_switch"
+    end
+
+    test "/session:end resolves" do
+      assert {:ok, route} = SlashRouteRegistry.lookup("/session:end")
+      assert route.command_module == Esr.Commands.Session.End
+      assert route.kind == "session_end"
+    end
+
+    # Regression for code-review C-2: `internal_kinds:` entries override the
+    # `slashes:` table at runtime via permission_for/1 (rebuild_merged_view
+    # inserts internal_kinds LAST). Pre-fix, /session:list ran with
+    # `session.list` (admin-only) and /session:switch with `session.switch`
+    # (admin-only) instead of the spec'd permissions.
+    test "permission_for/1 returns the slashes-table value (not the legacy internal_kinds value)" do
+      assert SlashRouteRegistry.permission_for("session_list") == "session:default/read"
+      assert SlashRouteRegistry.permission_for("session_switch") == nil
+      assert SlashRouteRegistry.permission_for("session_end") == "session:default/end"
     end
   end
 end

@@ -243,4 +243,39 @@ defmodule Esr.Commands.Session.ListTest do
       assert {:ok, %{"sessions" => []}} = SessionList.execute(cmd)
     end
   end
+
+  describe "chat-bound shape (no workspace= arg)" do
+    setup do
+      case Process.whereis(Esr.Session.ChatRouting.Registry) do
+        nil -> start_supervised!(Esr.Session.ChatRouting.Registry)
+        _ -> :ok
+      end
+
+      :ok
+    end
+
+    test "returns sessions attached to (chat_id, app_id) when chat context present" do
+      chat = "oc_b1_test"
+      app = "esr_helper_test"
+      sid_a = "aaaaaaaa-1111-4111-8111-111111111111"
+      sid_b = "bbbbbbbb-2222-4222-8222-222222222222"
+
+      :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid_a)
+      :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid_b)
+
+      cmd = %{
+        "submitted_by" => "linyilun",
+        "args" => %{
+          "chat_id" => chat,
+          "app_id" => app
+        }
+      }
+
+      assert {:ok, %{"sessions" => sessions, "chat_id" => ^chat}} =
+               Esr.Commands.Session.List.execute(cmd)
+
+      sids = Enum.map(sessions, & &1["session_id"]) |> Enum.sort()
+      assert sids == Enum.sort([sid_a, sid_b])
+    end
+  end
 end

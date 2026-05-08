@@ -54,8 +54,22 @@ defmodule Esr.Entity.FeishuChatProxy do
     ctx = Map.get(args, :proxy_ctx, %{})
     session_id = Map.fetch!(args, :session_id)
 
+    # Phase A.4b: PtyProcess registers under "pty:<actor_id>" post-Phase-A.4.
+    # FCP is currently only spawned via AgentSpawner (single-agent path),
+    # which goes through Factory.spawn_peer and does NOT thread actor_id —
+    # the PtyProcess peer's init falls back to `actor_id ||= session_id`,
+    # so PTY registers under "pty:<session_id>". Mirror that fallback here.
+    #
+    # When/if FCP gains a multi-agent spawn path (via InstanceRegistry),
+    # the primary agent's pty_actor_id is the right binding — resolve via
+    # InstanceRegistry first, then fall back to session_id keying for the
+    # AgentSpawner path (and for any race where FCP boots before the row
+    # is written).
+    pty_actor_id = resolve_pty_actor_id(session_id)
+
     base = %{
       session_id: session_id,
+      pty_actor_id: pty_actor_id,
       chat_id: Map.fetch!(args, :chat_id),
       thread_id: Map.fetch!(args, :thread_id),
       # PR-A T4: home app + authenticated principal. Source order:
@@ -132,7 +146,10 @@ defmodule Esr.Entity.FeishuChatProxy do
     })
 
     if Process.whereis(EsrWeb.PubSub) do
-      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> session_id)
+      # Phase A.4b: PTY topic now keys on actor_id (see PtyProcess
+      # on_raw_stdout). cc_mcp_ready / pty_attach remain session-scoped
+      # — they are session-level events, not pty-scoped.
+      Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty:" <> pty_actor_id)
       Phoenix.PubSub.subscribe(EsrWeb.PubSub, "cc_mcp_ready/" <> session_id)
       Phoenix.PubSub.subscribe(EsrWeb.PubSub, "pty_attach/" <> session_id)
     end
@@ -328,7 +345,11 @@ defmodule Esr.Entity.FeishuChatProxy do
         "feishu_chat_proxy: auto-confirming dev-channels dialog session_id=#{sid}"
       )
 
-      _ = Esr.Entity.PtyProcess.write(sid, "1\r")
+      # Phase A.4b: PTY register key keys on actor_id. state.pty_actor_id
+      # is resolved at init via resolve_pty_actor_id/1 (falls back to
+      # session_id for AgentSpawner spawns where no InstanceRegistry row
+      # exists — matches PtyProcess's `actor_id ||= session_id`).
+      _ = Esr.Entity.PtyProcess.write(state.pty_actor_id, "1\r")
       %{state | dev_channels_confirmed: true}
     else
       state
@@ -368,7 +389,9 @@ defmodule Esr.Entity.FeishuChatProxy do
       end
 
     if Process.whereis(EsrWeb.PubSub) do
-      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "pty:" <> sid)
+      # Phase A.4b: unsubscribe symmetrically with init's subscribe — the
+      # PTY topic keys on actor_id, not session_id.
+      Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "pty:" <> state.pty_actor_id)
     end
 
     Logger.info("feishu_chat_proxy: boot bridge handing off to cc_mcp session_id=#{sid}")
@@ -386,7 +409,8 @@ defmodule Esr.Entity.FeishuChatProxy do
     state = %{state | winsize_pending_ref: nil}
 
     if state.boot_mode do
-      _ = Esr.Entity.PtyProcess.resize(state.session_id, 120, 40)
+      # Phase A.4b: PTY register key keys on actor_id post-Phase-A.4.
+      _ = Esr.Entity.PtyProcess.resize(state.pty_actor_id, 120, 40)
     end
 
     {:noreply, state}
@@ -442,6 +466,51 @@ defmodule Esr.Entity.FeishuChatProxy do
         if String.trim(maybe_blank) == "", do: [""], else: chunk
     end)
     |> Enum.join("\n")
+  end
+
+  # Phase A.4b — PTY actor_id resolution.
+  #
+  # Post-Phase-A.4, PtyProcess registers under "pty:<actor_id>" and
+  # broadcasts on the same topic. FCP needs the actor_id (not session_id)
+  # for the boot-bridge subscribe + the auto-confirm/default-winsize
+  # writes that go via the public PtyProcess.write/2 + resize/3 API.
+  #
+  # Resolution order:
+  #   1. InstanceRegistry — primary agent's pty_actor_id from the
+  #      `%Instance{}` ETS row. Used when /session:add-agent is the
+  #      spawn path (multi-agent).
+  #   2. session_id fallback — used when AgentSpawner (single-agent
+  #      path) created the session: that path goes through
+  #      Factory.spawn_peer without threading actor_id, and PtyProcess's
+  #      init falls back to `actor_id ||= session_id`. Mirroring that
+  #      fallback here keeps the lookup key consistent.
+  #
+  # The fallback also covers the boot-ordering race where FCP's init
+  # runs BEFORE InstanceRegistry's `add_instance_and_spawn/2` ETS write
+  # completes — though, as of A.4b, FCP is only spawned in the
+  # single-agent AgentSpawner path, so the race window doesn't actually
+  # exist in production today. The fallback is retained for forward
+  # compatibility.
+  defp resolve_pty_actor_id(session_id) do
+    case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+      {:ok, name} ->
+        case Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(session_id, name) do
+          {:ok, aid} ->
+            aid
+
+          :not_found ->
+            session_id
+        end
+
+      :not_found ->
+        session_id
+    end
+  rescue
+    # Esr.Entity.Agent.InstanceRegistry GenServer not running in some
+    # isolated unit-test setups — fall back to session_id keying.
+    _ -> session_id
+  catch
+    :exit, _ -> session_id
   end
 
   # ------------------------------------------------------------------

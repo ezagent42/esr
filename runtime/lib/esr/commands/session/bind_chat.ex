@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Session.Attach do
+defmodule Esr.Commands.Session.BindChat do
   @moduledoc """
-  `/session:attach` — attach an existing session to the current chat scope.
+  `/session:bind-chat` — bind an existing session to the current chat scope.
 
   ## Args
 
@@ -53,7 +53,7 @@ defmodule Esr.Commands.Session.Attach do
      %{
        "type" => "invalid_args",
        "message" =>
-         "/session:attach requires args.session (UUID) and a chat context (chat_id + app_id)"
+         "/session:bind-chat requires args.session (UUID) and a chat context (chat_id + app_id)"
      }}
   end
 
@@ -69,7 +69,7 @@ defmodule Esr.Commands.Session.Attach do
        %{
          "type" => "invalid_session_uuid",
          "message" =>
-           "session attach requires a UUID; use /session:list to see available sessions"
+           "session bind-chat requires a UUID; use /session:list to see available sessions"
        }}
     end
   end
@@ -78,7 +78,7 @@ defmodule Esr.Commands.Session.Attach do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "/session:attach requires args.session (non-empty UUID string)"
+       "message" => "/session:bind-chat requires args.session (non-empty UUID string)"
      }}
   end
 
@@ -122,7 +122,7 @@ defmodule Esr.Commands.Session.Attach do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "/session:attach requires a chat context (chat_id + app_id in envelope)"
+       "message" => "/session:bind-chat requires a chat context (chat_id + app_id in envelope)"
      }}
   end
 end

@@ -1,36 +1,49 @@
 defmodule Esr.Commands.Agent.List do
   @moduledoc """
-  `/list-agents` slash command — list every agent name compiled from
-  `agents.yaml` (PR-21κ, 2026-04-30).
+  `/agent:list` — list agent INSTANCES in chat-current session.
 
-  Reads `Esr.Entity.Agent.Registry.list_agents/0`.
+  Reads `Esr.Session.ChatRouting.Registry.current_session/2` to find the
+  current session UUID, then `Esr.Entity.Agent.InstanceRegistry.list/2`
+  to enumerate the per-session `%Instance{}` records.
 
-  ## Latent bug fixed by this module
-
-  Pre-PR-21κ, `/list-agents` was parsed by SlashHandler as
-  `kind: "agent_list"`, but `Esr.Admin.Dispatcher.run_command/2` had no
-  branch for that kind — it fell through to the default error path and
-  the operator received `unknown_kind`. PR-21κ wires `agent_list` to
-  this module via `slash-routes.yaml`'s `command_module` field, so the
-  kind now resolves cleanly.
+  Spec rev-3 §4.2 (`/agent:list` repurposed), I3. The old type-catalog
+  semantics moved to `Esr.Commands.Plugin.AgentTypes`.
   """
 
   @behaviour Esr.Role.Control
 
-  @type result :: {:ok, map()}
+  alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
-  @spec execute(map()) :: result()
+  @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  def execute(%{"args" => %{"chat_id" => chat_id, "app_id" => app_id}})
+      when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    case ChatRouting.current_session(chat_id, app_id) do
+      {:ok, sid} ->
+        agents =
+          Esr.Entity.Agent.InstanceRegistry.list(sid)
+          |> Enum.map(fn inst ->
+            %{
+              "name" => inst.name,
+              "type" => inst.type,
+              "actor_ids" => %{
+                "cc" => get_in(inst.actor_ids || %{}, [:cc]),
+                "pty" => get_in(inst.actor_ids || %{}, [:pty])
+              }
+            }
+          end)
+
+        {:ok, %{"chat_id" => chat_id, "session_id" => sid, "agents" => agents}}
+
+      :not_found ->
+        {:ok, %{"chat_id" => chat_id, "session_id" => nil, "agents" => []}}
+    end
+  end
+
   def execute(_cmd) do
-    text =
-      case Esr.Entity.Agent.Registry.list_agents() do
-        [] ->
-          "no agents loaded (agents.yaml empty or not found)"
-
-        names ->
-          lines = Enum.map_join(names, "\n", fn n -> "  - #{n}" end)
-          "available agents:\n#{lines}"
-      end
-
-    {:ok, %{"text" => text}}
+    {:error,
+     %{
+       "type" => "invalid_args",
+       "message" => "/agent:list requires chat context (chat_id + app_id in envelope)"
+     }}
   end
 end

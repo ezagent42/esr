@@ -82,6 +82,73 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       assert text =~ "/session:list"
     end
 
+    # Phase C (resource-typed grammar rev-3 §4.2): the per-agent commands
+    # were renamed from /session:* to /agent:* (Tasks C.3-C.5). Operators
+    # who still type the old form get a rename hint via @deprecated_slashes.
+    test "/session:add-agent returns rename hint to /agent:add" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:add-agent type=cc name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:add"
+      assert text =~ "renamed"
+    end
+
+    test "/session:remove-agent returns rename hint to /agent:remove" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:remove-agent name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:remove"
+      assert text =~ "renamed"
+    end
+
+    test "/session:set-primary returns rename hint to /agent:set-primary" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:set-primary name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:set-primary"
+      assert text =~ "renamed"
+    end
+
+    # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
+    # split from PTY URL emission. /session:attach is now /session:bind-chat;
+    # /session:detach is /session:unbind-chat. Operators typing the old
+    # forms get a rename hint via @deprecated_slashes.
+    test "/session:attach returns rename hint to /session:bind-chat" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:attach session=abc"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/session:bind-chat"
+      assert text =~ "renamed"
+    end
+
+    test "/session:detach returns rename hint to /session:unbind-chat" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:detach"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/session:unbind-chat"
+      assert text =~ "renamed"
+    end
+
+    test "/attach now hints to /pty:attach (was /session:attach)" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/attach"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/pty:attach"
+      assert text =~ "renamed"
+    end
+
     test "envelope chat_id/app_id/principal_id flow into the command's args" do
       pid = start_handler!()
       ref = make_ref()
@@ -97,6 +164,115 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       # TestEcho echoes the args back via inspect; "ok: %{...}" format
       # from ChatPid.format_result for non-text result maps.
       assert text =~ "echo:echo"
+    end
+  end
+
+  describe "Phase B — chat-bound /session:list + /session:switch" do
+    # Override the test_routes/0 snapshot so /session:list + /session:switch
+    # dispatch to the REAL command modules. Validates the slash → module
+    # wiring at the dispatch layer (regression for the C-1 review finding:
+    # `Session.Switch.execute/1` had no chat-bound clause; ETS-level lookup
+    # tests passed but operator-typed `/session:switch session=<uuid>` failed).
+    setup do
+      case Process.whereis(Esr.Session.ChatRouting.Registry) do
+        nil -> start_supervised!(Esr.Session.ChatRouting.Registry)
+        _ -> :ok
+      end
+
+      SlashRouteRegistry.load_snapshot(%{
+        slashes: [
+          %{
+            slash: "/session:list",
+            kind: "session_list",
+            permission: nil,
+            command_module: Esr.Commands.Session.List,
+            requires_workspace_binding: false,
+            requires_user_binding: false,
+            category: "Sessions",
+            description: "list sessions",
+            aliases: [],
+            args: [%{name: "workspace", required: false, default: nil}]
+          },
+          %{
+            slash: "/session:switch",
+            kind: "session_switch",
+            permission: nil,
+            command_module: Esr.Commands.Session.Switch,
+            requires_workspace_binding: false,
+            requires_user_binding: false,
+            category: "Sessions",
+            description: "switch chat current session",
+            aliases: [],
+            args: [%{name: "session", required: true, default: nil}]
+          }
+        ],
+        internal_kinds: []
+      })
+
+      :ok
+    end
+
+    test "/session:list with chat context returns chat-bound shape" do
+      chat = "oc_phb_disp"
+      app = "esr_helper_disp"
+      sid = "11111111-aaaa-4aaa-8aaa-111111111111"
+      :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
+
+      pid = start_handler!()
+      ref = make_ref()
+
+      env =
+        envelope("/session:list")
+        |> put_in(["payload", "args", "chat_id"], chat)
+        |> put_in(["payload", "args", "app_id"], app)
+
+      cast_dispatch(pid, env, self(), ref)
+
+      # Session.List chat-bound shape returns
+      # %{"sessions" => [...], "chat_id" => ...}; ChatPid.format_result
+      # falls through to "ok: " <> inspect(m) for non-workspace shapes.
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "sessions"
+      assert text =~ sid
+    end
+
+    test "/session:switch with session=<uuid> + chat context promotes the session" do
+      chat = "oc_phb_sw"
+      app = "esr_helper_sw"
+      sid_a = "22222222-bbbb-4bbb-8bbb-222222222222"
+      sid_b = "33333333-cccc-4ccc-8ccc-333333333333"
+
+      :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid_a)
+      :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid_b)
+
+      # First attach made sid_a current; second attach kept current=sid_a
+      # (attach_session/3 only overwrites current when current was nil).
+      assert {:ok, ^sid_a} = Esr.Session.ChatRouting.Registry.current_session(chat, app)
+
+      pid = start_handler!()
+      ref = make_ref()
+
+      env =
+        envelope("/session:switch session=" <> sid_b)
+        |> put_in(["payload", "args", "chat_id"], chat)
+        |> put_in(["payload", "args", "app_id"], app)
+
+      cast_dispatch(pid, env, self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      # Result is %{"session_id" => sid_b, "switched" => true, ...};
+      # ChatPid.format_result hits the {"session_id", "switched" => true}
+      # clause and renders "switched chat-current session → <sid>".
+      # (Spec rev-4 §4.2 second-review fix #2 — the generic
+      # {"session_id"} clause was previously shadowing this and rendering
+      # "session started", misleading operators into believing a new
+      # session had been created.)
+      assert text =~ sid_b
+      assert text =~ "switched"
+      refute text =~ "started"
+
+      # Verify the registry promotion actually landed.
+      assert {:ok, ^sid_b} = Esr.Session.ChatRouting.Registry.current_session(chat, app)
     end
   end
 

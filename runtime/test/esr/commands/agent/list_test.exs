@@ -1,32 +1,77 @@
 defmodule Esr.Commands.Agent.ListTest do
-  @moduledoc """
-  Tests for `Esr.Commands.Agent.List` (PR-21κ).
-
-  Loads the `simple.yaml` fixture used by `SessionRegistry`-level tests
-  to verify Agent.List surfaces the agent name as a plain text bullet.
-  """
-
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Agent.List, as: AgentList
+  setup do
+    case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+      nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+      _ -> :ok
+    end
 
-  test "lists agents from agents.yaml" do
-    fixture = Path.expand("../../fixtures/agents/simple.yaml", __DIR__)
-    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
+    case Process.whereis(Esr.Session.ChatRouting.Registry) do
+      nil -> start_supervised!(Esr.Session.ChatRouting.Registry)
+      _ -> :ok
+    end
 
-    assert {:ok, %{"text" => text}} = AgentList.execute(%{})
-    assert text =~ "available agents:"
-    assert text =~ "  - cc"
+    :ok
   end
 
-  test "empty agents → 'no agents loaded' text" do
-    empty = Path.join(System.tmp_dir!(), "agents-empty-#{System.unique_integer([:positive])}.yaml")
-    File.write!(empty, "agents: {}\n")
-    :ok = Esr.Entity.Agent.Registry.load_agents(empty)
+  test "lists instances of chat-current session" do
+    chat = "oc_b1_list"
+    app = "esr_helper_list"
+    sid = "cccccccc-3333-4333-8333-333333333333"
+    :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-    assert {:ok, %{"text" => text}} = AgentList.execute(%{})
-    assert text =~ "no agents loaded"
+    tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
 
-    File.rm(empty)
+    inst_a = %Esr.Entity.Agent.Instance{
+      id: "cc-uuid-a",
+      session_id: sid,
+      type: "cc",
+      name: "alice",
+      config: %{},
+      created_at: "2026-05-08T00:00:00Z",
+      actor_ids: %{cc: "cc-uuid-a", pty: "pty-uuid-a"}
+    }
+
+    inst_b = %Esr.Entity.Agent.Instance{
+      id: "cc-uuid-b",
+      session_id: sid,
+      type: "cc",
+      name: "bob",
+      config: %{},
+      created_at: "2026-05-08T00:00:00Z",
+      actor_ids: %{cc: "cc-uuid-b", pty: "pty-uuid-b"}
+    }
+
+    :ets.insert(tab, {{sid, "alice"}, inst_a})
+    :ets.insert(tab, {{sid, "bob"}, inst_b})
+
+    cmd = %{
+      "submitted_by" => "linyilun",
+      "args" => %{"chat_id" => chat, "app_id" => app}
+    }
+
+    assert {:ok, %{"agents" => agents}} = Esr.Commands.Agent.List.execute(cmd)
+    names = Enum.map(agents, & &1["name"]) |> Enum.sort()
+    assert names == ["alice", "bob"]
+  end
+
+  test "empty session: returns empty list" do
+    chat = "oc_b1_list_empty"
+    app = "esr_helper_list_empty"
+    sid = "dddddddd-4444-4444-8444-444444444444"
+    :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
+
+    cmd = %{
+      "submitted_by" => "linyilun",
+      "args" => %{"chat_id" => chat, "app_id" => app}
+    }
+
+    assert {:ok, %{"agents" => []}} = Esr.Commands.Agent.List.execute(cmd)
+  end
+
+  test "no chat context: returns invalid_args" do
+    cmd = %{"submitted_by" => "linyilun", "args" => %{}}
+    assert {:error, %{"type" => "invalid_args"}} = Esr.Commands.Agent.List.execute(cmd)
   end
 end

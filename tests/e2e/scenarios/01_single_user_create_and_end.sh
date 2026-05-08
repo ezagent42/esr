@@ -38,7 +38,7 @@ echo "$SESSION_CREATE_OUT"
 assert_contains "$SESSION_CREATE_OUT" "ok: true" "user-step 1: session_new returned ok"
 # Capture the assigned session_id for later teardown (session_new returns
 # a random ULID since chat binding is deferred to the FeishuChatProxy).
-SESSION_ID=$(echo "$SESSION_CREATE_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SESSION_ID=$(echo "$SESSION_CREATE_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "$SESSION_ID" ]] || _fail_with_context "user-step 1: no session_id in output"
 echo "created session ${SESSION_ID}"
 

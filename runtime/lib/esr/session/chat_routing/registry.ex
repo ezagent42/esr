@@ -28,7 +28,7 @@ defmodule Esr.Session.ChatRouting.Registry do
     - `attach_session/3`      — attach a session UUID; sets as current if first
     - `detach_session/3`      — remove from attached set; promotes next if current
     - `current_session/2`     — return current session UUID or :not_found
-    - `attached_sessions/2`   — list all attached session UUIDs
+    - `list_sessions/2`       — list all attached session UUIDs
     - `lookup_by_chat/2`      — backward-compat shim returns {:ok, sid, refs}
     - `unregister_session/1`  — drop chat slot for sid (orphan-safe)
     - `set_default_workspace/3` / `get_default_workspace/2` / `clear_default_workspace/2`
@@ -116,8 +116,8 @@ defmodule Esr.Session.ChatRouting.Registry do
   Order of returned list is undefined (MapSet iteration order).
   For legacy entries written by register_session/3, returns [sid].
   """
-  @spec attached_sessions(String.t(), String.t()) :: [String.t()]
-  def attached_sessions(chat_id, app_id) do
+  @spec list_sessions(String.t(), String.t()) :: [String.t()]
+  def list_sessions(chat_id, app_id) do
     case :ets.lookup(@ets_table, {chat_id, app_id}) do
       [{_, %{attached: set}}] -> MapSet.to_list(set)
       # Legacy format written by register_session/3
@@ -126,6 +126,24 @@ defmodule Esr.Session.ChatRouting.Registry do
     end
   rescue
     ArgumentError -> []
+  end
+
+  @doc """
+  Promote `session_uuid` to the chat-current session for this `(chat_id,
+  app_id)` slot. The UUID must already be in the attached set.
+
+  Used by `/session:switch session=<uuid>` to flip the chat's current
+  session without unbinding the others. Idempotent when `session_uuid`
+  is already current.
+
+  Returns `:ok` on success, `{:error, :not_attached}` if the UUID has
+  not been attached to this chat.
+  """
+  @spec set_current_session(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_attached}
+  def set_current_session(chat_id, app_id, session_uuid)
+      when is_binary(chat_id) and is_binary(app_id) and is_binary(session_uuid) do
+    GenServer.call(__MODULE__, {:set_current_session, chat_id, app_id, session_uuid})
   end
 
   @doc """
@@ -296,6 +314,29 @@ defmodule Esr.Session.ChatRouting.Registry do
 
     persist_attached_to_disk()
     {:reply, :ok, state}
+  end
+
+  def handle_call({:set_current_session, chat_id, app_id, uuid}, _from, state) do
+    key = {chat_id, app_id}
+
+    reply =
+      case :ets.lookup(@ets_table, key) do
+        [{_, %{attached: set} = slot}] ->
+          if MapSet.member?(set, uuid) do
+            :ets.insert(@ets_table, {key, %{slot | current: uuid}})
+            persist_attached_to_disk()
+            :ok
+          else
+            {:error, :not_attached}
+          end
+
+        # Legacy register_session/3 entry — no attached-set semantics.
+        # Treat as not-attached so callers get a deterministic surface.
+        _ ->
+          {:error, :not_attached}
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call({:detach_session, chat_id, app_id, uuid}, _from, state) do

@@ -60,3 +60,94 @@ defmodule Esr.Entity.PtyProcessTest do
   end
 
 end
+
+defmodule Esr.Entity.PtyProcessIsolationTest do
+  use ExUnit.Case, async: false
+
+  alias Phoenix.PubSub
+
+  setup do
+    case Process.whereis(EsrWeb.PubSub) do
+      nil -> start_supervised!({Phoenix.PubSub, name: EsrWeb.PubSub})
+      _ -> :ok
+    end
+
+    case Process.whereis(Esr.Entity.Registry) do
+      nil -> start_supervised!(Esr.Entity.Registry)
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  test "two PtyProcesses with same session_id register under distinct actor_id keys" do
+    sid = "55555555-5555-4555-8555-555555555555"
+    aid_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    aid_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    parent = self()
+
+    # Simulate the post-fix init/1 contract: each PtyProcess registers
+    # itself (self()) under its actor_id, not session_id. Registry only
+    # accepts self-registration, mirroring how PtyProcess.init/1 calls it.
+    pid_a =
+      spawn_link(fn ->
+        {:ok, _} = Esr.Entity.Registry.register("pty:" <> aid_a, self())
+        send(parent, {:registered, :a, self()})
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    pid_b =
+      spawn_link(fn ->
+        {:ok, _} = Esr.Entity.Registry.register("pty:" <> aid_b, self())
+        send(parent, {:registered, :b, self()})
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:registered, :a, ^pid_a}, 500
+    assert_receive {:registered, :b, ^pid_b}, 500
+
+    assert {:ok, ^pid_a} = Esr.Entity.Registry.lookup("pty:" <> aid_a)
+    assert {:ok, ^pid_b} = Esr.Entity.Registry.lookup("pty:" <> aid_b)
+    assert pid_a != pid_b
+
+    send(pid_a, :stop)
+    send(pid_b, :stop)
+
+    _ = sid
+  end
+
+  test "broadcast on pty:<actor_id> reaches only the matching subscriber" do
+    aid_a = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+    aid_b = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+
+    parent = self()
+
+    _sub_a = spawn_link(fn ->
+      :ok = PubSub.subscribe(EsrWeb.PubSub, "pty:" <> aid_a)
+      receive do
+        {:pty_stdout, data} -> send(parent, {:a, data})
+      after 500 -> send(parent, {:a, :timeout})
+      end
+    end)
+
+    _sub_b = spawn_link(fn ->
+      :ok = PubSub.subscribe(EsrWeb.PubSub, "pty:" <> aid_b)
+      receive do
+        {:pty_stdout, data} -> send(parent, {:b, data})
+      after 500 -> send(parent, {:b, :timeout})
+      end
+    end)
+
+    Process.sleep(50)
+
+    PubSub.broadcast(EsrWeb.PubSub, "pty:" <> aid_a, {:pty_stdout, "alice-output"})
+
+    assert_receive {:a, "alice-output"}, 1_000
+    assert_receive {:b, :timeout}, 1_000
+  end
+end

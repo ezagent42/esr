@@ -61,7 +61,7 @@ echo "19 session_new output: ${SESSION_OUT}"
 assert_contains "$SESSION_OUT" "ok: true"               "19: session_new ok"
 assert_contains "$SESSION_OUT" "${USERNAME}-default"    "19: session bound to user-default ws"
 
-SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
+SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}' | tr -d '"')
 [[ -n "$SID" ]] || _fail_with_context "19: no session_id from session_new"
 echo "19: session created: ${SID}"
 

@@ -280,6 +280,43 @@ in parallel.
 
 ---
 
+---
+
+## rev-5 — resource-typed grammar shipped (2026-05-08)
+
+PR `feat/resource-typed-grammar` (~810 LOC, 5 phases A-E) implemented spec [`2026-05-08-resource-typed-grammar.md`](../superpowers/specs/2026-05-08-resource-typed-grammar.md) (rev-3, user-approved 2026-05-08), closing follow-ups #1-#7 from the rev-4 list.
+
+### Closed by this PR
+
+| Original # | What | How closed |
+|---|---|---|
+| 1 | Grammar spec | Spec rev-3 + plan landed; this PR ships the implementation |
+| 2 | `/session:list` chat-bound shape | Phase B Task B.2 — `Esr.Commands.Session.List` extended with chat-bound output shape; slash entry wired in `slash-routes.default.yaml` |
+| 3 | `/agent:list` repurposed (instances) + `/plugin:agent-types` | Phase C Tasks C.1-C.2 — old type-catalog logic moved to `Esr.Commands.Plugin.AgentTypes`; `/agent:list` now reads `InstanceRegistry.list/2` |
+| 4 | `/pty:list` + `/pty:attach` | Phase E Tasks E.1-E.2 — new `Esr.Commands.Pty.{List,Attach}`; orphan `Esr.Commands.Attach` deleted |
+| 5 | `/claude_code:tui` shortcut | Phase E Task E.3 — `Esr.Plugins.ClaudeCode.Commands.Tui` ships in claude_code plugin via the rev-3 plugin-scoped command registration mechanism (manifest `slash_routes:` block) |
+| 6 | `/agent:rename`/`set-primary`/`primary`/`remove`/`add` family | Phase C Tasks C.3-C.7 — 5 modules under `runtime/lib/esr/commands/agent/`; old `session/{add_agent,remove_agent,set_primary}.ex` deleted |
+| 7 | `/session:bind-chat`/`unbind-chat`/`switch` + slash-wire `/session:end` | Phase B Task B.4 (switch + end wiring) + Phase D Tasks D.1-D.5 (bind-chat/unbind-chat) |
+
+### Still open (carried forward to rev-6)
+
+| # | What | Status |
+|---|---|---|
+| 8 | `docs/grammar/commands.md` generator (`esr admin describe-grammar --format=markdown`) | spec-only — independent of this PR |
+| 9 | First-user-auto-admin | not started — single-file change, ~30 LOC |
+| 10 | `esr daemon init` + `esr daemon clear` | not started — first-30-min UX |
+| (security) | `pty_attach_security_hardening` (PtySocket signed-token auth) | tracked in `docs/futures/todo.md`; deferred per rev-2 D3 |
+
+### Net read
+
+**rev-3 audit:** 9/12 fully closed.
+**rev-4 audit:** 10/12 fully closed.
+**rev-5 (this PR):** 11/12 fully closed (only #9 mental-model remains as a structural thing; everything operator-visible is unblocked).
+
+The grammar overhaul also closes the cross-cutting "no PTY URL" regression (rev-4 #12) and unifies the operator surface around the resource axis (P1) so future plugin authors have a clear convention to follow.
+
+---
+
 ## See also
 
 - [`2026-05-06-bootstrap-flow-audit.md`](2026-05-06-bootstrap-flow-audit.md) — predecessor audit, 12-step baseline

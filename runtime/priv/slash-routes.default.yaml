@@ -261,42 +261,13 @@ slashes:
     args:
       - { name: workspace, required: true }
 
-  # /workspace:sessions DROPPED — workspace must not depend on session (Rule 6)
-  # Use /session:list (not yet wired — deferred to follow-up phase; see below).
+  # /workspace:sessions DROPPED — workspace must not depend on session (Rule 6).
+  # Use /session:list instead (wired below).
 
-  "/session:add-agent":
-    kind: session_add_agent
-    permission: "session:default/add-agent"
-    command_module: "Esr.Commands.Session.AddAgent"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "向当前 session 添加 agent 实例；name 须全局唯一"
-    args:
-      - { name: type, required: true }
-      - { name: name, required: true }
-
-  "/session:remove-agent":
-    kind: session_remove_agent
-    permission: "session:default/add-agent"
-    command_module: "Esr.Commands.Session.RemoveAgent"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "从当前 session 删除 agent；不能删 primary（需先 set-primary 到其他 agent）"
-    args:
-      - { name: name, required: true }
-
-  "/session:set-primary":
-    kind: session_set_primary
-    permission: "session:default/add-agent"
-    command_module: "Esr.Commands.Session.SetPrimary"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "设当前 session 的 primary agent（接收无 @ 前缀的纯文本）"
-    args:
-      - { name: name, required: true }
+  # Phase C (resource-typed grammar rev-3 §4.2): /session:add-agent,
+  # /session:remove-agent, /session:set-primary renamed to the /agent:*
+  # family (defined below). slash_handler @deprecated_slashes points
+  # operators who still type the old form to the new name.
 
   "/session:new":
     kind: session_new_surface
@@ -310,10 +281,10 @@ slashes:
       - { name: name, required: true }
       - { name: agent, required: false, default: "cc" }
 
-  "/session:attach":
-    kind: session_attach_surface
+  "/session:bind-chat":
+    kind: session_bind_chat
     permission: "session.attach"
-    command_module: "Esr.Commands.Session.Attach"
+    command_module: "Esr.Commands.Session.BindChat"
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Sessions"
@@ -321,14 +292,14 @@ slashes:
     args:
       - { name: session, required: true }
 
-  "/session:detach":
-    kind: session_detach_surface
+  "/session:unbind-chat":
+    kind: session_unbind_chat
     permission: null
-    command_module: "Esr.Commands.Session.Detach"
+    command_module: "Esr.Commands.Session.UnbindChat"
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Sessions"
-    description: "离开当前 session（session 保持运行；可省略 session= 默认 detach 当前）"
+    description: "离开当前 session；session 保持运行；可省略 session= 默认 unbind 当前"
     args:
       - { name: session, required: false }
 
@@ -345,7 +316,41 @@ slashes:
       - { name: user, required: true }
       - { name: perm, required: false, default: "attach" }
 
-  # /session:end, /session:list, /session:bind-workspace, /session:info — deferred
+  "/session:list":
+    kind: session_list
+    permission: "session:default/read"
+    command_module: "Esr.Commands.Session.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "列当前 chat 绑定的 session（无 workspace=）；带 workspace= 时按 workspace 列"
+    args:
+      - { name: workspace, required: false }
+
+  "/session:switch":
+    kind: session_switch
+    permission: null
+    command_module: "Esr.Commands.Session.Switch"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "切换 chat 当前 session（不解绑其它）；session=<uuid>"
+    args:
+      - { name: session, required: true }
+
+  "/session:end":
+    kind: session_end
+    permission: "session:default/end"
+    command_module: "Esr.Commands.Session.End"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Sessions"
+    description: "销毁 session；session_id=<uuid> 或 name=<n>"
+    args:
+      - { name: session_id, required: false }
+      - { name: name, required: false }
+
+  # /session:bind-workspace, /session:info — deferred
   # (command modules not yet implemented; will land as Esr.Commands.Session.*)
 
   "/agent:list":
@@ -353,10 +358,91 @@ slashes:
     permission: null
     command_module: "Esr.Commands.Agent.List"
     requires_workspace_binding: false
-    requires_user_binding: false
+    requires_user_binding: true
     category: "Agents"
-    description: "列所有可用 agent"
+    description: "列当前 chat 当前 session 内运行的 agent 实例"
     args: []
+
+  "/agent:add":
+    kind: agent_add
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Add"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Agents"
+    description: "向当前 session 添加 agent 实例；name 须全局唯一"
+    args:
+      - { name: type, required: true }
+      - { name: name, required: true }
+
+  "/agent:remove":
+    kind: agent_remove
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Remove"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Agents"
+    description: "从当前 session 删除 agent；不能删 primary（先 set-primary）"
+    args:
+      - { name: name, required: true }
+
+  "/agent:set-primary":
+    kind: agent_set_primary
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.SetPrimary"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Agents"
+    description: "设当前 session 的 primary agent"
+    args:
+      - { name: name, required: true }
+
+  "/agent:primary":
+    kind: agent_primary
+    permission: null
+    command_module: "Esr.Commands.Agent.Primary"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Agents"
+    description: "显示当前 session 的 primary agent"
+    args: []
+
+  "/agent:rename":
+    kind: agent_rename
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Rename"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Agents"
+    description: "重命名 agent；name=<旧> new_name=<新>"
+    args:
+      - { name: name, required: true }
+      - { name: new_name, required: true }
+
+  # Phase E (resource-typed grammar rev-4 §4.2): /pty:list + /pty:attach.
+  # Permissions are null — both are chat-bound (operator already in chat,
+  # PTY URL hardening is the next layer per spec rev-2 D3, tracked in
+  # docs/futures/todo.md as `pty_attach_security_hardening`).
+  "/pty:list":
+    kind: pty_list
+    permission: null
+    command_module: "Esr.Commands.Pty.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "PTY"
+    description: "列当前 chat 当前 session 的 PTY actor id"
+    args: []
+
+  "/pty:attach":
+    kind: pty_attach
+    permission: null
+    command_module: "Esr.Commands.Pty.Attach"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "PTY"
+    description: "返回 PTY 的 web URL；pty=<actor_id>"
+    args:
+      - { name: pty, required: true }
 
   "/actor:list":
     kind: actor_list
@@ -376,6 +462,16 @@ slashes:
     requires_user_binding: false
     category: "Plugins"
     description: "列出已安装 plugin + enabled 状态"
+    args: []
+
+  "/plugin:agent-types":
+    kind: plugin_agent_types
+    permission: null
+    command_module: "Esr.Commands.Plugin.AgentTypes"
+    requires_workspace_binding: false
+    requires_user_binding: false
+    category: "Plugins"
+    description: "列出 enabled plugins 声明的所有 agent 类型（旧 /agent:list 的语义）"
     args: []
 
   "/plugin:info":
@@ -524,7 +620,7 @@ internal_kinds:
     command_module: "Esr.Commands.Session.BranchNew"
 
   session_switch:
-    permission: "session.switch"
+    permission: null
     command_module: "Esr.Commands.Session.Switch"
 
   session_branch_end:
@@ -653,6 +749,36 @@ internal_kinds:
     permission: "adapter.manage"
     command_module: "Esr.Commands.Adapter.Rename"
 
+  # Phase C (resource-typed grammar rev-3 §4.2 / spec C-2 trap):
+  # internal_kinds entries for /agent:* + /plugin:agent-types so the
+  # file-queue admin path dispatches them with the same permissions as
+  # the slash-callable entries above. permissions MUST match the
+  # `slashes:` table (otherwise the registry rebuild path silently
+  # drops one — see registry_test.exs:533 regression).
+  agent_add:
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Add"
+
+  agent_remove:
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Remove"
+
+  agent_set_primary:
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.SetPrimary"
+
+  agent_primary:
+    permission: null
+    command_module: "Esr.Commands.Agent.Primary"
+
+  agent_rename:
+    permission: "session:default/spawn"
+    command_module: "Esr.Commands.Agent.Rename"
+
+  plugin_agent_types:
+    permission: null
+    command_module: "Esr.Commands.Plugin.AgentTypes"
+
   cross_app_test:
     permission: "cross_app_test.invoke"
     command_module: "Esr.Commands.CrossAppTest"
@@ -668,9 +794,32 @@ internal_kinds:
     command_module: "Esr.Commands.Session.End"
 
   session_list:
-    permission: "session.list"
+    permission: "session:default/read"
     command_module: "Esr.Commands.Session.List"
 
-  attach:
+  # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
+  # commands renamed from /session:{attach,detach} to /session:{bind,unbind}-chat.
+  # `session.attach` permission gates the slash-table pre-gate; the
+  # per-session cap (session:<uuid>/{attach,admin}) is checked in
+  # Esr.Commands.Session.BindChat.execute/1. Unbind is never gated
+  # (you can always leave a session you're attached to).
+  session_bind_chat:
+    permission: "session.attach"
+    command_module: "Esr.Commands.Session.BindChat"
+
+  session_unbind_chat:
     permission: null
-    command_module: "Esr.Commands.Attach"
+    command_module: "Esr.Commands.Session.UnbindChat"
+
+  # Phase E (resource-typed grammar rev-4 §4.2): pty_list + pty_attach
+  # internal_kinds rows mirror the slash table above so the file-queue
+  # admin path dispatches them with the same null permission. Permissions
+  # MUST match the `slashes:` table (otherwise the registry rebuild path
+  # silently drops one — see registry_test.exs priv-default smoke test).
+  pty_list:
+    permission: null
+    command_module: "Esr.Commands.Pty.List"
+
+  pty_attach:
+    permission: null
+    command_module: "Esr.Commands.Pty.Attach"
