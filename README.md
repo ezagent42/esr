@@ -118,6 +118,7 @@ discovering live flows.
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set learn | [`docs/superpowers/specs/2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
 | [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach — browser xterm renders cc TUI via WS | [`docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
 | [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor bidirectional — keystroke → process → frame round-trip | same |
+| [`20_feishu_inbound_multimedia.sh`](tests/e2e/scenarios/20_feishu_inbound_multimedia.sh) | Feishu inbound image — PNG → content-addressed `resources/image/<sha>.png` + refs.jsonl | [`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).

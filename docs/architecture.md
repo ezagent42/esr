@@ -117,6 +117,7 @@ from that spec to code on disk. PRs are tracked under
 | Topology `<channel reachable=…>` + BGP learn | `tests/e2e/scenarios/05_topology_routing.sh` |
 | PTY actor attach (xterm WS frames) | `tests/e2e/scenarios/06_pty_attach.sh` |
 | PTY actor bidirectional roundtrip | `tests/e2e/scenarios/07_pty_bidir.sh` |
+| Feishu inbound image → content-addressed storage + refs.jsonl | `tests/e2e/scenarios/20_feishu_inbound_multimedia.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |
