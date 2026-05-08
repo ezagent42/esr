@@ -281,10 +281,10 @@ slashes:
       - { name: name, required: true }
       - { name: agent, required: false, default: "cc" }
 
-  "/session:attach":
-    kind: session_attach_surface
+  "/session:bind-chat":
+    kind: session_bind_chat
     permission: "session.attach"
-    command_module: "Esr.Commands.Session.Attach"
+    command_module: "Esr.Commands.Session.BindChat"
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Sessions"
@@ -292,14 +292,14 @@ slashes:
     args:
       - { name: session, required: true }
 
-  "/session:detach":
-    kind: session_detach_surface
+  "/session:unbind-chat":
+    kind: session_unbind_chat
     permission: null
-    command_module: "Esr.Commands.Session.Detach"
+    command_module: "Esr.Commands.Session.UnbindChat"
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Sessions"
-    description: "离开当前 session（session 保持运行；可省略 session= 默认 detach 当前）"
+    description: "离开当前 session；session 保持运行；可省略 session= 默认 unbind 当前"
     args:
       - { name: session, required: false }
 
@@ -771,6 +771,20 @@ internal_kinds:
   session_list:
     permission: "session:default/read"
     command_module: "Esr.Commands.Session.List"
+
+  # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
+  # commands renamed from /session:{attach,detach} to /session:{bind,unbind}-chat.
+  # `session.attach` permission gates the slash-table pre-gate; the
+  # per-session cap (session:<uuid>/{attach,admin}) is checked in
+  # Esr.Commands.Session.BindChat.execute/1. Unbind is never gated
+  # (you can always leave a session you're attached to).
+  session_bind_chat:
+    permission: "session.attach"
+    command_module: "Esr.Commands.Session.BindChat"
+
+  session_unbind_chat:
+    permission: null
+    command_module: "Esr.Commands.Session.UnbindChat"
 
   attach:
     permission: null

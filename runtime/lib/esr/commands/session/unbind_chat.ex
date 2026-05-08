@@ -1,14 +1,14 @@
-defmodule Esr.Commands.Session.Detach do
+defmodule Esr.Commands.Session.UnbindChat do
   @moduledoc """
-  `/session:detach` — leave a session in the current chat scope.
+  `/session:unbind-chat` — leave a session in the current chat scope.
 
-  Detaching keeps the session alive — it just removes the `(chat_id,
+  Unbinding keeps the session alive — it just removes the `(chat_id,
   app_id)` mapping. No capability check required: you can always leave
   a session you are attached to.
 
   ## Args
 
-    * `session` (optional) — UUID of the session to detach. When
+    * `session` (optional) — UUID of the session to unbind. When
       absent, defaults to the current session for this chat.
 
   ## Flow
@@ -59,7 +59,7 @@ defmodule Esr.Commands.Session.Detach do
      %{
        "type" => "invalid_args",
        "message" =>
-         "/session:detach requires a chat context (chat_id + app_id in envelope)"
+         "/session:unbind-chat requires a chat context (chat_id + app_id in envelope)"
      }}
   end
 
@@ -76,7 +76,7 @@ defmodule Esr.Commands.Session.Detach do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "/session:detach requires a chat context (chat_id + app_id in envelope)"
+       "message" => "/session:unbind-chat requires a chat context (chat_id + app_id in envelope)"
      }}
   end
 
@@ -89,7 +89,7 @@ defmodule Esr.Commands.Session.Detach do
        %{
          "type" => "invalid_session_uuid",
          "message" =>
-           "session detach requires a UUID; use /session:list to see available sessions"
+           "session unbind-chat requires a UUID; use /session:list to see available sessions"
        }}
     end
   end

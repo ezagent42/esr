@@ -115,6 +115,40 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       assert text =~ "renamed"
     end
 
+    # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
+    # split from PTY URL emission. /session:attach is now /session:bind-chat;
+    # /session:detach is /session:unbind-chat. Operators typing the old
+    # forms get a rename hint via @deprecated_slashes.
+    test "/session:attach returns rename hint to /session:bind-chat" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:attach session=abc"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/session:bind-chat"
+      assert text =~ "renamed"
+    end
+
+    test "/session:detach returns rename hint to /session:unbind-chat" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:detach"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/session:unbind-chat"
+      assert text =~ "renamed"
+    end
+
+    test "/attach now hints to /pty:attach (was /session:attach)" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/attach"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/pty:attach"
+      assert text =~ "renamed"
+    end
+
     test "envelope chat_id/app_id/principal_id flow into the command's args" do
       pid = start_handler!()
       ref = make_ref()

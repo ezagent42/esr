@@ -138,7 +138,13 @@ defmodule Esr.Entity.SlashHandler do
     "/end-session" => "/session:end",
     "/sessions" => "/session:list",
     "/list-sessions" => "/session:list",
-    "/attach" => "/session:attach",
+    # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
+    # split from PTY URL emission. /attach was the URL-emitter orphan;
+    # natural successor is /pty:attach (Phase E). /session:{attach,detach}
+    # are the chat-binding verbs and rename to /session:{bind,unbind}-chat.
+    "/attach" => "/pty:attach",
+    "/session:attach" => "/session:bind-chat",
+    "/session:detach" => "/session:unbind-chat",
     "/whoami" => "/user:whoami",
     "/key" => "/pty:key",
     "/new-workspace" => "/workspace:new",

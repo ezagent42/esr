@@ -37,6 +37,14 @@ defmodule Esr.Admin do
       "session.switch",
       "session.end",
       "session.list",
+      # Phase D (resource-typed grammar rev-3 §4.2): `/session:bind-chat`
+      # slash-table coarse pre-gate. The fine-grained per-session cap
+      # (`session:<uuid>/attach` or `session:<uuid>/admin`) is checked
+      # inside `Esr.Commands.Session.BindChat.execute/1`. Declared here
+      # so any ops who want to grant the bare flat cap (e.g. as a
+      # blanket pre-gate for dev/admin users) can do so — without a
+      # declaration the file_loader rejects it as :unknown_permission.
+      "session.attach",
       "cap.manage",
       # PR-3 P3-8/P3-9: canonical prefix:name/perm form for the new
       # agent-session lifecycle commands (`session_new` +
