@@ -31,8 +31,15 @@ defmodule Esr.Uri do
   """
 
   @legacy_types ~w(actor adapter handler command interface)a
-  @path_style_types ~w(adapters workspaces chats users sessions)a
+  @path_style_types ~w(adapters workspaces chats users sessions resources)a
   @valid_types @legacy_types ++ @path_style_types
+
+  @media_types ~w(image file audio)a
+  @allowed_exts %{
+    image: ~w(png jpg jpeg gif webp heic),
+    file: ~w(bin pdf doc docx xls xlsx zip txt md csv),
+    audio: ~w(opus mp3 wav m4a aac)
+  }
 
   defstruct [:org, :host, :port, :type, :id, :segments, :params]
 
@@ -115,6 +122,104 @@ defmodule Esr.Uri do
   end
 
   @doc """
+  Parses a `resources`-type `esr://` URI into a typed map.
+
+  Returns `{:ok, %{media_type, sha256, ext, env, host}}` on success,
+  or `{:error, :invalid_uri}` if the URI does not conform to the
+  resources grammar. Validates:
+
+  - URI type is `:resources` with exactly 3 segments
+  - media_type is one of #{inspect(@media_types)}
+  - sha256 is exactly 64 lowercase hex characters
+  - ext is in the per-media-type allowlist
+  """
+  @spec parse_resource(String.t() | t()) ::
+          {:ok,
+           %{
+             media_type: atom(),
+             sha256: String.t(),
+             ext: String.t(),
+             env: String.t() | nil,
+             host: String.t()
+           }}
+          | {:error, :invalid_uri}
+  def parse_resource(uri) when is_binary(uri) do
+    with {:ok, parsed} <- parse(uri),
+         :ok <- check_resource_shape(parsed) do
+      [_, mt_str, last_seg] = parsed.segments
+
+      case String.split(last_seg, ".", parts: 2) do
+        [sha, ext] ->
+          ext = String.downcase(ext)
+          media_type = String.to_existing_atom(mt_str)
+
+          cond do
+            not validate_sha256(sha) -> {:error, :invalid_uri}
+            not validate_ext(media_type, ext) -> {:error, :invalid_uri}
+            true ->
+              {:ok,
+               %{
+                 media_type: media_type,
+                 sha256: sha,
+                 ext: ext,
+                 env: parsed.org,
+                 host: parsed.host
+               }}
+          end
+
+        _ ->
+          {:error, :invalid_uri}
+      end
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_uri}
+  end
+
+  def parse_resource(%__MODULE__{type: :resources} = uri) do
+    # Reconstruct the URI string from struct fields and re-parse as a resource.
+    authority_str =
+      case {uri.org, uri.port} do
+        {nil, nil} -> uri.host
+        {nil, port} -> "#{uri.host}:#{port}"
+        {org, nil} -> "#{org}@#{uri.host}"
+        {org, port} -> "#{org}@#{uri.host}:#{port}"
+      end
+
+    path = "/" <> Enum.join(uri.segments, "/")
+    parse_resource("esr://#{authority_str}#{path}")
+  end
+
+  def parse_resource(%__MODULE__{}), do: {:error, :invalid_uri}
+
+  @doc """
+  Builds a `resources`-type `esr://` URI from media type + sha256 hash.
+
+  Options:
+  - `:ext` — file extension (default `"bin"`)
+  - `:env` — org/env prefix emitted as `env@host` (default: none)
+  - `:host` — host portion of the URI (default `"localhost"`)
+  """
+  @spec build_resource(atom(), String.t(), keyword()) :: String.t()
+  def build_resource(media_type, sha256, opts \\ [])
+      when is_atom(media_type) and is_binary(sha256) do
+    ext = Keyword.get(opts, :ext, "bin") |> to_string() |> String.downcase()
+
+    unless validate_sha256(sha256) do
+      raise ArgumentError,
+            "build_resource: sha256 must be 64 lowercase hex chars, got: #{inspect(sha256)}"
+    end
+
+    unless validate_ext(media_type, ext) do
+      raise ArgumentError,
+            "build_resource: ext #{inspect(ext)} not in allowlist for media_type #{inspect(media_type)}"
+    end
+
+    env = Keyword.get(opts, :env)
+    host = Keyword.get(opts, :host, "localhost")
+    build_path(["resources", to_string(media_type), "#{sha256}.#{ext}"], host, env: env)
+  end
+
+  @doc """
   Renders an `esr://` URI as an HTTP URL pointing at the given Phoenix
   Endpoint. Path segments and query string are preserved verbatim;
   scheme + authority come from `endpoint.url/0`.
@@ -140,10 +245,31 @@ defmodule Esr.Uri do
     do: raise(ArgumentError, "not an esr:// URI: #{inspect(other)}")
 
   defp authority(host, opts) do
-    case Keyword.get(opts, :org) do
+    # :env is an alias for :org (closes the 2026-04-29 known gap in build_path)
+    org = Keyword.get(opts, :org) || Keyword.get(opts, :env)
+
+    case org do
       nil -> host
       "" -> host
-      org when is_binary(org) -> "#{org}@#{host}"
+      o when is_binary(o) -> "#{o}@#{host}"
+    end
+  end
+
+  defp check_resource_shape(%__MODULE__{type: :resources, segments: segments})
+       when length(segments) == 3,
+       do: :ok
+
+  defp check_resource_shape(_), do: {:error, :invalid_uri}
+
+  defp validate_sha256(s) when byte_size(s) == 64, do: String.match?(s, ~r/^[0-9a-f]{64}$/)
+  defp validate_sha256(_), do: false
+
+  defp validate_ext(media_type, ext) do
+    ext = String.downcase(ext)
+
+    case Map.get(@allowed_exts, media_type) do
+      nil -> false
+      list -> ext in list
     end
   end
 

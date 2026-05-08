@@ -141,6 +141,27 @@ channel's role is just to faithfully forward events that passed the gate.
 4. **Defer permission relay** to a follow-up task — we want the sender
    gating audit done first.
 
+## Attachment notification shape (multimedia protocol)
+
+Non-text envelopes reach Claude TUI as `notifications/claude/channel`
+notifications with:
+
+- `content`: stub like `"[image attachment]"` — replaces the URI body
+- `meta.kind`: `"image"` | `"file"` | `"audio"` (audio future)
+- `meta.path`: absolute filesystem path on the esrd host
+  (e.g. `/Users/<user>/.esrd/<env>/resources/image/<sha256>.png`)
+
+Claude consumes the path via the Read tool — multimodal for image,
+text for small text files, raw bytes via other tools for audio.
+
+The channel flat-attribute discipline (keys `[A-Za-z0-9_]+`, no
+nested children) holds: `kind` and `path` are top-level string keys
+in `meta`.
+
+See `docs/notes/multimedia-protocol.md` for the broader protocol +
+`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`
+for the spec.
+
 ## Pointers
 
 - Live reference: https://code.claude.com/docs/en/channels-reference

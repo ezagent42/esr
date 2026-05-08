@@ -183,7 +183,8 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_python_sidecars(manifest),
          :ok <- register_entities(manifest),
          :ok <- register_slash_routes(name, manifest),
-         :ok <- register_startup(name, manifest) do
+         :ok <- register_startup(name, manifest),
+         :ok <- register_media_types(name, manifest) do
       # HR-1: take a config snapshot at plugin load time so the first
       # /plugin:reload always has a baseline to diff against.
       # ConfigSnapshot.create_table/0 is guaranteed to have been called
@@ -387,5 +388,17 @@ defmodule Esr.Plugin.Loader do
       {:error, _} = err ->
         err
     end
+  end
+
+  # D5 (2026-05-08-multimedia-content-protocol-design §4.1): register
+  # the manifest's `declares.media_types` block into
+  # `Esr.Resource.Media.PluginRegistry`. An absent block (non-multimedia
+  # plugin) is represented as `{inbound: [], outbound: []}` by the
+  # manifest parser — registering it is a no-op from the routing layer's
+  # perspective (`supports?/3` returns false for any media type), but
+  # it keeps the registry consistent: every loaded plugin has a row.
+  defp register_media_types(plugin_name, %Manifest{declares: declares}) do
+    media_types = Map.get(declares, :media_types, %{inbound: [], outbound: []})
+    :ok = Esr.Resource.Media.PluginRegistry.register(plugin_name, media_types)
   end
 end

@@ -1,0 +1,1 @@
+# esr.resource package

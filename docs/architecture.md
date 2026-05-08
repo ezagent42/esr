@@ -59,6 +59,21 @@ from that spec to code on disk. PRs are tracked under
 - Tool is intended to be called when the LLM needs pipeline context (its role, downstream stages, expected output format) — not on every turn.
 - See `docs/superpowers/specs/2026-04-28-business-topology-mcp-tool.md`, `docs/notes/actor-topology-routing.md` §"Authoring workspace config" → `metadata:`.
 
+### Media storage (`runtime/lib/esr/resource/media/`)
+- `Esr.Resource.Media` — content-addressed media storage facade
+  (`store/3`, `resolve/1`)
+  - `Esr.Resource.Media.LocalAddress` — host:port helper for URI
+    builders (reads `EsrWeb.Endpoint.config(:http)`)
+  - `Esr.Resource.Media.{Image,File}Phaser` — per-media-type format
+    converters (path/bytes/base64_data_url/inline_text)
+  - `Esr.Resource.Media.PhaserRegistry` — dispatches URI →
+    consumer-format via media_type lookup
+  - `Esr.Resource.Media.PluginRegistry` — ETS-backed plugin
+    capability declarations from `declares.media_types`
+  - `Esr.Resource.Media.Inbound` — orchestrator for non-text inbound
+    flow (capability check → download_file directive → envelope
+    rebuild)
+
 ### Python subprocess supervision
 - `esr/worker_supervisor.ex` — spawns / tracks `python -m <sidecar>` processes. `sidecar_module/1` dispatch table routes adapter names to their per-type sidecar module (`feishu_adapter_runner`, `cc_adapter_runner`, generic fallback).
 
@@ -117,6 +132,8 @@ from that spec to code on disk. PRs are tracked under
 | Topology `<channel reachable=…>` + BGP learn | `tests/e2e/scenarios/05_topology_routing.sh` |
 | PTY actor attach (xterm WS frames) | `tests/e2e/scenarios/06_pty_attach.sh` |
 | PTY actor bidirectional roundtrip | `tests/e2e/scenarios/07_pty_bidir.sh` |
+| Feishu inbound image → content-addressed storage + refs.jsonl | `tests/e2e/scenarios/20_feishu_inbound_multimedia.sh` |
+| cc outbound image → send_file MCP → store + α-wire → mock_feishu file message | `tests/e2e/scenarios/21_cc_outbound_multimedia.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |

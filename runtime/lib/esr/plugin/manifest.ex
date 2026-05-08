@@ -53,6 +53,8 @@ defmodule Esr.Plugin.Manifest do
   # the rule is "lowercase token segments separated by - or _".
   @kebab_case ~r/^[a-z][a-z0-9]*([-_][a-z0-9]+)*$/
 
+  @known_media_types ~w(image file audio)a
+
   @doc """
   Parse `manifest.yaml` at `path`. Returns `{:ok, struct}` or
   `{:error, reason}`.
@@ -64,25 +66,56 @@ defmodule Esr.Plugin.Manifest do
   def parse(path) do
     with {:ok, content} <- read_file(path),
          {:ok, parsed} <- read_yaml(content, path),
-         {:ok, name} <- fetch_required(parsed, "name"),
+         {:ok, manifest} <- parse_raw(parsed) do
+      {:ok, %{manifest | path: path}}
+    end
+  end
+
+  @doc """
+  Parse a manifest from a YAML string (in-memory). Returns `{:ok,
+  struct}` or `{:error, reason}`. The `:path` field on the returned
+  struct will be `nil`.
+
+  Useful for tests and introspection tools that don't have a file on
+  disk (e.g. `/plugin info` over a manifest fetched from a remote
+  registry).
+  """
+  @spec parse_string(String.t()) :: {:ok, t()} | {:error, term()}
+  def parse_string(content) when is_binary(content) do
+    with {:ok, parsed} <- read_yaml(content, "<string>"),
+         {:ok, manifest} <- parse_raw(parsed) do
+      {:ok, manifest}
+    end
+  end
+
+  # Shared parse logic for both parse/1 and parse_string/1.
+  defp parse_raw(parsed) do
+    with {:ok, name} <- fetch_required(parsed, "name"),
          :ok <- validate_kebab(name),
          {:ok, version} <- fetch_required(parsed, "version"),
          {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}),
          {:ok, hot_reloadable} <- parse_hot_reloadable(parsed) do
-      depends_on = parse_depends_on(parsed["depends_on"] || %{})
-      declares = atomize_declares(parsed["declares"] || %{})
-      declares_with_schema = Map.put(declares, :config_schema, config_schema)
+      raw_declares = parsed["declares"] || %{}
+      declares = atomize_declares(raw_declares)
+      raw_media_types = raw_declares["media_types"] || raw_declares[:media_types]
 
-      {:ok,
-       %__MODULE__{
-         name: name,
-         version: version,
-         description: parsed["description"] || "",
-         depends_on: depends_on,
-         declares: declares_with_schema,
-         hot_reloadable: hot_reloadable,
-         path: path
-       }}
+      with {:ok, media_types} <- parse_media_types(raw_media_types) do
+        declares_full =
+          declares
+          |> Map.put(:config_schema, config_schema)
+          |> Map.put(:media_types, media_types)
+
+        {:ok,
+         %__MODULE__{
+           name: name,
+           version: version,
+           description: parsed["description"] || "",
+           depends_on: parse_depends_on(parsed["depends_on"] || %{}),
+           declares: declares_full,
+           hot_reloadable: hot_reloadable,
+           path: nil
+         }}
+      end
     end
   end
 
@@ -211,6 +244,41 @@ defmodule Esr.Plugin.Manifest do
   end
 
   defp atomize_declares(_), do: %{}
+
+  # ---- media_types parser (D5) ----
+
+  defp parse_media_types(nil), do: {:ok, %{inbound: [], outbound: []}}
+
+  defp parse_media_types(%{} = block) do
+    with {:ok, inbound} <-
+           parse_media_list(Map.get(block, "inbound") || Map.get(block, :inbound) || []),
+         {:ok, outbound} <-
+           parse_media_list(Map.get(block, "outbound") || Map.get(block, :outbound) || []) do
+      {:ok, %{inbound: inbound, outbound: outbound}}
+    end
+  end
+
+  defp parse_media_types(_), do: {:error, "media_types must be a map"}
+
+  defp parse_media_list(list) when is_list(list) do
+    result =
+      Enum.reduce_while(list, {:ok, []}, fn s, {:ok, acc} ->
+        atom = String.to_atom(to_string(s))
+
+        if atom in @known_media_types do
+          {:cont, {:ok, [atom | acc]}}
+        else
+          {:halt, {:error, "unknown media_type: #{s}"}}
+        end
+      end)
+
+    case result do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      err -> err
+    end
+  end
+
+  defp parse_media_list(_), do: {:error, "media_types list must be a list"}
 
   # ---- hot_reloadable parser (HR-1) ----
 

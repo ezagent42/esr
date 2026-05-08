@@ -11,3 +11,10 @@ http = ["open.feishu.cn"]
 urllib = ["127.0.0.1", "localhost"]
 base64 = "*"
 hashlib = "*"
+
+[media_types]
+# Mirror of runtime/lib/esr/plugins/feishu/manifest.yaml
+# declares.media_types. Cross-check enforced in CI per spec
+# 2026-05-08-multimedia-content-protocol-design.md §4.2.
+inbound  = ["image", "file"]
+outbound = ["image", "file"]

@@ -82,6 +82,14 @@ declares:
         permission: "feishu/user-bind"
         command_module: "Esr.Plugins.Feishu.Commands.UnbindUser"
 
+  # Multi-media content protocol participation (per spec
+  # 2026-05-08-multimedia-content-protocol-design.md §4.1, D5).
+  # Block is OPTIONAL — feishu opts in for image+file inbound/outbound.
+  # Audio/video/interactive deferred to follow-up specs.
+  media_types:
+    inbound:  [image, file]
+    outbound: [image, file]
+
 config_schema:
   app_id:
     type: string

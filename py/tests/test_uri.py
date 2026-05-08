@@ -10,8 +10,10 @@ from esr.uri import (
     EsrURI,
     build,
     build_path,
+    build_resource,
     legacy_types,
     parse,
+    parse_resource,
     path_style_types,
 )
 
@@ -200,3 +202,66 @@ def test_path_style_types_set() -> None:
     assert "users" in path_style_types()
     assert "sessions" in path_style_types()
     assert "actor" not in path_style_types()
+
+
+class TestResources:
+    def test_parse_resource_happy(self) -> None:
+        sha = "a" * 64
+        uri = f"esr://default@localhost/resources/image/{sha}.png"
+        result = parse_resource(uri)
+        assert result["media_type"] == "image"
+        assert result["sha256"] == sha
+        assert result["ext"] == "png"
+        assert result["env"] == "default"
+        assert result["host"] == "localhost"
+
+    def test_parse_resource_rejects_bad_sha(self) -> None:
+        with pytest.raises(ValueError, match="invalid_uri"):
+            parse_resource("esr://default@localhost/resources/image/short.png")
+
+    def test_parse_resource_rejects_bad_ext(self) -> None:
+        sha = "a" * 64
+        with pytest.raises(ValueError, match="invalid_uri"):
+            parse_resource(f"esr://default@localhost/resources/image/{sha}.exe")
+
+    def test_parse_resource_rejects_unknown_media_type(self) -> None:
+        sha = "a" * 64
+        with pytest.raises(ValueError, match="invalid_uri"):
+            parse_resource(f"esr://default@localhost/resources/video/{sha}.mp4")
+
+    def test_parse_resource_normalizes_ext_lowercase(self) -> None:
+        sha = "a" * 64
+        result = parse_resource(f"esr://default@localhost/resources/image/{sha}.PNG")
+        assert result["ext"] == "png"
+
+    def test_parse_resource_env_nil_when_no_org_segment(self) -> None:
+        sha = "a" * 64
+        result = parse_resource(f"esr://localhost/resources/image/{sha}.png")
+        assert result["env"] is None
+        assert result["host"] == "localhost"
+
+    def test_build_resource_round_trips(self) -> None:
+        sha = "b" * 64
+        uri = build_resource("image", sha, ext="jpg", env="prod", host="esrd-1:4001")
+        assert uri == f"esr://prod@esrd-1:4001/resources/image/{sha}.jpg"
+        result = parse_resource(uri)
+        assert result["media_type"] == "image"
+        assert result["sha256"] == sha
+
+    def test_build_resource_raises_on_invalid_sha(self) -> None:
+        with pytest.raises(ValueError, match="sha256"):
+            build_resource("image", "tooshort", ext="png")
+
+    def test_build_resource_raises_on_invalid_ext(self) -> None:
+        sha = "a" * 64
+        with pytest.raises(ValueError, match="ext"):
+            build_resource("image", sha, ext="exe")
+
+    def test_build_resource_raises_on_unknown_media_type(self) -> None:
+        sha = "a" * 64
+        with pytest.raises(ValueError, match="unknown media_type"):
+            build_resource("video", sha, ext="mp4")
+
+    def test_build_path_with_env_keyword(self) -> None:
+        uri = build_path(["resources", "image", "abc.png"], host="localhost", env="default")
+        assert uri == "esr://default@localhost/resources/image/abc.png"

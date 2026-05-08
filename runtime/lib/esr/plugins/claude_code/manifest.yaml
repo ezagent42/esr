@@ -35,6 +35,14 @@ declares:
   # No python_sidecars — PR-3.5 (2026-05-05) deleted adapters/cc_mcp/.
   # The MCP server is now esrd-hosted (Elixir, EsrWeb.McpController).
 
+  # Multi-media content protocol participation (per spec
+  # 2026-05-08-multimedia-content-protocol-design.md §4.1, D5).
+  # Block is OPTIONAL — claude_code opts in for image+file inbound/outbound.
+  # Audio/video/interactive deferred to follow-up specs.
+  media_types:
+    inbound:  [image, file]
+    outbound: [image, file]
+
 config_schema:
   http_proxy:
     type: string

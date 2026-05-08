@@ -126,6 +126,12 @@ defmodule Esr.Application do
       # fail with :noproc even though tests pass via start_supervised.
       Esr.Session.Router,
 
+      # 4d.4 Media PluginRegistry — ETS-backed capability lookup for routing-
+      # layer fail-fast gating (spec 2026-05-08 D5). No dependencies on other
+      # supervised processes. Populated by Esr.Plugin.Loader at boot (Task 1.9)
+      # from each manifest's `declares.media_types` block.
+      Esr.Resource.Media.PluginRegistry,
+
       # 4d.5 Workspace name↔id index — must come before Workspace.Registry
       # since Registry calls into NameIndex on every put/rename/delete.
       {Esr.Resource.Workspace.NameIndex, []},

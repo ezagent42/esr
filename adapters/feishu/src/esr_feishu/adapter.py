@@ -88,6 +88,7 @@ def _extract_text(raw_content: str, msg_type: str) -> str:
         "urllib": ["127.0.0.1", "localhost"],
         "base64": "*",
         "hashlib": "*",
+        "tempfile": "*",
     },
 )
 class FeishuAdapter:
@@ -244,7 +245,8 @@ class FeishuAdapter:
         if action == "unpin":
             return await self._with_ratelimit_retry(lambda: self._unpin(args))
         if action == "download_file":
-            return self._download_file(args)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._download_file, args)
         if action == "send_file":
             # send_file's mock path does sync HTTP; dispatch through the
             # executor so an in-process aiohttp mock on the same loop can
@@ -531,19 +533,86 @@ class FeishuAdapter:
         return _lark_failure(response, "unpin failed")
 
     def _download_file(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Download a message's file/image/audio to the uploads dir (PRD 04 F14).
+        """Download a message's file/image/audio bytes from Lark and store
+        content-addressed via esr.resource.media.store.
 
-        Layout: <uploads_dir>/<chat_id>/<file_name>. The uploads_dir is
-        taken from AdapterConfig.uploads_dir (falling back to
-        ~/.esrd/<instance>/uploads).
+        Per spec docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md
+        §2 + PR-2 §4.2 row B: replaces PRD §F14's uploads/<chat_id>/<file_name>
+        path with content-addressed resources/<media_type>/<sha256>.<ext>.
+
+        Returns {ok, result: {uri, sha256, path}}.
         """
-        import lark_oapi.api.im.v1 as im_v1
+        import os
+        import tempfile
+
+        from esr.resource.media import EsrResourceError
+        from esr.resource.media import store as media_store
 
         msg_id = args["msg_id"]
         file_key = args["file_key"]
         file_name = args["file_name"]
         msg_type = args["msg_type"]
-        chat_id = args["chat_id"]
+        chat_id = args.get("chat_id", "")
+
+        base_url = getattr(self._config, "base_url", "") or ""
+        if base_url.startswith(("http://127.0.0.1", "http://localhost")):
+            bytes_data = self._download_via_http(base_url, msg_id, file_key)
+        else:
+            bytes_data = self._download_via_lark_oapi(msg_id, file_key, msg_type)
+
+        if bytes_data is None:
+            return {"ok": False, "error": "download failed"}
+
+        # Write to a tmp file with the original ext so media_store's
+        # extension detection works correctly.
+        suffix = Path(file_name).suffix or self._default_ext_for(msg_type)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+            tf.write(bytes_data)
+            tmp_path = tf.name
+
+        try:
+            result = media_store(
+                msg_type,
+                tmp_path,
+                {
+                    "adapter": "feishu",
+                    "instance": getattr(self, "_instance_id", ""),
+                    "msg_id": msg_id,
+                    "file_key": file_key,
+                    "file_name": file_name,
+                    "chat_id": chat_id,
+                },
+            )
+        except EsrResourceError as e:
+            return {"ok": False, "error": f"store_failed: {e}"}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return {"ok": True, "result": result}
+
+    def _download_via_http(
+        self, base_url: str, msg_id: str, file_key: str
+    ) -> bytes | None:
+        """Mock path: GET <base_url>/open-apis/im/v1/messages/<msg_id>/resources/<file_key>."""
+        import urllib.error
+        import urllib.request
+
+        url = f"{base_url.rstrip('/')}/open-apis/im/v1/messages/{msg_id}/resources/{file_key}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                return resp.read()
+        except urllib.error.URLError as exc:
+            logger.warning("mock download failed: %s", exc)
+            return None
+
+    def _download_via_lark_oapi(
+        self, msg_id: str, file_key: str, msg_type: str
+    ) -> bytes | None:
+        """Real Lark path: call lark_oapi im.v1.message_resource.get."""
+        import lark_oapi.api.im.v1 as im_v1
 
         request = (
             im_v1.GetMessageResourceRequest.builder()
@@ -554,22 +623,12 @@ class FeishuAdapter:
         )
         response = self.client().im.v1.message_resource.get(request)
         if not response.success():
-            return _lark_failure(response, "download failed")
+            return None
+        return response.file.read()
 
-        uploads_dir = self._uploads_dir()
-        target = uploads_dir / chat_id / file_name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(response.file.read())
-        return {"ok": True, "result": {"path": str(target)}}
-
-    def _uploads_dir(self) -> Path:
-        """Resolve the uploads directory — config override or the default."""
-        configured = getattr(self._config, "uploads_dir", None) if (
-            hasattr(self._config, "uploads_dir")
-        ) else None
-        if configured:
-            return Path(configured)
-        return Path.home() / ".esrd" / "default" / "uploads"
+    def _default_ext_for(self, msg_type: str) -> str:
+        """Fallback extension when file_name has no suffix."""
+        return {"image": ".png", "file": ".bin", "audio": ".opus"}.get(msg_type, ".bin")
 
     def _send_file(self, args: dict[str, Any]) -> dict[str, Any]:
         """α wire shape (spec §6.1): base64 in-band + sha256 check."""
@@ -946,9 +1005,20 @@ class FeishuAdapter:
         # `push_inbound(app_id=...)` to the right consumer. Without the
         # query, both adapters in scenario 04 land in the "default" bucket
         # and mock_feishu can't tell them apart.
+        #
+        # Use the Feishu platform app_id (self.app_id) not the instance_id
+        # (self.actor_id): scenarios push_inbound with the platform app_id
+        # so the WS bucket key must match. In multi-app setups (scenario 04)
+        # the adapters.yaml app_id equals the instance_id so both fields
+        # give the same value.
+        import os as _os
         ws_url = (
             base_url.rstrip("/").replace("http://", "ws://")
-            + f"/ws?app_id={self.actor_id}"
+            + f"/ws?app_id={self.app_id}"
+        )
+        logger.debug(
+            "_emit_events_mock: pid=%s connecting to %s",
+            _os.getpid(), ws_url,
         )
         async with aiohttp.ClientSession() as session:
             while True:
@@ -956,7 +1026,12 @@ class FeishuAdapter:
                     async with session.ws_connect(
                         ws_url, timeout=aiohttp.ClientWSTimeout(ws_close=30.0)
                     ) as ws:
+                        logger.debug(
+                            "_emit_events_mock: pid=%s WS connected",
+                            _os.getpid(),
+                        )
                         async for msg in ws:
+                            logger.debug("_emit_events_mock: got WS msg type=%s", msg.type)
                             if msg.type != aiohttp.WSMsgType.TEXT:
                                 continue
                             try:
@@ -973,25 +1048,56 @@ class FeishuAdapter:
                             chat_id = message.get("chat_id", "") or ""
                             # Lane A gate removed 2026-04-26 — Lane B
                             # (peer_server.ex:236-274) is sole auth surface.
+                            mock_args: dict[str, Any] = {
+                                "chat_id": chat_id,
+                                # PR-A T1: ESR instance_id (the
+                                # adapters.yaml key); see the
+                                # parallel _emit_events_lark
+                                # comment for the locked semantics.
+                                "app_id": self.actor_id,
+                                "message_id": message.get("message_id", ""),
+                                "content": _extract_text(raw_content, msg_type),
+                                "raw_content": raw_content,
+                                "msg_type": msg_type,
+                                "sender_id": sender_open_id,
+                                "sender_type": sender.get("sender_type", ""),
+                                "thread_id": message.get("thread_id", ""),
+                                "root_id": message.get("root_id", ""),
+                            }
+                            # Inline the same non-text-args branch as
+                            # parsers._parse_msg_received so file_key +
+                            # file_name reach FCP even on the mock path.
+                            if msg_type in {"image", "file", "audio", "media"}:
+                                try:
+                                    content_dict = json.loads(raw_content)
+                                except (json.JSONDecodeError, TypeError):
+                                    content_dict = {}
+                                file_key = (
+                                    content_dict.get("image_key")
+                                    or content_dict.get("file_key")
+                                    or ""
+                                )
+                                file_name = content_dict.get("file_name")
+                                if not file_name:
+                                    if msg_type == "image":
+                                        file_name = (
+                                            f"{file_key}.png"
+                                            if file_key
+                                            else "unknown.png"
+                                        )
+                                    else:
+                                        file_name = file_key or "unknown"
+                                mock_args["file_key"] = file_key
+                                mock_args["file_name"] = file_name
+                            logger.debug(
+                                "_emit_events_mock: yielding msg_received "
+                                "msg_type=%s chat_id=%s", msg_type, chat_id
+                            )
                             yield self._build_msg_received_envelope(
-                                args={
-                                    "chat_id": chat_id,
-                                    # PR-A T1: ESR instance_id (the
-                                    # adapters.yaml key); see the
-                                    # parallel _emit_events_lark
-                                    # comment for the locked semantics.
-                                    "app_id": self.actor_id,
-                                    "message_id": message.get("message_id", ""),
-                                    "content": _extract_text(raw_content, msg_type),
-                                    "raw_content": raw_content,
-                                    "msg_type": msg_type,
-                                    "sender_id": sender_open_id,
-                                    "sender_type": sender.get("sender_type", ""),
-                                    "thread_id": message.get("thread_id", ""),
-                                    "root_id": message.get("root_id", ""),
-                                },
+                                args=mock_args,
                                 sender_open_id=sender_open_id,
                             )
-                except (aiohttp.ClientError, TimeoutError):
+                except (aiohttp.ClientError, TimeoutError) as exc:
                     # mock_feishu restart-tolerance: back off and retry.
+                    logger.debug("_emit_events_mock: WS error %s, retrying", exc)
                     await asyncio.sleep(1)

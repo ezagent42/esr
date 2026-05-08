@@ -149,3 +149,133 @@ def test_parse_ws_event_unknown_returns_none() -> None:
     from esr_feishu.parsers import parse_ws_event
 
     assert parse_ws_event("P2SomethingElseV1", {}) is None
+
+
+# --- F14: standardised media args (PR-2 §4.2 row A) -------------------
+
+
+def test_image_event_args_contains_file_key_and_msg_id() -> None:
+    """image msg_type: args must carry file_key (from image_key) + file_name + msg_id."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_abc",
+            "chat_id": "oc_test",
+            "message_type": "image",
+            "content": '{"image_key": "img_xyz"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    args = out["args"]
+    assert args["msg_type"] == "image"
+    assert args["msg_id"] == "om_abc"
+    assert args["file_key"] == "img_xyz"
+    # file_name derived as "<image_key>.png" when absent from content
+    assert args["file_name"] == "img_xyz.png"
+
+
+def test_image_event_args_file_name_from_content_when_present() -> None:
+    """image msg_type: explicit file_name in content overrides derived name."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_abc2",
+            "chat_id": "oc_test",
+            "message_type": "image",
+            "content": '{"image_key": "img_xyz", "file_name": "photo.png"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    assert out["args"]["file_key"] == "img_xyz"
+    assert out["args"]["file_name"] == "photo.png"
+
+
+def test_file_event_args_contains_file_key_and_filename() -> None:
+    """file msg_type: args must carry file_key + file_name + msg_id."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_def",
+            "chat_id": "oc_test",
+            "message_type": "file",
+            "content": '{"file_key": "file_abc", "file_name": "doc.pdf"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    args = out["args"]
+    assert args["msg_type"] == "file"
+    assert args["msg_id"] == "om_def"
+    assert args["file_key"] == "file_abc"
+    assert args["file_name"] == "doc.pdf"
+
+
+def test_audio_event_args_contains_file_key() -> None:
+    """audio msg_type: args must carry file_key + msg_id; file_name falls back to key."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_ghi",
+            "chat_id": "oc_test",
+            "message_type": "audio",
+            "content": '{"file_key": "audio_xyz", "duration": 3200}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    args = out["args"]
+    assert args["msg_type"] == "audio"
+    assert args["msg_id"] == "om_ghi"
+    assert args["file_key"] == "audio_xyz"
+    assert args["file_name"] == "audio_xyz"
+
+
+def test_media_event_args_contains_file_key() -> None:
+    """media msg_type: same standardised args shape as audio/file."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_jkl",
+            "chat_id": "oc_test",
+            "message_type": "media",
+            "content": '{"file_key": "video_aaa", "file_name": "clip.mp4"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    args = out["args"]
+    assert args["msg_type"] == "media"
+    assert args["msg_id"] == "om_jkl"
+    assert args["file_key"] == "video_aaa"
+    assert args["file_name"] == "clip.mp4"
+
+
+def test_text_event_args_has_no_file_key() -> None:
+    """text msg_type must NOT have file_key/file_name injected."""
+    from esr_feishu.parsers import parse_ws_event
+
+    raw = {
+        "sender": {"sender_id": {"open_id": "ou_user"}},
+        "message": {
+            "message_id": "om_txt",
+            "chat_id": "oc_test",
+            "message_type": "text",
+            "content": '{"text": "hello"}',
+        },
+    }
+    out = parse_ws_event("P2ImMessageReceiveV1", raw)
+    assert out is not None
+    assert "file_key" not in out["args"]
+    assert "file_name" not in out["args"]

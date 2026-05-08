@@ -166,6 +166,7 @@ defmodule Esr.Entity.FeishuChatProxy do
     # fixture-based tests that used the same wrong shape. Same class of bug
     # fixed in FeishuAppAdapter during T10.
     args = get_in(envelope, ["payload", "args"]) || %{}
+    msg_type = args["msg_type"] || "text"
     text = args["content"] || ""
     message_id = args["message_id"] || ""
 
@@ -201,8 +202,27 @@ defmodule Esr.Entity.FeishuChatProxy do
 
     # PR-21κ Phase 6: slash detection moved upstream into the FAA's
     # handle_upstream gate — slashes never reach FCP anymore. FCP is
-    # now purely "forward inbound text to the CC session".
-    forward_text_and_react(text, message_id, meta, state)
+    # now purely "forward inbound to the CC session".
+    #
+    # Task 2.4: branch on msg_type — text takes the existing path;
+    # image/file/audio dispatches through Esr.Resource.Media.Inbound;
+    # unknown types are logged and dropped.
+    case msg_type do
+      "text" ->
+        forward_text_and_react(text, message_id, meta, state)
+
+      kind when kind in ["image", "file", "audio"] ->
+        do_handle_non_text_inbound(envelope, args, kind, meta, state)
+        {:drop, :non_text_handled, state}
+
+      other ->
+        Logger.info(
+          "feishu_chat_proxy: unsupported msg_type #{inspect(other)} — dropping",
+          session_id: state.session_id
+        )
+
+        {:drop, :unsupported_msg_type, state}
+    end
   end
 
   # PR-9 T5c: CC's reply lands here via the cc_process neighbor (see
@@ -478,49 +498,117 @@ defmodule Esr.Entity.FeishuChatProxy do
   end
 
   defp dispatch_tool_invoke("send_file", args, req_id, channel_pid, state) do
-    # T12-comms-3g: CC's MCP tool sends just `chat_id + file_path`. The
-    # feishu adapter's `_send_file` wire shape (spec §6.1) is α: base64
-    # in-band with a sha256 check, needing `file_name + content_b64 +
-    # sha256`. Do the read + hash + encode at the Elixir boundary so
-    # the Python adapter's contract stays uniform across all channel
-    # adapters (only they know how to talk to their platform).
+    # T12-comms-3g + Tasks 3.1+3.2 (spec 2026-05-08 D4 + §Outbound flow):
+    # CC's MCP tool sends just `chat_id + file_path`. Before dispatching
+    # on the α-wire we now:
+    #   1. Infer media_type from the file extension
+    #   2. Check the feishu plugin declares outbound for that media_type
+    #   3. Content-address the bytes via Esr.Resource.Media.store
+    # The α-wire shape (file_name + content_b64 + sha256) is UNCHANGED —
+    # the Python sidecar contract stays uniform across all channel adapters.
     file_path = Map.get(args, "file_path") || ""
     chat_id = Map.get(args, "chat_id") || state.chat_id
+    channel_adapter = Map.get(state, "channel_adapter", "feishu")
 
-    case read_file_for_send(file_path) do
-      {:ok, file_name, content_b64, sha256} ->
-        _ =
-          emit_to_feishu_app_proxy(
-            %{
-              "kind" => "send_file",
-              "args" => %{
-                "chat_id" => chat_id,
-                "file_name" => file_name,
-                "content_b64" => content_b64,
-                "sha256" => sha256
-              }
-            },
-            state
-          )
+    case infer_media_type(file_path) do
+      {:ok, media_type} ->
+        with :ok <- check_outbound_capability(channel_adapter, media_type),
+             {:ok, %{sha256: sha}} <-
+               Esr.Resource.Media.store(media_type, file_path, %{
+                 source_actor: "cc",
+                 session_id: state.session_id,
+                 chat_id: chat_id
+               }),
+             {:ok, file_name, content_b64, _sha2} <- read_file_for_send(file_path) do
+          # Existing α-wire — UNCHANGED. The store call above handles
+          # content-addressing + ref tracking; the α-wire delivers bytes
+          # to the Python sidecar in the same shape it has always consumed
+          # (Python adapter contract preserved per spec D4).
+          _ =
+            emit_to_feishu_app_proxy(
+              %{
+                "kind" => "send_file",
+                "args" => %{
+                  "chat_id" => chat_id,
+                  "file_name" => file_name,
+                  "content_b64" => content_b64,
+                  "sha256" => sha
+                }
+              },
+              state
+            )
 
-        reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+          reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+        else
+          {:error, :unsupported_outbound} ->
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "unsupported_outbound",
+              "kind" => to_string(media_type)
+            })
 
-      {:error, reason} ->
-        Logger.warning(
-          "feishu_chat_proxy: send_file read failed path=#{inspect(file_path)} " <>
-            "reason=#{inspect(reason)} session_id=#{state.session_id}"
-        )
+          {:error, :unsupported_ext} ->
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "unsupported_ext"
+            })
 
-        reply_tool_result(
-          channel_pid,
-          req_id,
-          false,
-          nil,
-          %{"type" => "read_failed", "message" => inspect(reason)}
-        )
+          {:error, reason} ->
+            Logger.warning(
+              "feishu_chat_proxy: send_file failed path=#{inspect(file_path)} " <>
+                "reason=#{inspect(reason)} session_id=#{state.session_id}"
+            )
+
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "store_or_read_failed",
+              "detail" => inspect(reason)
+            })
+        end
+
+      {:error, :no_extension} ->
+        reply_tool_result(channel_pid, req_id, false, nil, %{
+          "type" => "no_extension"
+        })
     end
 
     state
+  end
+
+  # Infer media_type atom from the file extension. Image extensions map
+  # to :image; any other recognised extension maps to :file; missing or
+  # bare-dot extension returns {:error, :no_extension}.
+  defp infer_media_type(path) do
+    case path |> Path.extname() |> String.downcase() do
+      "" -> {:error, :no_extension}
+      "." -> {:error, :no_extension}
+      ext when ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic"] -> {:ok, :image}
+      _other -> {:ok, :file}
+    end
+  end
+
+  # Check whether the named channel adapter plugin declares outbound
+  # capability for the given media_type via Esr.Resource.Media.PluginRegistry.
+  #
+  # Normalization: `parse_channel_adapter/1` extracts the full adapter
+  # family name from the proxy target (e.g. "feishu_app" from
+  # "admin::feishu_app_adapter_<id>"). Plugin manifests use a shorter
+  # canonical name ("feishu"). Normalize by stripping a trailing "_app"
+  # suffix so "feishu_app" looks up as "feishu". If the normalized name
+  # is also not registered, fall back to the original so the error message
+  # stays meaningful.
+  defp check_outbound_capability(plugin_name, media_type) do
+    normalized =
+      if String.ends_with?(plugin_name, "_app") do
+        String.slice(plugin_name, 0, String.length(plugin_name) - 4)
+      else
+        plugin_name
+      end
+
+    lookup = if normalized != plugin_name, do: normalized, else: plugin_name
+
+    if Esr.Resource.Media.PluginRegistry.supports?(lookup, :outbound, media_type) do
+      :ok
+    else
+      {:error, :unsupported_outbound}
+    end
   end
 
   defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
@@ -695,6 +783,147 @@ defmodule Esr.Entity.FeishuChatProxy do
     send(channel_pid, {:push_envelope, payload})
   end
 
+  # Task 2.4: handle non-text inbound (image/file/audio) by dispatching
+  # to Esr.Resource.Media.Inbound. The directive_fn dispatches a
+  # download_file directive to the FAA and waits synchronously for the
+  # directive_ack via PubSub. On capability-miss, emits a throttled
+  # "media unsupported" DM via CapGuard.
+  #
+  # The directive_fn approach mirrors Entity.Server's dispatch_action/2
+  # pattern but uses a blocking receive (acceptable: download latency is
+  # bounded by @directive_download_timeout_ms; no other FCP messages are
+  # missed since the GenServer mailbox is serialized).
+  @directive_download_timeout_ms 30_000
+
+  defp do_handle_non_text_inbound(envelope, args, kind, meta, state) do
+    chat_id = args["chat_id"] || state.chat_id
+
+    inbound = %{
+      msg_type: kind,
+      adapter_msg: %{
+        "msg_id" => args["msg_id"] || args["message_id"] || "",
+        "file_key" => args["file_key"] || "",
+        "file_name" => args["file_name"] || "",
+        "msg_type" => kind,
+        "chat_id" => chat_id
+      },
+      meta: %{
+        chat_id: chat_id,
+        sender_id: envelope["principal_id"] || args["sender_id"] || "",
+        source_plugin: "feishu",
+        target_plugin: "claude_code"
+      }
+    }
+
+    directive_fn = build_directive_fn(state)
+
+    case Esr.Resource.Media.Inbound.handle(inbound, directive_fn: directive_fn) do
+      {:ok, envelope_out} ->
+        forward_media_to_cc(envelope_out, meta, state)
+
+      {:error, :unsupported_kind} ->
+        Esr.Entity.CapGuard.media_unsupported_dm(envelope, kind)
+
+        Logger.info(
+          "feishu_chat_proxy: media kind=#{inspect(kind)} not supported by cc — DM sent",
+          session_id: state.session_id
+        )
+
+      {:error, reason} ->
+        Logger.warning(
+          "feishu_chat_proxy: non-text inbound failed " <>
+            "kind=#{inspect(kind)} reason=#{inspect(reason)} " <>
+            "session_id=#{state.session_id}"
+        )
+    end
+
+    :ok
+  end
+
+  # Build a synchronous directive_fn that:
+  # 1. Generates a unique directive id
+  # 2. Subscribes to directive_ack:<id> on PubSub
+  # 3. Sends {:outbound, directive} to the feishu_app_proxy neighbor
+  #    (FAA's handle_downstream wraps it as kind=directive and broadcasts
+  #    on adapter:feishu/<instance_id>; Python adapter handles and acks)
+  # 4. Blocks with a receive/timeout to correlate the ack
+  #
+  # Called from handle_non_text_inbound within the GenServer's
+  # handle_info callback — safe to block for @directive_download_timeout_ms.
+  defp build_directive_fn(state) do
+    fn action, args ->
+      id =
+        "d-" <>
+          (:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false))
+
+      directive = %{
+        "kind" => "directive",
+        "id" => id,
+        "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "type" => "directive",
+        "payload" => %{
+          "adapter" => "feishu",
+          "action" => action,
+          "args" => args
+        }
+      }
+
+      # Subscribe before sending so a fast ack lands in mailbox.
+      if Process.whereis(EsrWeb.PubSub) do
+        Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+      end
+
+      case emit_to_feishu_app_proxy(%{"kind" => "directive"} |> Map.merge(directive), state) do
+        :ok ->
+          receive do
+            {:directive_ack, %{"id" => ^id, "payload" => payload}} ->
+              if Process.whereis(EsrWeb.PubSub) do
+                Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+              end
+
+              {:ok, payload}
+          after
+            @directive_download_timeout_ms ->
+              if Process.whereis(EsrWeb.PubSub) do
+                Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+              end
+
+              {:error, {:directive_timeout, id}}
+          end
+
+        {:drop, reason} ->
+          if Process.whereis(EsrWeb.PubSub) do
+            Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+          end
+
+          {:error, {:no_app_proxy, reason}}
+      end
+    end
+  end
+
+  # Forward a URI-shaped media envelope to the cc_process neighbor.
+  # The envelope_out from Media.Inbound carries %{msg_type, content (URI), meta}.
+  # We thread it as {:text, uri, enriched_meta} so cc_process sees the
+  # URI as text content and the meta carries msg_type for handler routing.
+  defp forward_media_to_cc(envelope_out, upstream_meta, state) do
+    enriched_meta =
+      Map.merge(upstream_meta, %{
+        msg_type: envelope_out.msg_type,
+        media_uri: envelope_out.content
+      })
+
+    case Esr.ActorQuery.list_by_role(state.session_id, :cc_process) do
+      [pid | _] ->
+        send(pid, {:text, envelope_out.content, enriched_meta})
+
+      [] ->
+        Logger.warning(
+          "feishu_chat_proxy: media inbound but no cc_process found via ActorQuery " <>
+            "session_id=#{state.session_id}"
+        )
+    end
+  end
+
   # PR-9 T11b.6a: upstream tuple is now `{:text, text, meta}` (3-tuple)
   # so CCProcess has message_id/sender_id/thread_id for the notification
   # envelope. CCProcess accepts both the new 3-tuple and legacy 2-tuple
@@ -754,18 +983,35 @@ defmodule Esr.Entity.FeishuChatProxy do
   # react is no longer a CC MCP tool (PR-9 T5 D4).
   defp emit_to_feishu_app_proxy(envelope, state) do
     # M-2.1: ActorQuery replaces state.neighbors.
+    #
+    # FeishuAppProxy is a stateless Esr.Entity.Proxy module — it has no
+    # init/1 and therefore never registers itself in the ActorQuery role
+    # index. The FAA (Feishu inbound/outbound door) IS registered under
+    # "feishu_app_adapter_<app_id>" in Esr.Entity.Registry (FAA init/1
+    # lines 77-78). Fall back to that registry when ActorQuery returns []
+    # so the directive reaches the FAA directly.
     case Esr.ActorQuery.list_by_role(state.session_id, :feishu_app_proxy) do
       [pid | _] ->
         send(pid, {:outbound, envelope})
         :ok
 
       [] ->
-        Logger.warning(
-          "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
-            "via ActorQuery session_id=#{state.session_id}"
-        )
+        faa_key = "feishu_app_adapter_#{state.app_id}"
 
-        {:drop, :no_app_proxy_neighbor}
+        case Esr.Entity.Registry.lookup(faa_key) do
+          {:ok, pid} ->
+            send(pid, {:outbound, envelope})
+            :ok
+
+          :error ->
+            Logger.warning(
+              "feishu_chat_proxy: emit #{envelope["kind"]} but no feishu_app_proxy found " <>
+                "via ActorQuery session_id=#{state.session_id} " <>
+                "and no FAA at #{inspect(faa_key)}"
+            )
+
+            {:drop, :no_app_proxy_neighbor}
+        end
     end
   end
 

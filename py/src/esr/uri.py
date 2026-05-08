@@ -22,16 +22,17 @@ on wire-level URI strings for IPC.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import parse_qsl
 
 # Legacy types: 2-segment URIs (single id, no slashes inside).
 _LEGACY_TYPES = frozenset({"adapter", "actor", "command"})
 
 # Path-style RESTful types: 2+ segment URIs (hierarchical resource path).
-_PATH_STYLE_TYPES = frozenset({"adapters", "workspaces", "chats", "users", "sessions"})
+_PATH_STYLE_TYPES = frozenset({"adapters", "workspaces", "chats", "users", "sessions", "resources"})
 
 _VALID_TYPES = _LEGACY_TYPES | _PATH_STYLE_TYPES
 
@@ -214,13 +215,16 @@ def build_path(
     host: str,
     port: int | None = None,
     org: str | None = None,
+    env: str | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
     """Build a path-style ``esr://`` URI from path segments.
 
     The first segment must be a path-style type
-    (e.g. ``adapters``, ``workspaces``, ``chats``, ``users``, ``sessions``).
-    Use ``build`` for legacy 2-segment forms.
+    (e.g. ``adapters``, ``workspaces``, ``chats``, ``users``, ``sessions``,
+    ``resources``). Use ``build`` for legacy 2-segment forms.
+
+    ``env=`` is an alias for ``org=`` (aligned with Elixir ``Esr.Uri.build_path/3``).
     """
     if len(segments) < 2:
         raise ValueError(
@@ -238,11 +242,12 @@ def build_path(
         if seg == "":
             raise ValueError(f"empty segment at index {i} in {list(segments)!r}")
 
+    org_arg = env or org
     authority = host
     if port is not None:
         authority = f"{authority}:{port}"
-    if org:
-        authority = f"{org}@{authority}"
+    if org_arg:
+        authority = f"{org_arg}@{authority}"
 
     s = f"esr://{authority}/" + "/".join(segments)
 
@@ -251,3 +256,107 @@ def build_path(
 
         s = f"{s}?{urlencode(params)}"
     return s
+
+
+# ---------------------------------------------------------------------------
+# Resources URI helpers (introduced 2026-05-08, multimedia content protocol)
+# Mirror of Esr.Uri.parse_resource/1 and Esr.Uri.build_resource/3 (commit 018c21a).
+# ---------------------------------------------------------------------------
+
+
+class ParsedResource(TypedDict):
+    """Precise return type for :func:`parse_resource`.
+
+    ``media_type``, ``sha256``, ``ext``, and ``host`` are always populated
+    (validated against allowlists before returning). ``env`` is ``str | None``
+    because the ``org@`` authority component is optional in resource URIs.
+    """
+
+    media_type: str
+    sha256: str
+    ext: str
+    env: str | None
+    host: str
+
+_ALLOWED_EXTS: dict[str, tuple[str, ...]] = {
+    "image": ("png", "jpg", "jpeg", "gif", "webp", "heic"),
+    "file":  ("bin", "pdf", "doc", "docx", "xls", "xlsx", "zip", "txt", "md", "csv"),
+    "audio": ("opus", "mp3", "wav", "m4a", "aac"),
+}
+
+_MEDIA_TYPES: tuple[str, ...] = tuple(_ALLOWED_EXTS)  # single source of truth
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def parse_resource(uri: str) -> ParsedResource:
+    """Parse a resources URI and return a dict with media_type, sha256, ext, env, host.
+
+    Raises ``ValueError('invalid_uri: ...')`` on:
+    - non-resources URI type
+    - wrong segment count (must be 3: ['resources', media_type, '<sha>.<ext>'])
+    - unknown media_type (not in image/file/audio)
+    - sha256 not exactly 64 lowercase hex
+    - ext not in per-media-type allowlist
+
+    Mirror of ``Esr.Uri.parse_resource/1`` (Elixir, commit 018c21a).
+    Ext is normalized to lowercase per spec D7.
+    """
+    parsed = parse(uri)
+    if parsed.type != "resources":
+        raise ValueError("invalid_uri: not a resources URI")
+    if len(parsed.segments) != 3:
+        raise ValueError("invalid_uri: bad segment count")
+
+    _, mt_str, last_seg = parsed.segments
+    if mt_str not in _MEDIA_TYPES:
+        raise ValueError(f"invalid_uri: unknown media_type {mt_str!r}")
+
+    if "." not in last_seg:
+        raise ValueError("invalid_uri: missing ext")
+    sha, ext = last_seg.rsplit(".", 1)
+    ext = ext.lower()  # normalize per spec D7
+
+    if not _SHA256_RE.match(sha):
+        raise ValueError("invalid_uri: sha256 must be 64 lowercase hex chars")
+    if ext not in _ALLOWED_EXTS[mt_str]:
+        raise ValueError(f"invalid_uri: ext {ext!r} not in allowlist for {mt_str!r}")
+
+    return {
+        "media_type": mt_str,
+        "sha256": sha,
+        "ext": ext,
+        "env": parsed.org,
+        "host": parsed.host,
+    }
+
+
+def build_resource(
+    media_type: str,
+    sha256: str,
+    *,
+    ext: str = "bin",
+    env: str | None = None,
+    host: str = "localhost",
+) -> str:
+    """Construct a resources URI. Raises ``ValueError`` on invalid input.
+
+    Mirror of ``Esr.Uri.build_resource/3`` (Elixir, commit 018c21a).
+    """
+    ext = str(ext).lower()
+    if not _SHA256_RE.match(sha256):
+        raise ValueError(
+            f"build_resource: sha256 must be 64 lowercase hex chars, got: {sha256!r}"
+        )
+    if media_type not in _ALLOWED_EXTS:
+        raise ValueError(f"build_resource: unknown media_type {media_type!r}")
+    if ext not in _ALLOWED_EXTS[media_type]:
+        raise ValueError(
+            f"build_resource: ext {ext!r} not in allowlist for media_type {media_type!r}"
+        )
+
+    return build_path(
+        ["resources", media_type, f"{sha256}.{ext}"],
+        host=host,
+        env=env,
+    )
