@@ -12,6 +12,19 @@ defmodule Esr.SlashRoutesTest do
     if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
     SlashRouteRegistry.load_snapshot(%{slashes: [], internal_kinds: []})
 
+    # Audit #6 rev-3 (2026-05-08-plugin-command-registration): in test
+    # env, runtime.exs's plugin loader auto-enables feishu + claude_code
+    # via `Esr.Plugin.EnabledList`'s legacy default, so their overlays
+    # are registered against this singleton SlashRouteRegistry at app
+    # boot. These tests exercise the BASE registry mechanics (load,
+    # list_internal_kinds, dump/1) — overlay contributions would
+    # contaminate enumeration assertions. Unregister them so each test
+    # sees only the base + the fixture it loads. The on_exit hook below
+    # restores the priv default base; downstream tests that depend on
+    # plugin overlays re-register them via Loader.start_plugin/2.
+    SlashRouteRegistry.unregister_overlay("feishu")
+    SlashRouteRegistry.unregister_overlay("claude_code")
+
     on_exit(fn ->
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
       if File.exists?(priv), do: FileLoader.load(priv)
@@ -257,8 +270,11 @@ defmodule Esr.SlashRoutesTest do
       # Old-form slashes do NOT resolve after cutover
       assert :not_found = SlashRouteRegistry.lookup("/sessions")
       assert :not_found = SlashRouteRegistry.lookup("/list-sessions")
-      # Internal kind: notify should resolve via permission_for
-      assert "notify.send" == SlashRouteRegistry.permission_for("notify")
+      # Internal kind: reload should resolve via permission_for. (Pre-rev-3
+      # this asserted on `notify`/`notify.send` — both moved to the feishu
+      # plugin overlay as `feishu_notify`/`feishu/notify-send` per audit #6
+      # rev-3, so the priv-default base no longer carries them.)
+      assert "runtime.reload" == SlashRouteRegistry.permission_for("reload")
     end
   end
 

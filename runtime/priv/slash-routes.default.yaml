@@ -584,13 +584,10 @@ internal_kinds:
     permission: "user.manage"
     command_module: "Esr.Commands.User.Remove"
 
-  user_bind_feishu:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.BindFeishu"
-
-  user_unbind_feishu:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.UnbindFeishu"
+  # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+  # `user_bind_feishu` and `user_unbind_feishu` migrated to the feishu
+  # plugin as `feishu_bind` / `feishu_unbind` (cap `feishu/user-bind`).
+  # Declared by runtime/lib/esr/plugins/feishu/manifest.yaml.
 
   user_use:
     permission: "workspace.create"

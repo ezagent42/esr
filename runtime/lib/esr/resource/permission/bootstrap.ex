@@ -30,8 +30,12 @@ defmodule Esr.Resource.Permission.Bootstrap do
     # subsystem itself, always present regardless of which plugins are
     # installed.
     {"plugin/manage", Esr.Plugin.Loader},
-    # Phase B-3 (2026-05-05): `user.manage` gates user_add/remove/
-    # bind-feishu/unbind-feishu. Read-only `user_list` is permission-less.
+    # Phase B-3 (2026-05-05): `user.manage` gates user_add/remove.
+    # As of audit #6 rev-3 (2026-05-08-plugin-command-registration),
+    # the bind-feishu/unbind-feishu commands moved into the feishu
+    # plugin and switched to `feishu/user-bind` (declared by the
+    # feishu manifest's `capabilities:`). `user.manage` is now
+    # identity-only. Read-only `user_list` is permission-less.
     {"user.manage", Esr.Entity.User.Registry},
     # 2026-05-05 cli-channel→slash migration: runtime.deadletter gates
     # deadletter_list / deadletter_flush. runtime.debug gates
