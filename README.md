@@ -261,6 +261,7 @@ E2E 覆盖在 [`tests/e2e/scenarios/`](tests/e2e/scenarios/)。**新增 scenario
 | [`05_topology_routing.sh`](tests/e2e/scenarios/05_topology_routing.sh) | `<channel reachable=…>` + BGP-style reachable_set 学习 | [`2026-04-27-actor-topology-routing.md`](docs/superpowers/specs/2026-04-27-actor-topology-routing.md) |
 | [`06_pty_attach.sh`](tests/e2e/scenarios/06_pty_attach.sh) | PTY actor attach —— 浏览器 xterm 渲染 cc TUI（WS） | [`2026-05-01-pty-actor-attach-design.md`](docs/superpowers/specs/2026-05-01-pty-actor-attach-design.md) |
 | [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor 双向 —— keystroke → process → frame 回环 | 同上 |
+| [`20_feishu_inbound_multimedia.sh`](tests/e2e/scenarios/20_feishu_inbound_multimedia.sh) | Feishu inbound 图片 —— PNG → content-addressed `resources/image/<sha>.png` + refs.jsonl | [`2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 
 > 添加新 scenario 时：在本表登记，**并**在
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md) 里记一笔。

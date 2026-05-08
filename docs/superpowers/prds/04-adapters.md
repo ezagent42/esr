@@ -72,7 +72,24 @@ Any `on_directive(d)` with `d.action` not in the supported set returns `{"ok": F
 For `P2ImMessageReceiveV1`, parse `msg_type` → dispatch to per-type parsers (text / post / image / file / merge_forward / interactive / sticker / share_chat / share_user / location / todo / system / hongbao / vote / video_chat / calendar / folder — mirrors cc-openclaw's `channel_server/adapters/feishu/parsers.py`). Each parser returns a normalised `(text_repr, file_path)`. Unknown types fall back to `f"[{msg_type} message]"`. **Unit test:** per type, assert parse output against known-good Feishu payloads (fixtures in `tests/fixtures/`).
 
 #### F14 — File download hook
-When an event represents a file/image/audio, `emit_events()` does NOT auto-download (spec §10.1). Instead, yields the event with `args={"msg_id", "file_key", "file_name", "msg_type"}` so a handler can choose whether to download. Downloading is triggered by a separate directive `download_file` (`on_directive`). **Unit test:** file event yields without file bytes; directive downloads to `~/.esrd/<instance>/uploads/<chat_id>/<file_name>` and returns `{"ok": True, "result": {"path": ...}}`.
+
+When an event represents a file/image/audio, `emit_events()` does
+NOT auto-download (spec §10.1). Instead, yields the event with
+`args={"msg_id", "file_key", "file_name", "msg_type"}` so a handler
+can choose whether to download. Downloading is triggered by a
+separate directive `download_file` (`on_directive`) which fetches
+the bytes and stores them content-addressed via
+`esr.resource.media.store` at
+`$ESRD_HOME/$ESR_INSTANCE/resources/<media_type>/<sha256>.<ext>`.
+
+Returns `{"ok": True, "result": {"uri": "esr://...", "sha256": "...",
+"path": "<absolute>"}}` on success. Storage layout migrated 2026-05-08
+from chat-keyed `uploads/<chat_id>/<file_name>` to content-addressed
+`resources/<media_type>/<sha256>.<ext>`. See spec
+`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`.
+
+**Unit test:** file event yields without file bytes; directive
+downloads + content-addresses + returns the URI/sha256/path triple.
 
 #### F15 — Rate limiting
 Respect Lark's documented rate limits. On 429, back off exponentially (1s, 2s, 4s, ..., capped at 30s) and retry. Directives that time out after 30s total return `{"ok": False, "error": "timeout"}` per spec §7.3. **Unit test:** mock returning 429 followed by 200; verify one retry.
