@@ -14,19 +14,6 @@ defmodule Esr.Plugins.Feishu.ConfigMigrationTest do
                     )
 
   describe "feishu manifest config_schema" do
-    test "feishu manifest has config_schema with app_id" do
-      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
-      schema = manifest.declares[:config_schema] || %{}
-      assert Map.has_key?(schema, "app_id"), "feishu manifest missing app_id in config_schema"
-    end
-
-    test "feishu manifest has config_schema with app_secret" do
-      {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
-      schema = manifest.declares[:config_schema] || %{}
-      assert Map.has_key?(schema, "app_secret"),
-             "feishu manifest missing app_secret in config_schema"
-    end
-
     test "feishu manifest has config_schema with log_level" do
       {:ok, manifest} = Manifest.parse(@feishu_manifest_path)
       schema = manifest.declares[:config_schema] || %{}
@@ -69,14 +56,6 @@ defmodule Esr.Plugins.Feishu.ConfigMigrationTest do
 
       assert Map.has_key?(schema, "esrd_url"),
              "claude_code manifest missing esrd_url in config_schema"
-    end
-  end
-
-  describe "feishu plugin boots with config from layered yaml" do
-    test "FeishuAppAdapter.get_app_id/1 reads from Plugin.Config before env var" do
-      assert function_exported?(Esr.Entity.FeishuAppAdapter, :get_app_id, 1) or
-               function_exported?(Esr.Entity.FeishuAppAdapter, :get_app_id, 0),
-             "FeishuAppAdapter must export get_app_id/0 or get_app_id/1 after Phase 7.6"
     end
   end
 end

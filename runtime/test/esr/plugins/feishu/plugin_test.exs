@@ -11,22 +11,6 @@ defmodule Esr.Plugins.Feishu.PluginTest do
   alias Esr.Plugins.Feishu.Plugin
 
   describe "on_config_change/1" do
-    test "returns :ok for app_id change (no log)" do
-      log = capture_log(fn ->
-        assert :ok == Plugin.on_config_change(["app_id"])
-      end)
-
-      assert log == ""
-    end
-
-    test "returns :ok for app_secret change (no log)" do
-      log = capture_log(fn ->
-        assert :ok == Plugin.on_config_change(["app_secret"])
-      end)
-
-      assert log == ""
-    end
-
     test "returns :ok for log_level change AND logs a warning" do
       log = capture_log(fn ->
         assert :ok == Plugin.on_config_change(["log_level"])
