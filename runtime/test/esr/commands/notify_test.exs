@@ -123,14 +123,14 @@ defmodule Esr.Commands.NotifyTest do
 
       command = %{
         "id" => id,
-        "kind" => "notify",
+        "kind" => "feishu_notify",
         "submitted_by" => @test_principal,
         "args" => %{"to" => "ou_receiver_e2e", "text" => "hello-from-queue"}
       }
 
       # Mirror Watcher's flow: write pending file, move to processing,
       # then dispatch via SlashHandler with QueueFile target.
-      File.write!(processing, "id: #{id}\nkind: notify\n")
+      File.write!(processing, "id: #{id}\nkind: feishu_notify\n")
 
       target = {QueueFile, %{id: id, command: command}}
       _ = SlashHandler.dispatch_command(command, target)
@@ -144,7 +144,7 @@ defmodule Esr.Commands.NotifyTest do
 
       {:ok, doc} = YamlElixir.read_from_file(completed)
       assert doc["id"] == id
-      assert doc["kind"] == "notify"
+      assert doc["kind"] == "feishu_notify"
       assert %{"ok" => true, "delivered_at" => _} = doc["result"]
       assert is_binary(doc["completed_at"])
     end
@@ -155,12 +155,12 @@ defmodule Esr.Commands.NotifyTest do
       completed = Path.join([tmp, "default/admin_queue/completed", "#{id}.yaml"])
       failed = Path.join([tmp, "default/admin_queue/failed", "#{id}.yaml"])
 
-      File.write!(processing, "id: #{id}\nkind: notify\n")
+      File.write!(processing, "id: #{id}\nkind: feishu_notify\n")
 
       # principal intentionally NOT in Grants — cap-check must deny.
       command = %{
         "id" => id,
-        "kind" => "notify",
+        "kind" => "feishu_notify",
         "submitted_by" => "ou_nobody",
         "args" => %{"to" => "ou_x", "text" => "y"}
       }
@@ -183,7 +183,7 @@ defmodule Esr.Commands.NotifyTest do
 
       command = %{
         "id" => id,
-        "kind" => "notify",
+        "kind" => "feishu_notify",
         "submitted_by" => @test_principal,
         "args" => %{"to" => "ou_pid", "text" => "pid-reply"}
       }

@@ -595,7 +595,7 @@ defmodule Esr.Entity.SlashHandler do
 
         {:error,
          "this command requires your Feishu identity to be bound to an esr user; " <>
-           "run `./esr.sh user bind-feishu <esr_user> #{principal}` first (or /doctor for guidance)"}
+           "run `./esr.sh feishu bind <esr_user> #{principal}` first (or /doctor for guidance)"}
     end
   end
 

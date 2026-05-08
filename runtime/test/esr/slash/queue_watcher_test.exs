@@ -104,7 +104,7 @@ defmodule Esr.Slash.QueueWatcherTest do
     # Watcher. Its init/1 sweep should discover and re-cast it.
     yaml = """
     id: #{id}
-    kind: notify
+    kind: feishu_notify
     submitted_by: #{@test_principal}
     args:
       to: ou_receiver
