@@ -1,7 +1,7 @@
 defmodule Esr.Session.AgentSpawnerTest do
   @moduledoc """
   R6 — unit tests for `Esr.Session.AgentSpawner`, the stateless
-  Spawner extracted from `Esr.Scope.Router`. Mirrors the pre-R6
+  Spawner extracted from `Esr.Session.Router`. Mirrors the pre-R6
   `scope_router_channel_adapter_test.exs` content (the
   `parse_channel_adapter` / `build_ctx` / `stamp_channel_adapter`
   surface area) and locks in the new test-helper home.

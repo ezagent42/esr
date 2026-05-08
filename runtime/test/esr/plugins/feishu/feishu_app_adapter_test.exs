@@ -5,11 +5,11 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
   setup do
     # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
-    # `Esr.Scope.Admin.Process` (via P2-9's Scope.Admin) are now started
+    # `Esr.Session.Admin.Process` (via P2-9's Scope.Admin) are now started
     # at app boot, so a redundant `start_supervised!` would crash with
     # :already_started. Reuse the app-level processes.
-    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
     # No `name:` on the supervisor — a hard-coded atom collided across
     # tests when a previous run's DynamicSupervisor hadn't fully torn
     # down yet (PR-5 os_cleanup flake). Thread the pid via ctx instead.
@@ -28,7 +28,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       )
 
     assert Process.alive?(pid)
-    {:ok, ^pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_inst_test123)
+    {:ok, ^pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_inst_test123)
   end
 
   test "inbound envelope with chat+thread routes to the matching FeishuChatProxy via SessionRegistry",
@@ -37,7 +37,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     test_pid = self()
 
     :ok =
-      Esr.Resource.ChatScope.Registry.register_session(
+      Esr.Session.ChatRouting.Registry.register_session(
         "session-abc",
         # PR-A T1: registry key is (chat_id, app_id, thread_id). Pre-PR-A
         # envelopes (no args["app_id"]) fall back to state.instance_id —
@@ -75,7 +75,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
     # Arrange: register a session keyed under app_id "feishu_DEV"
     :ok =
-      Esr.Resource.ChatScope.Registry.register_session(
+      Esr.Session.ChatRouting.Registry.register_session(
         "S_PRA_FAA",
         %{chat_id: "oc_PRA", app_id: "feishu_DEV", thread_id: ""},
         %{feishu_chat_proxy: test_pid}
@@ -128,7 +128,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     send(pid_fallback, {:inbound_event, env_without_app_id})
     assert_receive {:feishu_inbound, ^env_without_app_id}, 500
 
-    Esr.Resource.ChatScope.Registry.unregister_session("S_PRA_FAA")
+    Esr.Session.ChatRouting.Registry.unregister_session("S_PRA_FAA")
   end
 
   test "registration key is instance_id, not Feishu-platform app_id (PR-9 T10)",
@@ -152,10 +152,10 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       )
 
     # Registered under instance_id.
-    assert {:ok, ^pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
+    assert {:ok, ^pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
 
     # NOT registered under the Feishu-platform app_id.
-    assert :error = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_cli_a9563cc03d399cc9)
+    assert :error = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_cli_a9563cc03d399cc9)
 
     # Peer state retains the real app_id for Feishu API calls.
     assert %{app_id: "cli_a9563cc03d399cc9", instance_id: "main_bot"} = :sys.get_state(pid)
@@ -542,13 +542,13 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
         end)
 
       # PR-21κ Phase 6: production `dispatch/3` resolves the slash
-      # handler via `Esr.Scope.Admin.Process.slash_handler_ref/0`.
+      # handler via `Esr.Session.Admin.Process.slash_handler_ref/0`.
       # Override the registration with our recording stub so the FAA's
       # cast lands in the test mailbox. on_exit tries to restart the
       # production slash_handler via the Scope.Admin bootstrap helper
       # — re-registering the dead test pid would leave the registry
       # broken for subsequent tests.
-      :ok = Esr.Scope.Admin.Process.register_admin_peer(:slash_handler, slash_pid)
+      :ok = Esr.Session.Admin.Process.register_admin_peer(:slash_handler, slash_pid)
 
       on_exit(fn ->
         # Re-bootstrap the production handler so other tests find a
@@ -556,7 +556,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
         # supervisor; safely no-op when supervisor_test has torn it down
         # (try/rescue covers the GenServer.call to a dead supervisor).
         try do
-          Esr.Scope.Admin.bootstrap_slash_handler()
+          Esr.Session.Admin.bootstrap_slash_handler()
         catch
           :exit, _ -> :ok
         end

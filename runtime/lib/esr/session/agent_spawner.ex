@@ -7,13 +7,13 @@ defmodule Esr.Session.AgentSpawner do
   neighbors.
 
   Implements `Esr.Interface.Spawner` for the agents.yaml-declared
-  Session shape. Extracted from `Esr.Scope.Router` in R6 of the
+  Session shape. Extracted from `Esr.Session.Router` in R6 of the
   structural refactor (`docs/notes/structural-refactor-plan-r4-r11.md`
   §四-R6).
 
   ## Why a separate module
 
-  `Esr.Scope.Router` was a 799-LOC GenServer mixing five concerns:
+  `Esr.Session.Router` was a 799-LOC GenServer mixing five concerns:
   lifecycle coordination, spawn pipeline mechanics, neighbor wiring,
   per-Entity ctx construction, and workspace `start_cmd` resolution.
   AgentSpawner owns the middle three plus (M-4) `start_cmd`
@@ -24,7 +24,7 @@ defmodule Esr.Session.AgentSpawner do
     * `spawn/3`         — `Esr.Interface.Spawner` callback. Reads the
                           agent declaration from the supplied `decl`
                           map (the agents.yaml entry) and spawns the
-                          Session subtree under `Esr.Scope.Supervisor`.
+                          Session subtree under `Esr.Session.Supervisor`.
                           Returns `{:ok, session_sup_pid}` on success.
     * `terminate/2`     — `Esr.Interface.Spawner` callback. Tears down
                           a Session subtree by its scope_id.
@@ -87,7 +87,7 @@ defmodule Esr.Session.AgentSpawner do
 
     case do_create(Map.put(params, :agent, agent_name)) do
       {:ok, session_id, _monitor_refs} ->
-        via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, session_id}}}
+        via = {:via, Registry, {Esr.Session.Registry, {:session_sup, session_id}}}
 
         case GenServer.whereis(via) do
           pid when is_pid(pid) -> {:ok, pid}
@@ -102,20 +102,20 @@ defmodule Esr.Session.AgentSpawner do
   @impl Esr.Interface.Spawner
   @doc """
   `Esr.Interface.Spawner` teardown. Symmetric to
-  `Esr.Scope.Router.end_session/1` but routes through the supervisor
+  `Esr.Session.Router.end_session/1` but routes through the supervisor
   directly instead of the lifecycle GenServer.
   """
   @spec terminate(binary(), term()) :: :ok
   def terminate(scope_id, _reason) when is_binary(scope_id) do
-    via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, scope_id}}}
+    via = {:via, Registry, {Esr.Session.Registry, {:session_sup, scope_id}}}
 
     case GenServer.whereis(via) do
       nil ->
         :ok
 
       pid when is_pid(pid) ->
-        :ok = Esr.Scope.Supervisor.stop_session(pid)
-        :ok = Esr.Resource.ChatScope.Registry.unregister_session(scope_id)
+        :ok = Esr.Session.Supervisor.stop_session(pid)
+        :ok = Esr.Session.ChatRouting.Registry.unregister_session(scope_id)
         :ok
     end
   end
@@ -126,7 +126,7 @@ defmodule Esr.Session.AgentSpawner do
 
   @doc """
   Coordinator-friendly entry: returns the rich tuple
-  `{:ok, session_id, monitor_refs}` that `Esr.Scope.Router` needs to
+  `{:ok, session_id, monitor_refs}` that `Esr.Session.Router` needs to
   register its peer-DOWN monitors. Callers outside Router should
   prefer `spawn/3`.
   """
@@ -244,7 +244,7 @@ defmodule Esr.Session.AgentSpawner do
     # PR-21λ: chat_thread_key narrowed to the 2-tuple routing key.
     # `thread_id` for Feishu reply rendering still flows through the
     # FCP via per-peer params, not via this struct.
-    Esr.Scope.Supervisor.start_session(%{
+    Esr.Session.Supervisor.start_session(%{
       session_id: sid,
       agent_name: agent_name,
       dir: dir,
@@ -409,7 +409,7 @@ defmodule Esr.Session.AgentSpawner do
     # PR-21λ: routing key dropped thread_id. The full chat-binding map
     # still lives in `params` for FCP/CC reply rendering — this only
     # narrows what `ChatScope.Registry` indexes on.
-    Esr.Resource.ChatScope.Registry.register_session(
+    Esr.Session.ChatRouting.Registry.register_session(
       session_id,
       %{
         chat_id: get_param(params, :chat_id) || "",
@@ -498,9 +498,9 @@ defmodule Esr.Session.AgentSpawner do
   # `:error` rather than crashing when Scope.Admin.Process isn't
   # running (isolated unit-test setups).
   defp safe_admin_peer(sym) do
-    case Process.whereis(Esr.Scope.Admin.Process) do
+    case Process.whereis(Esr.Session.Admin.Process) do
       nil -> :error
-      _pid -> Esr.Scope.Admin.Process.admin_peer(sym)
+      _pid -> Esr.Session.Admin.Process.admin_peer(sym)
     end
   rescue
     _ -> :error

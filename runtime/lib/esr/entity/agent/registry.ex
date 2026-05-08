@@ -4,14 +4,14 @@ defmodule Esr.Entity.Agent.Registry do
   the legacy `Esr.SessionRegistry`).
 
   Single source of truth for agents.yaml-compiled agent definitions. The
-  `Esr.Scope.Router` and admin command modules read from here when
+  `Esr.Session.Router` and admin command modules read from here when
   resolving an agent name to its declared pipeline / capabilities /
   proxies / params shape.
 
   See `docs/notes/structural-refactor-plan-r4-r11.md` §四-R5 for the
   motivation: legacy `SessionRegistry` mixed three concerns (agents.yaml,
   chat-current routing, URI claims). R5 splits the agents.yaml concern
-  here; chat / URI concerns moved to `Esr.Resource.ChatScope.Registry`.
+  here; chat / URI concerns moved to `Esr.Session.ChatRouting.Registry`.
 
   ## R5 §A2 / §B1 note (autonomous decision)
 

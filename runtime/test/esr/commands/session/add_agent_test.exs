@@ -28,7 +28,7 @@ defmodule Esr.Commands.Session.AddAgentTest do
   end
 
   # M-2.8: AddAgent now goes through InstanceRegistry.add_instance_and_spawn/2,
-  # which requires a per-session Esr.Scope.AgentSupervisor to be running.
+  # which requires a per-session Esr.Session.AgentSupervisor to be running.
   # This unit-test module does NOT stand up a real Scope tree, so the spawn
   # step fails with {:error, {:spawn_failed, _}} for any session_id without
   # one. Live spawn semantics are covered by e2e scenario 18.

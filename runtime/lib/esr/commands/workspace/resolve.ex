@@ -20,7 +20,7 @@ defmodule Esr.Commands.Workspace.Resolve do
   """
 
   alias Esr.Entity.User.Registry, as: UserRegistry
-  alias Esr.Resource.ChatScope.Registry, as: ChatScope
+  alias Esr.Session.ChatRouting.Registry, as: ChatScope
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
 

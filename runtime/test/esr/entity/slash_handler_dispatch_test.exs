@@ -37,7 +37,7 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
   end
 
   setup do
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
 
     if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
     SlashRouteRegistry.load_snapshot(test_routes())

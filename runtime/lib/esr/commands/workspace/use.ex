@@ -16,7 +16,7 @@ defmodule Esr.Commands.Workspace.Use do
   @behaviour Esr.Role.Control
 
   alias Esr.Resource.Workspace.NameIndex
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @type result :: {:ok, map()} | {:error, map()}
 

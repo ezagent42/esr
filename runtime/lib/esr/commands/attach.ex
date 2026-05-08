@@ -18,7 +18,7 @@ defmodule Esr.Commands.Attach do
 
   @behaviour Esr.Role.Control
 
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Uri, as: EsrUri
 
   def execute(%{"args" => args}) do

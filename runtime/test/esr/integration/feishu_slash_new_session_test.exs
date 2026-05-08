@@ -18,19 +18,19 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
        `SessionRegistry.lookup_by_chat_thread/3` — proving the binding loop.
 
   The integration test uses the production SlashHandler started by
-  `Esr.Scope.Admin.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
+  `Esr.Session.Admin.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
   full command path runs through `Esr.Admin.Dispatcher` → `Session.New`.
 
   ## PR-8 T4 update
 
   Post-T4, `Session.New` delegates the chat-bound branch to
-  `Esr.Scope.Router.create_session/1`, which spawns the full
+  `Esr.Session.Router.create_session/1`, which spawns the full
   `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, PtyProcess)
   and registers the session with refs carrying each spawned peer pid.
   This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
   returns the newly-created session); the T4-specific assertion —
   that `refs.feishu_chat_proxy` is a live pid — lives in
-  `Esr.Commands.Scope.NewTest`'s `:t4_session_router` describe
+  `Esr.Commands.Session.NewTest`'s `:t4_session_router` describe
   block rather than here, to keep each test focused.
   """
   use ExUnit.Case, async: false
@@ -60,17 +60,17 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     :ok = Esr.TestSupport.Grants.with_grants(%{@test_principal => ["*"]})
 
     # PR-8 T1: SlashHandler is auto-started by
-    # `Esr.Scope.Admin.bootstrap_slash_handler/0` at application boot,
+    # `Esr.Session.Admin.bootstrap_slash_handler/0` at application boot,
     # so we only need to re-spawn if a sibling torched it.
     slash_pid =
-      case Esr.Scope.Admin.Process.slash_handler_ref() do
+      case Esr.Session.Admin.Process.slash_handler_ref() do
         {:ok, pid} ->
           pid
 
@@ -89,9 +89,9 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     on_exit(fn ->
       # PR-A T1: Scope.Router defaults app_id to "default" when the
       # slash flow doesn't carry one (T3 will surface app_id explicitly).
-      Esr.Resource.ChatScope.Registry.lookup_by_chat(@chat_id, "default")
+      Esr.Session.ChatRouting.Registry.lookup_by_chat(@chat_id, "default")
       |> case do
-        {:ok, sid, _} -> Esr.Resource.ChatScope.Registry.unregister_session(sid)
+        {:ok, sid, _} -> Esr.Session.ChatRouting.Registry.unregister_session(sid)
         _ -> :ok
       end
     end)

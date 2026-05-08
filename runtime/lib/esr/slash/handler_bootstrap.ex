@@ -1,7 +1,7 @@
 defmodule Esr.Slash.HandlerBootstrap do
   @moduledoc """
   One-shot supervision-tree child whose `init/1` calls
-  `Esr.Scope.Admin.bootstrap_slash_handler/0` and returns `:ignore`,
+  `Esr.Session.Admin.bootstrap_slash_handler/0` and returns `:ignore`,
   so the supervisor doesn't track a long-lived process — but it DOES
   block on the bootstrap completing before starting the next child.
 
@@ -29,7 +29,7 @@ defmodule Esr.Slash.HandlerBootstrap do
 
   @impl true
   def init(:ok) do
-    case Esr.Scope.Admin.bootstrap_slash_handler() do
+    case Esr.Session.Admin.bootstrap_slash_handler() do
       :ok ->
         :ignore
 

@@ -77,8 +77,8 @@ defmodule Esr.Integration.CCE2ETest do
     # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
     # supervisor so each test gets a clean instance.
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     on_exit(fn ->
@@ -105,10 +105,10 @@ defmodule Esr.Integration.CCE2ETest do
     # NOTE: earlier tests (admin_session_test.exs, session_test.exs)
     # mutate the `:admin_children_sup_name` Application env as part of
     # their own setup, and the env leaks across tests. Use the
-    # canonical app-booted supervisor (Esr.Scope.Admin.ChildrenSupervisor)
+    # canonical app-booted supervisor (Esr.Session.Admin.ChildrenSupervisor)
     # directly rather than re-reading the env — that's the one
     # Esr.Application actually started and the one live here.
-    admin_children_sup = Esr.Scope.Admin.ChildrenSupervisor
+    admin_children_sup = Esr.Session.Admin.ChildrenSupervisor
 
     {:ok, faa} =
       DynamicSupervisor.start_child(
@@ -163,7 +163,7 @@ defmodule Esr.Integration.CCE2ETest do
     # peer chain (FCP → CCProxy[marker] → CCProcess → PtyProcess) and
     # registers (chat_id, thread_id) in SessionRegistry.
     {:ok, sid} =
-      Esr.Scope.Router.create_session(%{
+      Esr.Session.Router.create_session(%{
         agent: "cc",
         dir: "/tmp",
         principal_id: "ou_alice",
@@ -174,7 +174,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # 4. Resolve the spawned peer pids from SessionRegistry.
     assert {:ok, ^sid, refs} =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
+             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
 
     assert is_pid(refs.feishu_chat_proxy)
     assert is_pid(refs.cc_process)
@@ -304,11 +304,11 @@ defmodule Esr.Integration.CCE2ETest do
     # supervisor (kills CCProcess + PtyProcess + FCP + peers_sup) and
     # unregisters (chat_id, thread_id) from SessionRegistry.
     :ok = EsrWeb.Endpoint.unsubscribe(topic)
-    :ok = Esr.Scope.Router.end_session(sid)
+    :ok = Esr.Session.Router.end_session(sid)
 
     # Registry reflects the teardown.
     assert :not_found =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
+             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
   end
 
   # ------------------------------------------------------------------

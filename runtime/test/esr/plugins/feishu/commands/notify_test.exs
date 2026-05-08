@@ -22,7 +22,7 @@ defmodule Esr.Plugins.Feishu.Commands.NotifyTest do
   alias Esr.Entity.SlashHandler
   alias Esr.Slash.QueueResult
   alias Esr.Slash.ReplyTarget.QueueFile
-  alias Esr.Scope
+  alias Esr.Session
   alias Esr.Resource.Capability.Grants
 
   @test_principal "ou_notify_test"
@@ -59,24 +59,24 @@ defmodule Esr.Plugins.Feishu.Commands.NotifyTest do
   end
 
   # Post-P2-16: Notify.execute/1 discovers the feishu adapter topic by
-  # iterating `Scope.Admin.Process.list_admin_peers/0` for a
+  # iterating `Session.Admin.Process.list_admin_peers/0` for a
   # `:feishu_app_adapter_<app_id>` entry. Tests register the caller pid
   # as a stand-in so the iteration resolves to a predictable topic.
   defp register_fake_feishu_adapter(app_id) do
     sym = String.to_atom("feishu_app_adapter_#{app_id}")
-    :ok = Scope.Admin.Process.register_admin_peer(sym, self())
+    :ok = Session.Admin.Process.register_admin_peer(sym, self())
     topic = "adapter:feishu/#{app_id}"
     :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
     topic
   end
 
   # PR-2.3b-2: SlashHandler is registered under :slash_handler in
-  # Scope.Admin.Process; if a previous test tore it down, re-bootstrap.
+  # Session.Admin.Process; if a previous test tore it down, re-bootstrap.
   defp ensure_slash_handler do
-    case Esr.Scope.Admin.Process.slash_handler_ref() do
+    case Esr.Session.Admin.Process.slash_handler_ref() do
       {:ok, _pid} -> :ok
       :error ->
-        :ok = Esr.Scope.Admin.bootstrap_slash_handler()
+        :ok = Esr.Session.Admin.bootstrap_slash_handler()
     end
   end
 
@@ -102,7 +102,7 @@ defmodule Esr.Plugins.Feishu.Commands.NotifyTest do
     end
 
     test "returns no_feishu_adapter when no feishu app adapter is registered" do
-      # Don't register a fake — Scope.Admin.Process has other peers
+      # Don't register a fake — Session.Admin.Process has other peers
       # (e.g. :slash_handler) but no :feishu_app_adapter_* entry.
       assert {:error, %{"type" => "no_feishu_adapter"}} =
                Notify.execute(%{"args" => %{"to" => "ou_x", "text" => "y"}})

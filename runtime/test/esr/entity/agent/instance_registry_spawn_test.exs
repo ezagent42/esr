@@ -61,7 +61,7 @@ defmodule Esr.Entity.Agent.InstanceRegistrySpawnTest do
       agent_name = "helper-#{System.unique_integer([:positive])}"
 
       # No Scope started for `sid`, so the via-tuple
-      # {:via, Registry, {Esr.Scope.Registry, {:agent_sup, sid}}} won't
+      # {:via, Registry, {Esr.Session.Registry, {:agent_sup, sid}}} won't
       # resolve to any pid. add_agent_subtree should bubble that up as
       # an error — wrapped in :spawn_failed by the handler.
       result =

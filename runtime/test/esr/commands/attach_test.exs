@@ -8,7 +8,7 @@ defmodule Esr.Commands.AttachTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Attach
-  alias Esr.Resource.ChatScope.Registry, as: SessionRegistry
+  alias Esr.Session.ChatRouting.Registry, as: SessionRegistry
 
   setup do
     # Use a unique chat triple per test so they don't collide.

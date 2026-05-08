@@ -67,8 +67,8 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   Steps:
     1. Look up `{session_id, name}` in the metadata table; reject
        if already present (`:duplicate_agent_name`).
-    2. Resolve the per-session `Esr.Scope.AgentSupervisor` via
-       `{:via, Registry, {Esr.Scope.Registry, {:agent_sup, sid}}}`
+    2. Resolve the per-session `Esr.Session.AgentSupervisor` via
+       `{:via, Registry, {Esr.Session.Registry, {:agent_sup, sid}}}`
        and call `add_agent_subtree/2`.
     3. On success: write the `%Instance{}` ETS record, plus
        `{:instance_sup, sid, name, instance_sup_pid}` so
@@ -253,11 +253,11 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
         pty_args = build_pty_args(session_id, name, pty_actor_id, config)
 
         agent_sup_via =
-          {:via, Registry, {Esr.Scope.Registry, {:agent_sup, session_id}}}
+          {:via, Registry, {Esr.Session.Registry, {:agent_sup, session_id}}}
 
         spawn_result =
           try do
-            Esr.Scope.AgentSupervisor.add_agent_subtree(agent_sup_via, %{
+            Esr.Session.AgentSupervisor.add_agent_subtree(agent_sup_via, %{
               session_id: session_id,
               name: name,
               cc_args: cc_args,

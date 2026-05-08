@@ -7,7 +7,7 @@ defmodule Esr.Interface.LiveRegistry do
   and are populated incrementally as actors come up. Examples:
     - `Esr.Entity.Registry` (actor_id → pid; auto-cleanup on pid death)
     - `Esr.Resource.AdapterSocket.Registry` (sid → socket; soft-offline)
-    - Future R5: `Esr.Resource.ChatScope.Registry` (chat → sid)
+    - Future R5: `Esr.Session.ChatRouting.Registry` (chat → sid)
 
   `unregister` is best-effort and returns `:ok` even if the key wasn't
   registered (idempotent).

@@ -23,7 +23,7 @@ defmodule Esr.Commands.Session.Attach do
   @behaviour Esr.Role.Control
 
   alias Esr.Resource.Session.Registry, as: SessionRegistry
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
 
   @uuid_re ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
