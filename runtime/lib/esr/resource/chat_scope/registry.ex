@@ -93,8 +93,14 @@ defmodule Esr.Resource.ChatScope.Registry do
   # Public API
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  def register_session(session_id, chat_thread_key, peer_refs),
-    do: GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
+  def register_session(session_id, chat_thread_key, peer_refs) do
+    result = GenServer.call(__MODULE__, {:register_session, session_id, chat_thread_key, peer_refs})
+    # Cleanup-PR commit 3a double-write: also write to the new registry so
+    # commit 3b can flip readers without losing state. Tolerate the new
+    # GenServer not being up yet (very-early boot writes).
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.register_session(session_id, chat_thread_key, peer_refs) end)
+    result
+  end
 
   @doc """
   Phase 2: Attach a session UUID to this `(chat_id, app_id)` scope.
@@ -106,7 +112,9 @@ defmodule Esr.Resource.ChatScope.Registry do
   @spec attach_session(String.t(), String.t(), String.t()) :: :ok
   def attach_session(chat_id, app_id, session_uuid)
       when is_binary(chat_id) and is_binary(app_id) and is_binary(session_uuid) do
-    GenServer.call(__MODULE__, {:attach_session, chat_id, app_id, session_uuid})
+    result = GenServer.call(__MODULE__, {:attach_session, chat_id, app_id, session_uuid})
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.attach_session(chat_id, app_id, session_uuid) end)
+    result
   end
 
   @doc """
@@ -119,7 +127,9 @@ defmodule Esr.Resource.ChatScope.Registry do
   @spec detach_session(String.t(), String.t(), String.t()) :: :ok
   def detach_session(chat_id, app_id, session_uuid)
       when is_binary(chat_id) and is_binary(app_id) and is_binary(session_uuid) do
-    GenServer.call(__MODULE__, {:detach_session, chat_id, app_id, session_uuid})
+    result = GenServer.call(__MODULE__, {:detach_session, chat_id, app_id, session_uuid})
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.detach_session(chat_id, app_id, session_uuid) end)
+    result
   end
 
   @doc """
@@ -169,7 +179,22 @@ defmodule Esr.Resource.ChatScope.Registry do
   """
   @spec reload() :: :ok
   def reload do
-    GenServer.call(__MODULE__, :reload)
+    result = GenServer.call(__MODULE__, :reload)
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.reload() end)
+    result
+  end
+
+  # Cleanup-PR commit 3a double-write helper. Tolerates the new ChatRouting /
+  # NameIndex GenServers not being up yet (very-early-boot writes) by
+  # rescuing the :exit / ArgumentError and silently dropping the mirror.
+  defp safe_call(fun) when is_function(fun, 0) do
+    try do
+      fun.()
+    catch
+      :exit, _ -> :error
+    rescue
+      ArgumentError -> :error
+    end
   end
 
   @doc """
@@ -196,7 +221,19 @@ defmodule Esr.Resource.ChatScope.Registry do
           }
         ) :: :ok | {:error, term()}
   def claim_uri(session_id, %{} = uri_components) when is_binary(session_id) do
-    GenServer.call(__MODULE__, {:claim_uri, session_id, uri_components})
+    result = GenServer.call(__MODULE__, {:claim_uri, session_id, uri_components})
+
+    # Cleanup-PR commit 3a double-write: mirror the claim into NameIndex.Registry
+    # only if the legacy claim succeeded (avoid double-error). Tolerate the new
+    # GenServer not being up yet.
+    case result do
+      :ok ->
+        _ = safe_call(fn -> Esr.Session.NameIndex.Registry.claim_uri(session_id, uri_components) end)
+        :ok
+
+      other ->
+        other
+    end
   end
 
   @doc """
@@ -250,8 +287,12 @@ defmodule Esr.Resource.ChatScope.Registry do
     ArgumentError -> :not_found
   end
 
-  def unregister_session(session_id),
-    do: GenServer.call(__MODULE__, {:unregister_session, session_id})
+  def unregister_session(session_id) do
+    result = GenServer.call(__MODULE__, {:unregister_session, session_id})
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.unregister_session(session_id) end)
+    _ = safe_call(fn -> Esr.Session.NameIndex.Registry.release_uri(session_id) end)
+    result
+  end
 
   @doc """
   Set the default workspace UUID for a `(chat_id, app_id)` slot. New
@@ -261,7 +302,9 @@ defmodule Esr.Resource.ChatScope.Registry do
   @spec set_default_workspace(String.t(), String.t(), String.t()) :: :ok
   def set_default_workspace(chat_id, app_id, workspace_id)
       when is_binary(chat_id) and is_binary(app_id) and is_binary(workspace_id) do
-    GenServer.call(__MODULE__, {:set_default_workspace, chat_id, app_id, workspace_id})
+    result = GenServer.call(__MODULE__, {:set_default_workspace, chat_id, app_id, workspace_id})
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.set_default_workspace(chat_id, app_id, workspace_id) end)
+    result
   end
 
   @doc """
@@ -283,7 +326,9 @@ defmodule Esr.Resource.ChatScope.Registry do
   @spec clear_default_workspace(String.t(), String.t()) :: :ok
   def clear_default_workspace(chat_id, app_id)
       when is_binary(chat_id) and is_binary(app_id) do
-    GenServer.call(__MODULE__, {:clear_default_workspace, chat_id, app_id})
+    result = GenServer.call(__MODULE__, {:clear_default_workspace, chat_id, app_id})
+    _ = safe_call(fn -> Esr.Session.ChatRouting.Registry.clear_default_workspace(chat_id, app_id) end)
+    result
   end
 
   # GenServer callbacks

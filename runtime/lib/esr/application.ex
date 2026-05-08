@@ -108,12 +108,19 @@ defmodule Esr.Application do
       # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
       Esr.Session.Supervisor,
 
-      # 4e.3b ChatScope.Registry (R5 split from legacy SessionRegistry):
-      # `(chat_id, app_id) → session_id` chat-current routing + URI-claim
-      # uniqueness indexes. Started just before Scope.Router since the
-      # router is the primary writer (register_session on success path,
-      # unregister_session on session end) and FeishuAppAdapter / admin
-      # commands are the primary readers.
+      # 4e.3b Session.ChatRouting.Registry + Session.NameIndex.Registry
+      # (cleanup-PR commit 3 split from `Esr.Resource.ChatScope.Registry`):
+      # ChatRouting owns `(chat_id, app_id) → session_id` chat-current
+      # routing; NameIndex owns the D8 URI-uniqueness indexes
+      # `(env, username, workspace, name)` and `(…, worktree_branch)`.
+      # Started BEFORE the legacy ChatScope.Registry so the double-write
+      # shim in commit 3a can safely forward writes to the new ETS tables.
+      {Esr.Session.ChatRouting.Registry, []},
+      {Esr.Session.NameIndex.Registry, []},
+
+      # 4e.3c Legacy ChatScope.Registry (R5 split from legacy SessionRegistry).
+      # Kept temporarily during the cleanup-PR double-write phase; commit 3c
+      # deletes this child after callers have switched to the new registries.
       {Esr.Resource.ChatScope.Registry, []},
 
       # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
