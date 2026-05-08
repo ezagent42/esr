@@ -53,7 +53,7 @@ defmodule Esr.Commands.Session.New do
   @behaviour Esr.Role.Control
 
   alias Esr.Resource.Session.Registry, as: SessionRegistry
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -200,7 +200,7 @@ defmodule Esr.Commands.Session.New do
               is_binary(ws) and ws != "" and is_binary(wt) and wt != "" do
     env = Esr.Paths.current_instance()
 
-    case Esr.Resource.ChatScope.Registry.claim_uri(sid, %{
+    case Esr.Session.NameIndex.Registry.claim_uri(sid, %{
            env: env,
            username: u,
            workspace: ws,
@@ -363,7 +363,10 @@ defmodule Esr.Commands.Session.New do
   defp maybe_attach_chat(_chat_id, _app_id, _sid), do: :ok
 
   defp slot_already_bound?(chat_id, app_id, sid) do
-    case :ets.lookup(:esr_chat_scope_chat_index, {chat_id, app_id}) do
+    # Cleanup-PR commit 3b: ETS table moved from :esr_chat_scope_chat_index
+    # (legacy ChatScope.Registry) to :esr_session_chat_routing
+    # (Esr.Session.ChatRouting.Registry). Same two-shape coexistence rules.
+    case :ets.lookup(:esr_session_chat_routing, {chat_id, app_id}) do
       # Old shape (register_session/3): {key, sid, refs}
       [{_k, ^sid, _refs}] -> true
       # New shape (attach/detach): {key, %{current: sid, ...}}

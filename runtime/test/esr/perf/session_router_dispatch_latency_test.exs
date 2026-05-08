@@ -77,7 +77,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # forwards `{:feishu_inbound, envelope}` here on
     # lookup_by_chat_thread hit.
     :ok =
-      Esr.Resource.ChatScope.Registry.register_session(
+      Esr.Session.ChatRouting.Registry.register_session(
         session_id,
         # PR-A T1: app_id mirrors instance_id so the FAA fallback path
         # (state.instance_id when args["app_id"] absent) hits this row.
@@ -101,7 +101,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     on_exit(fn ->
-      Esr.Resource.ChatScope.Registry.unregister_session(session_id)
+      Esr.Session.ChatRouting.Registry.unregister_session(session_id)
 
       if Process.alive?(session_sup) do
         Esr.Session.Supervisor.stop_session(session_sup)

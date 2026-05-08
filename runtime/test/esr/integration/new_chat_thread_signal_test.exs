@@ -88,7 +88,7 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
     # SessionRegistry now knows about the (chat_id, app_id, thread_id) mapping.
     assert {:ok, sid, refs} =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id)
+             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
 
     assert sid == meta.session_id
     assert is_pid(refs.feishu_chat_proxy)

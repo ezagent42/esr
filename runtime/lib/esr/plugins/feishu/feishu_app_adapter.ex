@@ -234,7 +234,7 @@ defmodule Esr.Entity.FeishuAppAdapter do
     # PR-21λ: routing key is (chat_id, app_id) only. thread_id still
     # flows downstream via the envelope so FCP/CC can quote-reply, but
     # it does not select the session anymore.
-    case Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id) do
+    case Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id) do
       {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         {:forward, [], state}

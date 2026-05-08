@@ -284,7 +284,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
       :ok = Esr.Resource.Workspace.Registry.put(ws)
 
       :ok =
-        Esr.Resource.ChatScope.Registry.set_default_workspace("oc_x", "cli_a", ws.id)
+        Esr.Session.ChatRouting.Registry.set_default_workspace("oc_x", "cli_a", ws.id)
 
       repo_path = make_tmp_git_repo!("addfolder-chat-current")
 

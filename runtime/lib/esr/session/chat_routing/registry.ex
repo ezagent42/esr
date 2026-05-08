@@ -161,8 +161,24 @@ defmodule Esr.Session.ChatRouting.Registry do
     ArgumentError -> :not_found
   end
 
-  def unregister_session(session_id),
-    do: GenServer.call(__MODULE__, {:unregister_session, session_id})
+  def unregister_session(session_id) do
+    result = GenServer.call(__MODULE__, {:unregister_session, session_id})
+    # Mirrors the legacy ChatScope.Registry contract: a single
+    # unregister_session call clears BOTH the chat slot AND the URI claims.
+    # Callers expect this conjoined cleanup; tolerate NameIndex not running.
+    _ = safe_release(session_id)
+    result
+  end
+
+  defp safe_release(session_id) do
+    try do
+      Esr.Session.NameIndex.Registry.release_uri(session_id)
+    catch
+      :exit, _ -> :error
+    rescue
+      ArgumentError -> :error
+    end
+  end
 
   @doc """
   Set the default workspace UUID for a `(chat_id, app_id)` slot. New

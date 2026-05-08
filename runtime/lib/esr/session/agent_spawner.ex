@@ -115,7 +115,7 @@ defmodule Esr.Session.AgentSpawner do
 
       pid when is_pid(pid) ->
         :ok = Esr.Session.Supervisor.stop_session(pid)
-        :ok = Esr.Resource.ChatScope.Registry.unregister_session(scope_id)
+        :ok = Esr.Session.ChatRouting.Registry.unregister_session(scope_id)
         :ok
     end
   end
@@ -409,7 +409,7 @@ defmodule Esr.Session.AgentSpawner do
     # PR-21λ: routing key dropped thread_id. The full chat-binding map
     # still lives in `params` for FCP/CC reply rendering — this only
     # narrows what `ChatScope.Registry` indexes on.
-    Esr.Resource.ChatScope.Registry.register_session(
+    Esr.Session.ChatRouting.Registry.register_session(
       session_id,
       %{
         chat_id: get_param(params, :chat_id) || "",

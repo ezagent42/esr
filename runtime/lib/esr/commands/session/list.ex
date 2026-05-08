@@ -61,7 +61,7 @@ defmodule Esr.Commands.Session.List do
 
       true ->
         sessions =
-          Esr.Resource.ChatScope.Registry.list_uris(env, username, ws)
+          Esr.Session.NameIndex.Registry.list_uris(env, username, ws)
           |> Enum.map(fn {name, sid} ->
             %{"name" => name, "session_id" => sid}
           end)

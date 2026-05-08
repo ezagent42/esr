@@ -3,7 +3,7 @@ defmodule Esr.Commands.Session.AttachTest do
 
   alias Esr.Commands.Session.Attach
   alias Esr.Resource.Session.Registry, as: SessionRegistry
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
 
   @submitter "user-uuid-0000-0000-000000000010"

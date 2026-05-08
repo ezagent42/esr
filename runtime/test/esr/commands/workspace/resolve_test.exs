@@ -3,7 +3,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
 
   alias Esr.Commands.Workspace.Resolve
   alias Esr.Entity.User.Registry, as: UserRegistry
-  alias Esr.Resource.ChatScope.Registry, as: ChatScope
+  alias Esr.Session.ChatRouting.Registry, as: ChatScope
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
   alias Esr.Test.WorkspaceFixture
 

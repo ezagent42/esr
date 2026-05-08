@@ -3,7 +3,7 @@ defmodule Esr.Commands.Workspace.UseTest do
 
   alias Esr.Commands.Workspace.Use, as: WorkspaceUse
   alias Esr.Resource.Workspace.{Struct, Registry}
-  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 

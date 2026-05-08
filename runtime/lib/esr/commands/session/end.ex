@@ -70,7 +70,7 @@ defmodule Esr.Commands.Session.End do
          }}
 
       true ->
-        case Esr.Resource.ChatScope.Registry.lookup_by_name(env, username, workspace, name) do
+        case Esr.Session.NameIndex.Registry.lookup_by_name(env, username, workspace, name) do
           {:ok, sid} ->
             end_by_session_id(sid, args)
 

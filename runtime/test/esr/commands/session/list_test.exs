@@ -133,7 +133,7 @@ defmodule Esr.Commands.Session.ListTest do
 
   describe "execute/1 PR-21j workspace-scoped path" do
     test "returns sessions filtered by (env, username, workspace) URI tuple" do
-      assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
+      assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
       assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
       unique = System.unique_integer([:positive])
@@ -156,7 +156,7 @@ defmodule Esr.Commands.Session.ListTest do
       sid_b = "sid-listB-#{unique}"
 
       :ok =
-        Esr.Resource.ChatScope.Registry.claim_uri(sid_a, %{
+        Esr.Session.NameIndex.Registry.claim_uri(sid_a, %{
           env: env,
           username: "linyilun",
           workspace: ws_name,
@@ -165,7 +165,7 @@ defmodule Esr.Commands.Session.ListTest do
         })
 
       :ok =
-        Esr.Resource.ChatScope.Registry.claim_uri(sid_b, %{
+        Esr.Session.NameIndex.Registry.claim_uri(sid_b, %{
           env: env,
           username: "linyilun",
           workspace: ws_name,
@@ -190,8 +190,8 @@ defmodule Esr.Commands.Session.ListTest do
       assert names == ["alpha", "beta"]
 
       # Cleanup
-      :ok = Esr.Resource.ChatScope.Registry.unregister_session(sid_a)
-      :ok = Esr.Resource.ChatScope.Registry.unregister_session(sid_b)
+      :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid_a)
+      :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid_b)
     end
 
     test "workspace= without username= → invalid_args" do

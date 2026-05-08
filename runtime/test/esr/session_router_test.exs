@@ -32,7 +32,7 @@ defmodule Esr.SessionRouterTest do
     # App-level deps exist: SessionRegistry, Session.Registry,
     # Session.Supervisor, Grants. Start the Session.Router under the
     # test supervisor so each test gets a clean instance.
-    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
+    assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
     assert is_pid(Process.whereis(Esr.Session.Registry))
     assert is_pid(Process.whereis(Esr.Session.Supervisor))
 
@@ -83,7 +83,7 @@ defmodule Esr.SessionRouterTest do
     # SessionRegistry records the chat-thread → session mapping and
     # the Stateful peer refs.
     assert {:ok, ^session_id, refs} =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_xx", "cli_test")
+             Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_xx", "cli_test")
 
     # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
     # cc_process → pty_process. The three Stateful peers are spawned
@@ -124,7 +124,7 @@ defmodule Esr.SessionRouterTest do
     # FeishuChatProxy's state already carries session_id; workspace_name
     # should be reachable to peers via enriched params.
     {:ok, ^session_id, refs} =
-      Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T11b2", "cli_test")
+      Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T11b2", "cli_test")
 
     fcp_state = :sys.get_state(refs.feishu_chat_proxy)
     assert fcp_state.session_id == session_id
@@ -165,11 +165,11 @@ defmodule Esr.SessionRouterTest do
 
     # Precondition: lookup succeeds.
     assert {:ok, ^sid, _refs} =
-             Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
+             Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_aa", "cli_test")
 
     :ok = Session.Router.end_session(sid)
 
-    assert :not_found = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
+    assert :not_found = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_aa", "cli_test")
 
     # And the Session supervisor is gone.
     via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
@@ -255,7 +255,7 @@ defmodule Esr.SessionRouterTest do
       # Find one spawned peer and kill it; the router's monitor will
       # DOWN and fire the telemetry event.
       {:ok, _sid2, refs} =
-        Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_crash", "cli_test")
+        Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_crash", "cli_test")
       Process.exit(refs.cc_process, :kill)
 
       assert_receive {[:esr, :session_router, :peer_crashed], _ref, %{count: 1}, meta}, 500
@@ -310,7 +310,7 @@ defmodule Esr.SessionRouterTest do
         app_id: app_id,
       })
 
-    {:ok, _sid2, refs} = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_T6", app_id)
+    {:ok, _sid2, refs} = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T6", app_id)
 
     fcp = refs.feishu_chat_proxy
     cc = refs.cc_process

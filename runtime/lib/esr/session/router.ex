@@ -111,7 +111,7 @@ defmodule Esr.Session.Router do
 
       pid when is_pid(pid) ->
         :ok = Esr.Session.Supervisor.stop_session(pid)
-        :ok = Esr.Resource.ChatScope.Registry.unregister_session(sid)
+        :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid)
         {:reply, :ok, state}
     end
   end
@@ -255,7 +255,7 @@ defmodule Esr.Session.Router do
   # `register_session/3` on its success path; we just need to look it
   # up and send the message.
   defp redeliver_triggering_envelope(chat_id, app_id, _thread_id, envelope) do
-    case Esr.Resource.ChatScope.Registry.lookup_by_chat(chat_id, app_id) do
+    case Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id) do
       {:ok, _sid, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
         send(proxy_pid, {:feishu_inbound, envelope})
         :ok

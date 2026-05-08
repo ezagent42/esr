@@ -27,7 +27,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
   alias Esr.Commands.Session.New, as: SessionNew
   alias Esr.Resource.Workspace.{Registry, Struct, NameIndex}
-  alias Esr.Resource.ChatScope.Registry, as: ChatReg
+  alias Esr.Session.ChatRouting.Registry, as: ChatReg
 
   @name_index_table :esr_workspace_name_index
 

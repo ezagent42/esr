@@ -9,7 +9,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
     # at app boot, so a redundant `start_supervised!` would crash with
     # :already_started. We reuse the app-level processes; register_admin_peer
     # is idempotent per-key so cross-test pollution is bounded.
-    assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
+    assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
     assert is_pid(Process.whereis(Esr.Session.Admin.Process))
     :ok
   end
