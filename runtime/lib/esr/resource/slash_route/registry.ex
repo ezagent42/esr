@@ -264,29 +264,84 @@ defmodule Esr.Resource.SlashRoute.Registry do
   def init(:ok) do
     :ets.new(@slash_table, [:named_table, :set, :public, read_concurrency: true])
     :ets.new(@kind_table, [:named_table, :set, :public, read_concurrency: true])
-    {:ok, %{}}
+    {:ok, %{base: %{slashes: [], internal_kinds: []}, overlays: %{}}}
   end
 
   @impl true
   def handle_call({:load, snapshot}, _from, state) do
-    :ets.delete_all_objects(@slash_table)
-    :ets.delete_all_objects(@kind_table)
+    base = %{
+      slashes: Map.get(snapshot, :slashes, []),
+      internal_kinds: Map.get(snapshot, :internal_kinds, [])
+    }
 
-    # Insert each slash-callable entry under all its keys (primary +
-    # aliases). Insert each entry's kind into kind_table.
-    slashes = Map.get(snapshot, :slashes, [])
+    new_state = %{state | base: base}
 
-    Enum.each(slashes, fn route ->
-      keys = [route.slash | Map.get(route, :aliases, [])]
-      Enum.each(keys, fn key -> :ets.insert(@slash_table, {key, route}) end)
-      :ets.insert(@kind_table, {route.kind, route})
-    end)
+    case rebuild_merged_view(new_state) do
+      :ok ->
+        {:reply, :ok, new_state}
 
-    # Internal-only kinds populate kind_table only.
-    internal = Map.get(snapshot, :internal_kinds, [])
-    Enum.each(internal, fn route -> :ets.insert(@kind_table, {route.kind, route}) end)
+      {:error, reason} = err ->
+        Logger.error("SlashRoute.Registry: base load produced collision: #{inspect(reason)}")
+        {:reply, err, state}
+    end
+  end
 
-    {:reply, :ok, state}
+  # Rebuild the public ETS tables from base + every overlay. Collision
+  # across registrations is a hard error — we refuse to install rather
+  # than silently overwrite.
+  defp rebuild_merged_view(%{base: base, overlays: overlays}) do
+    all_slashes =
+      base.slashes ++
+        (overlays |> Map.values() |> Enum.flat_map(&Map.get(&1, :slashes, [])))
+
+    all_internal =
+      base.internal_kinds ++
+        (overlays |> Map.values() |> Enum.flat_map(&Map.get(&1, :internal_kinds, [])))
+
+    # Kind-collision is checked WITHIN slashes and WITHIN internal_kinds
+    # separately: the canonical yaml deliberately shares some kinds across
+    # both lists (e.g. `cap_grant` is both slash-callable and an
+    # internal_kind alias for the escript dispatch path — see
+    # priv/slash-routes.default.yaml comment around line 551). The
+    # kind_table is populated from both with internal_kinds overwriting,
+    # so cross-list kind reuse is by design, not a collision.
+    with :ok <- detect_slash_collision(all_slashes),
+         :ok <- detect_kind_collision(all_slashes),
+         :ok <- detect_kind_collision(all_internal) do
+      :ets.delete_all_objects(@slash_table)
+      :ets.delete_all_objects(@kind_table)
+
+      Enum.each(all_slashes, fn route ->
+        keys = [route.slash | Map.get(route, :aliases, [])]
+        Enum.each(keys, fn key -> :ets.insert(@slash_table, {key, route}) end)
+        :ets.insert(@kind_table, {route.kind, route})
+      end)
+
+      Enum.each(all_internal, fn route -> :ets.insert(@kind_table, {route.kind, route}) end)
+
+      :ok
+    end
+  end
+
+  defp detect_slash_collision(slashes) do
+    keys =
+      Enum.flat_map(slashes, fn route ->
+        [route.slash | Map.get(route, :aliases, [])]
+      end)
+
+    case keys -- Enum.uniq(keys) do
+      [] -> :ok
+      [dup | _] -> {:error, {:slash_collision, dup}}
+    end
+  end
+
+  defp detect_kind_collision(routes) do
+    kinds = Enum.map(routes, & &1.kind)
+
+    case kinds -- Enum.uniq(kinds) do
+      [] -> :ok
+      [dup | _] -> {:error, {:kind_collision, dup}}
+    end
   end
 
   # ------------------------------------------------------------------
