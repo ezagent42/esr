@@ -20,6 +20,7 @@ defmodule Esr.Commands.User.Use do
 
   @behaviour Esr.Role.Control
 
+  alias Esr.Entity.User.NameIndex, as: UserNameIndex
   alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
@@ -31,7 +32,8 @@ defmodule Esr.Commands.User.Use do
       when is_binary(ws_name) and ws_name != "" do
     with {:ok, username} <- resolve_submitter(cmd),
          {:ok, ws_id} <- resolve_workspace_id(ws_name),
-         :ok <- UserRegistry.set_default_workspace(username, ws_id) do
+         :ok <- UserRegistry.set_default_workspace(username, ws_id),
+         :ok <- persist_default_to_user_json(username, ws_id) do
       {:ok,
        %{
          "action" => "user_default_set",
@@ -81,6 +83,43 @@ defmodule Esr.Commands.User.Use do
       true ->
         {:error, %{"type" => "unknown_user", "message" => "no submitter context"}}
     end
+  end
+
+  # Spec §4.3 invariant: the user-default binding must survive an esrd
+  # restart. ETS-only set_default_workspace is rebuilt on boot from
+  # user.json by FileLoader, so the canonical write goes here.
+  # Single-field update on the existing user.json (keep schema_version,
+  # id, username, feishu_ids, display_name, created_at intact) — atomic
+  # via tmp+rename. Missing-uuid in NameIndex is silently skipped: the
+  # ETS write already succeeded, so the in-memory state is correct
+  # within this boot; the disk-write is a best-effort durability layer.
+  defp persist_default_to_user_json(username, ws_id) do
+    case UserNameIndex.id_for_name(:esr_user_name_index, username) do
+      {:ok, uuid} -> rewrite_user_json_default(uuid, ws_id)
+      :not_found -> :ok
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp rewrite_user_json_default(uuid, ws_id) do
+    path = Path.join([Esr.Paths.users_dir(), uuid, "user.json"])
+
+    with {:ok, raw} <- File.read(path),
+         {:ok, doc} <- Jason.decode(raw) do
+      tmp = path <> ".tmp"
+      updated = Map.put(doc, "default_workspace_id", ws_id)
+
+      with :ok <- File.write(tmp, Jason.encode!(updated, pretty: true)),
+           :ok <- File.rename(tmp, path) do
+        :ok
+      end
+    else
+      {:error, :enoent} -> :ok
+      {:error, _} = err -> err
+    end
+  rescue
+    e -> {:error, e}
   end
 
   defp resolve_workspace_id(ws_name) do
