@@ -29,7 +29,7 @@ defmodule Esr.Commands.DoctorTest do
 
     assert text =~ "ESR 状态诊断"
     assert text =~ "未绑定"
-    assert text =~ "user bind-feishu"
+    assert text =~ "feishu bind"
     assert text =~ open_id
     # env_hint maps esr_dev_helper → dev
     assert text =~ "--env=dev"

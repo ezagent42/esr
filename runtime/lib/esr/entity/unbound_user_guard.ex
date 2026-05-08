@@ -85,7 +85,7 @@ defmodule Esr.Entity.UnboundUserGuard do
 
     然后跑：
 
-      ./esr.sh --env=<prod|dev> user bind-feishu <esr_username> #{user_id}
+      ./esr.sh --env=<prod|dev> feishu bind <esr_username> #{user_id}
 
     绑完之后给本 bot 发任意消息就会走 ESR 流程。
 

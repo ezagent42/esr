@@ -14,6 +14,44 @@ defmodule Esr.Resource.SlashRoute.Registry.FileLoader do
   alias Esr.Resource.SlashRoute.Registry, as: SlashRouteRegistry
 
   @doc """
+  Parse a yaml-shape `slash_routes:` block (top-level keys: `"slashes"`,
+  `"internal_kinds"`) into the `:slashes` + `:internal_kinds` snapshot
+  that `Esr.Resource.SlashRoute.Registry.load_snapshot/1` and
+  `register_overlay/2` expect.
+
+  Used by both the file-watcher path (base yaml) and the plugin loader
+  (per-plugin manifest). One parser, two callers — see audit #6 spec §5.4.
+
+  Entries that fail per-route validation are silently dropped from the
+  output; manifest-level validation (`Esr.Plugin.Manifest.validate/1`)
+  has already run by the time the loader calls this, so a malformed
+  entry here would be a programmer error rather than user input.
+  """
+  @spec parse_block_to_snapshot(map()) :: %{slashes: list(), internal_kinds: list()}
+  def parse_block_to_snapshot(block) when is_map(block) do
+    slashes_map = Map.get(block, "slashes", %{}) || %{}
+    internal_map = Map.get(block, "internal_kinds", %{}) || %{}
+
+    slashes =
+      Enum.flat_map(slashes_map, fn {key, entry} ->
+        case validate_slash_entry(key, entry) do
+          {:ok, route} -> [route]
+          {:error, _} -> []
+        end
+      end)
+
+    internal_kinds =
+      Enum.flat_map(internal_map, fn {kind, entry} ->
+        case validate_internal_kind(kind, entry) do
+          {:ok, route} -> [route]
+          {:error, _} -> []
+        end
+      end)
+
+    %{slashes: slashes, internal_kinds: internal_kinds}
+  end
+
+  @doc """
   Load the yaml at `path`, validate, and atomically swap into the
   ETS-backed snapshot. Missing file = empty snapshot, no error.
   Malformed yaml = `:error`, previous snapshot retained.

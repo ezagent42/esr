@@ -28,7 +28,9 @@ defmodule Esr.Admin do
   @spec permissions() :: [String.t()]
   def permissions do
     [
-      "notify.send",
+      # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+      # `notify.send` migrated to feishu plugin as `feishu/notify-send`,
+      # declared by runtime/lib/esr/plugins/feishu/manifest.yaml.
       "runtime.reload",
       "adapter.register",
       "session.create",

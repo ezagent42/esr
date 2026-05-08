@@ -38,7 +38,7 @@ defmodule Esr.Entity.User.Registry do
     strings; a single human may have multiple (one per registered
     Feishu app — open_ids are app-scoped).
     """
-    defstruct [:username, feishu_ids: []]
+    defstruct [:username, feishu_ids: [], default_workspace_id: nil]
   end
 
   # --- Public API ---
@@ -118,6 +118,34 @@ defmodule Esr.Entity.User.Registry do
     ArgumentError -> []
   end
 
+  @doc """
+  Bind `username` to a default workspace UUID. The workspace itself is
+  not validated here — caller must ensure ws_id exists in
+  `Esr.Resource.Workspace.Registry`.
+
+  Returns `{:error, :not_found}` if username has no row in `@by_name`.
+  """
+  @spec set_default_workspace(String.t(), String.t()) ::
+          :ok | {:error, :not_found}
+  def set_default_workspace(username, ws_id)
+      when is_binary(username) and is_binary(ws_id) do
+    GenServer.call(__MODULE__, {:set_default_workspace, username, ws_id})
+  end
+
+  @doc """
+  Look up the default workspace UUID for `username`.
+  Returns `:not_found` when no binding exists.
+  """
+  @spec get_default_workspace(String.t()) :: {:ok, String.t()} | :not_found
+  def get_default_workspace(username) when is_binary(username) do
+    case :ets.lookup(@by_name, username) do
+      [{^username, %User{default_workspace_id: id}}] when is_binary(id) -> {:ok, id}
+      _ -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
   # --- GenServer ---
 
   @impl true
@@ -166,6 +194,31 @@ defmodule Esr.Entity.User.Registry do
     end)
 
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:set_default_workspace, username, ws_id}, _from, state) do
+    case :ets.lookup(@by_name, username) do
+      [{^username, %User{} = user}] ->
+        updated = %User{user | default_workspace_id: ws_id}
+        :ets.insert(@by_name, {username, updated})
+
+        # Mirror to UUID table if a row is present (load_snapshot_with_uuids).
+        # Iterate tab2list rather than match_object — pin-in-struct-pattern
+        # cannot be used inside :ets match specs at compile time.
+        case Enum.find(:ets.tab2list(@by_uuid), fn
+               {_uuid, %User{username: ^username}} -> true
+               _ -> false
+             end) do
+          {uuid, _} -> :ets.insert(@by_uuid, {uuid, updated})
+          _ -> :ok
+        end
+
+        {:reply, :ok, state}
+
+      _ ->
+        {:reply, {:error, :not_found}, state}
+    end
   end
 
   # ---------------------------------------------------------------------------

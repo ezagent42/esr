@@ -345,4 +345,107 @@ defmodule Esr.Plugin.ManifestTest do
       assert {:error, {:invalid_hot_reloadable, 1}} = Manifest.parse(path)
     end
   end
+
+  describe "slash_routes validation (audit #6)" do
+    test "rejects a slash key with the wrong plugin prefix" do
+      manifest = %Esr.Plugin.Manifest{
+        name: "feishu",
+        version: "0.1.0",
+        description: nil,
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{
+          capabilities: ["feishu/bind"],
+          slash_routes: %{
+            "slashes" => %{
+              "/user:bind-feishu" => %{
+                "kind" => "feishu_bind",
+                "permission" => "feishu/bind",
+                "command_module" => "Esr.Plugins.Feishu.Commands.BindUser"
+              }
+            }
+          }
+        },
+        path: "/tmp/manifest.yaml",
+        hot_reloadable: false
+      }
+
+      assert {:error, {:bad_slash_prefix, "/user:bind-feishu", "feishu"}} =
+               Esr.Plugin.Manifest.validate(manifest)
+    end
+
+    test "rejects an internal_kinds entry whose kind doesn't start with <plugin_name>_" do
+      manifest = %Esr.Plugin.Manifest{
+        name: "feishu",
+        version: "0.1.0",
+        description: nil,
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{
+          capabilities: ["feishu/bind"],
+          slash_routes: %{
+            "internal_kinds" => %{
+              "user_bind_feishu" => %{
+                "permission" => "feishu/bind",
+                "command_module" => "Esr.Plugins.Feishu.Commands.BindUser"
+              }
+            }
+          }
+        },
+        path: "/tmp/manifest.yaml",
+        hot_reloadable: false
+      }
+
+      assert {:error, {:bad_kind_prefix, "user_bind_feishu", "feishu"}} =
+               Esr.Plugin.Manifest.validate(manifest)
+    end
+
+    test "rejects a permission not declared in this plugin's capabilities" do
+      manifest = %Esr.Plugin.Manifest{
+        name: "feishu",
+        version: "0.1.0",
+        description: nil,
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{
+          capabilities: ["feishu/manage"],
+          slash_routes: %{
+            "internal_kinds" => %{
+              "feishu_bind" => %{
+                "permission" => "claude_code/spawn",
+                "command_module" => "Esr.Plugins.Feishu.Commands.BindUser"
+              }
+            }
+          }
+        },
+        path: "/tmp/manifest.yaml",
+        hot_reloadable: false
+      }
+
+      assert {:error, {:cross_plugin_permission, "claude_code/spawn"}} =
+               Esr.Plugin.Manifest.validate(manifest)
+    end
+
+    test "rejects a command_module that doesn't exist (not loadable)" do
+      manifest = %Esr.Plugin.Manifest{
+        name: "feishu",
+        version: "0.1.0",
+        description: nil,
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{
+          capabilities: ["feishu/bind"],
+          slash_routes: %{
+            "internal_kinds" => %{
+              "feishu_bogus" => %{
+                "permission" => "feishu/bind",
+                "command_module" => "Esr.Plugins.Feishu.Commands.NopeNotReal"
+              }
+            }
+          }
+        },
+        path: "/tmp/manifest.yaml",
+        hot_reloadable: false
+      }
+
+      assert {:error, {:unknown_command_module, "Esr.Plugins.Feishu.Commands.NopeNotReal"}} =
+               Esr.Plugin.Manifest.validate(manifest)
+    end
+  end
 end

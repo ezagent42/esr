@@ -59,6 +59,29 @@ declares:
     module: Esr.Plugins.Feishu.Bootstrap
     function: bootstrap
 
+  capabilities:
+    - feishu/notify-send
+    - feishu/user-bind
+
+  # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+  # 3 plugin-owned commands migrated from core under the rev-3 naming
+  # contract (kind names rename to <plugin>_<verb>; cap names rename
+  # to <plugin>/<rest>). Old kind names: notify, user_bind_feishu,
+  # user_unbind_feishu. New: feishu_notify, feishu_bind, feishu_unbind.
+  slash_routes:
+    schema_version: 1
+    slashes: {}
+    internal_kinds:
+      feishu_notify:
+        permission: "feishu/notify-send"
+        command_module: "Esr.Plugins.Feishu.Commands.Notify"
+      feishu_bind:
+        permission: "feishu/user-bind"
+        command_module: "Esr.Plugins.Feishu.Commands.BindUser"
+      feishu_unbind:
+        permission: "feishu/user-bind"
+        command_module: "Esr.Plugins.Feishu.Commands.UnbindUser"
+
 config_schema:
   app_id:
     type: string

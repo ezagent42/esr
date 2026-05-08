@@ -1,4 +1,4 @@
-defmodule Esr.Commands.User.BindFeishu do
+defmodule Esr.Plugins.Feishu.Commands.BindUser do
   @moduledoc """
   `user_bind_feishu` admin-queue command — bind a feishu open_id to an
   esr user. Mirrors Python `esr user bind-feishu <name> <feishu_user_id>`

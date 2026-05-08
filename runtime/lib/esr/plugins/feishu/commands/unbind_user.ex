@@ -1,9 +1,9 @@
-defmodule Esr.Commands.User.UnbindFeishu do
+defmodule Esr.Plugins.Feishu.Commands.UnbindUser do
   @moduledoc """
   `user_unbind_feishu` admin-queue command — remove a feishu open_id
   binding from an esr user. Mirrors Python `esr user unbind-feishu`
   but **without** the bootstrap-cap auto-revoke (transitional Python
-  logic; see `Esr.Commands.User.BindFeishu` moduledoc).
+  logic; see `Esr.Plugins.Feishu.Commands.BindUser` moduledoc).
 
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
   """

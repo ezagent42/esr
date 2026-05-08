@@ -66,7 +66,7 @@ ADD_ALICE=$(esr_cli admin submit session_add_agent \
   --wait --timeout 30)
 echo "18 add_agent alice: ${ADD_ALICE}"
 assert_contains "$ADD_ALICE" "ok: true"     "18: add_agent alice ok"
-assert_contains "$ADD_ALICE" '"alice"'      "18: alice name in output"
+assert_contains "$ADD_ALICE" 'name: alice'  "18: alice name in output"
 
 # M-2.8 contract: actor_ids field present with cc + pty UUIDs.
 assert_contains "$ADD_ALICE" "actor_ids"    "18: actor_ids field surfaced"
@@ -94,7 +94,7 @@ ADD_BOB=$(esr_cli admin submit session_add_agent \
   --wait --timeout 30)
 echo "18 add_agent bob: ${ADD_BOB}"
 assert_contains "$ADD_BOB" "ok: true"        "18: add_agent bob ok"
-assert_contains "$ADD_BOB" '"bob"'           "18: bob name in output"
+assert_contains "$ADD_BOB" 'name: bob'        "18: bob name in output"
 assert_contains "$ADD_BOB" "actor_ids"       "18: bob actor_ids surfaced"
 
 BOB_CC=$(echo "$ADD_BOB" | grep -E -o '"cc":\s*"[0-9a-f-]{36}"' | head -1)
@@ -115,7 +115,7 @@ ADD_CAROL=$(esr_cli admin submit session_add_agent \
   --wait --timeout 30)
 echo "18 add_agent carol: ${ADD_CAROL}"
 assert_contains "$ADD_CAROL" "ok: true"      "18: add_agent carol ok"
-assert_contains "$ADD_CAROL" '"carol"'       "18: carol name in output"
+assert_contains "$ADD_CAROL" 'name: carol'    "18: carol name in output"
 
 CAROL_CC=$(echo "$ADD_CAROL" | grep -E -o '"cc":\s*"[0-9a-f-]{36}"' | head -1)
 

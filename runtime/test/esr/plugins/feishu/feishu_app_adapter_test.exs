@@ -355,7 +355,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
                      500
 
       # DM mentions the user-bind command + carries the open_id verbatim
-      assert content =~ "user bind-feishu"
+      assert content =~ "feishu bind"
       assert content =~ "ou_unbound_xyz"
 
       # No new_chat_thread broadcast — inbound dropped at user-guide gate
@@ -452,7 +452,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       # The chat-guide DM mentions `workspace add`; the user-guide DM
       # mentions `user bind-feishu`. We expect the chat one only.
       assert content =~ "workspace add"
-      refute content =~ "user bind-feishu"
+      refute content =~ "feishu bind"
 
       # No second DM stacked on top
       refute_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 200
@@ -507,7 +507,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
                      },
                      500
 
-      assert content =~ "user bind-feishu"
+      assert content =~ "feishu bind"
 
       refute_receive %Phoenix.Socket.Broadcast{event: "envelope"}, 200
     end

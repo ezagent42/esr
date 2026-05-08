@@ -146,7 +146,7 @@ defmodule Esr.Slash.ReplyTargetTest do
       processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
       File.write!(processing, "id: #{id}\n")
 
-      command = %{"id" => id, "kind" => "notify", "args" => %{"text" => "hi"}}
+      command = %{"id" => id, "kind" => "feishu_notify", "args" => %{"text" => "hi"}}
       target = %{id: id, command: command}
 
       assert :ok =
@@ -163,13 +163,13 @@ defmodule Esr.Slash.ReplyTargetTest do
       processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
       File.write!(processing, "id: #{id}\n")
 
-      command = %{"id" => id, "kind" => "notify", "args" => %{}}
+      command = %{"id" => id, "kind" => "feishu_notify", "args" => %{}}
       target = %{id: id, command: command}
 
       assert :ok =
                QueueFile.respond(
                  target,
-                 {:error, %{"type" => "unauthorized", "kind" => "notify"}},
+                 {:error, %{"type" => "unauthorized", "kind" => "feishu_notify"}},
                  make_ref()
                )
 
@@ -184,7 +184,7 @@ defmodule Esr.Slash.ReplyTargetTest do
       processing = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
       File.write!(processing, "id: #{id}\n")
 
-      command = %{"id" => id, "kind" => "notify", "args" => %{}}
+      command = %{"id" => id, "kind" => "feishu_notify", "args" => %{}}
       target = %{id: id, command: command}
 
       assert :ok =

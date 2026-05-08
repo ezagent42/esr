@@ -172,4 +172,51 @@ defmodule Esr.Entity.User.RegistryTest do
       assert {:ok, "uuid-new-222"} = NameIndex.id_for_name("new")
     end
   end
+
+  describe "User struct (M-5/D2)" do
+    test "defaults default_workspace_id to nil" do
+      user = %Esr.Entity.User.Registry.User{username: "alice"}
+      assert user.default_workspace_id == nil
+    end
+
+    test "carries default_workspace_id when constructed" do
+      uuid = "01ARZSTAB12345678901234567"
+      user = %Esr.Entity.User.Registry.User{username: "alice", default_workspace_id: uuid}
+      assert user.default_workspace_id == uuid
+    end
+  end
+
+  describe "set_default_workspace/2 + get_default_workspace/1" do
+    setup do
+      # Reset Registry between tests
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+        %{
+          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+        },
+        %{"alice" => "alice-uuid-1"}
+      )
+
+      :ok
+    end
+
+    test "set then get returns the bound workspace_id" do
+      assert :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-1")
+      assert {:ok, "ws-uuid-1"} = Esr.Entity.User.Registry.get_default_workspace("alice")
+    end
+
+    test "get returns :not_found when nothing set" do
+      assert :not_found = Esr.Entity.User.Registry.get_default_workspace("alice")
+    end
+
+    test "set on unknown user returns {:error, :not_found}" do
+      assert {:error, :not_found} =
+               Esr.Entity.User.Registry.set_default_workspace("ghost", "ws-uuid-1")
+    end
+
+    test "overwrite replaces the previous binding" do
+      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-1")
+      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-2")
+      assert {:ok, "ws-uuid-2"} = Esr.Entity.User.Registry.get_default_workspace("alice")
+    end
+  end
 end

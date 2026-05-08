@@ -59,7 +59,9 @@ defmodule Esr.Entity.User.FileLoader do
         with {:ok, yaml} <- parse(path),
              {:ok, snapshot} <- build_snapshot(yaml) do
           uuids = read_uuids_from_dir(users_dir)
+          defaults = read_default_workspaces_from_dir(users_dir)
           Registry.load_snapshot_with_uuids(snapshot, uuids)
+          apply_defaults(defaults)
           Logger.info("users: loaded #{map_size(snapshot)} users from #{path}")
           :ok
         else
@@ -138,6 +140,32 @@ defmodule Esr.Entity.User.FileLoader do
       %{}
   end
 
+  # Companion to read_uuids_from_dir/1: scan the same files for
+  # default_workspace_id. Returns %{username => ws_uuid}.
+  @spec read_default_workspaces_from_dir(Path.t()) :: %{String.t() => String.t()}
+  def read_default_workspaces_from_dir(users_dir) do
+    if File.dir?(users_dir) do
+      users_dir
+      |> File.ls!()
+      |> Enum.reduce(%{}, fn entry, acc ->
+        json_path = Path.join([users_dir, entry, "user.json"])
+
+        case read_user_json(json_path) do
+          {:ok, %{"username" => username, "default_workspace_id" => ws_id}}
+          when is_binary(username) and is_binary(ws_id) ->
+            Map.put(acc, username, ws_id)
+
+          _ ->
+            acc
+        end
+      end)
+    else
+      %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
   # Load from users/ directory when no users.yaml exists (post-migration state).
   # Returns {snapshot, uuids} where snapshot is built from user.json files.
   @spec load_from_users_dir(Path.t()) :: {%{String.t() => User.t()}, %{String.t() => String.t()}}
@@ -152,7 +180,14 @@ defmodule Esr.Entity.User.FileLoader do
           {:ok, %{"username" => username, "id" => uuid} = doc}
           when is_binary(username) and is_binary(uuid) ->
             feishu_ids = Map.get(doc, "feishu_ids", [])
-            user = %User{username: username, feishu_ids: feishu_ids}
+            default_ws = Map.get(doc, "default_workspace_id")
+
+            user = %User{
+              username: username,
+              feishu_ids: feishu_ids,
+              default_workspace_id: default_ws
+            }
+
             {Map.put(snap, username, user), Map.put(uuids, username, uuid)}
 
           _ ->
@@ -176,5 +211,11 @@ defmodule Esr.Entity.User.FileLoader do
     else
       _ -> :error
     end
+  end
+
+  defp apply_defaults(defaults) when is_map(defaults) do
+    Enum.each(defaults, fn {username, ws_id} ->
+      _ = Registry.set_default_workspace(username, ws_id)
+    end)
   end
 end

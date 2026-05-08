@@ -12,6 +12,19 @@ defmodule Esr.SlashRoutesTest do
     if Process.whereis(SlashRouteRegistry) == nil, do: start_supervised!(SlashRouteRegistry)
     SlashRouteRegistry.load_snapshot(%{slashes: [], internal_kinds: []})
 
+    # Audit #6 rev-3 (2026-05-08-plugin-command-registration): in test
+    # env, runtime.exs's plugin loader auto-enables feishu + claude_code
+    # via `Esr.Plugin.EnabledList`'s legacy default, so their overlays
+    # are registered against this singleton SlashRouteRegistry at app
+    # boot. These tests exercise the BASE registry mechanics (load,
+    # list_internal_kinds, dump/1) — overlay contributions would
+    # contaminate enumeration assertions. Unregister them so each test
+    # sees only the base + the fixture it loads. The on_exit hook below
+    # restores the priv default base; downstream tests that depend on
+    # plugin overlays re-register them via Loader.start_plugin/2.
+    SlashRouteRegistry.unregister_overlay("feishu")
+    SlashRouteRegistry.unregister_overlay("claude_code")
+
     on_exit(fn ->
       priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
       if File.exists?(priv), do: FileLoader.load(priv)
@@ -26,7 +39,7 @@ defmodule Esr.SlashRoutesTest do
     end
 
     test "single-word slash matches by head" do
-      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")})
+      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")})
 
       assert {:ok, route} = SlashRouteRegistry.lookup("/help")
       assert route.kind == "help"
@@ -34,7 +47,7 @@ defmodule Esr.SlashRoutesTest do
     end
 
     test "single-word slash with trailing args still matches" do
-      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")})
+      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")})
 
       assert {:ok, _} = SlashRouteRegistry.lookup("/help foo bar")
     end
@@ -42,8 +55,8 @@ defmodule Esr.SlashRoutesTest do
     test "multi-word slash matches longest prefix" do
       load_fixture(
         slashes: %{
-          "/workspace" => simple_route("workspace", "Esr.Commands.Notify"),
-          "/workspace info" => simple_route("workspace_info", "Esr.Commands.Notify")
+          "/workspace" => simple_route("workspace", "Esr.Test.NoopCommand"),
+          "/workspace info" => simple_route("workspace_info", "Esr.Test.NoopCommand")
         }
       )
 
@@ -60,7 +73,7 @@ defmodule Esr.SlashRoutesTest do
       # Phase 6: the priv default yaml no longer uses aliases (hard cutover).
       # This test validates the Registry's alias-resolution mechanism with a
       # synthetic fixture (the mechanism is still supported for custom yaml).
-      route = simple_route("session_list", "Esr.Commands.Notify")
+      route = simple_route("session_list", "Esr.Test.NoopCommand")
       load_fixture(slashes: %{"/session:list" => Map.put(route, "aliases", ["/sessions"])})
 
       assert {:ok, r1} = SlashRouteRegistry.lookup("/session:list")
@@ -69,7 +82,7 @@ defmodule Esr.SlashRoutesTest do
     end
 
     test "unknown slash returns :not_found" do
-      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")})
+      load_fixture(slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")})
 
       assert :not_found = SlashRouteRegistry.lookup("/totally-fake")
     end
@@ -79,10 +92,10 @@ defmodule Esr.SlashRoutesTest do
     test "covers slash kinds" do
       load_fixture(
         slashes: %{
-          "/help" => Map.put(simple_route("help", "Esr.Commands.Notify"), "permission", nil),
+          "/help" => Map.put(simple_route("help", "Esr.Test.NoopCommand"), "permission", nil),
           "/session:add-agent" =>
             Map.put(
-              simple_route("session_add_agent", "Esr.Commands.Notify"),
+              simple_route("session_add_agent", "Esr.Test.NoopCommand"),
               "permission",
               "session:default/add-agent"
             )
@@ -92,8 +105,8 @@ defmodule Esr.SlashRoutesTest do
       assert nil == SlashRouteRegistry.permission_for("help")
       assert "session:default/add-agent" == SlashRouteRegistry.permission_for("session_add_agent")
 
-      assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("help")
-      assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("session_add_agent")
+      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("help")
+      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("session_add_agent")
     end
 
     test "covers internal_kinds" do
@@ -101,13 +114,13 @@ defmodule Esr.SlashRoutesTest do
         internal_kinds: %{
           "notify" => %{
             "permission" => "notify.send",
-            "command_module" => "Esr.Commands.Notify"
+            "command_module" => "Esr.Test.NoopCommand"
           }
         }
       )
 
       assert "notify.send" == SlashRouteRegistry.permission_for("notify")
-      assert Esr.Commands.Notify == SlashRouteRegistry.command_module_for("notify")
+      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("notify")
     end
 
     test "unknown kind returns :not_found" do
@@ -123,11 +136,11 @@ defmodule Esr.SlashRoutesTest do
       load_fixture(
         slashes: %{
           "/session:list" =>
-            Map.merge(simple_route("session_list", "Esr.Commands.Notify"), %{
+            Map.merge(simple_route("session_list", "Esr.Test.NoopCommand"), %{
               "category" => "Sessions"
             }),
           "/help" =>
-            Map.merge(simple_route("help", "Esr.Commands.Notify"), %{"category" => "诊断"})
+            Map.merge(simple_route("help", "Esr.Test.NoopCommand"), %{"category" => "诊断"})
         }
       )
 
@@ -152,7 +165,7 @@ defmodule Esr.SlashRoutesTest do
         "/help":
           kind: help
           permission: null
-          command_module: "Esr.Commands.Notify"
+          command_module: "Esr.Test.NoopCommand"
           requires_workspace_binding: false
           requires_user_binding: false
           description: test
@@ -160,7 +173,7 @@ defmodule Esr.SlashRoutesTest do
       internal_kinds:
         notify:
           permission: notify.send
-          command_module: "Esr.Commands.Notify"
+          command_module: "Esr.Test.NoopCommand"
       """
 
       path = write_tmp(yaml)
@@ -219,7 +232,7 @@ defmodule Esr.SlashRoutesTest do
       slashes:
         "no-slash-prefix":
           kind: nope
-          command_module: "Esr.Commands.Notify"
+          command_module: "Esr.Test.NoopCommand"
           requires_workspace_binding: false
           requires_user_binding: false
           description: bad
@@ -257,8 +270,11 @@ defmodule Esr.SlashRoutesTest do
       # Old-form slashes do NOT resolve after cutover
       assert :not_found = SlashRouteRegistry.lookup("/sessions")
       assert :not_found = SlashRouteRegistry.lookup("/list-sessions")
-      # Internal kind: notify should resolve via permission_for
-      assert "notify.send" == SlashRouteRegistry.permission_for("notify")
+      # Internal kind: reload should resolve via permission_for. (Pre-rev-3
+      # this asserted on `notify`/`notify.send` — both moved to the feishu
+      # plugin overlay as `feishu_notify`/`feishu/notify-send` per audit #6
+      # rev-3, so the priv-default base no longer carries them.)
+      assert "runtime.reload" == SlashRouteRegistry.permission_for("reload")
     end
   end
 
@@ -269,10 +285,10 @@ defmodule Esr.SlashRoutesTest do
   describe "list_internal_kinds/0" do
     test "returns kinds present in internal_kinds: but not in slashes:" do
       load_fixture(
-        slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")},
+        slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"},
-          "revoke" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"}
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"},
+          "revoke" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -284,9 +300,9 @@ defmodule Esr.SlashRoutesTest do
       # Same kind appearing in both — slashes: takes priority, internal_kinds:
       # entry is filtered out of list_internal_kinds.
       load_fixture(
-        slashes: %{"/notify" => simple_route("notify", "Esr.Commands.Notify")},
+        slashes: %{"/notify" => simple_route("notify", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "notify" => %{"permission" => "notify.send", "command_module" => "Esr.Commands.Notify"}
+          "notify" => %{"permission" => "notify.send", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -297,9 +313,9 @@ defmodule Esr.SlashRoutesTest do
   describe "dump/1" do
     test "returns version + two sections" do
       load_fixture(
-        slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")},
+        slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"}
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -313,9 +329,9 @@ defmodule Esr.SlashRoutesTest do
 
     test "default include_internal: false strips permission + command_module" do
       load_fixture(
-        slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")},
+        slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"}
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -331,9 +347,9 @@ defmodule Esr.SlashRoutesTest do
 
     test "include_internal: true exposes permission + command_module on both sections" do
       load_fixture(
-        slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")},
+        slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"}
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -344,14 +360,14 @@ defmodule Esr.SlashRoutesTest do
       assert Map.has_key?(slash_entry, "permission")
       assert Map.has_key?(slash_entry, "command_module")
       assert internal_entry["permission"] == "cap.manage"
-      assert internal_entry["command_module"] == "Esr.Commands.Notify"
+      assert internal_entry["command_module"] == "Esr.Test.NoopCommand"
     end
 
     test "JSON-encodable" do
       load_fixture(
-        slashes: %{"/help" => simple_route("help", "Esr.Commands.Notify")},
+        slashes: %{"/help" => simple_route("help", "Esr.Test.NoopCommand")},
         internal_kinds: %{
-          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Commands.Notify"}
+          "grant" => %{"permission" => "cap.manage", "command_module" => "Esr.Test.NoopCommand"}
         }
       )
 
@@ -372,7 +388,7 @@ defmodule Esr.SlashRoutesTest do
         slash: "/session:new",
         kind: "session_new",
         permission: "session:default/create",
-        command_module: Esr.Commands.Notify,
+        command_module: Esr.Test.NoopCommand,
         requires_workspace_binding: false,
         requires_user_binding: true,
         category: "Sessions",
@@ -392,7 +408,7 @@ defmodule Esr.SlashRoutesTest do
         slash: "/workspace:list",
         kind: "workspace_list",
         permission: "session.list",
-        command_module: Esr.Commands.Notify,
+        command_module: Esr.Test.NoopCommand,
         requires_workspace_binding: false,
         requires_user_binding: true,
         category: "Workspace",

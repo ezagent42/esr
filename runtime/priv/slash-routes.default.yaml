@@ -65,6 +65,17 @@ slashes:
     description: "显示你的身份 + chat / workspace 绑定状态"
     args: []
 
+  "/user:use":
+    kind: user_use
+    permission: "workspace.create"
+    command_module: "Esr.Commands.User.Use"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "Users"
+    description: "设当前 user 的 default workspace（per-user 偏好；/session:new fallback 链中 user-default 这一层）"
+    args:
+      - { name: workspace, required: true }
+
   "/pty:key":
     kind: pty_key
     permission: null
@@ -119,9 +130,9 @@ slashes:
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Workspace"
-    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo）"
+    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo；name= 缺省时 fallback 到 chat-current → user-default）"
     args:
-      - { name: name, required: true }
+      - { name: name, required: false }
       - { name: path, required: true }
       - { name: folder_name, required: false }
 
@@ -500,10 +511,6 @@ slashes:
 # slash commands. They share the same Dispatcher dispatch table — yaml
 # is the single source of truth for kind → {permission, command_module}.
 internal_kinds:
-  notify:
-    permission: "notify.send"
-    command_module: "Esr.Commands.Notify"
-
   reload:
     permission: "runtime.reload"
     command_module: "Esr.Commands.Reload"
@@ -577,13 +584,14 @@ internal_kinds:
     permission: "user.manage"
     command_module: "Esr.Commands.User.Remove"
 
-  user_bind_feishu:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.BindFeishu"
+  # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
+  # `user_bind_feishu` and `user_unbind_feishu` migrated to the feishu
+  # plugin as `feishu_bind` / `feishu_unbind` (cap `feishu/user-bind`).
+  # Declared by runtime/lib/esr/plugins/feishu/manifest.yaml.
 
-  user_unbind_feishu:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.UnbindFeishu"
+  user_use:
+    permission: "workspace.create"
+    command_module: "Esr.Commands.User.Use"
 
   # 2026-05-05 cli-channel→slash migration:
   # `cli:deadletter/{list,flush}` migrated from EsrWeb.CliChannel into

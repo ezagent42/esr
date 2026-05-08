@@ -25,8 +25,16 @@ defmodule Esr.Commands.User.Add do
 
   @type result :: {:ok, map()} | {:error, map()}
 
+  # Default for the last step's registry call. Tests inject a stub via
+  # execute/2 opts to exercise rollback when the binding fails.
+  @default_set_default_fn &Esr.Entity.User.Registry.set_default_workspace/2
+
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"name" => name}}) when is_binary(name) and name != "" do
+  def execute(cmd), do: execute(cmd, [])
+
+  @spec execute(map(), keyword()) :: result()
+  def execute(%{"args" => %{"name" => name}}, opts)
+      when is_binary(name) and name != "" and is_list(opts) do
     cond do
       not Regex.match?(@username_regex, name) ->
         {:error,
@@ -47,21 +55,49 @@ defmodule Esr.Commands.User.Add do
           {:error, %{"type" => "already_exists", "message" => "user '#{name}' already exists"}}
         else
           uuid = UUID.uuid4()
+          ws_uuid = UUID.uuid4()
+          ws_name = "#{name}-default"
+
           updated_users = Map.put(users, name, %{"feishu_ids" => []})
           updated_doc = Map.put(doc, "users", updated_users)
 
-          with :ok <- Esr.Yaml.Writer.write(path, updated_doc),
-               :ok <- write_user_json(uuid, name) do
-            populate_name_index(name, uuid)
-            {:ok, %{"text" => "added esr user #{name}", "id" => uuid}}
-          else
-            {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+          set_default_fn = Keyword.get(opts, :set_default_fn, @default_set_default_fn)
+
+          # Spec §9 invariant 5: atomic. On any step failure, undo every
+          # disk artifact written by earlier steps so a re-run of
+          # /user:add <name> doesn't hit the spurious already_exists.
+          result =
+            with :ok <- Esr.Yaml.Writer.write(path, updated_doc),
+                 :ok <- write_user_json(uuid, name, ws_uuid),
+                 :ok <- sync_reload_user_registry(path),
+                 :ok <- create_user_default_workspace(ws_uuid, ws_name, name),
+                 :ok <- set_default_fn.(name, ws_uuid) do
+              :ok
+            end
+
+          case result do
+            :ok ->
+              populate_name_index(name, uuid)
+
+              {:ok,
+               %{
+                 "text" => "added esr user #{name}",
+                 "id" => uuid,
+                 "default_workspace" => ws_name,
+                 "default_workspace_id" => ws_uuid
+               }}
+
+            {:error, reason} ->
+              rollback_partial_add(name, uuid, ws_uuid, ws_name, doc, path)
+
+              {:error,
+               %{"type" => "write_failed", "detail" => inspect(reason)}}
           end
         end
     end
   end
 
-  def execute(_cmd) do
+  def execute(_cmd, _opts) do
     {:error,
      %{
        "type" => "invalid_args",
@@ -80,7 +116,7 @@ defmodule Esr.Commands.User.Add do
     end
   end
 
-  defp write_user_json(uuid, username) do
+  defp write_user_json(uuid, username, default_workspace_id) do
     dir = Path.join(Esr.Paths.users_dir(), uuid)
 
     with :ok <- File.mkdir_p(dir) do
@@ -93,6 +129,7 @@ defmodule Esr.Commands.User.Add do
         "username" => username,
         "display_name" => "",
         "feishu_ids" => [],
+        "default_workspace_id" => default_workspace_id,
         "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
@@ -103,6 +140,94 @@ defmodule Esr.Commands.User.Add do
     end
   rescue
     e -> {:error, e}
+  end
+
+  # The Watcher (FSEvents-based) reloads `User.Registry` asynchronously on
+  # users.yaml change events. Inside this command we need the new user to
+  # appear in `:esr_users_by_name` *before* `set_default_workspace/2` runs,
+  # otherwise that call returns `{:error, :not_found}`. Calling
+  # `FileLoader.load/1` synchronously here makes the with-chain atomic.
+  defp sync_reload_user_registry(yaml_path) do
+    case Esr.Entity.User.FileLoader.load(yaml_path) do
+      :ok -> :ok
+      {:error, _} = err -> err
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  defp create_user_default_workspace(ws_uuid, ws_name, owner) do
+    dir = Esr.Paths.workspace_dir(ws_name)
+
+    with :ok <- File.mkdir_p(dir) do
+      ws = %Esr.Resource.Workspace.Struct{
+        id: ws_uuid,
+        name: ws_name,
+        owner: owner,
+        folders: [],
+        agent: "cc",
+        settings: %{},
+        env: %{},
+        chats: [],
+        transient: false,
+        location: {:esr_bound, dir}
+      }
+
+      Esr.Resource.Workspace.Registry.put(ws)
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # Best-effort cleanup. Each step is idempotent — missing artifacts are
+  # silently fine. Sub-step failures are logged (we can't fail the user
+  # further) but don't abort the rollback chain.
+  defp rollback_partial_add(name, uuid, ws_uuid, ws_name, original_doc, yaml_path) do
+    rollback_step(:revert_users_yaml, fn ->
+      Esr.Yaml.Writer.write(yaml_path, original_doc)
+    end)
+
+    rollback_step(:delete_user_json_dir, fn ->
+      Esr.Paths.users_dir() |> Path.join(uuid) |> File.rm_rf()
+      :ok
+    end)
+
+    rollback_step(:resync_user_registry, fn ->
+      sync_reload_user_registry(yaml_path)
+    end)
+
+    rollback_step(:delete_workspace_dir, fn ->
+      Esr.Paths.workspace_dir(ws_name) |> File.rm_rf()
+      :ok
+    end)
+
+    rollback_step(:evict_workspace_registry, fn ->
+      _ = Esr.Resource.Workspace.Registry.delete_by_id(ws_uuid)
+      :ok
+    end)
+
+    Logger.warning(
+      "User.Add: rolled back partial create for user '#{name}' (uuid=#{uuid}, ws=#{ws_name})"
+    )
+
+    :ok
+  end
+
+  defp rollback_step(label, fun) do
+    case fun.() do
+      :ok ->
+        :ok
+
+      other ->
+        Logger.warning(
+          "User.Add rollback step #{inspect(label)} non-:ok result: #{inspect(other)}"
+        )
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "User.Add rollback step #{inspect(label)} crashed: #{inspect(e)}"
+      )
   end
 
   defp populate_name_index(name, uuid) do

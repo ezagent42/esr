@@ -81,7 +81,7 @@ defmodule Esr.Slash.QueueResultTest do
 
       doc = %{
         "id" => id,
-        "kind" => "notify",
+        "kind" => "feishu_notify",
         "args" => %{"text" => "hi", "token" => "secret-abc"}
       }
 
@@ -90,7 +90,7 @@ defmodule Esr.Slash.QueueResultTest do
       out = Path.join(Esr.Paths.admin_queue_dir(), "completed/#{id}.yaml")
       assert File.exists?(out)
       {:ok, parsed} = YamlElixir.read_from_file(out)
-      assert parsed["kind"] == "notify"
+      assert parsed["kind"] == "feishu_notify"
       assert parsed["completed_at"] |> is_binary()
       # Redaction in place:
       assert parsed["args"]["text"] == "hi"
@@ -102,7 +102,7 @@ defmodule Esr.Slash.QueueResultTest do
       File.write!(Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml"), "x: 1")
 
       stamp = "2026-05-05T00:00:00.000000Z"
-      doc = %{"id" => id, "kind" => "notify", "args" => %{}, "completed_at" => stamp}
+      doc = %{"id" => id, "kind" => "feishu_notify", "args" => %{}, "completed_at" => stamp}
 
       assert :ok = QueueResult.finish(id, "completed", doc)
       out = Path.join(Esr.Paths.admin_queue_dir(), "completed/#{id}.yaml")
@@ -131,7 +131,7 @@ defmodule Esr.Slash.QueueResultTest do
     test "moves any orphan processing/*.yaml to failed/ with synthesized error doc" do
       id = "stale-#{System.unique_integer([:positive])}"
       proc = Path.join(Esr.Paths.admin_queue_dir(), "processing/#{id}.yaml")
-      File.write!(proc, "id: #{id}\nkind: notify\n")
+      File.write!(proc, "id: #{id}\nkind: feishu_notify\n")
 
       assert 1 = QueueResult.recover_stale()
       refute File.exists?(proc)

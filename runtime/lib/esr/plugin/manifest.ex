@@ -95,7 +95,8 @@ defmodule Esr.Plugin.Manifest do
   @spec validate(t()) :: :ok | {:error, term()}
   def validate(%__MODULE__{} = manifest) do
     with :ok <- validate_caps(manifest),
-         :ok <- validate_entities(manifest) do
+         :ok <- validate_entities(manifest),
+         :ok <- validate_slash_routes(manifest) do
       :ok
     end
   end
@@ -259,6 +260,131 @@ defmodule Esr.Plugin.Manifest do
   defp entity_module_name(%{"module" => name}), do: name
   defp entity_module_name(%{module: name}), do: name
   defp entity_module_name(other), do: inspect(other)
+
+  # slash_routes validator (audit #6 / 2026-05-08-plugin-command-registration spec).
+  #
+  # Hard constraints enforced here (manifest validate time):
+  #   - every slash key must match `^/<plugin_name>:`
+  #   - every kind must start with `<plugin_name>_`
+  #   - every permission must be in this manifest's own capabilities list
+  #   - every command_module must be loadable AND start with
+  #     `Esr.Plugins.<PluginCamel>.`
+  #
+  # Belt-and-suspenders: SlashRoute.Registry.register_overlay/2 re-checks
+  # at register time (catches manifests hand-edited at runtime).
+  defp validate_slash_routes(%__MODULE__{name: name, declares: declares}) do
+    case Map.get(declares, :slash_routes) do
+      nil ->
+        :ok
+
+      block when is_map(block) ->
+        caps = Map.get(declares, :capabilities, [])
+        slashes = Map.get(block, "slashes", %{}) || %{}
+        kinds = Map.get(block, "internal_kinds", %{}) || %{}
+
+        with :ok <- validate_slash_keys(slashes, name),
+             :ok <- validate_kind_names(slashes, kinds, name),
+             :ok <- validate_permission_subset(slashes, kinds, caps),
+             :ok <- validate_command_modules(slashes, kinds, name) do
+          :ok
+        end
+
+      other ->
+        {:error, {:invalid_slash_routes_block, name, other}}
+    end
+  end
+
+  defp validate_slash_keys(slashes, plugin_name) do
+    prefix = "/" <> plugin_name <> ":"
+
+    Enum.reduce_while(Map.keys(slashes), :ok, fn key, :ok ->
+      if String.starts_with?(key, prefix) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:bad_slash_prefix, key, plugin_name}}}
+      end
+    end)
+  end
+
+  defp validate_kind_names(slashes, kinds, plugin_name) do
+    prefix = plugin_name <> "_"
+
+    slash_kinds =
+      slashes
+      |> Map.values()
+      |> Enum.flat_map(fn entry ->
+        case Map.get(entry, "kind") do
+          k when is_binary(k) -> [k]
+          _ -> []
+        end
+      end)
+
+    all_kinds = slash_kinds ++ Map.keys(kinds)
+
+    Enum.reduce_while(all_kinds, :ok, fn kind, :ok ->
+      if String.starts_with?(kind, prefix) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:bad_kind_prefix, kind, plugin_name}}}
+      end
+    end)
+  end
+
+  defp validate_permission_subset(slashes, kinds, caps) do
+    declared = MapSet.new(caps)
+
+    refs =
+      (Map.values(slashes) ++ Map.values(kinds))
+      |> Enum.flat_map(fn entry ->
+        case Map.get(entry, "permission") do
+          nil -> []
+          "" -> []
+          p when is_binary(p) -> [p]
+        end
+      end)
+
+    Enum.reduce_while(refs, :ok, fn perm, :ok ->
+      if MapSet.member?(declared, perm) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:cross_plugin_permission, perm}}}
+      end
+    end)
+  end
+
+  defp validate_command_modules(slashes, kinds, plugin_name) do
+    prefix = "Elixir.Esr.Plugins." <> Macro.camelize(plugin_name) <> "."
+
+    refs =
+      (Map.values(slashes) ++ Map.values(kinds))
+      |> Enum.flat_map(fn entry ->
+        case Map.get(entry, "command_module") do
+          m when is_binary(m) -> [m]
+          _ -> []
+        end
+      end)
+
+    Enum.reduce_while(refs, :ok, fn mod_str, :ok ->
+      fully_qualified =
+        if String.starts_with?(mod_str, "Elixir."),
+          do: mod_str,
+          else: "Elixir." <> mod_str
+
+      cond do
+        not String.starts_with?(fully_qualified, prefix) ->
+          {:halt, {:error, {:bad_command_module_prefix, mod_str, plugin_name}}}
+
+        true ->
+          mod = String.to_atom(fully_qualified)
+
+          if Code.ensure_loaded?(mod) do
+            {:cont, :ok}
+          else
+            {:halt, {:error, {:unknown_command_module, mod_str}}}
+          end
+      end
+    end)
+  end
 
   # PR-3.4 (2026-05-05): startup-hook validation. Required fields:
   # `module:` and `function:`. No defaults — missing field triggers an

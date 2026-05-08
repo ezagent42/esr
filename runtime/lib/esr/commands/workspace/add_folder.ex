@@ -26,6 +26,25 @@ defmodule Esr.Commands.Workspace.AddFolder do
   @spec execute(map()) :: result()
   def execute(cmd)
 
+  # M-5/D5: name= is optional. When omitted, fall back through the
+  # shared Resolve chain (chat-current → user-default → error).
+  def execute(%{"args" => %{"path" => path} = args} = cmd)
+      when is_binary(path) and path != "" and not is_map_key(args, "name") do
+    case Esr.Commands.Workspace.Resolve.resolve_workspace_for_args(merge_submitter(cmd, args)) do
+      {_tag, name} ->
+        execute(%{cmd | "args" => Map.put(args, "name", name)})
+
+      :no_match ->
+        {:error,
+         %{
+           "type" => "no_workspace_target",
+           "message" =>
+             "name= omitted but no chat-default and no user-default for submitter; " <>
+               "pass name=<workspace> explicitly or run `/user:use workspace=<n>` first"
+         }}
+    end
+  end
+
   def execute(%{"args" => %{"name" => name, "path" => path} = args})
       when is_binary(name) and name != "" and is_binary(path) and path != "" do
     folder_name = args["folder_name"]
@@ -57,6 +76,12 @@ defmodule Esr.Commands.Workspace.AddFolder do
   end
 
   ## Internals ---------------------------------------------------------------
+
+  defp merge_submitter(cmd, args) do
+    args
+    |> Map.put_new("submitted_by", cmd["submitted_by"])
+    |> Map.put_new("submitter_username", cmd["submitter_username"])
+  end
 
   defp validate_path_absolute(path) do
     if Path.type(path) == :absolute do

@@ -86,7 +86,7 @@ defmodule Esr.Commands.HelpTest do
       slash: slash,
       kind: kind,
       permission: nil,
-      command_module: Esr.Commands.Notify,
+      command_module: Esr.Test.NoopCommand,
       requires_workspace_binding: false,
       requires_user_binding: false,
       category: Keyword.get(opts, :category),

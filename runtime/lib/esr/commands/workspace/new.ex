@@ -64,7 +64,7 @@ defmodule Esr.Commands.Workspace.New do
          %{
            "type" => "invalid_args",
            "message" =>
-             "workspace_new requires args.owner (or args.username from slash) — bind your Feishu identity first via `esr user bind-feishu`"
+             "workspace_new requires args.owner (or args.username from slash) — bind your Feishu identity first via `esr feishu bind`"
          }}
 
       not owner_exists?(owner) ->

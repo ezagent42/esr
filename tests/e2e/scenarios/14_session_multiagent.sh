@@ -81,7 +81,7 @@ ADD_ALICE=$(esr_cli admin submit session_add_agent \
   --wait --timeout 20)
 echo "add_agent alice: ${ADD_ALICE}"
 assert_contains "$ADD_ALICE" "ok: true"    "14: add_agent alice ok"
-assert_contains "$ADD_ALICE" '"alice"'     "14: add_agent alice name in output"
+assert_contains "$ADD_ALICE" 'name: alice' "14: add_agent alice name in output"
 echo "14: added agent alice"
 
 # --- step 3: add bob (type=cc) -------------------------------------------
@@ -92,7 +92,7 @@ ADD_BOB=$(esr_cli admin submit session_add_agent \
   --wait --timeout 20)
 echo "add_agent bob: ${ADD_BOB}"
 assert_contains "$ADD_BOB" "ok: true"  "14: add_agent bob ok"
-assert_contains "$ADD_BOB" '"bob"'     "14: add_agent bob name in output"
+assert_contains "$ADD_BOB" 'name: bob'  "14: add_agent bob name in output"
 echo "14: added agent bob"
 
 # --- step 4: duplicate-name guard ----------------------------------------
@@ -116,8 +116,8 @@ SET_P_ALICE=$(esr_cli admin submit session_set_primary \
   --arg name=alice \
   --wait --timeout 15)
 echo "set_primary alice (re-affirm): ${SET_P_ALICE}"
-assert_contains "$SET_P_ALICE" "ok: true"        "14: set_primary alice ok"
-assert_contains "$SET_P_ALICE" '"alice"'          "14: primary_set alice"
+assert_contains "$SET_P_ALICE" "ok: true"            "14: set_primary alice ok"
+assert_contains "$SET_P_ALICE" 'primary_agent: alice' "14: primary_set alice"
 echo "14: primary=alice confirmed via set_primary ack"
 
 # --- step 6: set primary → bob -------------------------------------------
@@ -126,8 +126,8 @@ SET_P_BOB=$(esr_cli admin submit session_set_primary \
   --arg name=bob \
   --wait --timeout 15)
 echo "set_primary bob: ${SET_P_BOB}"
-assert_contains "$SET_P_BOB" "ok: true"  "14: set_primary bob ok"
-assert_contains "$SET_P_BOB" '"bob"'     "14: primary_set bob"
+assert_contains "$SET_P_BOB" "ok: true"           "14: set_primary bob ok"
+assert_contains "$SET_P_BOB" 'primary_agent: bob' "14: primary_set bob"
 echo "14: set_primary bob confirmed"
 
 # --- step 7: set_primary for unknown name → error ------------------------

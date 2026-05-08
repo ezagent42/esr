@@ -128,7 +128,16 @@ defmodule Esr.Commands.Scope.New do
                ),
              :ok <- maybe_claim_uri(args, sid),
              :ok <- bind_session_to_workspace(args, sid) do
-          {:ok, %{"session_id" => sid, "agent" => agent}}
+          # M-5 / spec §4.6: surface the resolved workspace name so the
+          # operator can see which fallback layer the chain hit. nil when
+          # `agent`-only legacy short-circuit was taken (no workspace).
+          base = %{"session_id" => sid, "agent" => agent}
+
+          {:ok,
+           case args["workspace"] do
+             ws when is_binary(ws) and ws != "" -> Map.put(base, "workspace", ws)
+             _ -> base
+           end}
         end
     end
   end
@@ -286,7 +295,13 @@ defmodule Esr.Commands.Scope.New do
        %{"type" => "invalid_args", "message" => "submitted_by + args required"}}
 
   # ---------------------------------------------------------------------------
-  # Phase 5.1 + 5.3 — workspace resolution chain
+  # Phase 5.1 / 5.3 + Phase 6 (M-5) — workspace resolution
+  #
+  # The chain itself lives in `Esr.Commands.Workspace.Resolve` (shared
+  # with /workspace:add-folder); this thin wrapper preserves Scope.New's
+  # short-circuits (explicit workspace, legacy agent-only mode) and
+  # re-shapes the {:no_match} terminal into the structured error map
+  # that downstream slash plumbing already knows how to render.
   #
   # Exposed as a public function (@doc false) so tests can exercise the
   # resolution logic directly without setting up the full session machinery.
@@ -304,59 +319,24 @@ defmodule Esr.Commands.Scope.New do
       is_binary(args["agent"]) and args["agent"] != "" ->
         :no_resolution_needed
 
-      # (c) neither: run the 3-step fallback chain
+      # (c) neither: walk the M-5 fallback chain via the shared Resolve helper
       true ->
-        case resolve_workspace(args) do
+        case Esr.Commands.Workspace.Resolve.resolve_workspace_for_args(args) do
           {:explicit, name} -> {:ok, name}
           {:chat_default, name} -> {:ok, name}
-          {:fallback, name} -> {:ok, name}
+          {:user_default, name} -> {:ok, name}
 
           :no_match ->
             {:error,
              %{
                "type" => "no_workspace_resolvable",
                "message" =>
-                 "no workspace specified, no chat default set, and no \"default\" workspace exists"
+                 "workspace not specified, no chat-default set, and " <>
+                   "submitter has no user-default. Run `/user:use workspace=<name>` " <>
+                   "to set one, or pass `workspace=<name>` explicitly."
              }}
         end
     end
-  end
-
-  defp resolve_workspace(args) do
-    cond do
-      is_binary(args["workspace"]) and args["workspace"] != "" ->
-        {:explicit, args["workspace"]}
-
-      (chat_default = lookup_chat_default(args)) != nil ->
-        {:chat_default, chat_default}
-
-      workspace_exists?("default") ->
-        {:fallback, "default"}
-
-      true ->
-        :no_match
-    end
-  end
-
-  defp lookup_chat_default(args) do
-    with chat_id when is_binary(chat_id) and chat_id != "" <- args["chat_id"],
-         app_id when is_binary(app_id) and app_id != "" <- args["app_id"],
-         {:ok, ws_uuid} <-
-           Esr.Resource.ChatScope.Registry.get_default_workspace(chat_id, app_id),
-         {:ok, ws} <- Esr.Resource.Workspace.Registry.get_by_id(ws_uuid) do
-      ws.name
-    else
-      _ -> nil
-    end
-  end
-
-  defp workspace_exists?(name) do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
-      {:ok, _} -> true
-      :not_found -> false
-    end
-  rescue
-    ArgumentError -> false
   end
 
   defp validate_args(nil, _),
