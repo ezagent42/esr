@@ -8,15 +8,21 @@
 # WHAT THIS TEST PROVES:
 #   - Two users (alice_15, bob_15) added via user_add
 #   - alice creates a session → session_id is a valid UUID v4
-#   - /session:attach surface (session_attach_surface kind) attaches the
-#     session to a second chat_id using the admin path (ou_admin wildcard
-#     caps satisfy the cap check).
-#   - /session:detach surface (session_detach_surface kind) leaves the
-#     session attached to alice's chat while removing it from bob's chat.
-#   - UUID-only enforcement: /session:attach with a plain name is rejected
-#     with invalid_session_uuid.
-#   - /session:detach on a chat with no attached session returns
+#   - /session:bind-chat (session_bind_chat kind) binds the session to a
+#     second chat_id using the admin path (ou_admin wildcard caps satisfy
+#     the cap check).
+#   - /session:unbind-chat (session_unbind_chat kind) leaves the session
+#     attached to alice's chat while removing it from bob's chat.
+#   - UUID-only enforcement: /session:bind-chat with a plain name is
+#     rejected with invalid_session_uuid.
+#   - /session:unbind-chat on a chat with no attached session returns
 #     no_current_session when no session= arg is provided.
+#
+# (Slash + kind names updated 2026-05-08 for resource-typed grammar
+#  rev-3 §4.2 D1 hard-cutover: /session:attach renamed to
+#  /session:bind-chat, /session:detach renamed to /session:unbind-chat;
+#  kinds session_attach_surface and session_detach_surface renamed to
+#  session_bind_chat and session_unbind_chat respectively.)
 #
 # HARNESS GAP — /session:share → User.NameIndex not populated:
 #   PR-248 added session_share_surface which delegates to
@@ -109,7 +115,7 @@ echo "15: UUID-only enforcement confirmed — SID is not a plain name"
 
 # --- step 4: alice grants bob session cap via cap_grant ---------------
 # Direct cap.manage path — bypasses User.NameIndex (see header gap note).
-# The cap string must use the UUID, matching what session_attach_surface
+# The cap string must use the UUID, matching what session_bind_chat
 # checks (Esr.Commands.Session.Attach.check_cap/2).
 CAP_PERM="session:${SID}/attach"
 GRANT_OUT=$(esr_cli admin submit cap_grant \
@@ -152,22 +158,22 @@ assert_contains "$SHARE_OUT" "user_not_found" \
   "15: session_share_surface must return user_not_found (NameIndex not populated)"
 echo "15: session_share_surface user_not_found invariant confirmed"
 
-# --- step 7: bob attaches to alice's session via session_attach_surface --
+# --- step 7: bob attaches to alice's session via session_bind_chat --
 # ou_admin has wildcard caps so the cap check passes regardless.
 # BOB_CHAT simulates a second Feishu chat window (different chat_id).
-ATTACH_OUT=$(esr_cli admin submit session_attach_surface \
+ATTACH_OUT=$(esr_cli admin submit session_bind_chat \
   --arg session="${SID}" \
   --arg chat_id="${BOB_CHAT}" \
   --arg app_id="${APP_ID}" \
   --wait --timeout 20)
-echo "session_attach_surface: ${ATTACH_OUT}"
+echo "session_bind_chat: ${ATTACH_OUT}"
 assert_contains "$ATTACH_OUT" "ok: true"   "15: session_attach ok"
 assert_contains "$ATTACH_OUT" '"attached"' "15: attached field present"
 echo "15: bob attached to session ${SID} via ${BOB_CHAT}"
 
 # --- step 8: UUID-only enforcement — plain name rejected by attach ----
 # Pass a plain name string instead of a UUID; expect invalid_session_uuid.
-BAD_ATTACH=$(esr_cli admin submit session_attach_surface \
+BAD_ATTACH=$(esr_cli admin submit session_bind_chat \
   --arg session=shared-session \
   --arg chat_id="${BOB_CHAT}" \
   --arg app_id="${APP_ID}" \
@@ -175,16 +181,16 @@ BAD_ATTACH=$(esr_cli admin submit session_attach_surface \
 echo "attach with plain name: ${BAD_ATTACH}"
 assert_contains "$BAD_ATTACH" "invalid_session_uuid" \
   "15: non-UUID session arg must be rejected"
-echo "15: UUID-only enforcement confirmed for session_attach_surface"
+echo "15: UUID-only enforcement confirmed for session_bind_chat"
 
 # --- step 9: bob detaches from alice's session ------------------------
 # Detach using the explicit session= UUID arg.
-DETACH_OUT=$(esr_cli admin submit session_detach_surface \
+DETACH_OUT=$(esr_cli admin submit session_unbind_chat \
   --arg session="${SID}" \
   --arg chat_id="${BOB_CHAT}" \
   --arg app_id="${APP_ID}" \
   --wait --timeout 20)
-echo "session_detach_surface: ${DETACH_OUT}"
+echo "session_unbind_chat: ${DETACH_OUT}"
 assert_contains "$DETACH_OUT" "ok: true"   "15: session_detach ok"
 assert_contains "$DETACH_OUT" '"detached"' "15: detached field present"
 echo "15: bob detached from session ${SID}"
@@ -193,7 +199,7 @@ echo "15: bob detached from session ${SID}"
 # After bob detached, the BOB_CHAT has no current session.
 # Calling detach without an explicit session= arg should return
 # no_current_session (ChatScopeRegistry.current_session returns :not_found).
-NO_SESS_OUT=$(esr_cli admin submit session_detach_surface \
+NO_SESS_OUT=$(esr_cli admin submit session_unbind_chat \
   --arg chat_id="${BOB_CHAT}" \
   --arg app_id="${APP_ID}" \
   --wait --timeout 15 2>&1 || true)

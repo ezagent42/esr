@@ -7,7 +7,7 @@
 # WHAT THIS TEST PROVES (operator-grade):
 #   The full chain:
 #     plugin_set http_proxy  →  plugin_reload claude_code
-#     →  session_remove_agent / session_add_agent  (subprocess restart)
+#     →  agent_remove / agent_add  (subprocess restart)
 #     →  new cc subprocess inherits the new HTTP_PROXY env value
 #
 #   Concretely:
@@ -16,8 +16,12 @@
 #     2. mock-claude writes its env snapshot to a temp file on startup
 #     3. First spawn: no proxy → dump file has proxy=-NONE-
 #     4. plugin_set http_proxy=http://192.0.2.1:8080 + plugin_reload
-#     5. session_remove_agent + session_add_agent → subprocess restart
+#     5. agent_remove + agent_add → subprocess restart
 #     6. Second spawn: new env → dump file has proxy=http://192.0.2.1:8080
+#
+# (Kind names updated 2026-05-08 for resource-typed grammar rev-3 §4.2 D1
+#  hard-cutover: session_add_agent → agent_add, session_remove_agent →
+#  agent_remove; slash forms now /agent:add + /agent:remove.)
 #
 # INVARIANT GATE (spec §14):
 #   bash tests/e2e/scenarios/17_plugin_config_hot_reload.sh 2>&1 | tail -3
@@ -128,7 +132,7 @@ echo "17: session created: ${SID}"
 # Reset dump file before adding agent (subprocess writes it on startup).
 reset_dump_file
 
-ADD_ALICE=$(esr_cli admin submit session_add_agent \
+ADD_ALICE=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=alice \
@@ -182,7 +186,7 @@ echo "17: step 4 PASS — plugin_reload acknowledged http_proxy change"
 
 # Remove alice. Because alice was the only agent (not primary in multi-agent
 # sense), we may need to handle the "cannot remove primary" guard.
-# session_add_agent auto-sets the first agent as primary (scenario 14 confirms).
+# agent_add auto-sets the first agent as primary (scenario 14 confirms).
 # For a single-agent session we must set a different primary before removal,
 # OR end the session entirely and create a new one.
 #
@@ -216,7 +220,7 @@ echo "17: second session created: ${SID2}"
 # Reset dump file before second spawn.
 reset_dump_file
 
-ADD_ALICE2=$(esr_cli admin submit session_add_agent \
+ADD_ALICE2=$(esr_cli admin submit agent_add \
   --arg session_id="${SID2}" \
   --arg type=cc \
   --arg name=alice \

@@ -154,6 +154,41 @@ scenario 14 和 scenario 18 都刻意跳过 `@alice` / `@bob` 路由断言，因
 
 ---
 
+---
+
+## rev-5 — resource-typed grammar 落地（2026-05-08）
+
+PR `feat/resource-typed-grammar`（~810 LOC，5 phase A-E）实施 spec [`2026-05-08-resource-typed-grammar.md`](../superpowers/specs/2026-05-08-resource-typed-grammar.md)（rev-3，2026-05-08 用户批准），闭合 rev-4 follow-up #1-#7。
+
+### 本 PR 闭合
+
+| 原 # | 内容 | 怎么闭合 |
+|---|---|---|
+| 1 | grammar spec | spec rev-3 + plan 落地，本 PR 出实现 |
+| 2 | `/session:list` chat-bound 形态 | Phase B Task B.2 |
+| 3 | `/agent:list` 重定义（instances）+ `/plugin:agent-types` | Phase C Tasks C.1-C.2 |
+| 4 | `/pty:list` + `/pty:attach` | Phase E Tasks E.1-E.2，orphan `Esr.Commands.Attach` 删除 |
+| 5 | `/claude_code:tui` shortcut | Phase E Task E.3，走 claude_code plugin manifest `slash_routes:` 块（rev-3 机制） |
+| 6 | `/agent:rename`/`set-primary`/`primary`/`remove`/`add` 5 件套 | Phase C Tasks C.3-C.7，老 `session/{add_agent,remove_agent,set_primary}.ex` 删除 |
+| 7 | `/session:bind-chat`/`unbind-chat`/`switch` + slash-wire `/session:end` | Phase B Task B.4 + Phase D Tasks D.1-D.5 |
+
+### 仍 open（顺延 rev-6）
+
+| # | 内容 | 状态 |
+|---|---|---|
+| 8 | `docs/grammar/commands.md` 生成器 | 仅 spec，与本 PR 独立 |
+| 9 | First-user-auto-admin | 未开始，~30 LOC 单文件 |
+| 10 | `esr daemon init` + `esr daemon clear` | 未开始，前 30 分钟 UX |
+| (security) | `pty_attach_security_hardening` PtySocket 签名 token | `docs/futures/todo.md` 跟踪，rev-2 D3 推迟 |
+
+### 净读
+
+**rev-3：** 9/12 完全闭合。**rev-4：** 10/12。**rev-5（本 PR）：** 11/12（仅 #9 结构性心智模型 gap 还在，操作员可见入口全部解锁）。
+
+grammar 重构也闭合了 rev-4 #12 cross-cutting "no PTY URL" 退化，并把操作员表面统一到资源轴（P1），未来 plugin 作者有了清晰惯例。
+
+---
+
 ## 见
 
 - [`2026-05-06-bootstrap-flow-audit.zh_cn.md`](2026-05-06-bootstrap-flow-audit.zh_cn.md) — 前置审计，12 步基线

@@ -7,13 +7,17 @@
 #
 # WHAT THIS TEST PROVES:
 #   - session_new → session_id captured
-#   - session_add_agent (alice, type=cc) → InstanceRegistry persists alice
-#   - session_add_agent (bob, type=cc)   → InstanceRegistry persists bob
-#   - primary is alice (first added) — verified via session_set_primary no-op ack
-#   - session_set_primary bob           → InstanceRegistry primary updated
+#   - agent_add (alice, type=cc) → InstanceRegistry persists alice
+#   - agent_add (bob, type=cc)   → InstanceRegistry persists bob
+#   - primary is alice (first added) — verified via agent_set_primary no-op ack
+#   - agent_set_primary bob      → InstanceRegistry primary updated
 #   - Duplicate-name guard: adding a second "alice" is rejected
 #   - unknown agent set_primary rejected with not_found
 #   - session_end teardown runs without error
+#
+# (Kind names updated 2026-05-08 for resource-typed grammar rev-3 §4.2 D1
+#  hard-cutover: session_add_agent → agent_add, session_set_primary →
+#  agent_set_primary; slash forms moved to /agent:add + /agent:set-primary.)
 #
 # HARNESS GAP — @mention routing (step 8) remains SKIPPED post-PR-248:
 #   PR-248 added /session:new surface command (session_new_surface kind)
@@ -74,7 +78,7 @@ SID=$(echo "$SESSION_OUT" | awk -F': ' '/^session_id:/ {print $2; exit}')
 echo "14: session created: ${SID}"
 
 # --- step 2: add alice (type=cc) -------------------------------------------
-ADD_ALICE=$(esr_cli admin submit session_add_agent \
+ADD_ALICE=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=alice \
@@ -85,7 +89,7 @@ assert_contains "$ADD_ALICE" 'name: alice' "14: add_agent alice name in output"
 echo "14: added agent alice"
 
 # --- step 3: add bob (type=cc) -------------------------------------------
-ADD_BOB=$(esr_cli admin submit session_add_agent \
+ADD_BOB=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=bob \
@@ -97,7 +101,7 @@ echo "14: added agent bob"
 
 # --- step 4: duplicate-name guard ----------------------------------------
 # Adding a second "alice" in the same session must be rejected.
-DUP_OUT=$(esr_cli admin submit session_add_agent \
+DUP_OUT=$(esr_cli admin submit agent_add \
   --arg session_id="${SID}" \
   --arg type=cc \
   --arg name=alice \
@@ -111,7 +115,7 @@ echo "14: duplicate-name guard confirmed"
 # InstanceRegistry auto-sets first-added as primary.
 # Confirm by calling set_primary(alice) — should ack "primary_set".
 # (session_info not yet wired as admin submit verb; deferred to follow-up.)
-SET_P_ALICE=$(esr_cli admin submit session_set_primary \
+SET_P_ALICE=$(esr_cli admin submit agent_set_primary \
   --arg session_id="${SID}" \
   --arg name=alice \
   --wait --timeout 15)
@@ -121,7 +125,7 @@ assert_contains "$SET_P_ALICE" 'primary_agent: alice' "14: primary_set alice"
 echo "14: primary=alice confirmed via set_primary ack"
 
 # --- step 6: set primary → bob -------------------------------------------
-SET_P_BOB=$(esr_cli admin submit session_set_primary \
+SET_P_BOB=$(esr_cli admin submit agent_set_primary \
   --arg session_id="${SID}" \
   --arg name=bob \
   --wait --timeout 15)
@@ -131,7 +135,7 @@ assert_contains "$SET_P_BOB" 'primary_agent: bob' "14: primary_set bob"
 echo "14: set_primary bob confirmed"
 
 # --- step 7: set_primary for unknown name → error ------------------------
-ERR_P=$(esr_cli admin submit session_set_primary \
+ERR_P=$(esr_cli admin submit agent_set_primary \
   --arg session_id="${SID}" \
   --arg name=ghost \
   --wait --timeout 15 2>&1 || true)

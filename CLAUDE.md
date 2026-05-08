@@ -78,7 +78,7 @@ esr://<env>@localhost/sessions/<username>/<workspace>/<session-name>
 `<env>` lives in the URI's `org@` slot, mapping to `$ESR_INSTANCE`. tmux session name is the URI path translated `/` → `_`: `<env>_<username>_<workspace>_<session-name>`. Slash command grammar:
 
 ```
-/new-session <workspace> name=<…> cwd=<…> worktree=<…>
+/session:new <workspace> name=<…> cwd=<…> worktree=<…>
 ```
 
 `cwd` is a git worktree path (always); `worktree` is a branch name forked from `origin/main` per workspace's `root:` field. See spec [`docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md`](docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md).

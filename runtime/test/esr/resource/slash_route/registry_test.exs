@@ -93,20 +93,20 @@ defmodule Esr.SlashRoutesTest do
       load_fixture(
         slashes: %{
           "/help" => Map.put(simple_route("help", "Esr.Test.NoopCommand"), "permission", nil),
-          "/session:add-agent" =>
+          "/agent:add" =>
             Map.put(
-              simple_route("session_add_agent", "Esr.Test.NoopCommand"),
+              simple_route("agent_add", "Esr.Test.NoopCommand"),
               "permission",
-              "session:default/add-agent"
+              "session:default/spawn"
             )
         }
       )
 
       assert nil == SlashRouteRegistry.permission_for("help")
-      assert "session:default/add-agent" == SlashRouteRegistry.permission_for("session_add_agent")
+      assert "session:default/spawn" == SlashRouteRegistry.permission_for("agent_add")
 
       assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("help")
-      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("session_add_agent")
+      assert Esr.Test.NoopCommand == SlashRouteRegistry.command_module_for("agent_add")
     end
 
     test "covers internal_kinds" do
