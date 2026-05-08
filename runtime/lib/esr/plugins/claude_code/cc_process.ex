@@ -451,8 +451,18 @@ defmodule Esr.Entity.CCProcess do
       "user" => sender_id,
       "user_id" => sender_id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "content" => text
+      "content" => text,
+      # Task 2.4: pass msg_type + media_uri through so mcp_controller's
+      # SSE handler can construct kind + path fields (Task 2.5).
+      # nil values are dropped so the text-only path stays clean.
+      "msg_type" => Map.get(last, :msg_type),
+      "media_uri" => Map.get(last, :media_uri)
     }
+
+    base =
+      base
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+      |> Map.new()
 
     base
     |> maybe_put_workspace(chat_id, app_id)

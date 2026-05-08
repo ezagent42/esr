@@ -246,7 +246,11 @@ defmodule EsrWeb.McpController do
         "runtime_mode" => payload["runtime_mode"] || "discussion",
         "source" => payload["source"] || "feishu",
         "user_id" => payload["user_id"],
-        "workspace" => payload["workspace"]
+        "workspace" => payload["workspace"],
+        # Task 2.4: thread msg_type + media_uri through to SSE meta so
+        # Task 2.5 can derive kind + path via PhaserRegistry.transform.
+        "msg_type" => payload["msg_type"],
+        "media_uri" => payload["media_uri"]
       }
       |> Enum.reject(fn {_k, v} -> is_nil(v) or v == "" end)
       |> Enum.into(%{}, fn {k, v} -> {k, to_string(v)} end)
