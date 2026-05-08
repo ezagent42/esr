@@ -49,33 +49,59 @@ defmodule Esr.ApplicationFirstBootTest do
     end
   end
 
-  describe "ensure_default_workspace" do
-    test "default workspace exists after Bootstrap" do
-      # The application's Bootstrap ran at boot, so "default" should already
-      # be in the Registry. Confirm it survives explicit re-invocation.
+  describe "bootstrap user-default workspace" do
+    setup do
+      # Seed a known user so Bootstrap can resolve the env id
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+        %{
+          "bootstrapper" => %Esr.Entity.User.Registry.User{
+            username: "bootstrapper",
+            feishu_ids: ["ou_boot"]
+          }
+        },
+        %{"bootstrapper" => "bootstrapper-uuid"}
+      )
+
+      System.put_env("ESR_BOOTSTRAP_PRINCIPAL_ID", "ou_boot")
+      on_exit(fn -> System.delete_env("ESR_BOOTSTRAP_PRINCIPAL_ID") end)
+      :ok
+    end
+
+    test "Bootstrap creates <user>-default + links it" do
       assert :ok = Bootstrap.run()
 
       {:ok, id} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+        Esr.Resource.Workspace.NameIndex.id_for_name(
+          :esr_workspace_name_index,
+          "bootstrapper-default"
+        )
 
       assert {:ok, ws} = Registry.get_by_id(id)
-      assert ws.name == "default"
+      assert ws.name == "bootstrapper-default"
+
+      assert {:ok, ^id} =
+               Esr.Entity.User.Registry.get_default_workspace("bootstrapper")
     end
 
-    test "is idempotent — running twice doesn't error or duplicate" do
+    test "is idempotent — running twice does not create a second workspace" do
       assert :ok = Bootstrap.run()
       {:ok, id1} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+        Esr.Resource.Workspace.NameIndex.id_for_name(
+          :esr_workspace_name_index,
+          "bootstrapper-default"
+        )
 
       assert :ok = Bootstrap.run()
       {:ok, id2} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+        Esr.Resource.Workspace.NameIndex.id_for_name(
+          :esr_workspace_name_index,
+          "bootstrapper-default"
+        )
 
-      # Same UUID — second run was a no-op
       assert id1 == id2
     end
 
-    test "both: deletes legacy yaml + leaves default workspace intact",
+    test "deletes legacy yaml + leaves bootstrap workspace intact",
          %{runtime_home: runtime_home} do
       File.write!(Path.join(runtime_home, "workspaces.yaml"), "stale: yes")
 
@@ -84,7 +110,10 @@ defmodule Esr.ApplicationFirstBootTest do
       refute File.exists?(Path.join(runtime_home, "workspaces.yaml"))
 
       {:ok, id} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "default")
+        Esr.Resource.Workspace.NameIndex.id_for_name(
+          :esr_workspace_name_index,
+          "bootstrapper-default"
+        )
 
       assert {:ok, _} = Registry.get_by_id(id)
     end
