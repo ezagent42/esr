@@ -64,6 +64,29 @@ defmodule Esr.Slash.ReplyTargetTest do
       assert_receive {:reply, "sessions: main, dev", ^ref}
     end
 
+    # Phase B regression (resource-typed grammar second-review #2):
+    # /session:switch returns %{"session_id" => sid, "switched" => true};
+    # the generic {"session_id"} clause was shadowing it and rendering
+    # "session started: <sid>" — actively misleading (operator could
+    # think a NEW session was spawned). Discriminating clause must come
+    # before the generic one in the file.
+    test "format_result for /session:switch success renders 'switched' message" do
+      result = {:ok, %{"session_id" => "abc-123", "switched" => true}}
+      rendered = ChatPid.format_result(result)
+      assert rendered =~ "switched"
+      assert rendered =~ "abc-123"
+      refute rendered =~ "started"
+    end
+
+    test "format_result for /session:new success still renders 'started' message" do
+      # Negative: ensure the new clause didn't accidentally consume
+      # non-switch shapes (no "switched" field).
+      result = {:ok, %{"session_id" => "xyz-456"}}
+      rendered = ChatPid.format_result(result)
+      assert rendered =~ "started"
+      assert rendered =~ "xyz-456"
+    end
+
     test "respond {:ok, %{text: ...}} returns text directly (Help/Whoami/Doctor)" do
       ref = make_ref()
       assert :ok = ChatPid.respond(self(), {:ok, %{"text" => "free-form output"}}, ref)

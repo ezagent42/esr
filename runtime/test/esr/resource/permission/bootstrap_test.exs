@@ -24,6 +24,16 @@ defmodule Esr.Resource.Permission.BootstrapTest do
     assert Registry.declared?("cap.read")
   end
 
+  # Phase B regression (resource-typed grammar second-review #1):
+  # `session:default/read` gates `/session:list` per spec rev-4 §4.2
+  # row 1; without an Admin.permissions/0 declaration the cap is
+  # un-grantable + the slash unreachable for non-admin users.
+  test "session:default/{create,end,read} are all declared by Esr.Admin" do
+    assert Registry.declared?("session:default/create")
+    assert Registry.declared?("session:default/end")
+    assert Registry.declared?("session:default/read")
+  end
+
   test "handler-declared permissions from Esr.Entity.Server are registered" do
     # Entity.Server declares the built-in MCP tools (reply, send_file,
     # _echo, session.signal_cleanup). CAP-4 would deny every

@@ -194,8 +194,15 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
 
       assert_receive {:reply, text, ^ref}, 1000
       # Result is %{"session_id" => sid_b, "switched" => true, ...};
-      # ChatPid.format_result hits the {"session_id"} clause.
+      # ChatPid.format_result hits the {"session_id", "switched" => true}
+      # clause and renders "switched chat-current session → <sid>".
+      # (Spec rev-4 §4.2 second-review fix #2 — the generic
+      # {"session_id"} clause was previously shadowing this and rendering
+      # "session started", misleading operators into believing a new
+      # session had been created.)
       assert text =~ sid_b
+      assert text =~ "switched"
+      refute text =~ "started"
 
       # Verify the registry promotion actually landed.
       assert {:ok, ^sid_b} = Esr.Session.ChatRouting.Registry.current_session(chat, app)

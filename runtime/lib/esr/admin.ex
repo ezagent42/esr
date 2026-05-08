@@ -42,8 +42,14 @@ defmodule Esr.Admin do
       # agent-session lifecycle commands (`session_new` +
       # `session_branch_new` share `session:default/create`; `session_end`
       # + `session_branch_end` share `session:default/end`).
+      #
+      # Phase B (resource-typed grammar spec rev-4 §4.2 row 1):
+      # `session:default/read` gates `/session:list`. Without a
+      # declaration here the cap is un-grantable + the slash unreachable
+      # for any non-admin user.
       "session:default/create",
       "session:default/end",
+      "session:default/read",
       # PR-21k: workspace.create — creating a workspace from inside
       # Feishu (via /new-workspace slash) writes workspaces.yaml.
       # Bootstrap path: `esr cap grant <esr-user> workspace.create`.

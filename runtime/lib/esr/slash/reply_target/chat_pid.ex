@@ -91,6 +91,17 @@ defmodule Esr.Slash.ReplyTarget.ChatPid do
   def format_result({:ok, %{"branches" => b}}) when is_list(b),
     do: "sessions: " <> Enum.join(b, ", ")
 
+  # Phase B (resource-typed grammar): /session:switch success returns
+  # %{"session_id" => sid, "switched" => true, ...}. Render as a
+  # promotion message — NOT "session started", which would imply a
+  # destructive new-session creation.
+  #
+  # Must come BEFORE the generic {"session_id"} clause below: Elixir's
+  # first-match wins and the generic clause would otherwise shadow
+  # this one (the bug spec rev-4 §4.2 second-review caught).
+  def format_result({:ok, %{"session_id" => sid, "switched" => true}}),
+    do: "switched chat-current session → #{sid}"
+
   def format_result({:ok, %{"session_id" => sid}}),
     do: "session started: #{sid}"
 
