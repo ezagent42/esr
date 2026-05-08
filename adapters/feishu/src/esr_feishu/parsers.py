@@ -206,16 +206,33 @@ def _parse_msg_received(raw: dict[str, Any]) -> dict[str, Any]:
         if isinstance(sender_id_field, dict)
         else str(sender.get("open_id", ""))
     )
+    args: dict[str, Any] = {
+        "msg_id": msg_id,
+        "chat_id": chat_id,
+        "msg_type": msg_type,
+        "text": text,
+        "sender_id": sender_id,
+        "content": content,
+    }
+
+    # Standardise args for downloadable msg_types (PR-2 §4.2 row A).
+    # Downstream Esr.Resource.Media.Inbound.handle/2 uses these to call
+    # the download_file directive with a uniform shape regardless of
+    # Lark's field-name variation (image_key vs file_key).
+    if msg_type in {"image", "file", "audio", "media"}:
+        file_key = content.get("image_key") or content.get("file_key") or ""
+        file_name = content.get("file_name")
+        if not file_name:
+            if msg_type == "image":
+                file_name = f"{file_key}.png" if file_key else "unknown.png"
+            else:
+                file_name = file_key or "unknown"
+        args["file_key"] = file_key
+        args["file_name"] = file_name
+
     return {
         "event_type": "msg_received",
-        "args": {
-            "msg_id": msg_id,
-            "chat_id": chat_id,
-            "msg_type": msg_type,
-            "text": text,
-            "sender_id": sender_id,
-            "content": content,
-        },
+        "args": args,
     }
 
 
