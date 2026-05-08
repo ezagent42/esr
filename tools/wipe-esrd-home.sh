@@ -17,6 +17,9 @@
 #
 # SPEC: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §11
 #       (post-deploy migration steps, D7 wipe procedure)
+#       and docs/superpowers/specs/2026-05-08-session-first-default-resolution.md
+#       §6 (D6 — old `default` workspace must be wiped before first boot
+#       of post-2026-05-08 ESR).
 set -euo pipefail
 
 MODE="--dev"
