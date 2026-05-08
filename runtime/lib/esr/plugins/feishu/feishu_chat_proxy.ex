@@ -498,49 +498,100 @@ defmodule Esr.Entity.FeishuChatProxy do
   end
 
   defp dispatch_tool_invoke("send_file", args, req_id, channel_pid, state) do
-    # T12-comms-3g: CC's MCP tool sends just `chat_id + file_path`. The
-    # feishu adapter's `_send_file` wire shape (spec §6.1) is α: base64
-    # in-band with a sha256 check, needing `file_name + content_b64 +
-    # sha256`. Do the read + hash + encode at the Elixir boundary so
-    # the Python adapter's contract stays uniform across all channel
-    # adapters (only they know how to talk to their platform).
+    # T12-comms-3g + Tasks 3.1+3.2 (spec 2026-05-08 D4 + §Outbound flow):
+    # CC's MCP tool sends just `chat_id + file_path`. Before dispatching
+    # on the α-wire we now:
+    #   1. Infer media_type from the file extension
+    #   2. Check the feishu plugin declares outbound for that media_type
+    #   3. Content-address the bytes via Esr.Resource.Media.store
+    # The α-wire shape (file_name + content_b64 + sha256) is UNCHANGED —
+    # the Python sidecar contract stays uniform across all channel adapters.
     file_path = Map.get(args, "file_path") || ""
     chat_id = Map.get(args, "chat_id") || state.chat_id
+    channel_adapter = Map.get(state, "channel_adapter", "feishu")
 
-    case read_file_for_send(file_path) do
-      {:ok, file_name, content_b64, sha256} ->
-        _ =
-          emit_to_feishu_app_proxy(
-            %{
-              "kind" => "send_file",
-              "args" => %{
-                "chat_id" => chat_id,
-                "file_name" => file_name,
-                "content_b64" => content_b64,
-                "sha256" => sha256
-              }
-            },
-            state
-          )
+    case infer_media_type(file_path) do
+      {:ok, media_type} ->
+        with :ok <- check_outbound_capability(channel_adapter, media_type),
+             {:ok, %{sha256: sha}} <-
+               Esr.Resource.Media.store(media_type, file_path, %{
+                 source_actor: "cc",
+                 session_id: state.session_id,
+                 chat_id: chat_id
+               }),
+             {:ok, file_name, content_b64, _sha2} <- read_file_for_send(file_path) do
+          # Existing α-wire — UNCHANGED. The store call above handles
+          # content-addressing + ref tracking; the α-wire delivers bytes
+          # to the Python sidecar in the same shape it has always consumed
+          # (Python adapter contract preserved per spec D4).
+          _ =
+            emit_to_feishu_app_proxy(
+              %{
+                "kind" => "send_file",
+                "args" => %{
+                  "chat_id" => chat_id,
+                  "file_name" => file_name,
+                  "content_b64" => content_b64,
+                  "sha256" => sha
+                }
+              },
+              state
+            )
 
-        reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+          reply_tool_result(channel_pid, req_id, true, %{"dispatched" => true})
+        else
+          {:error, :unsupported_outbound} ->
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "unsupported_outbound",
+              "kind" => to_string(media_type)
+            })
 
-      {:error, reason} ->
-        Logger.warning(
-          "feishu_chat_proxy: send_file read failed path=#{inspect(file_path)} " <>
-            "reason=#{inspect(reason)} session_id=#{state.session_id}"
-        )
+          {:error, :unsupported_ext} ->
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "unsupported_ext"
+            })
 
-        reply_tool_result(
-          channel_pid,
-          req_id,
-          false,
-          nil,
-          %{"type" => "read_failed", "message" => inspect(reason)}
-        )
+          {:error, reason} ->
+            Logger.warning(
+              "feishu_chat_proxy: send_file failed path=#{inspect(file_path)} " <>
+                "reason=#{inspect(reason)} session_id=#{state.session_id}"
+            )
+
+            reply_tool_result(channel_pid, req_id, false, nil, %{
+              "type" => "store_or_read_failed",
+              "detail" => inspect(reason)
+            })
+        end
+
+      {:error, :no_extension} ->
+        reply_tool_result(channel_pid, req_id, false, nil, %{
+          "type" => "no_extension"
+        })
     end
 
     state
+  end
+
+  # Infer media_type atom from the file extension. Image extensions map
+  # to :image; any other recognised extension maps to :file; missing or
+  # bare-dot extension returns {:error, :no_extension}.
+  defp infer_media_type(path) do
+    case path |> Path.extname() |> String.downcase() do
+      "" -> {:error, :no_extension}
+      "." -> {:error, :no_extension}
+      ext when ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic"] -> {:ok, :image}
+      _other -> {:ok, :file}
+    end
+  end
+
+  # Check whether the named channel adapter plugin declares outbound
+  # capability for the given media_type via Esr.Resource.Media.PluginRegistry.
+  defp check_outbound_capability(plugin_name, media_type) do
+    if Esr.Resource.Media.PluginRegistry.supports?(plugin_name, :outbound, media_type) do
+      :ok
+    else
+      {:error, :unsupported_outbound}
+    end
   end
 
   defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do

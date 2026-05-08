@@ -186,7 +186,51 @@ defmodule Esr.Entity.FeishuChatProxyTest do
   end
 
   describe "tool_invoke from ChannelChannel (PR-9 T11b.4)" do
-    test "registers as thread:<sid> in Esr.Entity.Registry" do
+    # Tasks 3.1+3.2: send_file now routes through Esr.Resource.Media.store
+    # before the α-wire dispatch. Tests that exercise the send_file path
+    # must set up:
+    #   1. ESRD_HOME (writable temp dir) so Media.store can persist bytes.
+    #   2. PluginRegistry registration for "feishu" with matching outbound
+    #      capability so check_outbound_capability/2 passes.
+    setup do
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "fcp_tool_invoke_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp)
+      saved_home = System.get_env("ESRD_HOME")
+      saved_inst = System.get_env("ESR_INSTANCE")
+      System.put_env("ESRD_HOME", tmp)
+      System.put_env("ESR_INSTANCE", "test")
+
+      # Register feishu plugin with full inbound+outbound capability so
+      # send_file tests can exercise the happy-path without fighting the
+      # capability check. Individual tests may override this via a second
+      # register/2 call before sending the tool_invoke.
+      Esr.Resource.Media.PluginRegistry.register("feishu", %{
+        inbound: [:image, :file],
+        outbound: [:image, :file]
+      })
+
+      on_exit(fn ->
+        File.rm_rf!(tmp)
+        Esr.Resource.Media.PluginRegistry.unregister("feishu")
+
+        if saved_home,
+          do: System.put_env("ESRD_HOME", saved_home),
+          else: System.delete_env("ESRD_HOME")
+
+        if saved_inst,
+          do: System.put_env("ESR_INSTANCE", saved_inst),
+          else: System.delete_env("ESR_INSTANCE")
+      end)
+
+      {:ok, tmp: tmp}
+    end
+
+    test "registers as thread:<sid> in Esr.Entity.Registry", %{tmp: _tmp} do
       sid = "ti_#{System.unique_integer([:positive])}"
 
       {:ok, peer} =
@@ -201,7 +245,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       assert [{^peer, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
     end
 
-    test "reply tool emits outbound + tool_result back on channel_pid" do
+    test "reply tool emits outbound + tool_result back on channel_pid", %{tmp: _tmp} do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -238,11 +282,12 @@ defmodule Esr.Entity.FeishuChatProxyTest do
                      500
     end
 
-    test "send_file tool reads file + emits α wire shape (file_name + content_b64 + sha256)" do
-      # T12-comms-3g: FCP translates CC's MCP tool (chat_id + file_path)
-      # into the feishu adapter's α wire shape (file_name + content_b64
-      # + sha256) by reading the local file. Write a temp file so the
-      # read succeeds deterministically.
+    test "send_file tool stores content-addressed bytes + emits α wire shape", %{tmp: tmp} do
+      # Tasks 3.1+3.2 (spec D4): the new flow is:
+      #   1. infer media_type from extension (.txt → :file)
+      #   2. check_outbound_capability("feishu", :file) → :ok
+      #   3. Esr.Resource.Media.store(:file, path, ref_meta) — content-addressed
+      #   4. existing read_file_for_send + emit_to_feishu_app_proxy (α-wire UNCHANGED)
       path = Path.join(System.tmp_dir!(), "fcp_sendfile_#{System.unique_integer([:positive])}.txt")
       File.write!(path, "hello fcp send_file")
       on_exit(fn -> File.rm(path) end)
@@ -268,6 +313,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       expected_sha = :crypto.hash(:sha256, "hello fcp send_file") |> Base.encode16(case: :lower)
       expected_name = Path.basename(path)
 
+      # α-wire shape unchanged: file_name + content_b64 + sha256.
       assert_receive {:relay, :app,
                       {:outbound,
                        %{
@@ -282,9 +328,117 @@ defmodule Esr.Entity.FeishuChatProxyTest do
                      500
 
       assert_receive {:push_envelope, %{"req_id" => "req-2", "ok" => true}}, 500
+
+      # Content-addressed file written to ESRD_HOME.
+      expected_path =
+        Path.join([tmp, "test", "resources", "file", "#{expected_sha}.txt"])
+
+      assert File.exists?(expected_path)
+
+      # refs.jsonl has one entry recording cc as source actor.
+      refs_path = Path.join([tmp, "test", "resources", "file", "#{expected_sha}.refs.jsonl"])
+      assert File.exists?(refs_path)
+      [ref_line | _] = File.read!(refs_path) |> String.split("\n", trim: true)
+      decoded = Jason.decode!(ref_line)
+      assert decoded["source_actor"] == "cc"
+      assert decoded["chat_id"] == "oc_sf"
     end
 
-    test "send_file rejects relative paths + paths containing `..`" do
+    test "send_file image stores under resources/image/ with correct extension", %{tmp: tmp} do
+      path = Path.join(System.tmp_dir!(), "fcp_img_#{System.unique_integer([:positive])}.png")
+      File.write!(path, "fake png bytes")
+      on_exit(fn -> File.rm(path) end)
+
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+      _ = register_role(app_proxy, "s_sf_img", :feishu_app_proxy)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_img",
+          chat_id: "oc_img_out",
+          thread_id: "om_img",
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-img", "send_file",
+                  %{"chat_id" => "oc_img_out", "file_path" => path},
+                  self(), "ou_admin"})
+
+      expected_sha =
+        :crypto.hash(:sha256, "fake png bytes") |> Base.encode16(case: :lower)
+
+      assert_receive {:push_envelope, %{"req_id" => "req-img", "ok" => true}}, 500
+
+      # Stored under resources/image/ (inferred from .png extension).
+      assert File.exists?(
+               Path.join([tmp, "test", "resources", "image", "#{expected_sha}.png"])
+             )
+    end
+
+    test "send_file rejects when feishu doesn't declare outbound for the media_type", %{tmp: _tmp} do
+      # Override: feishu outbound = [] (no image, no file)
+      Esr.Resource.Media.PluginRegistry.register("feishu", %{inbound: [], outbound: []})
+
+      path = Path.join(System.tmp_dir!(), "fcp_cap_#{System.unique_integer([:positive])}.png")
+      File.write!(path, "data")
+      on_exit(fn -> File.rm(path) end)
+
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+      _ = register_role(app_proxy, "s_sf_cap", :feishu_app_proxy)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_cap",
+          chat_id: "oc_cap",
+          thread_id: "om_cap",
+          proxy_ctx: %{}
+        })
+
+      send(peer, {:tool_invoke, "req-cap", "send_file",
+                  %{"chat_id" => "oc_cap", "file_path" => path},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{
+                        "req_id" => "req-cap",
+                        "ok" => false,
+                        "error" => %{"type" => "unsupported_outbound"}
+                      }},
+                     500
+
+      # α-wire must NOT be emitted when capability check fails.
+      refute_receive {:relay, :app, _}, 100
+    end
+
+    test "send_file rejects extensionless file_path with no_extension error", %{tmp: _tmp} do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_sf_noext",
+          chat_id: "oc_noext",
+          thread_id: "om_noext",
+          proxy_ctx: %{}
+        })
+
+      # File with no extension — rejected before any disk I/O.
+      send(peer, {:tool_invoke, "req-noext", "send_file",
+                  %{"chat_id" => "oc_noext", "file_path" => "/tmp/no_extension_file"},
+                  self(), "ou_admin"})
+
+      assert_receive {:push_envelope, %{
+                        "req_id" => "req-noext",
+                        "ok" => false,
+                        "error" => %{"type" => "no_extension"}
+                      }},
+                     500
+
+      refute_receive {:relay, :app, _}, 100
+    end
+
+    test "send_file rejects relative paths + paths containing `..`", %{tmp: _tmp} do
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -297,7 +451,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
           proxy_ctx: %{}
         })
 
-      # Relative path → rejected
+      # Relative path (no extension) → no_extension (infer_media_type fires first).
       send(peer, {:tool_invoke, "req-rel", "send_file",
                   %{"chat_id" => "oc_sfr", "file_path" => "etc/passwd"},
                   self(), "ou_admin"})
@@ -305,8 +459,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       assert_receive {:push_envelope, %{"req_id" => "req-rel", "ok" => false}}, 500
       refute_receive {:relay, :app, _}, 100
 
-      # Absolute but contains `..` → rejected (defence-in-depth even
-      # though Path.expand would resolve it).
+      # Absolute but contains `..` and no extension → no_extension.
       send(peer, {:tool_invoke, "req-trav", "send_file",
                   %{"chat_id" => "oc_sfr", "file_path" => "/tmp/foo/../../etc/passwd"},
                   self(), "ou_admin"})
@@ -315,7 +468,12 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       refute_receive {:relay, :app, _}, 100
     end
 
-    test "send_file with missing file returns tool_result ok:false + read_failed" do
+    test "send_file with missing file returns tool_result ok:false + store_or_read_failed", %{tmp: _tmp} do
+      # Missing-file path: the new flow hits Media.store before
+      # read_file_for_send. Media.store calls compute_sha256 which reads
+      # the file — so a missing file surfaces as store_or_read_failed
+      # (was: read_failed). Use a .txt extension so infer_media_type
+      # succeeds and the capability check passes before the read attempt.
       me = self()
       app_proxy = spawn_link(fn -> relay(me, :app) end)
 
@@ -329,20 +487,23 @@ defmodule Esr.Entity.FeishuChatProxyTest do
         })
 
       send(peer, {:tool_invoke, "req-3", "send_file",
-                  %{"chat_id" => "oc_sfm", "file_path" => "/tmp/this-file-does-not-exist-esr-test"},
+                  %{
+                    "chat_id" => "oc_sfm",
+                    "file_path" => "/tmp/this-file-does-not-exist-esr-test.txt"
+                  },
                   self(), "ou_admin"})
 
       assert_receive {:push_envelope, %{
                         "req_id" => "req-3",
                         "ok" => false,
-                        "error" => %{"type" => "read_failed"}
+                        "error" => %{"type" => "store_or_read_failed"}
                       }},
                      500
 
       refute_receive {:relay, :app, _}, 200
     end
 
-    test "unknown tool returns tool_result with ok:false + error" do
+    test "unknown tool returns tool_result with ok:false + error", %{tmp: _tmp} do
       {:ok, peer} =
         GenServer.start_link(FeishuChatProxy, %{
           session_id: "s_bad",
