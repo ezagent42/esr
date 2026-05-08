@@ -64,7 +64,14 @@ defmodule Esr.Commands.Key do
       {:ok, bytes} ->
         case ChatScopeRegistry.lookup_by_chat(chat_id, app_id) do
           {:ok, sid, _refs} ->
-            _ = Esr.Entity.PtyProcess.write(sid, bytes)
+            # Phase A.4b: PtyProcess.write/2 looks up "pty:<actor_id>"
+            # post-Phase-A.4. For multi-agent sessions, resolve the
+            # primary agent's pty_actor_id via InstanceRegistry; for
+            # single-agent sessions (no InstanceRegistry row), PtyProcess
+            # falls back to `actor_id ||= session_id` so a session_id
+            # lookup still succeeds.
+            pty_id = resolve_pty_actor_id(sid)
+            _ = Esr.Entity.PtyProcess.write(pty_id, bytes)
             {:ok, %{"text" => "🎹 sent #{byte_size(bytes)} byte(s) to PTY"}}
 
           :not_found ->
@@ -128,4 +135,26 @@ defmodule Esr.Commands.Key do
   end
 
   defp do_translate(_), do: :error
+
+  # Phase A.4b — resolve the primary agent's pty_actor_id for the
+  # session, falling back to session_id when no InstanceRegistry row
+  # exists (single-agent / AgentSpawner path; PtyProcess.init's
+  # `actor_id ||= session_id` makes "pty:<session_id>" the lookup key
+  # in that case).
+  defp resolve_pty_actor_id(session_id) do
+    case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+      {:ok, name} ->
+        case Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(session_id, name) do
+          {:ok, aid} -> aid
+          :not_found -> session_id
+        end
+
+      :not_found ->
+        session_id
+    end
+  rescue
+    _ -> session_id
+  catch
+    :exit, _ -> session_id
+  end
 end

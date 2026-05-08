@@ -271,7 +271,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
         cc_actor_id = uuid_v4()
         pty_actor_id = uuid_v4()
 
-        cc_args = build_cc_args(session_id, name, cc_actor_id, type, config)
+        cc_args = build_cc_args(session_id, name, cc_actor_id, pty_actor_id, type, config)
         pty_args = build_pty_args(session_id, name, pty_actor_id, config)
 
         agent_sup_via =
@@ -336,11 +336,12 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     DateTime.utc_now() |> DateTime.to_iso8601()
   end
 
-  defp build_cc_args(session_id, name, actor_id, type, config) do
+  defp build_cc_args(session_id, name, actor_id, pty_actor_id, type, config) do
     %{
       session_id: session_id,
       name: name,
       actor_id: actor_id,
+      pty_actor_id: pty_actor_id,
       handler_module: resolve_handler_module(type, config),
       proxy_ctx: %{session_id: session_id}
     }

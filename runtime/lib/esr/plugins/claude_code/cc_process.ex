@@ -89,6 +89,16 @@ defmodule Esr.Entity.CCProcess do
 
     name = Map.get(args, :name) || ("cc-" <> sid)
 
+    # Phase A.4b: PtyProcess registers under "pty:<actor_id>" (Phase A.4
+    # migrated away from "pty:<session_id>"). For multi-agent spawns
+    # InstanceRegistry.build_cc_args/6 threads `:pty_actor_id` through.
+    # Single-agent spawns via AgentSpawner/Factory.spawn_peer don't set
+    # `:pty_actor_id` AND don't set PtyProcess's `:actor_id` — the PTY
+    # peer's init/1 falls back to `actor_id ||= session_id` so the lookup
+    # key remains "pty:<session_id>". Mirror that fallback here so both
+    # spawn paths agree on the lookup key.
+    pty_actor_id = Map.get(args, :pty_actor_id) || sid
+
     # M-1.5: register in Index 2 (`{sid, name}`) and Index 3
     # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
     # `list_by_role/2` resolve this peer. Best-effort guard: unit tests
@@ -109,6 +119,7 @@ defmodule Esr.Entity.CCProcess do
     {:ok,
      %{
        session_id: sid,
+       pty_actor_id: pty_actor_id,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
        proxy_ctx: proxy_ctx,
@@ -316,7 +327,7 @@ defmodule Esr.Entity.CCProcess do
       # to PTY directly lets the operator unblock claude themselves
       # via Feishu, no `/attach` required for the simple cases.
       keystrokes = text <> "\r"
-      _ = Esr.Entity.PtyProcess.write(state.session_id, keystrokes)
+      _ = Esr.Entity.PtyProcess.write(state.pty_actor_id, keystrokes)
       state
     end
   end
