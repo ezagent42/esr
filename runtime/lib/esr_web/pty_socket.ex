@@ -21,9 +21,13 @@ defmodule EsrWeb.PtySocket do
 
   ## Connection
 
-  URL: `/attach_socket/websocket?sid=<session_id>`. The browser passes
-  `sid` as a query param at WebSocket handshake (matches the existing
-  `window.ESR_SID` injection in the attach HTML shell).
+  URL: `/attach_socket/websocket?sid=<pty_actor_id>`. The browser passes
+  `sid` as a query param at WebSocket handshake. Phase A.4 (resource-typed
+  grammar) migrated PtyProcess's pubsub topic + register key to
+  `pty:<actor_id>`, so the `?sid=` value is now semantically the
+  pty_actor_id (the URL emitter in Phase E builds URLs with the actor_id
+  UUID). The query-param NAME stays `sid` for backwards compat with the
+  existing `window.ESR_SID` injection in the attach HTML shell.
 
   On connect we subscribe to PubSub topic `pty:<sid>`; PtyProcess
   broadcasts `{:pty_stdout, bytes}` there, and we forward bytes
