@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Notify do
+defmodule Esr.Plugins.Feishu.Commands.Notify do
   @moduledoc """
-  `Esr.Commands.Notify` — emits a Feishu `reply` directive on
+  `Esr.Plugins.Feishu.Commands.Notify` — emits a Feishu `reply` directive on
   behalf of the admin dispatcher (spec §6.4 Notify bullet).
 
   Called by `Esr.Admin.Dispatcher` inside a `Task.start` when a

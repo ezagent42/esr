@@ -511,10 +511,6 @@ slashes:
 # slash commands. They share the same Dispatcher dispatch table — yaml
 # is the single source of truth for kind → {permission, command_module}.
 internal_kinds:
-  notify:
-    permission: "notify.send"
-    command_module: "Esr.Commands.Notify"
-
   reload:
     permission: "runtime.reload"
     command_module: "Esr.Commands.Reload"

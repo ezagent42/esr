@@ -1,4 +1,4 @@
-defmodule Esr.Commands.NotifyTest do
+defmodule Esr.Plugins.Feishu.Commands.NotifyTest do
   @moduledoc """
   DI-7 Task 14 — end-to-end exercise of the admin queue pipeline with
   `Commands.Notify` as the first real command.
@@ -18,7 +18,7 @@ defmodule Esr.Commands.NotifyTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Notify
+  alias Esr.Plugins.Feishu.Commands.Notify
   alias Esr.Entity.SlashHandler
   alias Esr.Slash.QueueResult
   alias Esr.Slash.ReplyTarget.QueueFile
