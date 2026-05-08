@@ -365,6 +365,189 @@ defmodule Esr.Entity.FeishuChatProxyTest do
     end
   end
 
+  describe "non-text inbound (Task 2.4)" do
+    alias Esr.Resource.Media.PluginRegistry
+
+    setup do
+      # Clean up PluginRegistry entries for "claude_code" after each test.
+      on_exit(fn -> PluginRegistry.unregister("claude_code") end)
+
+      # Reset CapGuard media_unsupported_last_emit state between tests.
+      if pid = Process.whereis(Esr.Entity.CapGuard) do
+        :sys.replace_state(pid, fn state ->
+          Map.put(state, :media_unsupported_last_emit, %{})
+        end)
+      end
+
+      :ok
+    end
+
+    test "dispatches image inbound to cc_process as {:text, uri, meta} when cc supports image" do
+      me = self()
+      sid = "s_img_#{System.unique_integer([:positive])}"
+
+      # cc_process relay: receives {:text, content, meta} and forwards to test.
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      # app_proxy relay: receives {:outbound, directive} and publishes directive_ack.
+      app_proxy = spawn_link(fn -> relay_with_directive_ack(me) end)
+
+      _ = register_role(cc_process, sid, :cc_process)
+      _ = register_role(app_proxy, sid, :feishu_app_proxy)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_img",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      PluginRegistry.register("claude_code", %{inbound: [:image, :file, :audio], outbound: []})
+
+      fake_uri =
+        "esr://test@localhost:4001/resources/image/" <>
+          String.duplicate("a", 64) <> ".jpg"
+
+      # Tell the relay what URI to use in the directive_ack.
+      send(app_proxy, {:set_ack_uri, fake_uri})
+      # Give relay time to store ack_uri before the inbound arrives.
+      Process.sleep(10)
+
+      envelope = %{
+        "source" => "esr://default@localhost/adapters/feishu/img_inst",
+        "principal_id" => "ou_img_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_img",
+            "msg_type" => "image",
+            "msg_id" => "om_img_1",
+            "file_key" => "img_filekey_abc",
+            "file_name" => "photo.jpg",
+            "sender_id" => "ou_img_user"
+          }
+        }
+      }
+
+      [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+      send(fcp_pid, {:feishu_inbound, envelope})
+
+      # cc_process receives {:text, uri, meta} — meta carries msg_type: "image"
+      assert_receive {:relay, :cc, {:text, ^fake_uri, meta}}, 5_000
+      assert meta.msg_type == "image"
+      assert meta.sender_id == "ou_img_user"
+    end
+
+    test "emits throttled DM when cc doesn't declare inbound for the kind" do
+      me = self()
+      sid = "s_unsup_#{System.unique_integer([:positive])}"
+      instance_id = "faa_unsup_#{System.unique_integer([:positive])}"
+
+      # Start a FAA so CapGuard can dispatch the DM.
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+      on_exit(fn -> if Process.alive?(sup), do: Process.exit(sup, :shutdown) end)
+
+      {:ok, _faa_pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {Esr.Entity.FeishuAppAdapter,
+           %{instance_id: instance_id, neighbors: [], proxy_ctx: %{}}}
+        )
+
+      # Subscribe to the adapter channel so we can observe the DM directive.
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/#{instance_id}")
+
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      _ = register_role(cc_process, sid, :cc_process)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_unsup",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      # claude_code does NOT support image inbound.
+      PluginRegistry.register("claude_code", %{inbound: [:file], outbound: []})
+
+      envelope = %{
+        "source" => "esr://default@localhost/adapters/feishu/#{instance_id}",
+        "principal_id" => "ou_unsup_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_unsup",
+            "msg_type" => "image",
+            "msg_id" => "om_unsup_1",
+            "sender_id" => "ou_unsup_user"
+          }
+        }
+      }
+
+      [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+      send(fcp_pid, {:feishu_inbound, envelope})
+
+      # FAA broadcasts the DM directive on the adapter topic.
+      # CapGuard.media_unsupported_dm -> FAA receives {:outbound, reply}
+      # -> FAA wraps as directive -> broadcast on adapter:feishu/<instance_id>.
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "kind" => "directive",
+                         "payload" => %{"action" => "send_message"}
+                       }
+                     },
+                     2_000
+
+      # Nothing forwarded to cc_process.
+      refute_receive {:relay, :cc, _}, 200
+    end
+
+    test "drops unknown msg_type (e.g. interactive) with log warning" do
+      import ExUnit.CaptureLog
+
+      me = self()
+      sid = "s_interactive_#{System.unique_integer([:positive])}"
+
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      _ = register_role(cc_process, sid, :cc_process)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_inter",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      original_level = Logger.level()
+      Logger.configure(level: :info)
+      on_exit(fn -> Logger.configure(level: original_level) end)
+
+      log =
+        capture_log(fn ->
+          [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+
+          send(fcp_pid, {:feishu_inbound, %{
+            "payload" => %{
+              "event_type" => "msg_received",
+              "args" => %{
+                "chat_id" => "oc_inter",
+                "msg_type" => "interactive",
+                "msg_id" => "om_inter_1"
+              }
+            }
+          }})
+
+          Process.sleep(50)
+        end)
+
+      assert log =~ "unsupported msg_type"
+      refute_receive {:relay, :cc, _}, 100
+    end
+  end
+
   describe "channel_adapter lifted from ctx (D1)" do
     test "init/1 stores ctx.channel_adapter under string key in state" do
       args = %{
@@ -427,6 +610,65 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       {:m2_role_registered, ^actor_id} -> actor_id
     after
       1000 -> raise "register_role timed out for #{inspect(pid)} sid=#{session_id} role=#{role}"
+    end
+  end
+
+  # Task 2.4: relay variant for the feishu_app_proxy role that also
+  # publishes a directive_ack on PubSub when it receives a directive
+  # outbound. This allows FCP's synchronous build_directive_fn/1 to
+  # complete without timing out in tests.
+  #
+  # Usage: send {:set_ack_uri, uri} before triggering inbound to configure
+  # the URI returned in the fake ack payload.
+  defp relay_with_directive_ack(reply_to, ack_uri \\ nil) do
+    receive do
+      {:set_ack_uri, uri} ->
+        relay_with_directive_ack(reply_to, uri)
+
+      {:m2_register_role, replier, actor_id, session_id, role} ->
+        :ok =
+          Esr.Entity.Registry.register_attrs(actor_id, %{
+            session_id: session_id,
+            name: "test-#{role}-#{actor_id}",
+            role: role
+          })
+
+        send(replier, {:m2_role_registered, actor_id})
+        relay_with_directive_ack(reply_to, ack_uri)
+
+      {:outbound, %{"kind" => "directive", "id" => id} = directive} = msg ->
+        send(reply_to, {:relay, :app, msg})
+
+        # Publish directive_ack so FCP's blocking receive resolves.
+        uri =
+          ack_uri ||
+            "esr://test@localhost:4001/resources/image/" <>
+              String.duplicate("a", 64) <> ".bin"
+
+        if Process.whereis(EsrWeb.PubSub) do
+          Phoenix.PubSub.broadcast(
+            EsrWeb.PubSub,
+            "directive_ack:" <> id,
+            {:directive_ack,
+             %{
+               "id" => id,
+               "payload" => %{
+                 "ok" => true,
+                 "result" => %{
+                   "uri" => uri,
+                   "sha256" => String.duplicate("a", 64),
+                   "path" => "/tmp/fake_media"
+                 }
+               }
+             }}
+          )
+        end
+
+        relay_with_directive_ack(reply_to, ack_uri)
+
+      msg ->
+        send(reply_to, {:relay, :app, msg})
+        relay_with_directive_ack(reply_to, ack_uri)
     end
   end
 end

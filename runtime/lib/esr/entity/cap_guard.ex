@@ -45,6 +45,8 @@ defmodule Esr.Entity.CapGuard do
   require Logger
 
   @deny_dm_text "你无权使用此 bot，请联系管理员授权。"
+  @media_unsupported_dm_text_prefix "操作员发了"
+  @media_unsupported_dm_text_suffix "类型消息，但当前 cc 不支持此类型消费 — 已忽略"
   @default_interval_ms 10 * 60 * 1000
   @feishu_source_re ~r{^esr://[^/]+/adapters/feishu/([^/]+)$}
 
@@ -79,6 +81,25 @@ defmodule Esr.Entity.CapGuard do
     end
   end
 
+  @doc """
+  Emits a "media type unsupported" DM to the operator who sent an
+  unsupported media type, throttled per `(sender_id, kind)` (10-min
+  window per spec D6).
+
+  The DM goes through the originating FAA peer via the same
+  `{:outbound, ...}` mechanism as the existing deny-DM. Different
+  throttle key from `check_inbound/3`'s deny-DM so a user who hit a
+  permission deny and a media-unsupported in the same window gets
+  both.
+
+  Returns `:dispatched | :rate_limited`.
+  """
+  @spec media_unsupported_dm(envelope :: map(), kind :: atom() | String.t()) ::
+          :dispatched | :rate_limited
+  def media_unsupported_dm(envelope, kind) do
+    GenServer.call(__MODULE__, {:media_unsupported_dm, envelope, to_string(kind)})
+  end
+
   # ------------------------------------------------------------------
   # GenServer
   # ------------------------------------------------------------------
@@ -86,7 +107,7 @@ defmodule Esr.Entity.CapGuard do
   @impl true
   def init(opts) do
     interval_ms = Keyword.get(opts, :interval_ms, @default_interval_ms)
-    {:ok, %{last_emit: %{}, interval_ms: interval_ms}}
+    {:ok, %{last_emit: %{}, media_unsupported_last_emit: %{}, interval_ms: interval_ms}}
   end
 
   @impl true
@@ -97,6 +118,26 @@ defmodule Esr.Entity.CapGuard do
     if is_nil(last) or now - last >= state.interval_ms do
       {:reply, :emit, %{state | last_emit: Map.put(state.last_emit, principal_id, now)}}
     else
+      {:reply, :rate_limited, state}
+    end
+  end
+
+  def handle_call({:media_unsupported_dm, envelope, kind}, _from, state) do
+    sender_id = envelope["principal_id"] || ""
+    throttle_key = {sender_id, kind}
+    now_ms = :erlang.monotonic_time(:millisecond)
+    last = Map.get(state.media_unsupported_last_emit, throttle_key)
+
+    if is_nil(last) or now_ms - last >= state.interval_ms do
+      dispatch_media_unsupported_dm(envelope, kind)
+      new_emit = Map.put(state.media_unsupported_last_emit, throttle_key, now_ms)
+      {:reply, :dispatched, %{state | media_unsupported_last_emit: new_emit}}
+    else
+      Logger.debug(
+        "CapGuard media-unsupported DM suppressed by rate-limit " <>
+          "sender_id=#{inspect(sender_id)} kind=#{inspect(kind)}"
+      )
+
       {:reply, :rate_limited, state}
     end
   end
@@ -154,5 +195,43 @@ defmodule Esr.Entity.CapGuard do
             "DM not sent (deny still effective; principal=#{inspect(principal_id)})"
         )
     end
+  end
+
+  defp dispatch_media_unsupported_dm(envelope, kind) do
+    text = "#{@media_unsupported_dm_text_prefix} #{kind} #{@media_unsupported_dm_text_suffix}"
+
+    with source when is_binary(source) <- envelope["source"],
+         [_full, instance_id] <- Regex.run(@feishu_source_re, source),
+         chat_id when is_binary(chat_id) and chat_id != "" <-
+           get_in(envelope, ["payload", "args", "chat_id"]),
+         principal_id when is_binary(principal_id) and principal_id != "" <-
+           envelope["principal_id"] do
+      case Registry.lookup(Esr.Entity.Registry, "feishu_app_adapter_#{instance_id}") do
+        [{faa_pid, _}] when is_pid(faa_pid) ->
+          send(
+            faa_pid,
+            {:outbound,
+             %{
+               "kind" => "reply",
+               "args" => %{"chat_id" => chat_id, "text" => text}
+             }}
+          )
+
+        _ ->
+          Logger.warning(
+            "CapGuard media-unsupported DM: no FAA registered for " <>
+              "instance_id=#{inspect(instance_id)}; DM not sent " <>
+              "principal=#{inspect(principal_id)} kind=#{inspect(kind)}"
+          )
+      end
+    else
+      _ ->
+        Logger.debug(
+          "CapGuard media-unsupported DM: envelope missing source/chat_id/principal_id; " <>
+            "skipping DM kind=#{inspect(kind)}"
+        )
+    end
+
+    :ok
   end
 end
