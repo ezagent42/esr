@@ -181,6 +181,48 @@ defmodule Esr.UriTest do
     end
   end
 
+  describe "resources path-style type" do
+    test "parse_resource/1 happy path" do
+      uri = "esr://default@localhost/resources/image/" <> String.duplicate("a", 64) <> ".png"
+      assert {:ok, parsed} = Esr.Uri.parse_resource(uri)
+      assert parsed.media_type == :image
+      assert parsed.sha256 == String.duplicate("a", 64)
+      assert parsed.ext == "png"
+      assert parsed.env == "default"
+      assert parsed.host == "localhost"
+    end
+
+    test "parse_resource/1 rejects non-64-hex sha256" do
+      bad = "esr://default@localhost/resources/image/notahash.png"
+      assert {:error, :invalid_uri} = Esr.Uri.parse_resource(bad)
+    end
+
+    test "parse_resource/1 rejects ext not in allowlist" do
+      bad = "esr://default@localhost/resources/image/" <> String.duplicate("a", 64) <> ".exe"
+      assert {:error, :invalid_uri} = Esr.Uri.parse_resource(bad)
+    end
+
+    test "parse_resource/1 rejects unknown media_type" do
+      bad = "esr://default@localhost/resources/video/" <> String.duplicate("a", 64) <> ".mp4"
+      assert {:error, :invalid_uri} = Esr.Uri.parse_resource(bad)
+    end
+
+    test "build_resource/3 round-trips" do
+      sha = String.duplicate("b", 64)
+      uri = Esr.Uri.build_resource(:image, sha, ext: "jpg", env: "prod", host: "esrd-1:4001")
+      assert uri == "esr://prod@esrd-1:4001/resources/image/#{sha}.jpg"
+      assert {:ok, parsed} = Esr.Uri.parse_resource(uri)
+      assert parsed.media_type == :image
+      assert parsed.sha256 == sha
+      assert parsed.ext == "jpg"
+    end
+
+    test "build_path/3 with :env keyword (closes 2026-04-29 gap)" do
+      uri = Esr.Uri.build_path(["resources", "image", "abc.png"], "localhost", env: "default")
+      assert uri == "esr://default@localhost/resources/image/abc.png"
+    end
+  end
+
   describe "to_http_url/2" do
     test "renders esr URI to HTTP URL using endpoint host:port" do
       uri = Esr.Uri.build_path(["sessions", "sess_42", "attach"], "localhost")
