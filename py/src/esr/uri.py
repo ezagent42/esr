@@ -263,13 +263,13 @@ def build_path(
 # Mirror of Esr.Uri.parse_resource/1 and Esr.Uri.build_resource/3 (commit 018c21a).
 # ---------------------------------------------------------------------------
 
-_MEDIA_TYPES = ("image", "file", "audio")
-
 _ALLOWED_EXTS: dict[str, tuple[str, ...]] = {
     "image": ("png", "jpg", "jpeg", "gif", "webp", "heic"),
     "file":  ("bin", "pdf", "doc", "docx", "xls", "xlsx", "zip", "txt", "md", "csv"),
     "audio": ("opus", "mp3", "wav", "m4a", "aac"),
 }
+
+_MEDIA_TYPES: tuple[str, ...] = tuple(_ALLOWED_EXTS)  # single source of truth
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -333,7 +333,9 @@ def build_resource(
         raise ValueError(
             f"build_resource: sha256 must be 64 lowercase hex chars, got: {sha256!r}"
         )
-    if media_type not in _ALLOWED_EXTS or ext not in _ALLOWED_EXTS[media_type]:
+    if media_type not in _ALLOWED_EXTS:
+        raise ValueError(f"build_resource: unknown media_type {media_type!r}")
+    if ext not in _ALLOWED_EXTS[media_type]:
         raise ValueError(
             f"build_resource: ext {ext!r} not in allowlist for media_type {media_type!r}"
         )
