@@ -109,25 +109,20 @@ defmodule Esr.Application do
       Esr.Session.Supervisor,
 
       # 4e.3b Session.ChatRouting.Registry + Session.NameIndex.Registry
-      # (cleanup-PR commit 3 split from `Esr.Resource.ChatScope.Registry`):
+      # (cleanup-PR commit 3 split from the legacy `ChatScope.Registry`):
       # ChatRouting owns `(chat_id, app_id) → session_id` chat-current
       # routing; NameIndex owns the D8 URI-uniqueness indexes
       # `(env, username, workspace, name)` and `(…, worktree_branch)`.
-      # Started BEFORE the legacy ChatScope.Registry so the double-write
-      # shim in commit 3a can safely forward writes to the new ETS tables.
+      # Both must start BEFORE Scope.Router since Router writes through
+      # them on every spawn / unregister path.
       {Esr.Session.ChatRouting.Registry, []},
       {Esr.Session.NameIndex.Registry, []},
 
-      # 4e.3c Legacy ChatScope.Registry (R5 split from legacy SessionRegistry).
-      # Kept temporarily during the cleanup-PR double-write phase; commit 3c
-      # deletes this child after callers have switched to the new registries.
-      {Esr.Resource.ChatScope.Registry, []},
-
       # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
-      # the agents.yaml pipeline. Depends on ChatScope.Registry,
-      # Scope.Supervisor, and Session.Registry (all earlier
-      # children). Without this, production `/new-session` calls
+      # the agents.yaml pipeline. Depends on ChatRouting.Registry,
+      # NameIndex.Registry, Scope.Supervisor, and Session.Registry (all
+      # earlier children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
       Esr.Session.Router,
 
@@ -216,7 +211,7 @@ defmodule Esr.Application do
       # 5. Subsystem supervisors (scaffolds in F02; children arrive per-FR).
       # (P2-16) Esr.AdapterHub.Supervisor removed — AdapterHub.Registry's
       # role (adapter:<name>/<instance_id> → actor_id binding) is subsumed
-      # by Esr.Resource.ChatScope.Registry.lookup_by_chat/2 in the new
+      # by Esr.Session.ChatRouting.Registry.lookup_by_chat/2 in the new
       # peer chain (post-R5).
       Esr.HandlerRouter.Supervisor,
       Esr.Persistence.Supervisor,

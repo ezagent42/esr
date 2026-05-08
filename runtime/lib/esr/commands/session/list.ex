@@ -18,7 +18,7 @@ defmodule Esr.Commands.Session.List do
           ]
         }}
 
-  Reads `Esr.Resource.ChatScope.Registry.list_uris/3` — the URI-keyed live-session
+  Reads `Esr.Session.NameIndex.Registry.list_uris/3` — the URI-keyed live-session
   table claimed at /new-session time (PR-21g). Independent of the
   legacy routing.yaml / branches.yaml shape below.
 

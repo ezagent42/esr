@@ -5,7 +5,7 @@ defmodule Esr.Entity.FeishuAppAdapter do
 
   Role: sole Elixir consumer of `adapter:feishu/<instance_id>`
   Phoenix-channel inbound frames. Routes each frame to the owning
-  Session's FeishuChatProxy via `Esr.Resource.ChatScope.Registry.lookup_by_chat/2`,
+  Session's FeishuChatProxy via `Esr.Session.ChatRouting.Registry.lookup_by_chat/2`,
   or broadcasts `:new_chat_thread` on PubSub for Scope.Router (PR-3)
   to create a new session.
 

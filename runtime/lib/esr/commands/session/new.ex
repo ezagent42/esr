@@ -167,7 +167,7 @@ defmodule Esr.Commands.Session.New do
         # (a) operator pointed at an existing checkout intentionally
         #     (e.g., session reuse) — proceed without re-running git
         # (b) collision with another session's worktree — would have
-        #     been caught by Esr.Resource.ChatScope.Registry.claim_uri post-spawn
+        #     been caught by Esr.Session.NameIndex.Registry.claim_uri post-spawn
         # Treating as (a) here; (b) is the URI-uniqueness gate's job.
         require Logger
         Logger.info("session_new: cwd #{cwd} already exists, treating as reuse")
@@ -192,7 +192,7 @@ defmodule Esr.Commands.Session.New do
 
   # PR-21g: if the slash command threaded URI components (name +
   # username + workspace + worktree), claim them in
-  # Esr.Resource.ChatScope.Registry against the freshly-spawned sid.
+  # Esr.Session.ChatRouting.Registry against the freshly-spawned sid.
   # Collisions roll back the spawn so the pair (Registry, supervisor
   # tree) stays consistent.
   defp maybe_claim_uri(%{"name" => name, "username" => u, "workspace" => ws, "worktree" => wt} = _args, sid)
@@ -331,7 +331,7 @@ defmodule Esr.Commands.Session.New do
   #
   #   (a) Real chat-bound spawn: `spawn_session` delegated to
   #       `Esr.Session.Router.create_session/1`, which already calls
-  #       `Esr.Resource.ChatScope.Registry.register_session/3` with peer
+  #       `Esr.Session.ChatRouting.Registry.register_session/3` with peer
   #       refs (FeishuChatProxy pid + co.). Re-running `attach_session`
   #       here would overwrite that 3-tuple entry with the 2-tuple
   #       attach-shape and silently drop the refs — every inbound

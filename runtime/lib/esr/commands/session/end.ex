@@ -10,7 +10,7 @@ defmodule Esr.Commands.Session.End do
   - **Legacy `session_id`** — direct ULID lookup via `Scope.Router.end_session/1`.
     Used by tests and the file-queue admin path.
   - **New `name`** (PR-21d slash grammar) — resolves to session_id via
-    `Esr.Resource.ChatScope.Registry.lookup_by_name/4` using
+    `Esr.Session.NameIndex.Registry.lookup_by_name/4` using
     `(env, username, workspace, name)`. `env` defaults to
     `$ESR_INSTANCE`; `username` and `workspace` come from the args
     (threaded by `SlashHandler`).

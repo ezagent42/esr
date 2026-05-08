@@ -369,7 +369,7 @@ defmodule Esr.Session.ChatRouting.Registry do
   defp load_attached_from_disk do
     path = persist_path()
 
-    case Esr.Resource.ChatScope.FileLoader.load(path) do
+    case Esr.Session.ChatRouting.FileLoader.load(path) do
       {:ok, entries} ->
         Enum.each(entries, fn %{chat_id: c, app_id: a, sessions: sids, current: cur} ->
           attached = MapSet.new(sids)
@@ -400,7 +400,7 @@ defmodule Esr.Session.ChatRouting.Registry do
 
       path = persist_path()
 
-      case Esr.Resource.ChatScope.FileLoader.write(path, entries) do
+      case Esr.Session.ChatRouting.FileLoader.write(path, entries) do
         :ok ->
           :ok
 

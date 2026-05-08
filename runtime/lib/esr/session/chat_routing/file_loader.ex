@@ -1,4 +1,4 @@
-defmodule Esr.Resource.ChatScope.FileLoader do
+defmodule Esr.Session.ChatRouting.FileLoader do
   @moduledoc """
   Persist and load the `(chat_id, app_id)` → attached-set mapping.
 
