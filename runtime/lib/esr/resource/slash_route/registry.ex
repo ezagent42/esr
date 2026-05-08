@@ -253,6 +253,31 @@ defmodule Esr.Resource.SlashRoute.Registry do
     GenServer.call(__MODULE__, {:load, snapshot})
   end
 
+  @doc """
+  Register a per-plugin slash-route overlay. `snapshot` has the same
+  shape as the one passed to `load_snapshot/1` (`:slashes` + `:internal_kinds`
+  lists). Collision against base or any other overlay is a hard error
+  — the call returns `{:error, {:slash_collision | :kind_collision, key}}`
+  and the overlay is NOT installed.
+
+  Audit #6 / 2026-05-08-plugin-command-registration spec §5.3.
+  """
+  @spec register_overlay(plugin_name :: String.t(), snapshot :: map()) ::
+          :ok | {:error, term()}
+  def register_overlay(plugin_name, snapshot)
+      when is_binary(plugin_name) and is_map(snapshot) do
+    GenServer.call(__MODULE__, {:register_overlay, plugin_name, snapshot})
+  end
+
+  @doc """
+  Remove the overlay registered by `plugin_name`. Idempotent — removing
+  an overlay that was never registered is `:ok`.
+  """
+  @spec unregister_overlay(plugin_name :: String.t()) :: :ok
+  def unregister_overlay(plugin_name) when is_binary(plugin_name) do
+    GenServer.call(__MODULE__, {:unregister_overlay, plugin_name})
+  end
+
   # ------------------------------------------------------------------
   # GenServer
   # ------------------------------------------------------------------
@@ -284,6 +309,34 @@ defmodule Esr.Resource.SlashRoute.Registry do
         Logger.error("SlashRoute.Registry: base load produced collision: #{inspect(reason)}")
         {:reply, err, state}
     end
+  end
+
+  @impl true
+  def handle_call({:register_overlay, plugin_name, snapshot}, _from, state) do
+    overlay = %{
+      slashes: Map.get(snapshot, :slashes, []),
+      internal_kinds: Map.get(snapshot, :internal_kinds, [])
+    }
+
+    candidate = %{state | overlays: Map.put(state.overlays, plugin_name, overlay)}
+
+    case rebuild_merged_view(candidate) do
+      :ok ->
+        {:reply, :ok, candidate}
+
+      {:error, _} = err ->
+        # Collision — do NOT install the overlay; rebuild from the
+        # pre-call state so the merged ETS reflects the rolled-back view.
+        _ = rebuild_merged_view(state)
+        {:reply, err, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:unregister_overlay, plugin_name}, _from, state) do
+    candidate = %{state | overlays: Map.delete(state.overlays, plugin_name)}
+    :ok = rebuild_merged_view(candidate)
+    {:reply, :ok, candidate}
   end
 
   # Rebuild the public ETS tables from base + every overlay. Collision
