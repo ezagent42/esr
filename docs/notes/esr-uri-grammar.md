@@ -63,6 +63,7 @@ Single `id` segment after the type:
 | `chats` | (rarely top-level; usually nested under `workspaces/`) | chat addressing |
 | `users` | `esr://localhost/users/ou_xxx` | user identity (today: feishu open_id; PR-21: switches to esr username) |
 | `sessions` | `esr://localhost/sessions/sess_42` | a CC session (PR-21 extends with hierarchical `sessions/<user>/<workspace>/<name>`) |
+| `resources` | `esr://default@localhost/resources/image/<sha256>.png` | content-addressed media storage; `<media_type>/<sha256>.<ext>`; introduced 2026-05-08 (spec `2026-05-08-multimedia-content-protocol-design.md` §1) |
 
 The full registered set lives at `runtime/lib/esr/uri.ex:33-34` and
 `py/src/esr/uri.py:31-34` — these two must stay in sync.
@@ -80,6 +81,7 @@ The full registered set lives at `runtime/lib/esr/uri.ex:33-34` and
 | `runner_core.py:159` | source URI per spec §7.5 | `py/src/esr/uri.py` builder |
 | `handler_worker.py:160-165` | `localhost/{topic}` (informational) | string interp |
 | `channel_pusher.py:29` | `adapters/{platform}/{instance_id}` | comment-only |
+| `uri.ex` (`build_resource/3`) | `resources/{media_type}/{sha256}.{ext}` | `Esr.Uri.build_resource/3` |
 
 The string-interp sites are informational/source-tagging only —
 no parsing happens against them. The `Esr.Uri.build_path/2`-routed
@@ -103,13 +105,12 @@ Esr.Uri.build_path(["workspaces", "ws_dev", "chats", "oc_xxx"], "localhost")
 # → "esr://localhost/workspaces/ws_dev/chats/oc_xxx"
 ```
 
-**Known gap (2026-04-29):** Elixir `build/3` and `build_path/2` do not
-accept an `org` parameter. The parser handles `org@host` correctly
-(see `uri_test.exs:27`), but to *emit* `esr://default@localhost/...`
-you currently have to interpolate manually. PR-21 (session URI redesign,
-spec at `docs/superpowers/specs/2026-04-28-session-cwd-worktree-redesign.md`)
-will be the first production user of `org@` and will extend the builder
-signatures.
+**Known gap (2026-04-29, closed 2026-05-08):** Elixir `build/3` and
+`build_path/2` now accept both `:org` and `:env` (alias) as of 2026-05-08
+(`build_path/3` via the `authority/2` helper). The parser handles `org@host`
+correctly (see `uri_test.exs:27`). `build_resource/3` also accepts `:env`
+for emitting `env@host` authority. The original gap (manual interpolation
+required) is closed.
 
 ### Python
 

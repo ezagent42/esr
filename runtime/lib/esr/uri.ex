@@ -150,6 +150,7 @@ defmodule Esr.Uri do
 
       case String.split(last_seg, ".", parts: 2) do
         [sha, ext] ->
+          ext = String.downcase(ext)
           media_type = String.to_existing_atom(mt_str)
 
           cond do
@@ -199,8 +200,20 @@ defmodule Esr.Uri do
   - `:host` — host portion of the URI (default `"localhost"`)
   """
   @spec build_resource(atom(), String.t(), keyword()) :: String.t()
-  def build_resource(media_type, sha256, opts \\ []) do
-    ext = Keyword.get(opts, :ext, "bin")
+  def build_resource(media_type, sha256, opts \\ [])
+      when is_atom(media_type) and is_binary(sha256) do
+    ext = Keyword.get(opts, :ext, "bin") |> to_string() |> String.downcase()
+
+    unless validate_sha256(sha256) do
+      raise ArgumentError,
+            "build_resource: sha256 must be 64 lowercase hex chars, got: #{inspect(sha256)}"
+    end
+
+    unless validate_ext(media_type, ext) do
+      raise ArgumentError,
+            "build_resource: ext #{inspect(ext)} not in allowlist for media_type #{inspect(media_type)}"
+    end
+
     env = Keyword.get(opts, :env)
     host = Keyword.get(opts, :host, "localhost")
     build_path(["resources", to_string(media_type), "#{sha256}.#{ext}"], host, env: env)
