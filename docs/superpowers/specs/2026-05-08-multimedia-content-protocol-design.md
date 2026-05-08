@@ -680,8 +680,8 @@ split is for atomic review + bisect, not phased delivery.
 | PR | Acceptance |
 |---|---|
 | PR-1 | `mix test` green; `pytest` green; new `tests/integration/test_plugin_manifest_consistency.py` green; no e2e change. Per D5: cc + feishu manifests gain `media_types:` blocks; loader parses if present, no rejection path. |
-| PR-2 | `mix test` + `pytest` green; new e2e scenario 19 (Feishu inbound multimedia) passes; manual: PNG dropped into Feishu chat reaches cc as a Read-able path |
-| PR-3 | `mix test` + `pytest` green; new e2e scenario 20 (cc outbound multimedia) passes; manual: claude `send_file` produces a visible Lark message |
+| PR-2 | `mix test` + `pytest` green; new e2e scenario 20 (Feishu inbound multimedia) passes; manual: PNG dropped into Feishu chat reaches cc as a Read-able path |
+| PR-3 | `mix test` + `pytest` green; new e2e scenario 21 (cc outbound multimedia) passes; manual: claude `send_file` produces a visible Lark message |
 
 ## File-level change inventory
 
@@ -716,7 +716,7 @@ split is for atomic review + bisect, not phased delivery.
 | `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex` | Modify | PR-2 | non-text branch invokes `Esr.Resource.Media.Inbound.handle/2` |
 | `runtime/lib/esr_web/mcp_controller.ex` | Modify | PR-2 | SSE notification carries `meta.kind` + `meta.path` for non-text |
 | `tests/e2e/scenarios/19_feishu_inbound_multimedia.sh` | New | PR-2 | |
-| `tests/mock-feishu/` (or wherever `mock_feishu` server lives) | Modify | PR-2 | Upgrade fidelity for image / file inbound: implement `P2ImMessageReceiveV1` with `msg_type=image\|file`, serve `im/v1/messages/<msg_id>/resources/<file_key>` for download. Per `docs/notes/mock-feishu-fidelity.md` the inbound image / file paths are ❌ today (lines 102-105); scenario 19 cannot run without this upgrade. |
+| `tests/mock-feishu/` (or wherever `mock_feishu` server lives) | Modify | PR-2 | Upgrade fidelity for image / file inbound: implement `P2ImMessageReceiveV1` with `msg_type=image\|file`, serve `im/v1/messages/<msg_id>/resources/<file_key>` for download. Per `docs/notes/mock-feishu-fidelity.md` the inbound image / file paths are ❌ today (lines 102-105); scenario 20 cannot run without this upgrade. |
 | `runtime/lib/esr/plugins/claude_code/cc_proxy.ex` | Modify | PR-3 | outbound store + envelope build |
 | `runtime/lib/esr/plugins/claude_code/mcp/tools.ex` | Modify | PR-3 | `send_file` re-implemented atop protocol |
 | `runtime/lib/esr/plugins/feishu/feishu_app_proxy.ex` | Modify | PR-3 | outbound non-text dispatch |
