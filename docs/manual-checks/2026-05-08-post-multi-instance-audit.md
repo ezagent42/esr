@@ -1,6 +1,8 @@
 # Post multi-instance routing audit — 2026-05-08
 
-**Operator-proposed journey** (12 steps, original from 2026-05-06 rev-3) vs **shipped surface** as of `origin/dev` `a69fd6a` (multi-instance routing cleanup PR #261 just landed).
+**Operator-proposed journey** (12 steps, original from 2026-05-06 rev-3) vs **shipped surface** as of `origin/dev` post PR #263 (session-first default + plugin-scoped command registration).
+
+> **rev-4 update (2026-05-08, post PR #263):** session-first migration (#5) and plugin-scoped command registration (#6 rev-3) closed end-to-end. New section [§ rev-4 — resource-typed grammar revision](#rev-4--resource-typed-grammar-revision-2026-05-08) reframes the previously-listed gaps A/B/C against four operator-stated grammar principles. The original "newly-surfaced gaps" proposals were partially incorrect (mis-located on the `/session:*` axis instead of the resource axis); see rev-4 for the revised plan.
 
 > **Companion file:** Chinese version at
 > [`2026-05-08-post-multi-instance-audit.zh_cn.md`](2026-05-08-post-multi-instance-audit.zh_cn.md).
@@ -24,7 +26,7 @@ Scope: `runtime/priv/slash-routes.default.yaml`, `runtime/lib/esr/cli/main.ex`, 
 | 1 | `esr daemon start` | ✅ | ✅ | ✅ | works | unchanged |
 | 2 | `esr add user linyilun`（auto-admin） | ✅ | ⚠️ | ⚠️ | grammar fixed via colon-namespace; auto-admin still env-driven | grammar improved |
 | 3 | `esr plugin install feishu` | ✅ | ⚠️ | ⚠️ | colon-namespace shipped; install verb still local-path | grammar improved |
-| 4 | `esr plugin feishu bind linyilun ou_xxx` | ✅ | ✅ | ❌ | bind is `esr user:bind-feishu`, plugin-scoped form still missing | unchanged |
+| 4 | `esr plugin feishu bind linyilun ou_xxx` | ✅ | ✅ | ✅ | **closed by PR #263 (plugin-scoped command registration rev-3)**: now `esr feishu bind <name> <ou_id>`; kind `feishu_bind`; cap `feishu/user-bind`; module `Esr.Plugins.Feishu.Commands.BindUser` | **fully closed** |
 | 5 | `esr plugin install claude_code` | ✅ | ⚠️ | ⚠️ | same as #3; built-in by default | unchanged |
 | 6 | `esr plugin claude_code set config http_proxy=…` | ✅ | ✅ | ✅ | **closed by Phase 7 + HR-2**: `/plugin:set` / `/plugin:show-config` / `/plugin:reload` | **fully closed** |
 | 7 | (Feishu) `/help` `/doctor` | ✅ | ✅ | ✅ | works as designed | unchanged |
@@ -34,9 +36,9 @@ Scope: `runtime/priv/slash-routes.default.yaml`, `runtime/lib/esr/cli/main.ex`, 
 | 11 | (Feishu) plain text → reply with cwd | ✅ | ✅ | ✅ | working today | unchanged |
 | 12 | (Feishu) `/agent:inspect esr-developer` → URL | ❌ | ❌ | ❌ | `/attach` removed by colon-namespace cutover; no slash returns the PtySocket URL | **regressed** |
 
-**Net read:** **9 of 12 fully closed** (was 7 fully + 2 partial in the 2026-05-06 audit). Two improvements (#6, #8, #10), one regression (#12 — the previous `/attach` was working but is now silently gone), three structural / model-level gaps remain (#2 auto-admin, #4 plugin-scoped grammar, #9 mental-model).
+**Net read (rev-4, post PR #263):** **10 of 12 fully closed** (was 7 fully + 2 partial in the 2026-05-06 audit, then 9 of 12 at rev-3). Three closes since rev-3: #4 plugin-scoped grammar (PR #263), #8 (Phase 6 colon cutover), #10 (M-2 + PR #248 multi-instance). Two structural / model-level gaps remain: #2 auto-admin, #9 mental-model partial. One regression sticks: #12 attach URL (now reframed under rev-4 grammar — see below).
 
-The big architectural wins since 2026-05-06 — colon-namespace, plugin config, multi-instance per-session DynSup, atomic `add_instance_and_spawn`, M-3/M-4 legacy removal — closed three steps and improved two more, but **surfaced one previously-shipped operator entry point getting deleted in the colon cutover** (#12 attach URL).
+The big architectural wins since 2026-05-06 — colon-namespace, plugin config, multi-instance per-session DynSup, atomic `add_instance_and_spawn`, M-3/M-4 legacy removal, session-first default resolution, plugin-scoped command registration — closed five steps. The rev-4 reframe (below) addresses #12 + the multi-instance helper gaps as one coherent grammar overhaul.
 
 ---
 
@@ -90,11 +92,25 @@ Audit task 1 (per memory) replaced the stale references in `Esr.Commands.Doctor`
 
 ### Session-first default resolution — **CLOSED 2026-05-08**
 
-PR (this branch) implements the `2026-05-08-session-first-default-resolution.md` spec:
+PR #263 implements the `2026-05-08-session-first-default-resolution.md` spec:
 per-user default workspace replaces the system "default" workspace, `/user:add` auto-creates
 `<username>-default`, new `/user:use` slash, and `/workspace:add-folder name=` falls back through
 the same chain. Audit step 9's session-first 1-2-3 path (`/session:new` → `/workspace:add-folder` →
 `/session:add-agent`) now works without ever typing a workspace name. Verified by e2e scenario 19.
+
+### Plugin-scoped command registration — **CLOSED 2026-05-08 (rev-3)**
+
+PR #263 also implements the `2026-05-08-plugin-command-registration.md` spec rev-3:
+`Esr.Plugin.Manifest` gained a `slash_routes:` declaration block + 4 sub-validators
+(slash prefix, kind prefix, permission cap subset, command_module loadability);
+`Esr.Resource.SlashRoute.Registry` refactored to base + per-plugin overlay model with
+hard collision detection; `Esr.Plugin.Loader.register_slash_routes/2` wired into
+`start_plugin/2`. **Audit step #4** (`esr plugin feishu bind …` mental model) is now
+implemented as `esr feishu bind …` — kind names renamed to comply with namespace
+(`notify` → `feishu_notify`, `user_bind_feishu` → `feishu_bind`, `user_unbind_feishu`
+→ `feishu_unbind`), caps renamed (`notify.send` → `feishu/notify-send`, new
+`feishu/user-bind`). 3 commands physically migrated to `runtime/lib/esr/plugins/feishu/commands/`.
+No back-compat for the old forms. Migration test asserts old kind names return `:not_found`.
 
 ## Newly-surfaced gaps (post multi-instance routing cleanup)
 
@@ -150,6 +166,117 @@ Both scenario 14 and scenario 18 deliberately skip the `@alice` / `@bob` routing
 | 8 | Plugin install-by-name (registry) | spec-only | Phase 2 of plugin spec. Deferred. Lower leverage than #1-#6. |
 
 The first three (#1, #2, #3) cluster as "what an operator hits in their first 30 minutes". The next three (#4, #5, #6) cluster as "what the multi-instance work made possible but didn't quite finish". Items #7 and #8 are larger structural work.
+
+---
+
+## rev-4 — resource-typed grammar revision (2026-05-08)
+
+After PR #263 landed, the user surfaced four architectural principles
+that reframe gaps A/B/C above. The earlier proposals (`/session:list`,
+`/session:rename-agent`, etc.) were partially mis-located — they put
+operations on the *containing* resource's axis instead of the *operand*
+resource's axis. This section documents the principles + the revised
+plan.
+
+### Principles
+
+**P1 — Resource axis follows the OPERAND, not the container.**
+A command operating on resource X belongs under `/<X>:<verb>`, even
+if X lives inside another resource. Renaming an agent inside a
+session is `/agent:rename`, not `/session:rename-agent`.
+
+**P2 — Lists return their own resource, not their children.**
+`/session:list` lists sessions. `/agent:list` lists agents. There is
+no `/session:list-agents` — that's a category error.
+
+**P3 — `attach` is a PTY operation, not a session operation.**
+`attach` was originally for "give me the WebSocket URL to drive this
+PTY". It belongs under `/pty:attach <pty_id>` (or `/pty:inspect`).
+Other forms (e.g. "open the Claude Code TUI") are *shortcuts* that
+internally resolve to a PTY id and call the same primitive. The
+chat↔session relationship operations (today: `/session:attach`,
+`/session:detach`) are about *binding*, not *terminal access* — they
+should use a different verb. `bind-chat`/`unbind-chat` already
+exists in the workspace namespace; a parallel session form would be
+consistent.
+
+**P4 — Operator command surfaces (slash + CLI + URI) need one
+canonical reference doc.** Today only `/admin/slash_schema.json`
+machine-readable; `/help` shows slashes only (omits internal_kinds);
+URI grammar lives in a separate `docs/notes/esr-uri-grammar.md` with
+no cross-link. An operator has no single place to discover the full
+surface.
+
+### Current grammar audit (against P1-P3)
+
+| What it does | Today | Per P1-P3 |
+|---|---|---|
+| List session-internal agent instances (cc:alice, cc:bob, …) | nothing wired | `/agent:list` (chat-current session by default) |
+| List agent **types** declared by enabled plugins | `/agent:list` (mis-named — it does this today) | `/plugin:agent-types` or `/agent-type:list` (frees `/agent:list` for instances) |
+| List sessions in scope | nothing wired | `/session:list` |
+| List PTY actors | nothing wired | `/pty:list` |
+| Get TUI URL for an agent's terminal | nothing wired (orphaned `Esr.Commands.Attach`) | `/pty:attach pty=<id>` returning `attach_url`; `/cc:tui name=<n>` thin shortcut |
+| Rename an agent instance | nothing wired | `/agent:rename name=old to=new` (NOT `/session:rename-agent`) |
+| Set primary agent | `/session:set-primary name=<n>` | `/agent:set-primary name=<n>` |
+| Show primary agent | nothing wired | `/agent:primary` (read-only) |
+| Remove agent instance | `/session:remove-agent name=<n>` | `/agent:remove name=<n>` |
+| Add agent instance | `/session:add-agent type=<t> name=<n>` | `/agent:add type=<t> name=<n>` (session implicit from chat) |
+| Bind chat to session (transient/operational) | `/session:attach session=<uuid>` | `/session:bind-chat session=<uuid>` (mirrors `/workspace:bind-chat`) |
+| Unbind chat from session | `/session:detach` | `/session:unbind-chat` |
+| Switch chat-current session (multi-session per chat) | nothing wired | `/session:switch session=<uuid>` |
+| End / destroy session | `internal_kind: session_end` (no slash) | `/session:end session=<uuid>` |
+| List PTY processes | nothing wired | `/pty:list` |
+| Send keys to PTY | `/pty:key key=…` | unchanged ✓ |
+
+### Q&A — resolving the operator's 4 questions
+
+**Q1. `/session:list` is for sessions; internals use `/<resource>:list`. Confirmed.**
+- `/session:list` → list sessions in current scope (chat-bound or admin-scope).
+- `/agent:list` → list agent instances in chat-current session (defaults to chat-current; explicit `session=<uuid>` arg for cross-session inspection).
+- `/agent:list` today is mis-named (it lists *agent types* declared by enabled plugins). That semantic should move to `/plugin:agent-types` or `/agent-type:list`. Need to decide which.
+- `/pty:list` → list PTY actors (chat-current session by default).
+
+**Q2. `attach` returns a URL — under `/pty:*`, not `/session:*`. Confirmed.**
+- `/pty:attach pty=<id>` → returns `attach_url` (signed token, one-shot — backed by `EsrWeb.PtySocket`).
+- Could also expose `/pty:inspect pty=<id>` — alias OR variant returning richer state (env, cwd, history). Open question.
+- `/cc:tui name=<agent>` → thin shortcut: looks up the agent's CC instance → resolves PTY actor id → calls `/pty:attach pty=<id>` semantics → returns the same URL. Future plugins can ship analogous shortcuts (`/voice:tui`, etc.).
+- The current `/session:attach` (which does chat-binding, not URL emission) should rename — see Q3.
+
+**Q3. Resource-typed verbs only.**
+- All per-agent operations move from `/session:*` to `/agent:*`: rename, remove, add, set-primary, show-primary.
+- `/session:attach` / `/session:detach` were always about chat-binding, not terminal access. Two options:
+  - **A**: rename to `/session:bind-chat` / `/session:unbind-chat` for symmetry with `/workspace:bind-chat`.
+  - **B**: drop entirely. Replace with `/session:switch session=<uuid>` (change chat-current) + `/session:end session=<uuid>` (destroy). The "multiple sessions attached to same chat" feature today is mostly unused — if it stays, A is the path; if not, B is cleaner.
+  - *Recommend A*: keeps the multi-session-per-chat capability, makes the parallelism with `/workspace:bind-chat` explicit, drops the `attach` verb's URL-emission baggage.
+
+**Q4. Unified command doc — does NOT exist.**
+- Status today: `/admin/slash_schema.json` is the only machine-readable cross-section (slashes + internal_kinds). `/help` shows slashes only. URIs in a separate notes doc.
+- Need: `docs/grammar/commands.md` (or similar) — auto-generated reference covering:
+  - Slash commands (from slash-routes yaml + every plugin manifest's `slash_routes:` block)
+  - CLI grammar (the `esr <head> <sub-actions>` synthesis from `cli/main.ex`)
+  - HTTP/WebSocket URIs (from `EsrWeb.Router` + `EsrWeb.Endpoint`)
+  - For each row: cap required, args schema, return shape, plugin source
+- Generation: an `esr admin describe-grammar --format=markdown` command (or a mix task) that reads the same sources `/admin/slash_schema.json` does, plus `EsrWeb.Router.__routes__/0`, plus the plugin manifest files. ~200 LOC.
+
+### Revised follow-up roadmap (supersedes the rev-3 list above)
+
+| # | What | Spec needed? | LOC | Closes |
+|---|---|:---:|:---:|---|
+| 1 | Grammar spec for `/agent:*` + `/pty:*` + `/session:list` | yes (single spec) | spec | Foundation for #2-#5 |
+| 2 | `/session:list` (sessions in scope) | covered by #1 | ~80 | rev-3 gap A (corrected) |
+| 3 | `/agent:list` (instances; rename current → `/plugin:agent-types` or `/agent-type:list`) | covered by #1 | ~150 | rev-3 gap A (corrected) |
+| 4 | `/pty:list` + `/pty:attach pty=<id>` (URL returner) | covered by #1 | ~250 | rev-3 gap B (relocated to /pty) + audit step #12 |
+| 5 | `/cc:tui name=<n>` thin shortcut over `/pty:attach` | covered by #1 | ~50 | UX completeness |
+| 6 | `/agent:rename` + `/agent:set-primary` + `/agent:primary` + `/agent:remove` + `/agent:add`; deprecate `/session:add-agent` etc. | covered by #1 | ~250 | rev-3 gap C (corrected) |
+| 7 | `/session:bind-chat` + `/session:unbind-chat` + `/session:switch` + slash-wire `/session:end`; deprecate `/session:attach` + `/session:detach` | covered by #1 | ~200 | rev-3 conceptual gap |
+| 8 | `docs/grammar/commands.md` generator (`esr admin describe-grammar --format=markdown`) | yes (small spec) | ~200 | rev-4 P4 |
+| 9 | First-user-auto-admin (carried forward) | no | ~30 | rev-3 cross-cutting #4 |
+| 10 | `esr daemon init` + `esr daemon clear` (carried forward) | no | ~250 + ~700 | first-30-min UX |
+
+The grammar spec (#1) is the gate — once #1 is brainstormed and
+approved, #2-#7 are purely mechanical implementation tasks (lots of
+verbatim renames + a few new modules). #8 is independent and can run
+in parallel.
 
 ---
 

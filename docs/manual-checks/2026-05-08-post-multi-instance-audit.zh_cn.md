@@ -1,6 +1,8 @@
 # 多实例路由清理后审计 — 2026-05-08
 
-**操作员设想路径**（12 步，基线源自 2026-05-06 rev-3）vs **dev 当前 shipped surface**，时间锚点 `origin/dev` `a69fd6a`（多实例路由清理 PR #261 刚合入）。
+**操作员设想路径**（12 步，基线源自 2026-05-06 rev-3）vs **dev 当前 shipped surface**，时间锚点 PR #263（session-first default + plugin-scoped command registration）合并之后。
+
+> **rev-4 更新（2026-05-08，PR #263 合并后）：** session-first 迁移（#5）和 plugin-scoped 命令注册（#6 rev-3）端到端 closed。新增 [§ rev-4 资源类型化语法修订](#rev-4--resource-typed-grammar-revision-2026-05-08)（在英文版同步章节）按操作员提出的 4 条语法原则重新审视先前的 gaps A/B/C —— 原 rev-3 在该处的提案部分定位错误（错把操作放在 `/session:*` 轴上而不是操作对象的资源轴上）。本中文版仅做导航说明；rev-4 完整内容见英文版 source-of-truth。
 
 > **配套文件：** 英文版本在
 > [`2026-05-08-post-multi-instance-audit.md`](2026-05-08-post-multi-instance-audit.md)。
