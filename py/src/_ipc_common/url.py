@@ -9,6 +9,20 @@ reconnect-on-launchctl-kickstart rationale.
 """
 from __future__ import annotations
 
+import os
+import pathlib
+
+
+def _runtime_home() -> pathlib.Path:
+    """Return the local esrd's runtime home dir.
+
+    Mirrors py/src/esr/ipc/url.py — reads $ESRD_HOME / $ESR_INSTANCE
+    env vars (defaults: ~/.esrd / "default").
+    """
+    home = os.environ.get("ESRD_HOME") or os.path.expanduser("~/.esrd")
+    instance = os.environ.get("ESR_INSTANCE", "default")
+    return pathlib.Path(home) / instance
+
 
 def resolve_url(fallback_url: str) -> str:
     """Re-read ``$ESRD_HOME/$ESR_INSTANCE/esrd.port`` and substitute the
@@ -20,9 +34,7 @@ def resolve_url(fallback_url: str) -> str:
     """
     from urllib.parse import urlparse, urlunparse
 
-    from esr.cli import paths
-
-    port_file = paths.runtime_home() / "esrd.port"
+    port_file = _runtime_home() / "esrd.port"
     try:
         port_txt = port_file.read_text().strip()
     except (FileNotFoundError, OSError):
