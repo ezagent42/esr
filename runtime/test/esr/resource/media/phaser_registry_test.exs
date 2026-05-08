@@ -60,19 +60,17 @@ defmodule Esr.Resource.Media.PhaserRegistryTest do
     assert {:error, :wrong_env} = PhaserRegistry.transform(bad, :path)
   end
 
-  test "transform/2 returns :no_phaser_for_media_type for audio (no phaser registered yet)", %{tmp: _tmp} do
-    # We can't easily store audio without a phaser, so manually craft a URI
-    # that points at an audio path and see the dispatch fail at the phaser lookup.
+  test "transform/2 returns :no_phaser_for_media_type for audio (no phaser registered yet)", %{tmp: tmp} do
+    # Place a real file at the expected content-addressed path so that
+    # Media.resolve/1 succeeds, letting the dispatch reach the phaser
+    # lookup — where :audio has no registered Phaser.
     sha = String.duplicate("c", 64)
-    audio_uri = "esr://test@localhost:4001/resources/audio/#{sha}.opus"
-    # The file isn't stored, so resolve will fail with :not_found before we even
-    # reach the phaser lookup. To exercise :no_phaser_for_media_type, we must
-    # bypass resolve. Instead skip this test path directly: assert that the
-    # registry knows about :image and :file but not :audio.
+    audio_dir = Path.join([tmp, "test", "resources", "audio"])
+    File.mkdir_p!(audio_dir)
+    File.write!(Path.join(audio_dir, "#{sha}.opus"), "fake audio")
 
-    # Equivalent assertion: registry is keyed only on :image and :file
-    refute :audio in PhaserRegistry.registered_media_types()
-    assert :image in PhaserRegistry.registered_media_types()
-    assert :file in PhaserRegistry.registered_media_types()
+    audio_uri = "esr://test@localhost:4001/resources/audio/#{sha}.opus"
+
+    assert {:error, :no_phaser_for_media_type} = PhaserRegistry.transform(audio_uri, :path)
   end
 end
