@@ -43,6 +43,34 @@ declares:
     inbound:  [image, file]
     outbound: [image, file]
 
+  # Phase E (resource-typed grammar rev-4 D5 + §4.4): /claude_code:tui ships
+  # in the claude_code plugin via the rev-3 plugin-scoped command
+  # registration mechanism. Validator (`Esr.Plugin.Manifest.validate/1` —
+  # see `runtime/lib/esr/plugin/manifest.ex:340-399`) enforces:
+  #   * slash key starts with "/<plugin_name>:" → "/claude_code:tui"
+  #   * kind name starts with "<plugin_name>_"   → "claude_code_tui"
+  #   * command_module under "Esr.Plugins.ClaudeCode."
+  #
+  # `/claude_code:tui` is a thin shortcut around `/pty:attach`: it
+  # resolves agent name → pty_actor_id via the chat-current session,
+  # then delegates. Permission `null` (chat-bound; auth gates the
+  # underlying URL out-of-scope per spec rev-2 D3, tracked in
+  # docs/futures/todo.md as `pty_attach_security_hardening`).
+  slash_routes:
+    schema_version: 1
+    slashes:
+      "/claude_code:tui":
+        kind: claude_code_tui
+        permission: null
+        command_module: "Esr.Plugins.ClaudeCode.Commands.Tui"
+        requires_workspace_binding: false
+        requires_user_binding: true
+        category: "Plugins"
+        description: "把当前 chat 的 session 内某 cc agent 的 PTY URL 发回（/pty:attach 的薄壳 shortcut）"
+        args:
+          - { name: name, required: true }
+    internal_kinds: {}
+
 config_schema:
   http_proxy:
     type: string

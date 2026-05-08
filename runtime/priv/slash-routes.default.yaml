@@ -419,6 +419,31 @@ slashes:
       - { name: name, required: true }
       - { name: new_name, required: true }
 
+  # Phase E (resource-typed grammar rev-4 §4.2): /pty:list + /pty:attach.
+  # Permissions are null — both are chat-bound (operator already in chat,
+  # PTY URL hardening is the next layer per spec rev-2 D3, tracked in
+  # docs/futures/todo.md as `pty_attach_security_hardening`).
+  "/pty:list":
+    kind: pty_list
+    permission: null
+    command_module: "Esr.Commands.Pty.List"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "PTY"
+    description: "列当前 chat 当前 session 的 PTY actor id"
+    args: []
+
+  "/pty:attach":
+    kind: pty_attach
+    permission: null
+    command_module: "Esr.Commands.Pty.Attach"
+    requires_workspace_binding: false
+    requires_user_binding: true
+    category: "PTY"
+    description: "返回 PTY 的 web URL；pty=<actor_id>"
+    args:
+      - { name: pty, required: true }
+
   "/actor:list":
     kind: actor_list
     permission: null
@@ -786,6 +811,15 @@ internal_kinds:
     permission: null
     command_module: "Esr.Commands.Session.UnbindChat"
 
-  attach:
+  # Phase E (resource-typed grammar rev-4 §4.2): pty_list + pty_attach
+  # internal_kinds rows mirror the slash table above so the file-queue
+  # admin path dispatches them with the same null permission. Permissions
+  # MUST match the `slashes:` table (otherwise the registry rebuild path
+  # silently drops one — see registry_test.exs priv-default smoke test).
+  pty_list:
     permission: null
-    command_module: "Esr.Commands.Attach"
+    command_module: "Esr.Commands.Pty.List"
+
+  pty_attach:
+    permission: null
+    command_module: "Esr.Commands.Pty.Attach"

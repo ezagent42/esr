@@ -120,6 +120,7 @@ discovering live flows.
 | [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor bidirectional — keystroke → process → frame round-trip | same |
 | [`20_feishu_inbound_multimedia.sh`](tests/e2e/scenarios/20_feishu_inbound_multimedia.sh) | Feishu inbound image — PNG → content-addressed `resources/image/<sha>.png` + refs.jsonl | [`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 | [`21_cc_outbound_multimedia.sh`](tests/e2e/scenarios/21_cc_outbound_multimedia.sh) | cc outbound image — `send_file` MCP tool → `resources/image/<sha>.png` + α-wire → mock_feishu file message | [`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
+| [`22_resource_typed_grammar.sh`](tests/e2e/scenarios/22_resource_typed_grammar.sh) | Resource-typed slash grammar — I1-I5 invariants (/agent:* + /pty:list + /pty:attach + /claude_code:tui plugin command) + Phase A.4 multi-agent PTY isolation | [`docs/superpowers/specs/2026-05-08-resource-typed-grammar.md`](docs/superpowers/specs/2026-05-08-resource-typed-grammar.md) |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).
