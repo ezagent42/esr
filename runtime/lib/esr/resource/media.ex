@@ -63,10 +63,12 @@ defmodule Esr.Resource.Media do
   """
   @spec store(atom(), Path.t(), ref_meta()) ::
           {:ok, %{uri: String.t(), sha256: String.t(), path: Path.t()}}
-          | {:error, term()}
+          | {:error, :unsupported_ext | term()}
   def store(media_type, source_path, ref_meta) when is_atom(media_type) do
-    with {:ok, sha} <- compute_sha256(source_path),
-         ext = extension_of(source_path),
+    ext = extension_of(source_path)
+
+    with :ok <- validate_media_type_and_ext(media_type, ext),
+         {:ok, sha} <- compute_sha256(source_path),
          target_dir = build_local_dir(media_type),
          :ok <- File.mkdir_p(target_dir) do
       dest = Path.join(target_dir, "#{sha}.#{ext}")
@@ -86,6 +88,19 @@ defmodule Esr.Resource.Media do
   end
 
   # ---- helpers ----
+
+  # Pre-validate (media_type, ext) before any disk I/O so store/3 never leaves
+  # orphan files when an invalid combination is supplied by the caller.
+  defp validate_media_type_and_ext(media_type, ext) do
+    try do
+      # build_resource raises ArgumentError on invalid ext/media_type combos.
+      # Use a dummy valid sha to exercise only the (media_type, ext) check.
+      _ = Esr.Uri.build_resource(media_type, String.duplicate("0", 64), ext: ext)
+      :ok
+    rescue
+      ArgumentError -> {:error, :unsupported_ext}
+    end
+  end
 
   # Normalize any parse failure from Esr.Uri.parse_resource/1 into :invalid_uri
   # so callers only need to handle the documented resolve/1 error atoms.

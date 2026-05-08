@@ -33,7 +33,7 @@ defmodule Esr.Resource.MediaTest do
     assert uri =~ "esr://test@"
     assert uri =~ "/resources/image/#{sha}.png"
 
-    refs_path = String.replace(stored_path, ".png", ".refs.jsonl")
+    refs_path = Path.join(Path.dirname(stored_path), "#{sha}.refs.jsonl")
     assert File.exists?(refs_path)
     refs = File.read!(refs_path) |> String.split("\n", trim: true)
     assert length(refs) == 1
@@ -55,9 +55,28 @@ defmodule Esr.Resource.MediaTest do
     assert sha1 == sha2
     assert p1 == p2  # content-addressed → same destination
 
-    refs_path = String.replace(p2, ".png", ".refs.jsonl")
+    refs_path = Path.join(Path.dirname(p2), "#{sha2}.refs.jsonl")
     refs = File.read!(refs_path) |> String.split("\n", trim: true)
     assert length(refs) == 2
+  end
+
+  test "store/3 returns :unsupported_ext when ext doesn't match media_type allowlist", %{tmp: tmp} do
+    src = Path.join(tmp, "wrong.mp3")
+    File.write!(src, "fake mp3 bytes")
+    assert {:error, :unsupported_ext} = Media.store(:image, src, %{})
+
+    # No file should be left in the resources dir — disk I/O must not have started
+    resource_dir = Path.join([tmp, "test", "resources"])
+    if File.exists?(resource_dir) do
+      files =
+        File.ls!(resource_dir)
+        |> Enum.flat_map(fn d ->
+          sub = Path.join(resource_dir, d)
+          if File.dir?(sub), do: File.ls!(sub), else: []
+        end)
+
+      assert files == []
+    end
   end
 
   test "store/3 returns bin extension for source without ext", %{tmp: tmp} do

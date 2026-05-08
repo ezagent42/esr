@@ -41,6 +41,7 @@ PR-180 series (today) = **Phase 1**: Loader + Manifest + 3 stub manifests + inte
 
 | What | Tracked PR | Notes |
 |---|---|---|
+| **Streaming SHA-256 in `Esr.Resource.Media.compute_sha256/1`** | New 2026-05-08 | Today loads whole file into memory via `File.read/1`. Switch to `File.stream!/3` + `:crypto.hash_init/update/final` before audio/video Phasers ship (Lark file limit is 30 MB image, 50 MB file; large videos would exceed). |
 | Investigate: why E2E missed multi-adapter orphan duplication | pending | See task #222 (in-memory tracker). Audit final_gate.sh + tests/e2e/ for assertions that would catch "1 user message → N replies" — likely none. May get folded into the lifecycle migration PR's testing chapter. |
 | Spec: structured error/notification response system | pending design | Task #220. "error: unauthorized" 粒度不够; design ToolUseResponse/AssistantResponse-style envelope to compose 错误 + 操作建议. Brainstorm separately. |
 | Channel abstraction (per-session BEAM-supervised peer) | pending design | Spawned during 2026-05-01 cc_mcp brainstorm + addressed *partially* by PR-3.5 (cc_mcp HTTP transport). The full abstraction — channel as a first-class peer, decoupled from claude/PtyProcess lifecycle, reusable for codex/gemini-cli/custom agents — is still future work. Open issue: `docs/issues/02-cc-mcp-decouple-from-claude.md`. |
