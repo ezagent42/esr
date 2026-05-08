@@ -182,6 +182,7 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_capabilities(name, manifest),
          :ok <- register_python_sidecars(manifest),
          :ok <- register_entities(manifest),
+         :ok <- register_slash_routes(name, manifest),
          :ok <- register_startup(name, manifest) do
       # HR-1: take a config snapshot at plugin load time so the first
       # /plugin:reload always has a baseline to diff against.
@@ -317,6 +318,38 @@ defmodule Esr.Plugin.Loader do
     {:ok, Module.concat([module_str])}
   rescue
     ArgumentError -> :error
+  end
+
+  # Audit #6 (2026-05-08-plugin-command-registration spec §5.3-§5.4):
+  # register the manifest's `slash_routes:` block as a per-plugin overlay
+  # on `Esr.Resource.SlashRoute.Registry`. Manifest-level shape +
+  # namespace + permission-subset checks already ran in
+  # `Manifest.validate/1`; the registry re-checks for cross-plugin
+  # collision against base yaml + every other already-installed overlay.
+  #
+  # No-op cases (both produce `:ok` without touching the registry):
+  #   * `slash_routes:` key absent entirely (`Map.get/2` returns nil)
+  #   * `slash_routes: {}` parses to an empty map (the gate-only manifest
+  #     style that ships first to validate the mechanism)
+  #
+  # The "block with both `slashes: {}` and `internal_kinds: {}`" case
+  # falls through to `parse_block_to_snapshot/1`, which produces an
+  # empty snapshot; `register_overlay/2` accepts it (registers an
+  # overlay carrying zero entries — harmless, costs one map entry).
+  defp register_slash_routes(plugin_name, %Manifest{declares: declares}) do
+    case Map.get(declares, :slash_routes) do
+      nil ->
+        :ok
+
+      %{} = block when block == %{} ->
+        :ok
+
+      block when is_map(block) ->
+        snapshot =
+          Esr.Resource.SlashRoute.Registry.FileLoader.parse_block_to_snapshot(block)
+
+        Esr.Resource.SlashRoute.Registry.register_overlay(plugin_name, snapshot)
+    end
   end
 
   # PR-3.4 (2026-05-05): parse the manifest's `startup:` block via
