@@ -91,4 +91,20 @@ defmodule Esr.Commands.User.AddTest do
                Add.execute(%{"args" => %{"name" => "bad name!"}})
     end
   end
+
+  describe "user.json default_workspace_id (M-5/D2 placeholder)" do
+    test "user.json contains default_workspace_id key (null if not yet set)" do
+      name = "alice-#{System.unique_integer([:positive])}"
+
+      cmd = %{"submitted_by" => "ou_admin", "args" => %{"name" => name}}
+      assert {:ok, %{"id" => uuid}} = Esr.Commands.User.Add.execute(cmd)
+
+      json_path = Path.join([Esr.Paths.users_dir(), uuid, "user.json"])
+      {:ok, doc} = Jason.decode(File.read!(json_path))
+
+      assert Map.has_key?(doc, "default_workspace_id")
+      # Phase 2 placeholder: nil. Phase 4 will populate with real ws id.
+      assert doc["default_workspace_id"] == nil
+    end
+  end
 end

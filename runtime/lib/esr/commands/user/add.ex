@@ -93,6 +93,7 @@ defmodule Esr.Commands.User.Add do
         "username" => username,
         "display_name" => "",
         "feishu_ids" => [],
+        "default_workspace_id" => nil,
         "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
