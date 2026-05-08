@@ -8,7 +8,7 @@ defmodule Esr.Commands.Scope.BranchEnd do
 
   Before the D15 collapse this module was `Session.End`, but PR-3
   P3-8/P3-9 re-uses that name for agent-session teardown via
-  `Esr.Scope.Router.end_session/1`. All branch-worktree logic
+  `Esr.Session.Router.end_session/1`. All branch-worktree logic
   (shell `esr-branch.sh end`, branches.yaml pruning, routing.yaml
   active-target fallback, DI-11 cleanup handshake) now lives here
   under the `BranchEnd` module name. No behavioural change — only

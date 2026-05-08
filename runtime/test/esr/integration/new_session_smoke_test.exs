@@ -17,7 +17,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
               |                              re-checks agent_def caps,
               |                              calls Scope.Supervisor
               v
-      Esr.Scope.Supervisor  — starts Esr.Scope (Scope.Process +
+      Esr.Session.Supervisor  — starts Esr.Scope (Scope.Process +
                                  empty peers DynamicSupervisor)
               |
               v
@@ -73,8 +73,8 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     # Test principal gets `"*"` (only grant shape that passes the
@@ -90,13 +90,13 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       })
 
     # PR-8 T1: Esr.Entity.SlashHandler is now auto-started by
-    # `Esr.Scope.Admin.bootstrap_slash_handler/0` during
+    # `Esr.Session.Admin.bootstrap_slash_handler/0` during
     # `Esr.Application.start/2`, so no manual `start_supervised/1` is
     # needed here — the production path is the test path. Fall back to
     # a test-supervised spawn only if a prior test torched the handler
     # and nothing respawned it.
     slash_pid =
-      case Esr.Scope.Admin.Process.slash_handler_ref() do
+      case Esr.Session.Admin.Process.slash_handler_ref() do
         {:ok, pid} ->
           pid
 

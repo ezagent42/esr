@@ -61,7 +61,7 @@ defmodule Esr.Entity.FeishuAppAdapter do
   @impl GenServer
   def init(%{instance_id: instance_id} = args) do
     :ok =
-      Esr.Scope.Admin.Process.register_admin_peer(
+      Esr.Session.Admin.Process.register_admin_peer(
         String.to_atom("feishu_app_adapter_#{instance_id}"),
         self()
       )

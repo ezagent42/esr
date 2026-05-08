@@ -89,7 +89,7 @@ defmodule Esr.Entity.ProxyCompileTest do
     # data-plane reads, and each session's grants are independent.
 
     setup do
-      assert is_pid(Process.whereis(Esr.Scope.Registry))
+      assert is_pid(Process.whereis(Esr.Session.Registry))
 
       if Process.whereis(Esr.Resource.Capability.Grants) == nil do
         start_supervised!(Esr.Resource.Capability.Grants)
@@ -116,7 +116,7 @@ defmodule Esr.Entity.ProxyCompileTest do
       :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_proxy_local" => []})
 
       {:ok, _sup} =
-        Esr.Scope.start_link(%{
+        Esr.Session.start_link(%{
           session_id: "proxy-sp-1",
           agent_name: "cc",
           dir: "/tmp/pp",
@@ -125,7 +125,7 @@ defmodule Esr.Entity.ProxyCompileTest do
         })
 
       [{sp_pid, _}] =
-        Registry.lookup(Esr.Scope.Registry, {:session_process, "proxy-sp-1"})
+        Registry.lookup(Esr.Session.Registry, {:session_process, "proxy-sp-1"})
 
       # With no grants for p_proxy_local, the local projection denies.
       # P6-A2: ctx now carries `session_id` so the cap-check wrapper

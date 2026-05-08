@@ -8,7 +8,7 @@ defmodule Esr.Plugins.Feishu.Commands.Notify do
   module (no GenServer) so it can be spawned and discarded.
 
   Routing (post-P2-16): iterates the admin-scope peers registered in
-  `Esr.Scope.Admin.Process` and finds the first
+  `Esr.Session.Admin.Process` and finds the first
   `:feishu_app_adapter_<app_id>` entry. It broadcasts a `{:directive,
   directive}` to `adapter:feishu/<app_id>` on `EsrWeb.PubSub` — the
   Python Feishu adapter subprocess is subscribed there via
@@ -59,12 +59,12 @@ defmodule Esr.Plugins.Feishu.Commands.Notify do
   # the form `:feishu_app_adapter_<app_id>`.
   @spec find_feishu_topic() :: {:ok, String.t()} | :error
   defp find_feishu_topic do
-    case Process.whereis(Esr.Scope.Admin.Process) do
+    case Process.whereis(Esr.Session.Admin.Process) do
       nil ->
         :error
 
       _pid ->
-        Esr.Scope.Admin.Process.list_admin_peers()
+        Esr.Session.Admin.Process.list_admin_peers()
         |> Enum.find_value(:error, fn {name, _pid} ->
           case Atom.to_string(name) do
             "feishu_app_adapter_" <> app_id ->

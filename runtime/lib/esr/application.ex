@@ -95,18 +95,18 @@ defmodule Esr.Application do
       {Esr.Resource.Session.Registry, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
-      # Must come BEFORE Scope.Admin (which calls Esr.Scope.supervisor_name/1
+      # Must come BEFORE Scope.Admin (which calls Esr.Session.supervisor_name/1
       # via Entity.Factory.spawn_peer_bootstrap/3 if it ever spawns admin-scope
       # peers via Session.supervisor_name) and before Scope.Supervisor.
-      {Registry, keys: :unique, name: Esr.Scope.Registry},
+      {Registry, keys: :unique, name: Esr.Session.Registry},
 
       # 4e.2 Scope.Admin — permanent supervisor hosting admin-scope peers.
       # Risk F: started BEFORE Scope.Router (not in PR-2 yet) and BEFORE
       # Scope.Supervisor.
-      Esr.Scope.Admin,
+      Esr.Session.Admin,
 
       # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
-      Esr.Scope.Supervisor,
+      Esr.Session.Supervisor,
 
       # 4e.3b ChatScope.Registry (R5 split from legacy SessionRegistry):
       # `(chat_id, app_id) → session_id` chat-current routing + URI-claim
@@ -122,7 +122,7 @@ defmodule Esr.Application do
       # Scope.Supervisor, and Session.Registry (all earlier
       # children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
-      Esr.Scope.Router,
+      Esr.Session.Router,
 
       # 4d.5 Workspace name↔id index — must come before Workspace.Registry
       # since Registry calls into NameIndex on every put/rename/delete.

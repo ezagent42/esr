@@ -38,7 +38,7 @@ defmodule Esr.Integration.FeishuReactLifecycleTest do
 
   setup do
     assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
 
     {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
     on_exit(fn -> if Process.alive?(sup), do: Process.exit(sup, :shutdown) end)

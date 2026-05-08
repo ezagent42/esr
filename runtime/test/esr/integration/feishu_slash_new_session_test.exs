@@ -18,13 +18,13 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
        `SessionRegistry.lookup_by_chat_thread/3` — proving the binding loop.
 
   The integration test uses the production SlashHandler started by
-  `Esr.Scope.Admin.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
+  `Esr.Session.Admin.bootstrap_slash_handler/0` (PR-8 T1). No stubs — the
   full command path runs through `Esr.Admin.Dispatcher` → `Session.New`.
 
   ## PR-8 T4 update
 
   Post-T4, `Session.New` delegates the chat-bound branch to
-  `Esr.Scope.Router.create_session/1`, which spawns the full
+  `Esr.Session.Router.create_session/1`, which spawns the full
   `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess, PtyProcess)
   and registers the session with refs carrying each spawned peer pid.
   This test still asserts the T3 invariant (`lookup_by_chat_thread/3`
@@ -60,17 +60,17 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
         Path.expand("../fixtures/agents/simple.yaml", __DIR__)
       )
 
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     :ok = Esr.TestSupport.Grants.with_grants(%{@test_principal => ["*"]})
 
     # PR-8 T1: SlashHandler is auto-started by
-    # `Esr.Scope.Admin.bootstrap_slash_handler/0` at application boot,
+    # `Esr.Session.Admin.bootstrap_slash_handler/0` at application boot,
     # so we only need to re-spawn if a sibling torched it.
     slash_pid =
-      case Esr.Scope.Admin.Process.slash_handler_ref() do
+      case Esr.Session.Admin.Process.slash_handler_ref() do
         {:ok, pid} ->
           pid
 

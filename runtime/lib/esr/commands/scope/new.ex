@@ -17,7 +17,7 @@ defmodule Esr.Commands.Scope.New do
        so the operator can see the full gap in a single reply.
     4. Spawn the session. Two branches:
          * **chat_id + thread_id present** — delegate to
-           `Esr.Scope.Router.create_session/1`, which runs the full
+           `Esr.Session.Router.create_session/1`, which runs the full
            `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess,
            PtyProcess, …), monitors each peer, and registers the
            session under the real `{chat_id, thread_id}` key with refs
@@ -29,7 +29,7 @@ defmodule Esr.Commands.Scope.New do
            have no chat binding. Calling Scope.Router here would register
            `{"pending","pending"}` in the ETS `:set` and clobber the slot
            for any real session that later uses the placeholder key.
-           Fall through to `Esr.Scope.Supervisor.start_session/1` (the
+           Fall through to `Esr.Session.Supervisor.start_session/1` (the
            legacy base subtree) and skip registry binding — no pipeline,
            no FeishuChatProxy, but also no registry pollution.
     5. Return `{:ok, %{"session_id" => sid, "agent" => agent}}` on
@@ -47,7 +47,7 @@ defmodule Esr.Commands.Scope.New do
   `FeishuAppAdapter.handle_upstream/2`'s `%{feishu_chat_proxy: pid}`
   pattern missed and every inbound Feishu message after the first
   `/new-session` got silently dropped. T4 routes the chat-bound path
-  through `Esr.Scope.Router.create_session/1` to close that loop.
+  through `Esr.Session.Router.create_session/1` to close that loop.
   """
 
   @behaviour Esr.Role.Control
@@ -57,8 +57,8 @@ defmodule Esr.Commands.Scope.New do
   # Default hooks — both injectable via `execute/2` opts. Tests stub
   # `create_session_fn` to avoid spawning the real pipeline, and
   # `start_session_fn` to cover the "pending" admin-CLI branch.
-  @default_create_session_fn &Esr.Scope.Router.create_session/1
-  @default_start_session_fn &Esr.Scope.Supervisor.start_session/1
+  @default_create_session_fn &Esr.Session.Router.create_session/1
+  @default_start_session_fn &Esr.Session.Supervisor.start_session/1
 
   @spec execute(map()) :: result()
   def execute(cmd), do: execute(cmd, [])
@@ -239,7 +239,7 @@ defmodule Esr.Commands.Scope.New do
   defp maybe_claim_uri(_args, _sid), do: :ok
 
   defp rollback_spawn(sid) do
-    _ = Esr.Scope.Router.end_session(sid)
+    _ = Esr.Session.Router.end_session(sid)
     :ok
   end
 

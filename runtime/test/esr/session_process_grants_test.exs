@@ -1,19 +1,19 @@
-defmodule Esr.ScopeProcessGrantsTest do
+defmodule Esr.SessionProcessGrantsTest do
   @moduledoc """
-  P3-3a.2: `Esr.Scope.Process` projects its principal's grants locally
+  P3-3a.2: `Esr.Session.Process` projects its principal's grants locally
   from the global `Esr.Resource.Capability.Grants` snapshot at init, subscribes
   to `grants_changed:<principal_id>` on PubSub, and refreshes its local
-  map on change. `Scope.Process.has?/2` is served from the local map
+  map on change. `Session.Process.has?/2` is served from the local map
   (no global ETS lookup per call).
   """
   use ExUnit.Case, async: false
 
   alias Esr.Resource.Capability.Grants
-  alias Esr.Scope
+  alias Esr.Session
 
   setup do
     # The Registry + Grants are app-level. Ensure they're up.
-    assert is_pid(Process.whereis(Esr.Scope.Registry))
+    assert is_pid(Process.whereis(Esr.Session.Registry))
 
     if Process.whereis(Grants) == nil do
       start_supervised!(Grants)
@@ -24,7 +24,7 @@ defmodule Esr.ScopeProcessGrantsTest do
 
   defp start_session(session_id, principal_id) do
     {:ok, _sup} =
-      Esr.Scope.start_link(%{
+      Esr.Session.start_link(%{
         session_id: session_id,
         agent_name: "cc",
         dir: "/tmp/sgp",
@@ -33,20 +33,20 @@ defmodule Esr.ScopeProcessGrantsTest do
       })
   end
 
-  test "Scope.Process pulls initial grants for its principal at init" do
+  test "Session.Process pulls initial grants for its principal at init" do
     # Seed BEFORE spawning so init/1 picks the grants up.
     :ok = Grants.load_snapshot(%{"p_init_proj" => ["workspace:proj-i/msg.send"]})
     start_session("sgp-init", "p_init_proj")
 
-    assert Scope.Process.has?("sgp-init", "workspace:proj-i/msg.send")
-    refute Scope.Process.has?("sgp-init", "workspace:other/msg.send")
+    assert Session.Process.has?("sgp-init", "workspace:proj-i/msg.send")
+    refute Session.Process.has?("sgp-init", "workspace:other/msg.send")
   end
 
-  test "Scope.Process refreshes grants on `grants_changed:<principal_id>` broadcast" do
+  test "Session.Process refreshes grants on `grants_changed:<principal_id>` broadcast" do
     :ok = Grants.load_snapshot(%{"p_refresh" => []})
     start_session("sgp-refresh", "p_refresh")
 
-    refute Scope.Process.has?("sgp-refresh", "workspace:new/msg.send")
+    refute Session.Process.has?("sgp-refresh", "workspace:new/msg.send")
 
     # Load a new snapshot — Grants should broadcast grants_changed:p_refresh.
     :ok = Grants.load_snapshot(%{"p_refresh" => ["workspace:new/msg.send"]})
@@ -54,7 +54,7 @@ defmodule Esr.ScopeProcessGrantsTest do
     # Wait for the refresh to land. has? is synchronous so it flushes
     # the mailbox; polling a few times is enough.
     assert eventually(fn ->
-             Scope.Process.has?("sgp-refresh", "workspace:new/msg.send")
+             Session.Process.has?("sgp-refresh", "workspace:new/msg.send")
            end)
   end
 
@@ -68,14 +68,14 @@ defmodule Esr.ScopeProcessGrantsTest do
     start_session("sgp-indep-a", "p_indep_a")
     start_session("sgp-indep-b", "p_indep_b")
 
-    assert Scope.Process.has?("sgp-indep-a", "workspace:a/msg.send")
-    refute Scope.Process.has?("sgp-indep-a", "workspace:b/msg.send")
+    assert Session.Process.has?("sgp-indep-a", "workspace:a/msg.send")
+    refute Session.Process.has?("sgp-indep-a", "workspace:b/msg.send")
 
-    assert Scope.Process.has?("sgp-indep-b", "workspace:b/msg.send")
-    refute Scope.Process.has?("sgp-indep-b", "workspace:a/msg.send")
+    assert Session.Process.has?("sgp-indep-b", "workspace:b/msg.send")
+    refute Session.Process.has?("sgp-indep-b", "workspace:a/msg.send")
   end
 
-  test "Scope.Process.has?/2 is served from local state (no global ETS read per call)" do
+  test "Session.Process.has?/2 is served from local state (no global ETS read per call)" do
     # Seed global ETS with a grant, spawn Session, then OVERWRITE the
     # global snapshot with an unrelated principal via a direct ETS
     # insert that bypasses the Grants GenServer (so no broadcast fires
@@ -100,7 +100,7 @@ defmodule Esr.ScopeProcessGrantsTest do
     :ok = Grants.load_snapshot(%{"p_local" => ["workspace:proj/msg.send"]})
     start_session("sgp-local", "p_local")
 
-    assert Scope.Process.has?("sgp-local", "workspace:proj/msg.send")
+    assert Session.Process.has?("sgp-local", "workspace:proj/msg.send")
 
     # 1_000 calls under 200ms — comfortably true for a local map
     # lookup, fails immediately if every call is a round-trip into the
@@ -108,18 +108,18 @@ defmodule Esr.ScopeProcessGrantsTest do
     {elapsed_us, _} =
       :timer.tc(fn ->
         Enum.each(1..1_000, fn _ ->
-          Scope.Process.has?("sgp-local", "workspace:proj/msg.send")
+          Session.Process.has?("sgp-local", "workspace:proj/msg.send")
         end)
       end)
 
     assert elapsed_us < 200_000,
-           "Scope.Process.has?/2 took #{elapsed_us}μs for 1000 calls — " <>
+           "Session.Process.has?/2 took #{elapsed_us}μs for 1000 calls — " <>
              "expected local projection path (<200_000μs)"
   end
 
-  test "Scope.Process without principal_id metadata returns false for every check" do
+  test "Session.Process without principal_id metadata returns false for every check" do
     {:ok, _sup} =
-      Esr.Scope.start_link(%{
+      Esr.Session.start_link(%{
         session_id: "sgp-noprincipal",
         agent_name: "cc",
         dir: "/tmp/sgp",
@@ -127,13 +127,13 @@ defmodule Esr.ScopeProcessGrantsTest do
         metadata: %{}
       })
 
-    refute Scope.Process.has?("sgp-noprincipal", "workspace:proj/msg.send")
-    refute Scope.Process.has?("sgp-noprincipal", "*")
+    refute Session.Process.has?("sgp-noprincipal", "workspace:proj/msg.send")
+    refute Session.Process.has?("sgp-noprincipal", "*")
   end
 
-  test "has?/2 does not call into the Scope.Process GenServer (post-A2)" do
+  test "has?/2 does not call into the Session.Process GenServer (post-A2)" do
     # P6-A2: has?/2 reads :persistent_term directly from the caller.
-    # Proof: suspend the Scope.Process so it cannot service GenServer
+    # Proof: suspend the Session.Process so it cannot service GenServer
     # calls, then call has?/2. If the implementation still uses
     # GenServer.call, it will block and time out; :persistent_term-based
     # reads bypass the owner process and return immediately.
@@ -141,7 +141,7 @@ defmodule Esr.ScopeProcessGrantsTest do
     :ok = Grants.load_snapshot(%{"ou_a2_test" => ["workspace:proj/msg.send"]})
 
     {:ok, session_sup} =
-      Esr.Scope.Supervisor.start_session(%{
+      Esr.Session.Supervisor.start_session(%{
         session_id: session_id,
         agent_name: "cc",
         dir: "/tmp",
@@ -152,7 +152,7 @@ defmodule Esr.ScopeProcessGrantsTest do
         metadata: %{principal_id: "ou_a2_test"}
       })
 
-    [{sp_pid, _}] = Registry.lookup(Esr.Scope.Registry, {:session_process, session_id})
+    [{sp_pid, _}] = Registry.lookup(Esr.Session.Registry, {:session_process, session_id})
     assert is_pid(sp_pid)
 
     :erlang.suspend_process(sp_pid)
@@ -160,7 +160,7 @@ defmodule Esr.ScopeProcessGrantsTest do
     try do
       task =
         Task.async(fn ->
-          Scope.Process.has?(session_id, "workspace:proj/msg.send")
+          Session.Process.has?(session_id, "workspace:proj/msg.send")
         end)
 
       # 500ms is orders of magnitude larger than a persistent_term read
@@ -168,14 +168,14 @@ defmodule Esr.ScopeProcessGrantsTest do
       result = Task.yield(task, 500) || Task.shutdown(task, :brutal_kill)
 
       assert match?({:ok, _}, result),
-             "has?/2 blocked while Scope.Process was suspended — still GenServer.call?"
+             "has?/2 blocked while Session.Process was suspended — still GenServer.call?"
     after
       :erlang.resume_process(sp_pid)
-      :ok = Esr.Scope.Supervisor.stop_session(session_sup)
+      :ok = Esr.Session.Supervisor.stop_session(session_sup)
     end
   end
 
-  test "Scope.Process has?/2 reads via :persistent_term after P6-A2 (source gate)" do
+  test "Session.Process has?/2 reads via :persistent_term after P6-A2 (source gate)" do
     src = File.read!("lib/esr/scope/process.ex")
 
     refute src =~ ~r/def has\?\([^)]+\) do\s*GenServer\.call\(/,

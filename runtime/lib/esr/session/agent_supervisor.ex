@@ -1,9 +1,9 @@
-defmodule Esr.Scope.AgentSupervisor do
+defmodule Esr.Session.AgentSupervisor do
   @moduledoc """
   Per-session DynamicSupervisor hosting agent instance subtrees.
 
   Each call to `/session:add-agent` adds one child: a `:one_for_all`
-  Supervisor (`Esr.Scope.AgentInstanceSupervisor`) containing exactly two
+  Supervisor (`Esr.Session.AgentInstanceSupervisor`) containing exactly two
   workers — `Esr.Entity.CCProcess` (in `runtime/lib/esr/plugins/claude_code/`) and
   `Esr.Entity.PtyProcess`.
 
@@ -51,9 +51,9 @@ defmodule Esr.Scope.AgentSupervisor do
     pty_args = Map.fetch!(attrs, :pty_args)
 
     child_spec = %{
-      id: {Esr.Scope.AgentInstanceSupervisor, sid, name},
+      id: {Esr.Session.AgentInstanceSupervisor, sid, name},
       start:
-        {Esr.Scope.AgentInstanceSupervisor, :start_link,
+        {Esr.Session.AgentInstanceSupervisor, :start_link,
          [
            %{
              session_id: sid,

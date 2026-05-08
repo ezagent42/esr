@@ -17,7 +17,7 @@ defmodule Esr.Commands.Scope.NewTest do
     * PR-8 T2: chat_id/thread_id thread through as chat_thread_key
     * PR-8 T3: SessionRegistry binding for chat-bound sessions
     * PR-8 T4: chat-bound path dispatches to
-      `Esr.Scope.Router.create_session/1` so the full pipeline spawns
+      `Esr.Session.Router.create_session/1` so the full pipeline spawns
       (FeishuChatProxy, CCProcess, PtyProcess); the admin-CLI
       "pending" branch retains the legacy `Scope.Supervisor` route
   """
@@ -29,7 +29,7 @@ defmodule Esr.Commands.Scope.NewTest do
   setup do
     # App-level singletons (booted by Esr.Application).
     assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Supervisor))
+    assert is_pid(Process.whereis(Esr.Session.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
     :ok =
@@ -41,8 +41,8 @@ defmodule Esr.Commands.Scope.NewTest do
     # so tests that exercise the create_session path start it under the
     # ExUnit supervisor and tear it down per-test. Idempotent — if a
     # sibling test already stood it up and it survived, reuse it.
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     # Snapshot + restore grants so tests don't bleed into siblings.
@@ -57,7 +57,7 @@ defmodule Esr.Commands.Scope.NewTest do
       Grants.load_snapshot(prior)
 
       # Clean up any sessions we spawned.
-      case Process.whereis(Esr.Scope.Supervisor) do
+      case Process.whereis(Esr.Session.Supervisor) do
         nil ->
           :ok
 
@@ -129,7 +129,7 @@ defmodule Esr.Commands.Scope.NewTest do
       assert is_binary(sid)
 
       # Scope.Process is actually up, with the submitter recorded.
-      state = Esr.Scope.Process.state(sid)
+      state = Esr.Session.Process.state(sid)
       assert state.agent_name == "cc"
       assert state.metadata.principal_id == "ou_alice"
     end
@@ -137,7 +137,7 @@ defmodule Esr.Commands.Scope.NewTest do
     test "principal missing ALL caps → missing_capabilities, Session NOT created" do
       Grants.load_snapshot(%{"ou_bob" => []})
 
-      before_count = DynamicSupervisor.count_children(Esr.Scope.Supervisor).active
+      before_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
 
       cmd = %{
         "submitted_by" => "ou_bob",
@@ -154,7 +154,7 @@ defmodule Esr.Commands.Scope.NewTest do
                "session:default/create"
              ]
 
-      after_count = DynamicSupervisor.count_children(Esr.Scope.Supervisor).active
+      after_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
       assert after_count == before_count, "no new Session should have been created"
     end
 
@@ -164,7 +164,7 @@ defmodule Esr.Commands.Scope.NewTest do
         "ou_carol" => ["session:default/create", "pty:default/spawn"]
       })
 
-      before_count = DynamicSupervisor.count_children(Esr.Scope.Supervisor).active
+      before_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
 
       cmd = %{
         "submitted_by" => "ou_carol",
@@ -174,7 +174,7 @@ defmodule Esr.Commands.Scope.NewTest do
       assert {:error, %{"type" => "missing_capabilities", "caps" => ["handler:cc_adapter_runner/invoke"]}} =
                SessionNew.execute(cmd)
 
-      after_count = DynamicSupervisor.count_children(Esr.Scope.Supervisor).active
+      after_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
       assert after_count == before_count, "no new Session should have been created"
     end
 
@@ -193,7 +193,7 @@ defmodule Esr.Commands.Scope.NewTest do
   describe "execute/2 chat_thread_key threading (PR-8 T2)" do
     test "chat_id + thread_id args flow into Scope.Router.create_session params" do
       # PR-8 T4: the chat-bound path now dispatches via `create_session_fn`
-      # (default `&Esr.Scope.Router.create_session/1`). Stub it so we can
+      # (default `&Esr.Session.Router.create_session/1`). Stub it so we can
       # observe the params shape without spawning the real pipeline.
       Grants.load_snapshot(%{"ou_admin" => ["*"]})
 
@@ -271,7 +271,7 @@ defmodule Esr.Commands.Scope.NewTest do
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
-      state = Esr.Scope.Process.state(sid)
+      state = Esr.Session.Process.state(sid)
       # PR-A T1 / PR-21λ: legacy admin-CLI path (no chat context) carries
       # an app_id slot mirroring the chat_id placeholder so the routing
       # key shape stays well-formed.
@@ -340,7 +340,7 @@ defmodule Esr.Commands.Scope.NewTest do
 
       # The session itself is still up — registration skip doesn't prevent
       # the session from starting.
-      state = Esr.Scope.Process.state(sid)
+      state = Esr.Session.Process.state(sid)
       assert state.agent_name == "cc"
     end
 

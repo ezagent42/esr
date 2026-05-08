@@ -1,29 +1,29 @@
-defmodule Esr.ScopeTest do
+defmodule Esr.SessionTest do
   use ExUnit.Case, async: false
 
   setup do
-    # Drift from expansion doc: `Esr.Scope.Registry` is already started
+    # Drift from expansion doc: `Esr.Session.Registry` is already started
     # by `Esr.Application` (P2-9 added it). Reuse the app-level Registry
     # rather than booting a redundant one.
-    assert is_pid(Process.whereis(Esr.Scope.Registry))
+    assert is_pid(Process.whereis(Esr.Session.Registry))
     :ok
   end
 
   test "supervisor_name/1 returns a unique via tuple per session_id" do
-    n1 = Esr.Scope.supervisor_name("s-1")
-    n2 = Esr.Scope.supervisor_name("s-2")
+    n1 = Esr.Session.supervisor_name("s-1")
+    n2 = Esr.Session.supervisor_name("s-2")
     assert n1 != n2
   end
 
   test "supervisor_name/1 returns admin children sup for session_id == \"admin\"" do
     # Admin resolution: Scope.Admin's children supervisor (registered via application.ex).
     Application.put_env(:esr, :admin_children_sup_name, :test_admin_children)
-    assert Esr.Scope.supervisor_name("admin") == :test_admin_children
+    assert Esr.Session.supervisor_name("admin") == :test_admin_children
   end
 
   test "Session.start_link starts Scope.Process + peer supervisor" do
     {:ok, sup} =
-      Esr.Scope.start_link(%{
+      Esr.Session.start_link(%{
         session_id: "s-abc",
         agent_name: "cc",
         dir: "/tmp/w",
@@ -32,13 +32,13 @@ defmodule Esr.ScopeTest do
       })
 
     children = Supervisor.which_children(sup)
-    assert Enum.any?(children, fn {id, _pid, _, _} -> id == Esr.Scope.Process end)
+    assert Enum.any?(children, fn {id, _pid, _, _} -> id == Esr.Session.Process end)
     assert Enum.any?(children, fn {id, _pid, _, _} -> id == :peers end)
   end
 
   test "Scope.Process state carries session_id + agent_name + dir" do
     {:ok, _sup} =
-      Esr.Scope.start_link(%{
+      Esr.Session.start_link(%{
         session_id: "s-xyz",
         agent_name: "cc",
         dir: "/tmp/w2",
@@ -46,7 +46,7 @@ defmodule Esr.ScopeTest do
         metadata: %{}
       })
 
-    state = Esr.Scope.Process.state("s-xyz")
+    state = Esr.Session.Process.state("s-xyz")
     assert state.session_id == "s-xyz"
     assert state.agent_name == "cc"
     assert state.dir == "/tmp/w2"
@@ -59,7 +59,7 @@ defmodule Esr.ScopeTest do
       :ok = Esr.Resource.Capability.Grants.load_snapshot(%{})
 
       {:ok, _sup} =
-        Esr.Scope.start_link(%{
+        Esr.Session.start_link(%{
           session_id: "g-s1",
           agent_name: "cc",
           dir: "/tmp/g",
@@ -71,7 +71,7 @@ defmodule Esr.ScopeTest do
     end
 
     test "Scope.Process.has?/2 denies when projection is empty" do
-      refute Esr.Scope.Process.has?("g-s1", "workspace:*/msg.send")
+      refute Esr.Session.Process.has?("g-s1", "workspace:*/msg.send")
     end
 
     test "Scope.Process.has?/2 agrees with Grants.has?/2 after a snapshot load" do
@@ -84,7 +84,7 @@ defmodule Esr.ScopeTest do
       :ok = Esr.Resource.Capability.Grants.load_snapshot(%{"p_test" => ["*"]})
       Process.sleep(50)
 
-      assert Esr.Scope.Process.has?("g-s1", "*") ==
+      assert Esr.Session.Process.has?("g-s1", "*") ==
                Esr.Resource.Capability.Grants.has?("p_test", "*")
     end
 
@@ -97,7 +97,7 @@ defmodule Esr.ScopeTest do
         # handle_info grants_changed, so a small sleep avoids flakes
         # when the scheduler races the two.
         Process.sleep(50)
-        assert Esr.Scope.Process.has?("g-s1", "workspace:proj/msg.send")
+        assert Esr.Session.Process.has?("g-s1", "workspace:proj/msg.send")
       after
         :ok = Esr.Resource.Capability.Grants.load_snapshot(%{})
       end

@@ -44,7 +44,7 @@ defmodule Esr.Slash.QueueWatcher do
   adapters.yaml entry, etc.
 
   SlashHandler is registered under `:slash_handler` in
-  `Esr.Scope.Admin.Process` and is started before this Watcher by
+  `Esr.Session.Admin.Process` and is started before this Watcher by
   `Esr.Application` boot order, so the cast always lands on a live
   named process.
   """

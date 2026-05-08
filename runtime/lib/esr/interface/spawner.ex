@@ -12,7 +12,7 @@ defmodule Esr.Interface.Spawner do
     - `Esr.Session.DaemonSpawner` (currently implicit in `Esr.Application`)
 
   See `docs/notes/structural-refactor-plan-r4-r11.md` §四-R6 for the
-  AgentSpawner extraction from Esr.Scope.Router.
+  AgentSpawner extraction from Esr.Session.Router.
   """
 
   @doc """

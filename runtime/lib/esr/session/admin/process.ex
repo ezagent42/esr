@@ -1,4 +1,4 @@
-defmodule Esr.Scope.Admin.Process do
+defmodule Esr.Session.Admin.Process do
   @moduledoc """
   Holds admin-level state: admin-scope peer refs (e.g. slash_handler pid),
   bootstrap metadata. Always registered under its own module name.

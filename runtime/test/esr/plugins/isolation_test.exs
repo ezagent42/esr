@@ -69,7 +69,7 @@ defmodule Esr.Plugins.IsolationTest do
              end)
   end
 
-  test "no Esr.Scope.Admin.bootstrap_feishu_app_adapters call site exists anywhere" do
+  test "no Esr.Session.Admin.bootstrap_feishu_app_adapters call site exists anywhere" do
     # The function is deleted in PR-3.4. Any reference is a stale
     # caller that needs to be updated to the feishu plugin's startup
     # hook. Scope is intentionally wider for this test (whole
@@ -90,13 +90,13 @@ defmodule Esr.Plugins.IsolationTest do
         |> Enum.with_index(1)
         |> Enum.filter(fn {line, _} ->
           not comment_line?(line) and
-            String.contains?(line, "Esr.Scope.Admin.bootstrap_feishu_app_adapters")
+            String.contains?(line, "Esr.Session.Admin.bootstrap_feishu_app_adapters")
         end)
         |> Enum.map(fn {line, lineno} -> {file, lineno, String.trim(line)} end)
       end)
 
     assert matches == [],
-           "stale references to deleted Esr.Scope.Admin.bootstrap_feishu_app_adapters:\n" <>
+           "stale references to deleted Esr.Session.Admin.bootstrap_feishu_app_adapters:\n" <>
              Enum.map_join(matches, "\n", fn {f, ln, l} ->
                "  #{Path.relative_to_cwd(f)}:#{ln}: #{l}"
              end)

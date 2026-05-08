@@ -1,4 +1,4 @@
-defmodule Esr.Scope.Supervisor do
+defmodule Esr.Session.Supervisor do
   @moduledoc """
   DynamicSupervisor hosting all user Sessions. Spec §3.4 D17:
   max_children = 128 (bounds concurrent sessions at 128).
@@ -22,7 +22,7 @@ defmodule Esr.Scope.Supervisor do
 
   @spec start_session(map()) :: {:ok, pid} | {:error, term()}
   def start_session(session_args) do
-    DynamicSupervisor.start_child(__MODULE__, {Esr.Scope, session_args})
+    DynamicSupervisor.start_child(__MODULE__, {Esr.Session, session_args})
   end
 
   def stop_session(session_sup_pid) when is_pid(session_sup_pid) do

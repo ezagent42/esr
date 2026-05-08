@@ -13,7 +13,7 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
     `Esr.Plugin.Loader.run_startup/0` rather than this module
     directly, but this hook is what the loader invokes.)
 
-  Each peer registers in `Esr.Scope.Admin.Process` under
+  Each peer registers in `Esr.Session.Admin.Process` under
   `:feishu_app_adapter_<instance_id>` (the YAML key — matching the
   Phoenix topic suffix `adapter:feishu/<instance_id>` the Python
   `adapter_runner` joins) so that
@@ -46,7 +46,7 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
   """
   @spec bootstrap(Path.t()) :: :ok
   def bootstrap(adapters_yaml_path) do
-    sup = Esr.Scope.Admin.children_supervisor_name()
+    sup = Esr.Session.Admin.children_supervisor_name()
 
     if File.exists?(adapters_yaml_path) do
       with {:ok, parsed} <- YamlElixir.read_from_file(adapters_yaml_path),

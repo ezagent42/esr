@@ -104,7 +104,7 @@ defmodule Esr.Commands.Scope.End do
     # remove --force` manually).
     session_root = args["root"]
 
-    case Esr.Scope.Router.end_session(sid) do
+    case Esr.Session.Router.end_session(sid) do
       :ok ->
         safe_unbind_session(sid)
         maybe_cleanup_transient_workspace(sid, args)

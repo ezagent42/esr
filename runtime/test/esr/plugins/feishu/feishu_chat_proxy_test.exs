@@ -5,12 +5,12 @@ defmodule Esr.Entity.FeishuChatProxyTest do
 
   setup do
     # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
-    # `Esr.Scope.Admin.Process` (via P2-9's Scope.Admin) are now started
+    # `Esr.Session.Admin.Process` (via P2-9's Scope.Admin) are now started
     # at app boot, so a redundant `start_supervised!` would crash with
     # :already_started. We reuse the app-level processes; register_admin_peer
     # is idempotent per-key so cross-test pollution is bounded.
     assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
     :ok
   end
 

@@ -13,8 +13,8 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
   use ExUnit.Case, async: false
 
   setup do
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
-    assert is_pid(Process.whereis(Esr.Scope.Admin.ChildrenSupervisor))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.Admin.ChildrenSupervisor))
 
     tmp = Path.join(System.tmp_dir!(), "adapters-#{System.unique_integer([:positive])}.yaml")
 
@@ -26,10 +26,10 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
             :feishu_app_adapter_secondary,
             :feishu_app_adapter_only
           ] do
-        case Esr.Scope.Admin.Process.admin_peer(name) do
+        case Esr.Session.Admin.Process.admin_peer(name) do
           {:ok, pid} ->
             DynamicSupervisor.terminate_child(
-              Esr.Scope.Admin.ChildrenSupervisor,
+              Esr.Session.Admin.ChildrenSupervisor,
               pid
             )
 
@@ -63,8 +63,8 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
 
     assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
 
-    {:ok, main_pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
-    {:ok, secondary_pid} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_secondary)
+    {:ok, main_pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
+    {:ok, secondary_pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_secondary)
     assert Process.alive?(main_pid)
     assert Process.alive?(secondary_pid)
 
@@ -74,7 +74,7 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
              :sys.get_state(main_pid)
 
     # Non-feishu instances are skipped by this bootstrap path.
-    assert :error = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_cc_mcp_one)
+    assert :error = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_cc_mcp_one)
   end
 
   test "is idempotent — re-running with the same adapters.yaml is :ok",
@@ -88,10 +88,10 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
     """)
 
     assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
-    {:ok, pid1} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_only)
+    {:ok, pid1} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
     assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
-    {:ok, pid2} = Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_only)
+    {:ok, pid2} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
     assert pid1 == pid2, "second call must not spawn a duplicate peer"
   end

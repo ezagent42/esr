@@ -1,4 +1,4 @@
-defmodule Esr.Scope.Process do
+defmodule Esr.Session.Process do
   @moduledoc """
   Per-Session GenServer holding core session state.
 
@@ -48,7 +48,7 @@ defmodule Esr.Scope.Process do
   end
 
   def via(session_id),
-    do: {:via, Registry, {Esr.Scope.Registry, {:session_process, session_id}}}
+    do: {:via, Registry, {Esr.Session.Registry, {:session_process, session_id}}}
 
   def state(session_id), do: GenServer.call(via(session_id), :state)
 

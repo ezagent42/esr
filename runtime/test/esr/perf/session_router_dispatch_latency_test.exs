@@ -7,7 +7,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
   Bootstrap adjustments from the plan's Step-3 skeleton:
 
     * The plan's skeleton sends `{:inbound_event, env}` to
-      `Esr.Scope.Router`, but `Scope.Router` is the **control-plane**
+      `Esr.Session.Router`, but `Scope.Router` is the **control-plane**
       GenServer (create/end session, peer-crash monitor) and does NOT
       handle `:inbound_event` — those messages would hit the Risk-E
       "dropped unexpected info" clause and no relay would ever fire.
@@ -62,7 +62,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     stub_relay = spawn_link(fn -> relay_loop(test_pid) end)
 
     {:ok, session_sup} =
-      Esr.Scope.Supervisor.start_session(%{
+      Esr.Session.Supervisor.start_session(%{
         session_id: session_id,
         agent_name: "cc",
         dir: "/tmp",
@@ -96,7 +96,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     {:ok, fab_pid} =
-      Esr.Scope.Admin.Process.admin_peer(
+      Esr.Session.Admin.Process.admin_peer(
         String.to_atom("feishu_app_adapter_#{app_id}")
       )
 
@@ -104,7 +104,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       Esr.Resource.ChatScope.Registry.unregister_session(session_id)
 
       if Process.alive?(session_sup) do
-        Esr.Scope.Supervisor.stop_session(session_sup)
+        Esr.Session.Supervisor.stop_session(session_sup)
       end
 
       if Process.alive?(fab_sup), do: Process.exit(fab_sup, :shutdown)

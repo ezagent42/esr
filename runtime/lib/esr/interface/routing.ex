@@ -4,7 +4,7 @@ defmodule Esr.Interface.Routing do
   the appropriate downstream consumer (Scope, Entity, Handler, etc.).
 
   Implementers in ESR (post-R4):
-    - `Esr.Scope.Router` (dispatches `:create_session_sync`, `:end_session_sync`,
+    - `Esr.Session.Router` (dispatches `:create_session_sync`, `:end_session_sync`,
        `:new_chat_thread` control-plane events; data-plane is rejected per Risk E)
     - `Esr.HandlerRouter` (routes handler_call envelopes to Python workers)
 

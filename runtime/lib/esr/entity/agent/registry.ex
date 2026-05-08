@@ -4,7 +4,7 @@ defmodule Esr.Entity.Agent.Registry do
   the legacy `Esr.SessionRegistry`).
 
   Single source of truth for agents.yaml-compiled agent definitions. The
-  `Esr.Scope.Router` and admin command modules read from here when
+  `Esr.Session.Router` and admin command modules read from here when
   resolving an agent name to its declared pipeline / capabilities /
   proxies / params shape.
 

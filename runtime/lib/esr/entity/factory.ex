@@ -7,7 +7,7 @@ defmodule Esr.Entity.Factory do
   `terminate_peer/2`, `restart_peer/2`. Review rejects additions.
 
   The factory resolves `session_id` to the correct Session supervisor by
-  delegating to `Esr.Scope.supervisor_name/1` (registry-backed in PR-2).
+  delegating to `Esr.Session.supervisor_name/1` (registry-backed in PR-2).
   An opt-in app-env override (`:esr, :peer_factory_sup_override`) is
   retained for unit tests that don't stand up a real Session; PR-3 removes
   this last scaffold once all tests use real Sessions.
@@ -29,7 +29,7 @@ defmodule Esr.Entity.Factory do
       # spawn time — avoids a Registry lookup on every forward/2 call.
       #
       # P6-A2: `session_id` is also threaded into ctx so Peer.Proxy's
-      # cap-check can call `Esr.Scope.Process.has?(session_id, perm)`
+      # cap-check can call `Esr.Session.Process.has?(session_id, perm)`
       # directly (zero-hop persistent_term read). The pid is retained
       # purely as a liveness guard — if the Scope.Process has died,
       # we fall back to the global `Esr.Resource.Capability.has?/2`.
@@ -59,7 +59,7 @@ defmodule Esr.Entity.Factory do
   end
 
   @doc """
-  Bootstrap-time peer spawn that bypasses `Esr.Scope.supervisor_name/1`.
+  Bootstrap-time peer spawn that bypasses `Esr.Session.supervisor_name/1`.
 
   Only Scope.Admin's init-time children use this — it is the documented
   exception to the "all peers spawn via the normal control plane" rule
@@ -82,13 +82,13 @@ defmodule Esr.Entity.Factory do
 
   # Session supervisor resolution.
   #
-  # Production: Esr.Scope.supervisor_name/1 (registry-backed in PR-2).
+  # Production: Esr.Session.supervisor_name/1 (registry-backed in PR-2).
   # Test-only opt-in override: Application.put_env(:esr, :peer_factory_sup_override, name)
   #   — used in unit tests that don't spin up a real Session. Removed entirely
   #   in PR-3 once all tests use real Sessions.
   defp resolve_sup(session_id) do
     case Application.get_env(:esr, :peer_factory_sup_override) do
-      nil -> Esr.Scope.supervisor_name(session_id)
+      nil -> Esr.Session.supervisor_name(session_id)
       override -> override
     end
   end
@@ -102,7 +102,7 @@ defmodule Esr.Entity.Factory do
   defp resolve_session_process_pid("admin"), do: nil
 
   defp resolve_session_process_pid(session_id) when is_binary(session_id) do
-    case Registry.lookup(Esr.Scope.Registry, {:session_process, session_id}) do
+    case Registry.lookup(Esr.Session.Registry, {:session_process, session_id}) do
       [{pid, _}] -> pid
       _ -> nil
     end

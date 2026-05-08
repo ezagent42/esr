@@ -1,6 +1,6 @@
-defmodule Esr.ScopeRouterTest do
+defmodule Esr.SessionRouterTest do
   @moduledoc """
-  P3-4.1 — unit tests for `Esr.Scope.Router`, the control-plane
+  P3-4.1 — unit tests for `Esr.Session.Router`, the control-plane
   coordinator for Session lifecycle (spec §3.3, §6 Risk E).
 
   **Drift note**: the expansion doc's test snippet asserts `is_pid/1`
@@ -15,7 +15,7 @@ defmodule Esr.ScopeRouterTest do
   stateless `cc_proxy` entry (recorded symbolically in refs as
   `{:proxy_module, Module}` when reachable).
 
-  Tests do not rely on `Scope.Router` being in `Esr.Application`'s
+  Tests do not rely on `Session.Router` being in `Esr.Application`'s
   child tree — the router is started via `start_supervised/1` in
   `setup`, matching the user-supplied task scope (wiring into
   `application.ex` is deferred to a later subtask).
@@ -23,25 +23,25 @@ defmodule Esr.ScopeRouterTest do
   use ExUnit.Case, async: false
 
 
-  alias Esr.Scope
+  alias Esr.Session
 
   @fixture_path Path.expand("fixtures/agents/simple.yaml", __DIR__)
 
 
   setup do
     # App-level deps exist: SessionRegistry, Session.Registry,
-    # Scope.Supervisor, Grants. Start the Scope.Router under the
+    # Session.Supervisor, Grants. Start the Session.Router under the
     # test supervisor so each test gets a clean instance.
     assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Supervisor))
+    assert is_pid(Process.whereis(Esr.Session.Registry))
+    assert is_pid(Process.whereis(Esr.Session.Supervisor))
 
     # "*" grants everything — avoids cap-denied drops in the pipeline.
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_alice" => ["*"]})
     :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
-    if Process.whereis(Esr.Scope.Router) == nil do
-      start_supervised!(Esr.Scope.Router)
+    if Process.whereis(Esr.Session.Router) == nil do
+      start_supervised!(Esr.Session.Router)
     end
 
     on_exit(fn ->
@@ -49,7 +49,7 @@ defmodule Esr.ScopeRouterTest do
 
       # Tear down any Sessions dynamically started by the router so
       # subsequent tests start from a clean DynamicSupervisor.
-      case Process.whereis(Esr.Scope.Supervisor) do
+      case Process.whereis(Esr.Session.Supervisor) do
         nil ->
           :ok
 
@@ -65,7 +65,7 @@ defmodule Esr.ScopeRouterTest do
 
   test "create_session_sync spawns Session supervisor + inbound Stateful peers" do
     assert {:ok, session_id} =
-             Scope.Router.create_session(%{
+             Session.Router.create_session(%{
                agent: "cc",
                dir: "/tmp",
                principal_id: "ou_alice",
@@ -76,8 +76,8 @@ defmodule Esr.ScopeRouterTest do
 
     assert is_binary(session_id)
 
-    # Session supervisor is registered under Esr.Scope.Registry.
-    via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, session_id}}}
+    # Session supervisor is registered under Esr.Session.Registry.
+    via = {:via, Registry, {Esr.Session.Registry, {:session_sup, session_id}}}
     assert is_pid(GenServer.whereis(via))
 
     # SessionRegistry records the chat-thread → session mapping and
@@ -112,7 +112,7 @@ defmodule Esr.ScopeRouterTest do
     on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("T11b2_ws") end)
 
     assert {:ok, session_id} =
-             Scope.Router.create_session(%{
+             Session.Router.create_session(%{
                agent: "cc",
                dir: "/tmp",
                principal_id: "ou_alice",
@@ -133,7 +133,7 @@ defmodule Esr.ScopeRouterTest do
   test "create_session defaults workspace_name to 'default' when no chat binding exists" do
     # No workspace seeded for (oc_unbound, cli_test) — fallback kicks in.
     assert {:ok, _session_id} =
-             Scope.Router.create_session(%{
+             Session.Router.create_session(%{
                agent: "cc",
                dir: "/tmp",
                principal_id: "ou_alice",
@@ -145,7 +145,7 @@ defmodule Esr.ScopeRouterTest do
 
   test "create_session returns {:error, :unknown_agent} for missing agent_def" do
     assert {:error, :unknown_agent} =
-             Scope.Router.create_session(%{
+             Session.Router.create_session(%{
                agent: "nonexistent",
                dir: "/tmp",
                principal_id: "ou_alice"
@@ -154,7 +154,7 @@ defmodule Esr.ScopeRouterTest do
 
   test "end_session terminates Session supervisor + unregisters" do
     {:ok, sid} =
-      Scope.Router.create_session(%{
+      Session.Router.create_session(%{
         agent: "cc",
         dir: "/tmp",
         principal_id: "ou_alice",
@@ -167,23 +167,23 @@ defmodule Esr.ScopeRouterTest do
     assert {:ok, ^sid, _refs} =
              Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
 
-    :ok = Scope.Router.end_session(sid)
+    :ok = Session.Router.end_session(sid)
 
     assert :not_found = Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_aa", "cli_test")
 
     # And the Session supervisor is gone.
-    via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, sid}}}
+    via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
     assert GenServer.whereis(via) == nil
   end
 
   test "end_session returns {:error, :unknown_session} when session does not exist" do
-    assert {:error, :unknown_session} = Scope.Router.end_session("nope-sid")
+    assert {:error, :unknown_session} = Session.Router.end_session("nope-sid")
   end
 
   # --- Risk-E boundary (spec §6 Risk E) ---
   #
   # The data-plane hot path (inbound/outbound user-message traffic) must
-  # NEVER be allowed to enter Scope.Router. Any shape that looks like a
+  # NEVER be allowed to enter Session.Router. Any shape that looks like a
   # data-plane envelope must be rejected (call) or dropped (cast/info)
   # with a WARN, and MUST NEVER crash the router. If a data-plane shape
   # ever makes it in, the router's supervisor-restart cascade would
@@ -203,14 +203,14 @@ defmodule Esr.ScopeRouterTest do
       # shape used by Peer.Stateful.handle_upstream/2. It must never be
       # accepted as a control-plane call.
       assert {:error, :not_control_plane} =
-               GenServer.call(Esr.Scope.Router, {:inbound_event, %{"text" => "hi"}})
+               GenServer.call(Esr.Session.Router, {:inbound_event, %{"text" => "hi"}})
 
       # Router must still be alive after the rejection.
-      assert Process.alive?(Process.whereis(Esr.Scope.Router))
+      assert Process.alive?(Process.whereis(Esr.Session.Router))
     end
 
     test "data-plane-shaped info messages are dropped (no crash)" do
-      router = Process.whereis(Esr.Scope.Router)
+      router = Process.whereis(Esr.Session.Router)
       # {:forward, sid, envelope} is the canonical data-plane fan-out
       # shape used between Stateful peers. Must be dropped, not raise.
       send(router, {:forward, :session_abc, %{"text" => "hi"}})
@@ -220,7 +220,7 @@ defmodule Esr.ScopeRouterTest do
     end
 
     test "another data-plane shape — :outbound envelope — is also dropped" do
-      router = Process.whereis(Esr.Scope.Router)
+      router = Process.whereis(Esr.Session.Router)
       # The outbound envelope shape emitted by CCProcess/PtyProcess.
       send(router, {:outbound, %{"payload" => %{"text" => "bye"}}})
       _ = :sys.get_state(router)
@@ -235,7 +235,7 @@ defmodule Esr.ScopeRouterTest do
 
       # A DOWN for an unknown monitor ref must NOT fire peer_crashed
       # (it's dropped silently) — confirms the early-return clause.
-      router = Process.whereis(Esr.Scope.Router)
+      router = Process.whereis(Esr.Session.Router)
       send(router, {:DOWN, make_ref(), :process, self(), :unknown_monitor})
       _ = :sys.get_state(router)
       refute_receive {[:esr, :session_router, :peer_crashed], _, _, _, _}, 100
@@ -243,7 +243,7 @@ defmodule Esr.ScopeRouterTest do
       # Now spawn a real session so the router has a tracked monitor,
       # kill the peer, and confirm peer_crashed fires.
       {:ok, _sid} =
-        Scope.Router.create_session(%{
+        Session.Router.create_session(%{
           agent: "cc",
           dir: "/tmp",
           principal_id: "ou_alice",
@@ -285,7 +285,7 @@ defmodule Esr.ScopeRouterTest do
     # `admin::feishu_app_adapter_${app_id}` target in simple.yaml
     # resolves to a real pid (not a proxy_module fallback marker).
     app_id = "T6_#{System.unique_integer([:positive])}"
-    admin_children_sup = Esr.Scope.Admin.ChildrenSupervisor
+    admin_children_sup = Esr.Session.Admin.ChildrenSupervisor
 
     {:ok, faa} =
       DynamicSupervisor.start_child(
@@ -301,7 +301,7 @@ defmodule Esr.ScopeRouterTest do
     end)
 
     {:ok, _sid} =
-      Scope.Router.create_session(%{
+      Session.Router.create_session(%{
         agent: "cc",
         dir: "/tmp",
         principal_id: "ou_alice",

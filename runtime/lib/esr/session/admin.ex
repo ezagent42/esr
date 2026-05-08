@@ -1,11 +1,11 @@
-defmodule Esr.Scope.Admin do
+defmodule Esr.Session.Admin do
   @moduledoc """
   Top-level permanent Supervisor for Scope.Admin — the one always-on
   Session hosting session-less peers (FeishuAppAdapter_<app_id>, SlashHandler,
   pool supervisors).
 
   Bootstrap exception (Risk F, spec §6): Scope.Admin is started directly
-  by `Esr.Supervisor`, NOT by `Esr.Scope.Router` (which doesn't exist
+  by `Esr.Supervisor`, NOT by `Esr.Session.Router` (which doesn't exist
   yet at boot; introduced in PR-3). Children of Scope.Admin are spawned
   via `Esr.Entity.Factory.spawn_peer_bootstrap/3` which bypasses the
   Scope.Router control-plane resolution.
@@ -14,7 +14,7 @@ defmodule Esr.Scope.Admin do
   """
   use Supervisor
 
-  @default_children_sup_name Esr.Scope.Admin.ChildrenSupervisor
+  @default_children_sup_name Esr.Session.Admin.ChildrenSupervisor
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -31,7 +31,7 @@ defmodule Esr.Scope.Admin do
       Keyword.get(opts, :children_sup_name, @default_children_sup_name)
 
     process_name =
-      Keyword.get(opts, :process_name, Esr.Scope.Admin.Process)
+      Keyword.get(opts, :process_name, Esr.Session.Admin.Process)
 
     # Cache the children-sup name so callers can resolve it without
     # plumbing opts through.
@@ -40,7 +40,7 @@ defmodule Esr.Scope.Admin do
     children = [
       # Scope.Admin.Process must start before any admin-scope peer so
       # register_admin_peer/2 can record pids as peers come up.
-      {Esr.Scope.Admin.Process, [name: process_name]},
+      {Esr.Session.Admin.Process, [name: process_name]},
       # DynamicSupervisor that hosts admin-scope peers. Empty at init;
       # populated later by `bootstrap_children/0` (P2-9) or test setup.
       {DynamicSupervisor, strategy: :one_for_one, name: children_sup_name}
@@ -55,8 +55,8 @@ defmodule Esr.Scope.Admin do
   Scope.Admin is up (Risk F bootstrap exception).
 
   SlashHandler's `init/1` already registers itself under
-  `:slash_handler` in `Esr.Scope.Admin.Process`, so after this call
-  returns `:ok`, `Esr.Scope.Admin.Process.slash_handler_ref/0` returns
+  `:slash_handler` in `Esr.Session.Admin.Process`, so after this call
+  returns `:ok`, `Esr.Session.Admin.Process.slash_handler_ref/0` returns
   `{:ok, pid}`. Without this bootstrap, `FeishuChatProxy`'s slash path
   silently drops every message because no peer is registered.
 

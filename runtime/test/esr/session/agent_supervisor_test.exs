@@ -1,4 +1,4 @@
-defmodule Esr.Scope.AgentSupervisorTest do
+defmodule Esr.Session.AgentSupervisorTest do
   @moduledoc """
   M-2.6 — per-session AgentSupervisor / AgentInstanceSupervisor.
 
@@ -28,7 +28,7 @@ defmodule Esr.Scope.AgentSupervisorTest do
 
   describe "AgentSupervisor.start_link/1" do
     test "starts with zero children" do
-      {:ok, pid} = Esr.Scope.AgentSupervisor.start_link(name: nil)
+      {:ok, pid} = Esr.Session.AgentSupervisor.start_link(name: nil)
       assert is_pid(pid)
       assert [] == DynamicSupervisor.which_children(pid)
     end
@@ -46,13 +46,13 @@ defmodule Esr.Scope.AgentSupervisorTest do
         children = [
           %{
             id: :cc,
-            start: {Esr.Scope.AgentSupervisorTest.DummyWorker, :start_link, [cc]},
+            start: {Esr.Session.AgentSupervisorTest.DummyWorker, :start_link, [cc]},
             restart: :permanent,
             type: :worker
           },
           %{
             id: :pty,
-            start: {Esr.Scope.AgentSupervisorTest.DummyWorker, :start_link, [pty]},
+            start: {Esr.Session.AgentSupervisorTest.DummyWorker, :start_link, [pty]},
             restart: :permanent,
             type: :worker
           }

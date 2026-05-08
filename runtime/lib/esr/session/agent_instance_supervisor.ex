@@ -1,4 +1,4 @@
-defmodule Esr.Scope.AgentInstanceSupervisor do
+defmodule Esr.Session.AgentInstanceSupervisor do
   @moduledoc """
   Per-agent-instance `:one_for_all` Supervisor hosting CC + PTY.
 
@@ -9,7 +9,7 @@ defmodule Esr.Scope.AgentInstanceSupervisor do
 
   Restart intensity: `max_restarts: 3, max_seconds: 60`. If the subtree
   trips this budget, the supervisor exits with reason `:shutdown`. The
-  parent `Esr.Scope.AgentSupervisor`'s `:transient` child spec means it
+  parent `Esr.Session.AgentSupervisor`'s `:transient` child spec means it
   is NOT restarted automatically; the operator must call
   `/session:add-agent` again.
   """

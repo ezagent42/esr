@@ -1,18 +1,18 @@
-defmodule Esr.ScopeSupervisorTest do
+defmodule Esr.SessionSupervisorTest do
   use ExUnit.Case, async: false
 
   setup do
-    # Drift from expansion doc: `Esr.Scope.Registry` and
-    # `Esr.Scope.Supervisor` are already started by `Esr.Application`
+    # Drift from expansion doc: `Esr.Session.Registry` and
+    # `Esr.Session.Supervisor` are already started by `Esr.Application`
     # (P2-9 added them). Reuse the app-level instances; clean up any
     # dynamically-started session children after each test.
-    assert is_pid(Process.whereis(Esr.Scope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Supervisor))
+    assert is_pid(Process.whereis(Esr.Session.Registry))
+    assert is_pid(Process.whereis(Esr.Session.Supervisor))
 
     on_exit(fn ->
       # Wipe any dynamically-started Sessions so tests don't pollute
       # each other via the shared app-level DynamicSupervisor.
-      case Process.whereis(Esr.Scope.Supervisor) do
+      case Process.whereis(Esr.Session.Supervisor) do
         nil ->
           :ok
 
@@ -31,13 +31,13 @@ defmodule Esr.ScopeSupervisorTest do
     # The app-level Scope.Supervisor is already running with the
     # default max_children=128. Assert it's reachable and childless
     # at test start.
-    sup = Process.whereis(Esr.Scope.Supervisor)
+    sup = Process.whereis(Esr.Session.Supervisor)
     count = DynamicSupervisor.count_children(sup)
     assert count.active == 0
   end
 
   test "start_session/1 creates a Session under the dynamic supervisor" do
-    {:ok, session_sup} = Esr.Scope.Supervisor.start_session(%{
+    {:ok, session_sup} = Esr.Session.Supervisor.start_session(%{
       session_id: "ss-1",
       agent_name: "cc",
       dir: "/tmp/y",
@@ -46,13 +46,13 @@ defmodule Esr.ScopeSupervisorTest do
     })
 
     assert Process.alive?(session_sup)
-    assert DynamicSupervisor.count_children(Esr.Scope.Supervisor).active == 1
+    assert DynamicSupervisor.count_children(Esr.Session.Supervisor).active == 1
   end
 
   @tag :slow
   test "129th concurrent session returns :max_children" do
     # The module-level Scope.Supervisor is hardcoded to name itself
-    # `Esr.Scope.Supervisor`, so we can't stand up a second one in the
+    # `Esr.Session.Supervisor`, so we can't stand up a second one in the
     # same BEAM for a bounded-max probe. Instead, start a private
     # DynamicSupervisor with max_children=4 directly and shim a local
     # start_session helper.

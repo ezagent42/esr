@@ -58,7 +58,7 @@ defmodule Esr.Commands.Adapter.Rename do
           _ = Esr.WorkerSupervisor.terminate_adapter(type, old)
 
           if type == "feishu" do
-            _ = Esr.Scope.Admin.terminate_feishu_app_adapter(old)
+            _ = Esr.Session.Admin.terminate_feishu_app_adapter(old)
           end
 
           # 2. Rewrite adapters.yaml with new key.

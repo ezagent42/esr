@@ -5,7 +5,7 @@ defmodule Esr.Commands.Adapter.Remove do
 
   1. Terminate the Python sidecar (`Esr.WorkerSupervisor.terminate_adapter/2`).
   2. Terminate the Elixir FAA peer if `type: feishu`
-     (`Esr.Scope.Admin.terminate_feishu_app_adapter/1`).
+     (`Esr.Session.Admin.terminate_feishu_app_adapter/1`).
   3. Remove the entry from `adapters.yaml` so a future esrd boot
      doesn't respawn it.
 
@@ -28,7 +28,7 @@ defmodule Esr.Commands.Adapter.Remove do
         _ = Esr.WorkerSupervisor.terminate_adapter(type, instance_id)
 
         if type == "feishu" do
-          _ = Esr.Scope.Admin.terminate_feishu_app_adapter(instance_id)
+          _ = Esr.Session.Admin.terminate_feishu_app_adapter(instance_id)
         end
 
         new_doc = update_in(doc, ["instances"], &Map.delete(&1 || %{}, instance_id))

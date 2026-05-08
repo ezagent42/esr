@@ -1,4 +1,4 @@
-defmodule Esr.Scope.Router do
+defmodule Esr.Session.Router do
   @moduledoc """
   Control-plane coordinator for Session lifecycle.
 
@@ -103,14 +103,14 @@ defmodule Esr.Scope.Router do
   end
 
   def handle_call({:end_session_sync, sid}, _from, state) do
-    via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, sid}}}
+    via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
 
     case GenServer.whereis(via) do
       nil ->
         {:reply, {:error, :unknown_session}, state}
 
       pid when is_pid(pid) ->
-        :ok = Esr.Scope.Supervisor.stop_session(pid)
+        :ok = Esr.Session.Supervisor.stop_session(pid)
         :ok = Esr.Resource.ChatScope.Registry.unregister_session(sid)
         {:reply, :ok, state}
     end

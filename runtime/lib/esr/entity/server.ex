@@ -879,7 +879,7 @@ defmodule Esr.Entity.Server do
   # path records the absent principal clearly.
   #
   # P3-3a: this helper still reads the global `Esr.Resource.Capability.has?/2`
-  # rather than `Esr.Scope.Process.has?/2`. The legacy peer_server
+  # rather than `Esr.Session.Process.has?/2`. The legacy peer_server
   # module is slated to die in P3-16 (its CC/tool-invoke paths migrate
   # to per-session peer modules which are spawned through
   # `Entity.Factory.spawn_peer/4` and receive a `session_process_pid` in

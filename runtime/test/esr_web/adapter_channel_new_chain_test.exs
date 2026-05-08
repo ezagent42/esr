@@ -2,7 +2,7 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
   @moduledoc """
   P2-11 — For `adapter:feishu/<app_id>` topics, EsrWeb.AdapterChannel
   routes inbound envelopes to the registered `Esr.Entity.FeishuAppAdapter`
-  for that app_id (looked up via `Esr.Scope.Admin.Process.admin_peer/1`
+  for that app_id (looked up via `Esr.Session.Admin.Process.admin_peer/1`
   under the symbolic name `:feishu_app_adapter_<app_id>`).
 
   Post-P2-17: the `USE_NEW_PEER_CHAIN` feature flag was removed during
@@ -14,11 +14,11 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
 
   setup do
     # Drift from expansion: both `Esr.SessionRegistry` and
-    # `Esr.Scope.Admin.Process` are started at app boot (see the
+    # `Esr.Session.Admin.Process` are started at app boot (see the
     # existing `FeishuAppAdapterTest` setup for the same note).
-    # A redundant `start_supervised!({Esr.Scope.Admin.Process, []})`
+    # A redundant `start_supervised!({Esr.Session.Admin.Process, []})`
     # crashes with `:already_started`, so reuse the app-level pid.
-    assert is_pid(Process.whereis(Esr.Scope.Admin.Process))
+    assert is_pid(Process.whereis(Esr.Session.Admin.Process))
 
     {:ok, _sup} =
       DynamicSupervisor.start_link(strategy: :one_for_one, name: :p2_11_test_sup)
@@ -41,7 +41,7 @@ defmodule EsrWeb.AdapterChannelNewChainTest do
 
   test "adapter_channel forwards {:inbound_event, envelope} to FeishuAppAdapter when flag on" do
     {:ok, _fab_pid} =
-      Esr.Scope.Admin.Process.admin_peer(:feishu_app_adapter_cli_app_p211)
+      Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_cli_app_p211)
 
     # Subscribe BEFORE triggering the forward so the broadcast emitted
     # inside FeishuAppAdapter.handle_upstream (no session matches →

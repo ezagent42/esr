@@ -30,11 +30,11 @@ defmodule Esr.M5ActorQuerySpawnTest do
 
   setup do
     # Each test gets a unique session id so tests can run interleaved
-    # without colliding via-tuples in Esr.Scope.Registry.
+    # without colliding via-tuples in Esr.Session.Registry.
     sid = "m5-spawn-#{System.unique_integer([:positive])}"
 
     {:ok, sup_pid} =
-      Esr.Scope.start_link(%{
+      Esr.Session.start_link(%{
         session_id: sid,
         agent_name: "cc",
         dir: "/tmp",

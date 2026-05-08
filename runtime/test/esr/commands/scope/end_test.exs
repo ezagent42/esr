@@ -3,7 +3,7 @@ defmodule Esr.Commands.Scope.EndTest do
   P3-9.2 — `Esr.Commands.Scope.End` (the new, post-D15-collapse
   agent-session teardown command; dispatcher kind `session_end`) tears
   down a Session supervisor tree by delegating to
-  `Esr.Scope.Router.end_session/1`.
+  `Esr.Session.Router.end_session/1`.
 
   Before PR-3 P3-9 this module name held the legacy branch-worktree
   teardown logic, now renamed to `Session.BranchEnd` (dispatcher kind
@@ -28,7 +28,7 @@ defmodule Esr.Commands.Scope.EndTest do
     # App-level singletons must already be up for Scope.Router to
     # do real work.
     assert is_pid(Process.whereis(Esr.Resource.ChatScope.Registry))
-    assert is_pid(Process.whereis(Esr.Scope.Supervisor))
+    assert is_pid(Process.whereis(Esr.Session.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
     :ok =
@@ -39,8 +39,8 @@ defmodule Esr.Commands.Scope.EndTest do
     # Ensure Scope.Router is running. Started as a supervised child in
     # app boot, but some test runs skip it — start-if-missing keeps the
     # suite self-contained.
-    case Process.whereis(Esr.Scope.Router) do
-      nil -> {:ok, _} = Esr.Scope.Router.start_link([])
+    case Process.whereis(Esr.Session.Router) do
+      nil -> {:ok, _} = Esr.Session.Router.start_link([])
       _ -> :ok
     end
 
@@ -54,7 +54,7 @@ defmodule Esr.Commands.Scope.EndTest do
     on_exit(fn ->
       Grants.load_snapshot(prior)
 
-      case Process.whereis(Esr.Scope.Supervisor) do
+      case Process.whereis(Esr.Session.Supervisor) do
         nil ->
           :ok
 
@@ -73,7 +73,7 @@ defmodule Esr.Commands.Scope.EndTest do
       Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
       {:ok, sid} =
-        Esr.Scope.Router.create_session(%{
+        Esr.Session.Router.create_session(%{
           agent: "cc",
           dir: "/tmp",
           principal_id: "ou_alice",
@@ -82,7 +82,7 @@ defmodule Esr.Commands.Scope.EndTest do
         })
 
       # Supervisor exists pre-teardown.
-      via = {:via, Registry, {Esr.Scope.Registry, {:session_sup, sid}}}
+      via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
       pre_pid = GenServer.whereis(via)
       assert is_pid(pre_pid) and Process.alive?(pre_pid)
 
@@ -131,7 +131,7 @@ defmodule Esr.Commands.Scope.EndTest do
       sid_suffix = System.unique_integer([:positive])
 
       {:ok, sid} =
-        Esr.Scope.Router.create_session(%{
+        Esr.Session.Router.create_session(%{
           agent: "cc",
           dir: "/tmp",
           principal_id: "ou_pr21g_a",

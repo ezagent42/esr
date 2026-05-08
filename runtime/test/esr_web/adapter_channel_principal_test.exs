@@ -31,7 +31,7 @@ defmodule EsrWeb.AdapterChannelPrincipalTest do
     # Register the caller pid as a stand-in FeishuAppAdapter — the
     # Scope.Admin.Process monitors the pid and auto-clears the entry
     # on exit, so no on_exit cleanup is needed.
-    :ok = Esr.Scope.Admin.Process.register_admin_peer(sym, self())
+    :ok = Esr.Session.Admin.Process.register_admin_peer(sym, self())
 
     %{topic: topic, app_id: app_id}
   end
