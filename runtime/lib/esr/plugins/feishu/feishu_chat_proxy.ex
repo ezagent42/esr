@@ -586,8 +586,25 @@ defmodule Esr.Entity.FeishuChatProxy do
 
   # Check whether the named channel adapter plugin declares outbound
   # capability for the given media_type via Esr.Resource.Media.PluginRegistry.
+  #
+  # Normalization: `parse_channel_adapter/1` extracts the full adapter
+  # family name from the proxy target (e.g. "feishu_app" from
+  # "admin::feishu_app_adapter_<id>"). Plugin manifests use a shorter
+  # canonical name ("feishu"). Normalize by stripping a trailing "_app"
+  # suffix so "feishu_app" looks up as "feishu". If the normalized name
+  # is also not registered, fall back to the original so the error message
+  # stays meaningful.
   defp check_outbound_capability(plugin_name, media_type) do
-    if Esr.Resource.Media.PluginRegistry.supports?(plugin_name, :outbound, media_type) do
+    normalized =
+      if String.ends_with?(plugin_name, "_app") do
+        String.slice(plugin_name, 0, String.length(plugin_name) - 4)
+      else
+        plugin_name
+      end
+
+    lookup = if normalized != plugin_name, do: normalized, else: plugin_name
+
+    if Esr.Resource.Media.PluginRegistry.supports?(lookup, :outbound, media_type) do
       :ok
     else
       {:error, :unsupported_outbound}
