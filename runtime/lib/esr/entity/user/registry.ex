@@ -38,7 +38,7 @@ defmodule Esr.Entity.User.Registry do
     strings; a single human may have multiple (one per registered
     Feishu app — open_ids are app-scoped).
     """
-    defstruct [:username, feishu_ids: []]
+    defstruct [:username, feishu_ids: [], default_workspace_id: nil]
   end
 
   # --- Public API ---

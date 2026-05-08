@@ -172,4 +172,17 @@ defmodule Esr.Entity.User.RegistryTest do
       assert {:ok, "uuid-new-222"} = NameIndex.id_for_name("new")
     end
   end
+
+  describe "User struct (M-5/D2)" do
+    test "defaults default_workspace_id to nil" do
+      user = %Esr.Entity.User.Registry.User{username: "alice"}
+      assert user.default_workspace_id == nil
+    end
+
+    test "carries default_workspace_id when constructed" do
+      uuid = "01ARZSTAB12345678901234567"
+      user = %Esr.Entity.User.Registry.User{username: "alice", default_workspace_id: uuid}
+      assert user.default_workspace_id == uuid
+    end
+  end
 end
