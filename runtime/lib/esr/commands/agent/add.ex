@@ -1,16 +1,14 @@
-defmodule Esr.Commands.Session.AddAgent do
+defmodule Esr.Commands.Agent.Add do
   @moduledoc """
-  Add an agent instance to a session (`/session:add-agent`).
+  `/agent:add` — add an agent instance to chat-current session (or
+  explicit `session_id=`). Replaces `/session:add-agent`.
 
-  Validates the requested agent type against the enabled plugin manifest
-  via `Esr.Entity.Agent.Registry.list_agents/0`. Rejects unknown types
-  with `{:error, %{"type" => "unknown_agent_type"}}`.
+  Logic identical to the legacy `Esr.Commands.Session.AddAgent`; the
+  spec rename (§4.2 row `/agent:add`, D1 hard-cutover) renames the
+  module + slash; the old session/add_agent.ex is deleted in Task C.9.
 
-  Name uniqueness is enforced globally within the session regardless of
-  type (spec Q7=B): two agents with the same name cannot coexist in one
-  session even if their types differ.
-
-  Slash-routes YAML entry added in Phase 6.
+  Validates type against `Esr.Entity.Agent.Registry.list_agents/0` and
+  rejects unknown types with `{:error, %{"type" => "unknown_agent_type"}}`.
   """
 
   @behaviour Esr.Role.Control
@@ -78,17 +76,12 @@ defmodule Esr.Commands.Session.AddAgent do
      %{
        "type" => "invalid_args",
        "message" =>
-         "add_agent requires args.session_id, args.type, and args.name (all non-empty strings)"
+         "/agent:add requires args.session_id, args.type, and args.name (all non-empty strings)"
      }}
   end
 
-  # ---------------------------------------------------------------------------
-  # Private helpers
-  # ---------------------------------------------------------------------------
-
   defp validate_agent_type(type) do
-    known = known_agent_types()
-    if type in known, do: :ok, else: {:error, :unknown_agent_type}
+    if type in known_agent_types(), do: :ok, else: {:error, :unknown_agent_type}
   end
 
   defp known_agent_types do

@@ -263,8 +263,9 @@ defmodule Esr.SlashRoutesTest do
       assert length(list) >= 8
       # Help should resolve (bare meta command — stays bare)
       assert {:ok, _} = SlashRouteRegistry.lookup("/help")
-      # Colon-form session commands resolve
-      assert {:ok, _} = SlashRouteRegistry.lookup("/session:add-agent")
+      # Colon-form session/agent commands resolve. Phase C renamed
+      # /session:add-agent → /agent:add (rev-3 §4.2 D1 hard-cutover).
+      assert {:ok, _} = SlashRouteRegistry.lookup("/agent:add")
       assert {:ok, _} = SlashRouteRegistry.lookup("/workspace:list")
       assert {:ok, _} = SlashRouteRegistry.lookup("/user:whoami")
       # Old-form slashes do NOT resolve after cutover

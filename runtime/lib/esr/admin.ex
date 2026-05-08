@@ -50,6 +50,13 @@ defmodule Esr.Admin do
       "session:default/create",
       "session:default/end",
       "session:default/read",
+      # Phase C (resource-typed grammar spec rev-4 §4.2 rows 6-9):
+      # `session:default/spawn` gates the per-agent slash family
+      # (/agent:add, /agent:remove, /agent:set-primary, /agent:rename).
+      # Without a declaration here the cap is un-grantable + the slashes
+      # unreachable for any non-admin user (parallel to `session:default/read`
+      # in Phase B).
+      "session:default/spawn",
       # PR-21k: workspace.create — creating a workspace from inside
       # Feishu (via /new-workspace slash) writes workspaces.yaml.
       # Bootstrap path: `esr cap grant <esr-user> workspace.create`.

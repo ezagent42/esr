@@ -1,11 +1,13 @@
-defmodule Esr.Commands.Session.SetPrimary do
+defmodule Esr.Commands.Agent.SetPrimary do
   @moduledoc """
-  Set the primary agent for a session (`/session:set-primary`).
+  Set the primary agent for a session (`/agent:set-primary`).
 
   The primary agent receives all plain-text messages that do not contain
   an explicit `@<name>` mention (spec Q8=A).
 
-  Slash-routes YAML entry added in Phase 6.
+  Replaces the legacy `Esr.Commands.Session.SetPrimary`; logic identical
+  (spec rev-3 §4.2 D1 hard-cutover). The old session/set_primary.ex is
+  deleted in Task C.9.
   """
 
   @behaviour Esr.Role.Control
@@ -37,7 +39,7 @@ defmodule Esr.Commands.Session.SetPrimary do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "set_primary requires args.session_id and args.name (non-empty strings)"
+       "message" => "/agent:set-primary requires args.session_id and args.name (non-empty strings)"
      }}
   end
 end

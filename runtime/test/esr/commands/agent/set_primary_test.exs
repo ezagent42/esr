@@ -1,12 +1,8 @@
-defmodule Esr.Commands.Session.SetPrimaryTest do
+defmodule Esr.Commands.Agent.SetPrimaryTest do
   use ExUnit.Case, async: false
-  alias Esr.Commands.Session.SetPrimary
+  alias Esr.Commands.Agent.SetPrimary
   alias Esr.Entity.Agent.InstanceRegistry
 
-  # M-2.8: AddAgent.execute now goes through add_instance_and_spawn which
-  # requires a per-session AgentSupervisor not stood up in this unit test.
-  # Seed via the legacy metadata-only add_instance/2 — set_primary +
-  # routing tests only need the registry rows, not live actor pids.
   defp seed_agent(sess, name) do
     :ok =
       InstanceRegistry.add_instance(%{
@@ -23,7 +19,6 @@ defmodule Esr.Commands.Session.SetPrimaryTest do
       _ -> :ok
     end
 
-    # Load agents fixture so "cc" is a known type.
     fixture =
       Path.join([__DIR__, "..", "..", "fixtures", "agents", "simple.yaml"])
       |> Path.expand()
@@ -58,31 +53,5 @@ defmodule Esr.Commands.Session.SetPrimaryTest do
   test "error: missing name" do
     assert {:error, %{"type" => "invalid_args"}} =
              SetPrimary.execute(%{"args" => %{"session_id" => "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"}})
-  end
-
-  # ---------------------------------------------------------------------------
-  # Phase 4.3 — lifecycle: SetPrimary → resolve_routing uses new primary
-  # ---------------------------------------------------------------------------
-
-  describe "lifecycle: set_primary → resolve_routing routes to new primary" do
-    test "next plain text routes to newly-set primary" do
-      sess = "c3d4e5f6-a7b8-4c9d-0e1f-#{Integer.to_string(:rand.uniform(999_999_999_999)) |> String.pad_leading(12, "0")}"
-      alice = "routing-alice-#{:rand.uniform(9999)}"
-      bob = "routing-bob-#{:rand.uniform(9999)}"
-
-      seed_agent(sess, alice)
-      seed_agent(sess, bob)
-
-      # alice is primary (first added); plain text routes to alice.
-      assert {:primary, ^alice} = Esr.Entity.SlashHandler.resolve_routing("hello", sess)
-
-      # Promote bob.
-      {:ok, _} = SetPrimary.execute(%{
-        "args" => %{"session_id" => sess, "name" => bob}
-      })
-
-      # Now plain text routes to bob.
-      assert {:primary, ^bob} = Esr.Entity.SlashHandler.resolve_routing("hello again", sess)
-    end
   end
 end

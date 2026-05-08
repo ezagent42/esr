@@ -1,11 +1,13 @@
-defmodule Esr.Commands.Session.RemoveAgent do
+defmodule Esr.Commands.Agent.Remove do
   @moduledoc """
-  Remove an agent instance from a session (`/session:remove-agent`).
+  Remove an agent instance (`/agent:remove`).
 
   Cannot remove the primary agent — the caller must set another agent as
-  primary first via `/session:set-primary`.
+  primary first via `/agent:set-primary`.
 
-  Slash-routes YAML entry added in Phase 6.
+  Replaces the legacy `Esr.Commands.Session.RemoveAgent`; logic identical
+  (spec rev-3 §4.2 D1 hard-cutover). The old session/remove_agent.ex is
+  deleted in Task C.9.
   """
 
   @behaviour Esr.Role.Control
@@ -24,7 +26,7 @@ defmodule Esr.Commands.Session.RemoveAgent do
          %{
            "type" => "cannot_remove_primary",
            "message" =>
-             "cannot remove primary agent '#{name}'; use /session:set-primary to promote another agent first"
+             "cannot remove primary agent '#{name}'; use /agent:set-primary to promote another agent first"
          }}
 
       {:error, :not_found} ->
@@ -40,7 +42,7 @@ defmodule Esr.Commands.Session.RemoveAgent do
     {:error,
      %{
        "type" => "invalid_args",
-       "message" => "remove_agent requires args.session_id and args.name (non-empty strings)"
+       "message" => "/agent:remove requires args.session_id and args.name (non-empty strings)"
      }}
   end
 end

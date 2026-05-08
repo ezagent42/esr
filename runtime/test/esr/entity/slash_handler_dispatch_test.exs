@@ -82,6 +82,39 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
       assert text =~ "/session:list"
     end
 
+    # Phase C (resource-typed grammar rev-3 §4.2): the per-agent commands
+    # were renamed from /session:* to /agent:* (Tasks C.3-C.5). Operators
+    # who still type the old form get a rename hint via @deprecated_slashes.
+    test "/session:add-agent returns rename hint to /agent:add" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:add-agent type=cc name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:add"
+      assert text =~ "renamed"
+    end
+
+    test "/session:remove-agent returns rename hint to /agent:remove" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:remove-agent name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:remove"
+      assert text =~ "renamed"
+    end
+
+    test "/session:set-primary returns rename hint to /agent:set-primary" do
+      pid = start_handler!()
+      ref = make_ref()
+      cast_dispatch(pid, envelope("/session:set-primary name=x"), self(), ref)
+
+      assert_receive {:reply, text, ^ref}, 1000
+      assert text =~ "/agent:set-primary"
+      assert text =~ "renamed"
+    end
+
     test "envelope chat_id/app_id/principal_id flow into the command's args" do
       pid = start_handler!()
       ref = make_ref()

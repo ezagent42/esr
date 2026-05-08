@@ -135,6 +135,20 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @doc """
+  Rename `name` → `new_name` in `session_id`. Atomic via the GenServer
+  call so the (session_id, name) ETS key swap is collision-checked.
+
+  Returns `:ok`, `{:error, :not_found}`, or
+  `{:error, :duplicate_agent_name}`.
+  """
+  @spec rename_instance(GenServer.server(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :duplicate_agent_name}
+  def rename_instance(server \\ __MODULE__, session_id, name, new_name)
+      when is_binary(session_id) and is_binary(name) and is_binary(new_name) do
+    GenServer.call(server, {:rename_instance, session_id, name, new_name})
+  end
+
+  @doc """
   Return the primary agent name for `session_id`.
 
   Returns `{:ok, name}` or `:not_found`.
@@ -253,6 +267,49 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
       [_] ->
         :ets.insert(state.table, {{session_id, :__primary__}, name})
         {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:rename_instance, sid, name, new_name}, _from, state) do
+    cond do
+      name == new_name ->
+        {:reply, :ok, state}
+
+      :ets.lookup(state.table, {sid, new_name}) != [] ->
+        {:reply, {:error, :duplicate_agent_name}, state}
+
+      true ->
+        case :ets.lookup(state.table, {sid, name}) do
+          [{_, %Instance{} = inst}] ->
+            new_inst = %{inst | name: new_name}
+            :ets.delete(state.table, {sid, name})
+            :ets.insert(state.table, {{sid, new_name}, new_inst})
+
+            # Also update primary pointer if this was the primary.
+            case :ets.lookup(state.table, {sid, :__primary__}) do
+              [{_, ^name}] ->
+                :ets.insert(state.table, {{sid, :__primary__}, new_name})
+
+              _ ->
+                :ok
+            end
+
+            # Mirror agent_sup_via key if it exists (per Esr.Session.AgentSupervisor convention)
+            case :ets.lookup(state.table, {:instance_sup, sid, name}) do
+              [{_, sup_pid}] ->
+                :ets.delete(state.table, {:instance_sup, sid, name})
+                :ets.insert(state.table, {{:instance_sup, sid, new_name}, sup_pid})
+
+              _ ->
+                :ok
+            end
+
+            {:reply, :ok, state}
+
+          [] ->
+            {:reply, {:error, :not_found}, state}
+        end
     end
   end
 
