@@ -130,9 +130,9 @@ slashes:
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Workspace"
-    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo）"
+    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo；name= 缺省时 fallback 到 chat-current → user-default）"
     args:
-      - { name: name, required: true }
+      - { name: name, required: false }
       - { name: path, required: true }
       - { name: folder_name, required: false }
 

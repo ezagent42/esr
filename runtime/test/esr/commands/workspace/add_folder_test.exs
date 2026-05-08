@@ -244,9 +244,12 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     assert err["type"] == "invalid_args"
   end
 
-  test "missing name arg → invalid_args" do
+  test "missing name arg with no chain layer → no_workspace_target (M-5/D5)" do
+    # Post-M-5: name= is optional and Resolve chain runs. With no submitter
+    # and no chat-default and no user-default, the chain emits
+    # "no_workspace_target" rather than the legacy "invalid_args".
     assert {:error, err} = WorkspaceAddFolder.execute(%{"args" => %{"path" => "/tmp"}})
-    assert err["type"] == "invalid_args"
+    assert err["type"] == "no_workspace_target"
   end
 
   test "empty name → invalid_args" do
@@ -261,5 +264,84 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
              WorkspaceAddFolder.execute(%{"args" => %{"name" => "some-ws", "path" => ""}})
 
     assert err["type"] == "invalid_args"
+  end
+
+  describe "name= optional via Resolve chain (M-5/D5)" do
+    setup do
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+        %{
+          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+        },
+        %{"alice" => "alice-uuid"}
+      )
+
+      on_exit(fn -> Esr.Test.WorkspaceFixture.reset!() end)
+      :ok
+    end
+
+    test "name= falls back to chat-current when omitted" do
+      ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+
+      :ok =
+        Esr.Resource.ChatScope.Registry.set_default_workspace("oc_x", "cli_a", ws.id)
+
+      repo_path = make_tmp_git_repo!("addfolder-chat-current")
+
+      cmd = %{
+        "submitted_by" => "ou_a",
+        "submitter_username" => "alice",
+        "args" => %{
+          "chat_id" => "oc_x",
+          "app_id" => "cli_a",
+          "path" => repo_path
+        }
+      }
+
+      assert {:ok, %{"name" => "alice-ws"}} =
+               Esr.Commands.Workspace.AddFolder.execute(cmd)
+    end
+
+    test "name= falls back to user-default when no chat-current" do
+      ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+
+      repo_path = make_tmp_git_repo!("addfolder-user-default")
+
+      cmd = %{
+        "submitted_by" => "ou_a",
+        "submitter_username" => "alice",
+        "args" => %{"path" => repo_path}
+      }
+
+      assert {:ok, %{"name" => "alice-ws"}} =
+               Esr.Commands.Workspace.AddFolder.execute(cmd)
+    end
+
+    test "name= omitted with no chain layer → no_workspace_target" do
+      repo_path = make_tmp_git_repo!("addfolder-no-target")
+
+      cmd = %{
+        "submitted_by" => "ou_a",
+        "submitter_username" => "alice",
+        "args" => %{"path" => repo_path}
+      }
+
+      assert {:error, %{"type" => "no_workspace_target"}} =
+               Esr.Commands.Workspace.AddFolder.execute(cmd)
+    end
+
+    defp make_tmp_git_repo!(label) do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "esr-addfolder-#{label}-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(Path.join(dir, ".git"))
+      on_exit(fn -> File.rm_rf!(dir) end)
+      dir
+    end
   end
 end
