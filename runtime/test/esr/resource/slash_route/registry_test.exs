@@ -524,5 +524,16 @@ defmodule Esr.SlashRoutesTest do
       assert route.command_module == Esr.Commands.Session.End
       assert route.kind == "session_end"
     end
+
+    # Regression for code-review C-2: `internal_kinds:` entries override the
+    # `slashes:` table at runtime via permission_for/1 (rebuild_merged_view
+    # inserts internal_kinds LAST). Pre-fix, /session:list ran with
+    # `session.list` (admin-only) and /session:switch with `session.switch`
+    # (admin-only) instead of the spec'd permissions.
+    test "permission_for/1 returns the slashes-table value (not the legacy internal_kinds value)" do
+      assert SlashRouteRegistry.permission_for("session_list") == "session:default/read"
+      assert SlashRouteRegistry.permission_for("session_switch") == nil
+      assert SlashRouteRegistry.permission_for("session_end") == "session:default/end"
+    end
   end
 end

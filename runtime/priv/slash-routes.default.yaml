@@ -374,9 +374,9 @@ slashes:
     requires_workspace_binding: false
     requires_user_binding: true
     category: "Sessions"
-    description: "销毁 session；session=<uuid> 或 name=<n>"
+    description: "销毁 session；session_id=<uuid> 或 name=<n>"
     args:
-      - { name: session, required: false }
+      - { name: session_id, required: false }
       - { name: name, required: false }
 
   # /session:bind-workspace, /session:info — deferred
@@ -558,7 +558,7 @@ internal_kinds:
     command_module: "Esr.Commands.Session.BranchNew"
 
   session_switch:
-    permission: "session.switch"
+    permission: null
     command_module: "Esr.Commands.Session.Switch"
 
   session_branch_end:
@@ -702,7 +702,7 @@ internal_kinds:
     command_module: "Esr.Commands.Session.End"
 
   session_list:
-    permission: "session.list"
+    permission: "session:default/read"
     command_module: "Esr.Commands.Session.List"
 
   attach:
