@@ -36,4 +36,9 @@ defmodule Esr.Commands.Agent.PrimaryTest do
     cmd = %{"submitted_by" => "linyilun", "args" => %{"chat_id" => chat, "app_id" => app}}
     assert {:ok, %{"primary" => "alice", "session_id" => ^sid}} = Primary.execute(cmd)
   end
+
+  test "no chat context: returns invalid_args" do
+    cmd = %{"submitted_by" => "linyilun", "args" => %{}}
+    assert {:error, %{"type" => "invalid_args"}} = Primary.execute(cmd)
+  end
 end
