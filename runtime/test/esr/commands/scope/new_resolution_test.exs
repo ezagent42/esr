@@ -1,15 +1,20 @@
 defmodule Esr.Commands.Scope.NewResolutionTest do
   @moduledoc """
-  Phase 5.1 + 5.3 — unit tests for `Esr.Commands.Scope.New.resolve_workspace_if_needed/1`.
+  Phase 5.1 / 5.3 + Phase 6 (M-5) — unit tests for
+  `Esr.Commands.Scope.New.resolve_workspace_if_needed/1`.
 
-  These tests exercise the 3-step workspace resolution chain directly via the
+  These tests exercise the workspace resolution chain directly via the
   `@doc false` public function, without setting up the full session machinery.
 
-  Resolution order:
+  Resolution order (post-M-5, delegated to `Esr.Commands.Workspace.Resolve`):
     1. Explicit — `args["workspace"]` is non-empty.
     2. Chat default — `ChatScope.Registry.get_default_workspace(chat_id, app_id)`
        returns a UUID → look up workspace by UUID → return its name.
-    3. Fallback — "default" workspace exists in NameIndex.
+    3. User default — `User.Registry.get_default_workspace(submitter_username)`.
+
+  Pre-M-5 there was a 4th layer "fallback to literal 'default' workspace";
+  M-5 removed it (spec § specificity ladder). Test coverage for that
+  removal lives in the M-5 describe block at the bottom of this file.
 
   Short-circuits:
     * When `args["workspace"]` is already set → `:no_resolution_needed`.
@@ -48,24 +53,6 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
     case NameIndex.id_for_name(@name_index_table, name) do
       {:ok, id} -> Registry.delete_by_id(id)
       :not_found -> :ok
-    end
-  end
-
-  # Phase 6.1's Bootstrap creates "default" at app boot. Tests that need
-  # to verify "default doesn't exist" must temporarily delete it; this
-  # helper schedules its recreation on_exit so siblings see post-Bootstrap
-  # state.
-  defp temporarily_delete_default do
-    case NameIndex.id_for_name(@name_index_table, "default") do
-      {:ok, id} ->
-        Registry.delete_by_id(id)
-
-        ExUnit.Callbacks.on_exit(fn ->
-          Registry.put(%Struct{id: id, name: "default", owner: "admin", location: nil})
-        end)
-
-      :not_found ->
-        :ok
     end
   end
 
@@ -134,15 +121,16 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
     test "chat default is ignored when chat_id is absent" do
       uuid = register_workspace("ws-chatdef-no-chatid")
       :ok = ChatReg.set_default_workspace("oc_orphan", "cli_orphan", uuid)
-      temporarily_delete_default()
 
       on_exit(fn ->
         ChatReg.clear_default_workspace("oc_orphan", "cli_orphan")
         clean_workspace("ws-chatdef-no-chatid")
       end)
 
-      # No chat_id in args → lookup_chat_default returns nil → falls through.
-      # No "default" workspace (just deleted) → :no_match.
+      # No chat_id in args → chat-default layer skips. No submitter →
+      # user-default layer skips. M-5 chain ends in :no_match — even if
+      # a literal "default" workspace exists in registry, it's no longer
+      # preferred (specificity ladder: chat-default → user-default → error).
       args = %{"dir" => "/tmp/x"}
 
       assert {:error, %{"type" => "no_workspace_resolvable"}} =
@@ -151,32 +139,18 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Test 3: no workspace + no chat default + "default" workspace exists → fallback
-  # ---------------------------------------------------------------------------
-
-  describe "fallback to 'default' workspace" do
-    test "resolves to 'default' when no workspace or chat default is set" do
-      # Self-heal in case sibling tests with interleaved on_exit ordering
-      # left the registry without a "default" entry. Bootstrap.run/0 is
-      # idempotent — a no-op when default is already present.
-      Esr.Resource.Workspace.Bootstrap.run()
-      args = %{"dir" => "/tmp/x"}
-
-      assert {:ok, "default"} = SessionNew.resolve_workspace_if_needed(args)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Test 4: no workspace + no chat default + no "default" workspace + no agent
-  #         → no_workspace_resolvable
+  # Test 3: M-5 — no_workspace_resolvable when no chain layer matches.
+  #
+  # Pre-M-5 this slot held a "fallback to literal 'default'" test. After M-5
+  # the literal-default fallback is gone (spec § specificity ladder); only
+  # chat-default and user-default fire. Replaced with the negative case.
   # ---------------------------------------------------------------------------
 
   describe "no_workspace_resolvable error" do
-    test "returns structured error when none of the three steps match" do
-      # Phase 6.1's Bootstrap creates "default" at boot — temporarily
-      # remove it so the fallback can't fire; restored on_exit.
-      temporarily_delete_default()
-
+    test "returns structured error when no chain layer matches" do
+      # No explicit workspace, no chat context, no user-default link.
+      # Even if a literal "default" workspace happens to exist on the
+      # registry from prior state, M-5 no longer falls through to it.
       args = %{"dir" => "/tmp/x"}
 
       assert {:error,
@@ -185,9 +159,12 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
                 "message" => msg
               }} = SessionNew.resolve_workspace_if_needed(args)
 
-      assert msg =~ "no workspace specified"
-      assert msg =~ "no chat default set"
-      assert msg =~ "no \"default\" workspace exists"
+      # New error message wording (spec §): points operator at /user:use
+      # or explicit workspace= arg, no longer mentions literal "default".
+      assert msg =~ "workspace not specified"
+      assert msg =~ "no chat-default set"
+      assert msg =~ "no user-default"
+      assert msg =~ "/user:use"
     end
   end
 
@@ -207,6 +184,52 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
       # at validate_args(agent, nil) for missing dir or at verify_caps — but
       # NOT with no_workspace_resolvable.
       assert :no_resolution_needed = SessionNew.resolve_workspace_if_needed(args)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Phase 6 Task 6.2 — M-5 chain: user-default replaces literal "default"
+  # ---------------------------------------------------------------------------
+
+  describe "resolve_workspace_if_needed/1 — M-5 chain (user-default replaces system default)" do
+    setup do
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+        %{
+          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+        },
+        %{"alice" => "alice-uuid"}
+      )
+
+      on_exit(fn -> Esr.Test.WorkspaceFixture.reset!() end)
+      :ok
+    end
+
+    test "no_workspace_resolvable when no chain layer matches" do
+      args = %{"submitter_username" => "alice"}
+      # No explicit, no chat-default, no user-default
+      assert {:error, %{"type" => "no_workspace_resolvable"}} =
+               Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
+    end
+
+    test "user-default wins when chat-default absent" do
+      ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+
+      args = %{"submitter_username" => "alice"}
+      assert {:ok, "alice-ws"} = Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
+    end
+
+    test "literal `default` no longer wins as a fallback" do
+      # Even if a workspace named literally `default` exists, it must not be
+      # preferred — only chat-default / user-default layers fire.
+      ws = Esr.Test.WorkspaceFixture.build(name: "default", owner: "alice")
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+
+      # alice has NO user-default link. No chat context.
+      args = %{"submitter_username" => "alice"}
+      assert {:error, %{"type" => "no_workspace_resolvable"}} =
+               Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
     end
   end
 end

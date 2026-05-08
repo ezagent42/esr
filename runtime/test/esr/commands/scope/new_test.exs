@@ -72,23 +72,17 @@ defmodule Esr.Commands.Scope.NewTest do
   end
 
   describe "execute/1 arg validation" do
-    test "missing workspace + agent → resolution falls back to \"default\" workspace (Phase 5.1 + 6.1)" do
-      # Phase 5.1 introduced the 3-step resolution chain; Phase 6.1's
-      # Bootstrap guarantees a "default" workspace exists at boot time, so
-      # the chain always resolves and execution proceeds to capability check.
-      # ou_alice is unprivileged → fails at capability gate, not resolution.
+    test "missing workspace + agent + no user-default → no_workspace_resolvable (Phase 6 M-5)" do
+      # Pre-M-5 (Phase 5.1 + 6.1): the resolution chain fell through to a
+      # literal "default" workspace, so this case reached the capability
+      # gate. M-5 (Phase 6) removed the literal-default layer — submitters
+      # without a user-default now error out at resolution instead.
+      #
+      # ou_alice has no user-default link → :no_match → no_workspace_resolvable.
       Grants.load_snapshot(%{"ou_alice" => []})
 
-      # Self-heal in case a sibling resolution test deleted "default" and
-      # didn't restore it cleanly (the on_exit ordering is sensitive).
-      ensure_default_workspace()
-
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
-      assert {:error, %{"type" => "missing_capabilities"}} = SessionNew.execute(cmd)
-    end
-
-    defp ensure_default_workspace do
-      Esr.Resource.Workspace.Bootstrap.run()
+      assert {:error, %{"type" => "no_workspace_resolvable"}} = SessionNew.execute(cmd)
     end
 
     test "missing dir → invalid_args" do
