@@ -89,7 +89,7 @@ Symmetric to `/workspace:use`. Sets the submitting user's default workspace. Tra
 ```yaml
 "/user:use":
   kind: user_use
-  permission: "workspace.use"
+  permission: "workspace.create"
   command_module: "Esr.Commands.User.Use"
   requires_workspace_binding: false
   requires_user_binding: true

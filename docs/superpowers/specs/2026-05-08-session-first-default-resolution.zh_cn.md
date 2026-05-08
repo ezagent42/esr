@@ -89,7 +89,7 @@ metamodel-aligned-esr 迁移（Phase 1-1b）凿出了这个存储槽，但 `defa
 ```yaml
 "/user:use":
   kind: user_use
-  permission: "workspace.use"
+  permission: "workspace.create"
   command_module: "Esr.Commands.User.Use"
   requires_workspace_binding: false
   requires_user_binding: true
