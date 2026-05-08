@@ -107,4 +107,46 @@ defmodule Esr.Commands.User.AddTest do
       assert doc["default_workspace_id"] == nil
     end
   end
+
+  describe "auto-create user-default workspace (M-5/D3)" do
+    setup do
+      on_exit(fn -> Esr.Test.WorkspaceFixture.reset!() end)
+      :ok
+    end
+
+    test "user_add creates <username>-default workspace + sets as user-default" do
+      name = "auto-#{System.unique_integer([:positive])}"
+      cmd = %{"submitted_by" => "ou_admin", "args" => %{"name" => name}}
+
+      assert {:ok, result} = Esr.Commands.User.Add.execute(cmd)
+
+      assert result["default_workspace"] == "#{name}-default"
+      assert is_binary(result["default_workspace_id"])
+
+      # Workspace exists in registry
+      {:ok, ws_id} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(
+          :esr_workspace_name_index,
+          "#{name}-default"
+        )
+
+      assert {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_id(ws_id)
+      assert ws.owner == name
+
+      # User-default link populated
+      assert {:ok, ^ws_id} = Esr.Entity.User.Registry.get_default_workspace(name)
+    end
+
+    test "user_add result map carries actor identity (Phase 4 contract)" do
+      name = "shape-#{System.unique_integer([:positive])}"
+      cmd = %{"submitted_by" => "ou_admin", "args" => %{"name" => name}}
+
+      assert {:ok, result} = Esr.Commands.User.Add.execute(cmd)
+
+      assert result["text"] =~ "added"
+      assert is_binary(result["id"])
+      assert is_binary(result["default_workspace_id"])
+      assert result["default_workspace"] == "#{name}-default"
+    end
+  end
 end

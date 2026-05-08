@@ -47,13 +47,26 @@ defmodule Esr.Commands.User.Add do
           {:error, %{"type" => "already_exists", "message" => "user '#{name}' already exists"}}
         else
           uuid = UUID.uuid4()
+          ws_uuid = UUID.uuid4()
+          ws_name = "#{name}-default"
+
           updated_users = Map.put(users, name, %{"feishu_ids" => []})
           updated_doc = Map.put(doc, "users", updated_users)
 
           with :ok <- Esr.Yaml.Writer.write(path, updated_doc),
-               :ok <- write_user_json(uuid, name) do
+               :ok <- write_user_json(uuid, name, ws_uuid),
+               :ok <- sync_reload_user_registry(path),
+               :ok <- create_user_default_workspace(ws_uuid, ws_name, name),
+               :ok <- Esr.Entity.User.Registry.set_default_workspace(name, ws_uuid) do
             populate_name_index(name, uuid)
-            {:ok, %{"text" => "added esr user #{name}", "id" => uuid}}
+
+            {:ok,
+             %{
+               "text" => "added esr user #{name}",
+               "id" => uuid,
+               "default_workspace" => ws_name,
+               "default_workspace_id" => ws_uuid
+             }}
           else
             {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
           end
@@ -80,7 +93,7 @@ defmodule Esr.Commands.User.Add do
     end
   end
 
-  defp write_user_json(uuid, username) do
+  defp write_user_json(uuid, username, default_workspace_id) do
     dir = Path.join(Esr.Paths.users_dir(), uuid)
 
     with :ok <- File.mkdir_p(dir) do
@@ -93,7 +106,7 @@ defmodule Esr.Commands.User.Add do
         "username" => username,
         "display_name" => "",
         "feishu_ids" => [],
-        "default_workspace_id" => nil,
+        "default_workspace_id" => default_workspace_id,
         "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
@@ -101,6 +114,43 @@ defmodule Esr.Commands.User.Add do
            :ok <- File.rename(tmp, path) do
         :ok
       end
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # The Watcher (FSEvents-based) reloads `User.Registry` asynchronously on
+  # users.yaml change events. Inside this command we need the new user to
+  # appear in `:esr_users_by_name` *before* `set_default_workspace/2` runs,
+  # otherwise that call returns `{:error, :not_found}`. Calling
+  # `FileLoader.load/1` synchronously here makes the with-chain atomic.
+  defp sync_reload_user_registry(yaml_path) do
+    case Esr.Entity.User.FileLoader.load(yaml_path) do
+      :ok -> :ok
+      {:error, _} = err -> err
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  defp create_user_default_workspace(ws_uuid, ws_name, owner) do
+    dir = Esr.Paths.workspace_dir(ws_name)
+
+    with :ok <- File.mkdir_p(dir) do
+      ws = %Esr.Resource.Workspace.Struct{
+        id: ws_uuid,
+        name: ws_name,
+        owner: owner,
+        folders: [],
+        agent: "cc",
+        settings: %{},
+        env: %{},
+        chats: [],
+        transient: false,
+        location: {:esr_bound, dir}
+      }
+
+      Esr.Resource.Workspace.Registry.put(ws)
     end
   rescue
     e -> {:error, e}
