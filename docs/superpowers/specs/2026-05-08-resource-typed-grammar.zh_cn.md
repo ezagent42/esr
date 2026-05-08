@@ -2,20 +2,46 @@
 
 **Spec id:** 2026-05-08-resource-typed-grammar
 **作者：** Allen Woods + Claude
-**状态：** rev-2（用户 2026-05-08 已 approve；4 处修正已落地）
+**状态：** rev-3（元模型重新对齐：**Realm = class、Session = instance** —— concepts.md 待同步更新）
 **对应：** rev-4 审计 follow-ups #1、#2、#7（`docs/manual-checks/2026-05-08-post-multi-instance-audit.md` § rev-4）
 **关联：** 2026-05-08-session-first-default-resolution.md、2026-05-08-plugin-command-registration.md（rev-3）
 
 > 本中文版仅做导航说明 + 关键决策摘要。完整 spec（每条命令的 LOC 估算、PtySocket 签名 token 设计、5 phase 实施计划、不变量、open question）在英文版 source-of-truth：[`2026-05-08-resource-typed-grammar.md`](2026-05-08-resource-typed-grammar.md)。
 
-## rev-2 修正（2026-05-08）
+## rev-3 修正（2026-05-08）—— 元模型重新对齐
 
-经用户审阅 rev-1 后确认的 4 处修正：
+rev-2 落地后用户深入提问，发现 Scope/Session 整套词汇定位需要反转。**rev-3 把元模型映射对换：**
 
-- **Q1 → `/plugin:agent-types`**（rev-1 是 `/agent-type:list`）。agent 类型本质是插件元数据，归在 `/plugin:` 下语义最准。
-- **Q2 → 本 PR 不动 PtySocket auth**。单操作员 + Tailscale 网络下今天不需要；将来作为 hardening 任务记到 `docs/futures/todo.md`。规模减少 ~100 LOC。
-- **Q3 → `/cc:tui` 落 claude_code plugin**（rev-1 误写"落核心"）。按 rev-3 plugin-scoped command registration spec D3 的强制命名空间规则。这成为 rev-3 机制的第二个真实消费者。
-- **Q4 → `Esr.Scope.* → Esr.Session.*` module rename 走单独 PR，本 spec 实施前先 land**。"Scope" 是 M-1..M-5 时代对 Session 的旧称；slash 已经叫 `/session:*` 但 module 名仍叫 Scope，本 spec 实施基底先清理干净。pre-rename PR 纯机械（sed + slash-routes yaml `command_module:` 更新 + 测试），零行为变化。
+| 层级 | 旧（concepts.md 当前）| 新（rev-3） |
+|---|---|---|
+| **Class / declarative** | Session | **Realm**（新词） |
+| **Instance / runtime** | Scope | **Session**（与操作员词汇对齐） |
+
+**理由：** 操作员说 `/session:new` 想的是"创建新实例" —— 是 instance 语感。concepts.md 当前"Session = class"映射和操作员直觉冲突；"Scope = instance"在英语 + 编程语境里都不天然。对换之后 code 和 operator 词汇都对齐到 instance，新词 Realm 占据 class 槽位（"Realm of admin operations"、"the workspace Realm" 读作 kind/category 自然）。
+
+新元模型：
+- **4 runtime primitives**：**Session**、Entity、Resource、Interface（之前 Scope/Entity/Resource/Interface）
+- **1 declarative primitive**：**Realm**（之前 Session）
+- "类比 OOP：**Realm 是 class、Session 是 instance**"
+
+**rev-3 修正：**
+
+- **Q4-revised**：cleanup PR 前置（在本 spec 实施前 land），三件事打包：
+  1. `Esr.Scope.* → Esr.Session.*`（runtime 层 ~7 模块、~80 处引用）
+  2. `Esr.Commands.Scope.* → Esr.Commands.Session.*`（admin 命令层 ~6 模块）+ 合并两个 New（保留 449-LOC 的 Scope.New 当 canonical Session.New）
+  3. **拆 `Esr.Resource.ChatScope.Registry`** 成两个 registry：
+     - `Esr.Session.ChatRouting.Registry` —— `(chat_id, app_id) → session_id` 路由
+     - `Esr.Session.NameIndex.Registry` —— session URI 唯一性约束（mirror `Esr.Resource.Workspace.NameIndex`）
+- concepts.md 同步更新 PR 在 cleanup PR 之前 ship —— 元模型对齐文档先行。
+- §6 实施面更新 —— 新增模块全部用 `Esr.Commands.Session.*`（cleanup 后的 canonical 名字）。
+
+**操作员面不变。** Operator 词汇 `/session:*` 本来就和 instance 对齐，rev-3 只是让 code 跟 operator 同步。
+
+**rev-1/rev-2 既定的 3 项保持：**
+
+- Q1. `/plugin:agent-types`
+- Q2. 本 PR 不做 PtySocket auth
+- Q3. `/cc:tui` 落 claude_code plugin
 
 ## 摘要
 
