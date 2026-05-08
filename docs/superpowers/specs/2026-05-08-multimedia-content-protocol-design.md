@@ -19,8 +19,9 @@ the brainstorm; rationale captured per row.
 | D2 | Resource URI = top-level `esr://<env>@<host>/resources/<media_type>/<sha256>.<ext>` (not nested under workspaces/sessions) | Content-addressing is intentionally *orthogonal* to workspace/session scope: the same SHA-256 served from any chat or session points at the same bytes, with refs[] tracking the chats that referenced it. Nesting under `workspaces/<ws>/...` would lose dedup across workspaces and complicate the future GC sweep. |
 | D3 | Concurrent store-of-same-sha256 atomicity = append-only `<sha>.refs.jsonl` + tmp-rename for bytes; `.meta.json` is a derived cache rebuilt from `.refs.jsonl` on boot | POSIX guarantees: append to existing file is atomic for ≤PIPE_BUF writes; rename within same FS is atomic. Refs are append-only single-line JSON; meta is a cache. No locks, no GenServer hot-spot, crash-safe by construction. |
 | D4 | `send_file` outbound = upstream `Esr.Resource.Media.store` + URI envelope at peer level; downstream Elixir→Python sidecar wire preserves existing α-shape (`{chat_id, file_name, content_b64, sha256}`) | The α-wire is the deliberate Python-adapter-uniformity boundary (`feishu_chat_proxy.ex:480-524` comment "Do the read + hash + encode at the Elixir boundary so the Python adapter's contract stays uniform across all channel adapters"). The peer-level envelope can be URI-shaped without touching the sidecar contract; FCP's outbound branch resolves URI → Path → existing `read_file_for_send` → existing `_send_file` directive. PR-3 stays Elixir-only (~200 LOC). |
-| D5 | PR-1 atomicity | The loader-rejection check + cc manifest update + feishu manifest update + adapter `esr.toml` `[media_types]` block all ship in one atomic commit. No partial migration window where the loader rejects manifests that have not yet been updated. |
+| D5 | `declares.media_types` is **opt-in, not required** | Plugins that omit the block are treated as non-multimedia (effectively `inbound: [], outbound: []`). Symmetric with how `capabilities`, `slash_routes`, `python_sidecars`, `startup` already work — all optional declarations, registered if present. Avoids needing to enumerate "content-bearing entity kinds", removes the partial-migration concern, and stays consistent with the rest of the manifest schema. |
 | D6 | Capability-miss throttling key = `(sender_id, kind)`, not `(chat_id, kind)` | Group chats with multiple senders pasting unsupported types: per-chat throttle hides all but the first sender's drop. Per-sender throttle gives every sender at least one feedback DM. |
+| D7 | `text` is not a media_type | `text` envelopes are bare strings (not URI-shaped); they don't traverse Phasers and don't need a capability check. `media_types` therefore enumerates only non-text content. Plugins handling only text don't declare the block at all. |
 
 ## Abstract
 
@@ -143,12 +144,12 @@ additive PR (new Phaser + manifest entry).
   share_user / location / system / hongbao / vote / video_chat /
   calendar / folder. Each becomes a single-Phaser additive PR
   after this spec lands.
-- Backward-compat for plugin manifests without `media_types:`.
-  Plugin manifests that declare entities of a peer kind expected to
-  send / receive content **must** include the block; loader rejects
-  on miss. Operators of in-tree plugins (claude_code, feishu)
-  receive the update in this work; out-of-tree plugin authors must
-  update.
+- Forced declaration enforcement. Per D5, `declares.media_types`
+  is opt-in: a plugin without the block is simply a non-multimedia
+  plugin. No loader rejection, no migration window concern. CC and
+  Feishu plugins gain the block in this work because they
+  participate in the protocol; out-of-tree text-only plugins need
+  no change.
 
 ## Design
 
@@ -347,22 +348,21 @@ on error (`EsrResourceError`).
 4. Append a single line of JSON to `<sha>.refs.jsonl`. POSIX
    guarantees concurrent appends ≤ PIPE_BUF (4096 bytes) atomic;
    each ref is well under that limit.
-5. Skip `.meta.json` writes during normal operation. Boot-time
-   `Esr.Resource.Media.RefIndex.scan/0` rebuilds `.meta.json` from
-   `<sha>.refs.jsonl` (and from byte stat if no refs file exists —
-   resource pre-population case). `.meta.json` is a derived cache,
-   never the source of truth.
+5. Skip `.meta.json` writes during normal operation. `.meta.json`
+   is a derived cache only; MVP doesn't even materialize it. Future
+   GC pass will rebuild it from `<sha>.refs.jsonl` on demand.
 
 Concurrent `store/3` for the same SHA-256 thus has zero locks: step
 3's rename collisions are no-ops (same-sha = same content; rename
-into existing dest succeeds with the new bytes-identical file
-landing); step 4's appends are independent and order-preserving in
-the file.
+into existing dest succeeds with the bytes-identical file landing);
+step 4's appends are independent and order-preserving in the file.
 
-Read path (`Esr.Resource.Media.RefIndex.refs_for/1`) reads the
-on-boot ETS index (mirror of `.refs.jsonl`); ETS gets one append per
-new ref, debounced through the same GenServer that watches
-`.refs.jsonl` for FSEvents (or polled on each `store/3`).
+**MVP scope: refs are write-only.** No runtime read path on
+`.refs.jsonl`. None of the inbound/outbound flows need a (chat,
+msg_id) → sha lookup; refs exist for future GC + human debug only.
+This means no ETS `RefIndex` GenServer, no boot scan, no FSEvents
+watcher in PR-1 — they're added when the GC follow-up actually
+needs them.
 
 #### 3.3 Phaser behaviour
 
@@ -432,28 +432,34 @@ streaming source), `input_formats` extends additively.
 
 ### 4. Plugin capability declaration
 
-#### 4.1 `manifest.yaml` `declares.media_types`
+#### 4.1 `manifest.yaml` `declares.media_types` (opt-in, per D5)
 
-Hard-required for any plugin whose entities send or receive content.
-No backward-compat — the loader rejects `manifest.yaml` lacking the
-block.
+Per D5/D7: the block is **optional**. Presence registers the plugin
+as a multimedia participant; absence means the plugin handles only
+text envelopes. The block enumerates **non-text** types only — text
+flows everywhere and isn't gated by Phaser dispatch.
 
 ```yaml
 # runtime/lib/esr/plugins/feishu/manifest.yaml
 declares:
   # ... existing entities / capabilities / slash_routes / startup ...
   media_types:
-    inbound:  [text, image, file]      # MVP. audio added in follow-up PR.
-    outbound: [text, image, file]
+    inbound:  [image, file]      # MVP. audio added in follow-up PR.
+    outbound: [image, file]
 ```
 
 ```yaml
 # runtime/lib/esr/plugins/claude_code/manifest.yaml
 declares:
   media_types:
-    inbound:  [text, image, file]
-    outbound: [text, image, file]
+    inbound:  [image, file]
+    outbound: [image, file]
 ```
+
+A plugin shipping only slash routes / capabilities / state without
+sending or receiving non-text envelopes simply omits the block.
+Asymmetric inbound/outbound (`inbound: [image], outbound: []`) is
+legal — the plugin consumes images but does not produce them.
 
 #### 4.2 `esr.toml` `[media_types]` cross-check
 
@@ -463,14 +469,21 @@ declares:
 # ... existing ...
 
 [media_types]
-inbound  = ["text", "image", "file"]
-outbound = ["text", "image", "file"]
+inbound  = ["image", "file"]
+outbound = ["image", "file"]
 ```
 
 Cross-check test (`tests/integration/test_plugin_manifest_consistency.py`,
-new): for each plugin with both files, assert
-`manifest.yaml.declares.media_types.{inbound,outbound}` equals
-`esr.toml.[media_types].{inbound,outbound}`. Fails CI on drift.
+new): for each plugin pair with both files,
+
+- both files have `media_types` block → strict equality required;
+  drift fails CI.
+- both files lack `media_types` → no check (plugin is not a
+  multimedia participant).
+- **asymmetric presence** (one file declares, the other doesn't)
+  → CI failure: this is always a bug (the Elixir manifest claims
+  the platform trusts the adapter to handle types the Python
+  sidecar doesn't know about, or vice versa).
 
 Two-source consistency check (not asymmetric — the equality is
 strict): the Elixir manifest is the routing-layer authority ("what
@@ -659,14 +672,14 @@ split is for atomic review + bisect, not phased delivery.
 | PR | Title | LOC | Sections covered |
 |---|---|---|---|
 | PR-1 | Multimedia protocol scaffold: `resources` URI grammar + Resolver/Phaser modules + manifest media_types | ~700-800 | §1, §3, §4 |
-| PR-2 | Inbound MVP: Feishu image + file → cc (replaces PRD §F14 download path) | ~600-700 | §5, Inbound flow, replaces `uploads/`→`resources/` |
+| PR-2 | Inbound MVP: Feishu image + file → cc (replaces PRD §F14 download path) + mock_feishu fidelity upgrade for inbound non-text | ~800-900 | §5, Inbound flow, replaces `uploads/`→`resources/`, mock_feishu inbound image/file |
 | PR-3 | Outbound MVP: cc `send_file` → Feishu image + file (Elixir-only per D4) | ~200 | Outbound flow |
 
 ### Per-PR completion definition
 
 | PR | Acceptance |
 |---|---|
-| PR-1 | `mix test` green; `pytest` green; new `tests/integration/test_plugin_manifest_consistency.py` green; no e2e change. **Atomic per D5**: the loader-rejection check + cc/feishu manifest `media_types:` blocks + adapter `esr.toml` `[media_types]` ship in one commit; no intermediate state where the loader rejects manifests that haven't been updated. |
+| PR-1 | `mix test` green; `pytest` green; new `tests/integration/test_plugin_manifest_consistency.py` green; no e2e change. Per D5: cc + feishu manifests gain `media_types:` blocks; loader parses if present, no rejection path. |
 | PR-2 | `mix test` + `pytest` green; new e2e scenario 19 (Feishu inbound multimedia) passes; manual: PNG dropped into Feishu chat reaches cc as a Read-able path |
 | PR-3 | `mix test` + `pytest` green; new e2e scenario 20 (cc outbound multimedia) passes; manual: claude `send_file` produces a visible Lark message |
 
@@ -681,7 +694,7 @@ split is for atomic review + bisect, not phased delivery.
 | `runtime/lib/esr/resource/media/image_phaser.ex` | New | PR-1 | |
 | `runtime/lib/esr/resource/media/file_phaser.ex` | New | PR-1 | |
 | `runtime/lib/esr/resource/media/phaser_registry.ex` | New | PR-1 | |
-| `runtime/lib/esr/resource/media/ref_index.ex` | New | PR-1 | ETS-backed; reads .meta.json on boot |
+| `runtime/lib/esr/resource/media/local_address.ex` | New | PR-1 | helper exposing `host_port/0` for URI builder; reads `EsrWeb.Endpoint.config(:http)` (already the SoT — `runtime/lib/esr/application.ex:436`, `runtime/lib/esr/commands/register_adapter.ex:152-172`); not a new architectural concept, just a single-source helper |
 | `runtime/test/esr/resource/media/*_test.exs` | New | PR-1 | per-module unit tests |
 | `py/src/esr/uri.py` | Modify | PR-1 | register `resources`; `parse_resource`/`build_resource` |
 | `py/tests/test_uri.py` | Modify | PR-1 | mirror Elixir tests |
@@ -692,8 +705,8 @@ split is for atomic review + bisect, not phased delivery.
 | `py/tests/test_resource_media.py` | New | PR-1 | |
 | `runtime/lib/esr/plugins/feishu/manifest.yaml` | Modify | PR-1 | add `declares.media_types` |
 | `runtime/lib/esr/plugins/claude_code/manifest.yaml` | Modify | PR-1 | add `declares.media_types` |
-| `runtime/lib/esr/plugin/manifest.ex` | Modify | PR-1 | parse `declares.media_types` block; required for plugins that declare any content-bearing entity (Boundary / Stateful / Proxy with inbound/outbound role) |
-| `runtime/lib/esr/plugin/loader.ex` | Modify | PR-1 | reject manifest without `media_types` at boot — fail-loud, not warn-and-default |
+| `runtime/lib/esr/plugin/manifest.ex` | Modify | PR-1 | parse OPTIONAL `declares.media_types` block (per D5); store as `%{inbound: [...], outbound: [...]}` or empty struct if absent |
+| `runtime/lib/esr/plugin/loader.ex` | Modify | PR-1 | hand parsed media_types to a new in-memory registry (`Esr.Resource.Media.PluginRegistry`) for routing-layer capability checks. No rejection path. |
 | `adapters/feishu/esr.toml` | Modify | PR-1 | add `[media_types]` |
 | `tests/integration/test_plugin_manifest_consistency.py` | New | PR-1 | cross-check |
 | `adapters/feishu/src/esr_feishu/parsers.py` | Modify | PR-2 | image/file parsers populate `args` consistently |
@@ -703,6 +716,7 @@ split is for atomic review + bisect, not phased delivery.
 | `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex` | Modify | PR-2 | non-text branch invokes `Esr.Resource.Media.Inbound.handle/2` |
 | `runtime/lib/esr_web/mcp_controller.ex` | Modify | PR-2 | SSE notification carries `meta.kind` + `meta.path` for non-text |
 | `tests/e2e/scenarios/19_feishu_inbound_multimedia.sh` | New | PR-2 | |
+| `tests/mock-feishu/` (or wherever `mock_feishu` server lives) | Modify | PR-2 | Upgrade fidelity for image / file inbound: implement `P2ImMessageReceiveV1` with `msg_type=image\|file`, serve `im/v1/messages/<msg_id>/resources/<file_key>` for download. Per `docs/notes/mock-feishu-fidelity.md` the inbound image / file paths are ❌ today (lines 102-105); scenario 19 cannot run without this upgrade. |
 | `runtime/lib/esr/plugins/claude_code/cc_proxy.ex` | Modify | PR-3 | outbound store + envelope build |
 | `runtime/lib/esr/plugins/claude_code/mcp/tools.ex` | Modify | PR-3 | `send_file` re-implemented atop protocol |
 | `runtime/lib/esr/plugins/feishu/feishu_app_proxy.ex` | Modify | PR-3 | outbound non-text dispatch |
@@ -745,11 +759,14 @@ estimate.
 
 - Scenario 19: operator drops a fixture PNG via mock-feishu inbound,
   asserts cc receives `<channel kind="image" path=...>` and the path
-  exists + bytes match.
+  exists + bytes match. **Requires mock_feishu fidelity upgrade**
+  (per `docs/notes/mock-feishu-fidelity.md` lines 102-105 the inbound
+  image / file paths are ❌ today). The upgrade lands in PR-2.
 - Scenario 20: claude (mocked) invokes `send_file` with a fixture
   PNG; mock-feishu records the upload + send sequence; assert the
   posted message has `msg_type=image` and the file_key resolves to
-  the original bytes.
+  the original bytes. The outbound side of mock_feishu (multipart
+  upload + message create) is already ✅ today (lines 144-145).
 
 Both scenarios update README.md "E2E test scenarios" table and
 `docs/architecture.md` "E2E coverage map" per project convention.
