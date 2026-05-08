@@ -79,19 +79,22 @@ def test_resolve_round_trip(tmp_esrd):
     assert str(p) == result["path"]
 
 
-def test_resolve_not_found_raises(tmp_esrd):
+@pytest.mark.usefixtures("tmp_esrd")
+def test_resolve_not_found_raises():
     bogus = "esr://test@localhost:4001/resources/image/" + ("0" * 64) + ".png"
     with pytest.raises(EsrResourceError, match="not_found"):
         resolve(bogus)
 
 
-def test_resolve_wrong_env_raises(tmp_esrd):
+@pytest.mark.usefixtures("tmp_esrd")
+def test_resolve_wrong_env_raises():
     bad = "esr://other@localhost:4001/resources/image/" + ("a" * 64) + ".png"
     with pytest.raises(EsrResourceError, match="wrong_env"):
         resolve(bad)
 
 
-def test_resolve_invalid_uri_raises(tmp_esrd):
+@pytest.mark.usefixtures("tmp_esrd")
+def test_resolve_invalid_uri_raises():
     with pytest.raises(EsrResourceError, match="invalid_uri"):
         resolve("not-a-uri")
 

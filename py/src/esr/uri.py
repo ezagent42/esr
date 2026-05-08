@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import parse_qsl
 
 # Legacy types: 2-segment URIs (single id, no slashes inside).
@@ -263,6 +263,21 @@ def build_path(
 # Mirror of Esr.Uri.parse_resource/1 and Esr.Uri.build_resource/3 (commit 018c21a).
 # ---------------------------------------------------------------------------
 
+
+class ParsedResource(TypedDict):
+    """Precise return type for :func:`parse_resource`.
+
+    ``media_type``, ``sha256``, ``ext``, and ``host`` are always populated
+    (validated against allowlists before returning). ``env`` is ``str | None``
+    because the ``org@`` authority component is optional in resource URIs.
+    """
+
+    media_type: str
+    sha256: str
+    ext: str
+    env: str | None
+    host: str
+
 _ALLOWED_EXTS: dict[str, tuple[str, ...]] = {
     "image": ("png", "jpg", "jpeg", "gif", "webp", "heic"),
     "file":  ("bin", "pdf", "doc", "docx", "xls", "xlsx", "zip", "txt", "md", "csv"),
@@ -274,7 +289,7 @@ _MEDIA_TYPES: tuple[str, ...] = tuple(_ALLOWED_EXTS)  # single source of truth
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def parse_resource(uri: str) -> dict[str, str | None]:
+def parse_resource(uri: str) -> ParsedResource:
     """Parse a resources URI and return a dict with media_type, sha256, ext, env, host.
 
     Raises ``ValueError('invalid_uri: ...')`` on:

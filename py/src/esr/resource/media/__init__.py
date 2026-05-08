@@ -102,7 +102,7 @@ def store(media_type: str, source_path: str, ref_meta: dict) -> dict:
 
     h = hashlib.sha256()
     with src.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
+        while chunk := f.read(65536):
             h.update(chunk)
     sha = h.hexdigest()
 
@@ -114,7 +114,7 @@ def store(media_type: str, source_path: str, ref_meta: dict) -> dict:
         # atomic copy: tmp + rename (POSIX atomic on same FS)
         tmp = target_dir / f"{sha}.{ext}.tmp.{os.getpid()}.{id(src)}"
         with src.open("rb") as r, tmp.open("wb") as w:
-            for chunk in iter(lambda: r.read(65536), b""):
+            while chunk := r.read(65536):
                 w.write(chunk)
         tmp.replace(dest)
 
