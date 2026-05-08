@@ -2,18 +2,46 @@
 
 **Spec id:** 2026-05-08-resource-typed-grammar
 **Author:** Allen Woods + Claude
-**Status:** rev-2 (user-approved 2026-05-08; 4 corrections applied)
+**Status:** rev-3 (metamodel re-grounded: **Realm = class, Session = instance** — concepts.md to be updated)
 **Tracks:** rev-4 audit follow-ups #1, #2, #7 (`docs/manual-checks/2026-05-08-post-multi-instance-audit.md` § rev-4)
 **Related specs:** 2026-05-08-session-first-default-resolution.md, 2026-05-08-plugin-command-registration.md (rev-3)
 
-## 0. rev-2 changelog (2026-05-08)
+## 0. rev-3 changelog (2026-05-08) — metamodel re-grounding
 
-User-confirmed corrections to rev-1:
+After spec rev-2 was committed, deeper discussion surfaced that the entire Scope-vs-Session vocabulary needed inversion. **rev-3 swaps the metamodel mapping:**
 
-- **Q1 → `/plugin:agent-types` (was `/plugin:agent-types`).** Agent types are plugin metadata declared via manifest; locating them under `/plugin:` is semantically accurate and avoids inventing a new resource axis with no anchoring module.
-- **Q2 → drop PtySocket signed-token auth from this PR.** Single-operator-on-Tailscale doesn't need it today; tracked as future hardening in `docs/futures/todo.md`. Estimate drops by ~100 LOC (impl + tests).
-- **Q3 → `/cc:tui` ships in the claude_code plugin (NOT core).** Per 2026-05-08-plugin-command-registration spec rev-3 D3 ("Per-plugin namespace prefix is mandatory"). `/cc:tui` becomes the second real consumer of the rev-3 mechanism, validating it again. Module: `Esr.Plugins.ClaudeCode.Commands.Tui` under `runtime/lib/esr/plugins/claude_code/commands/tui.ex`.
-- **Q4 → `Esr.Scope.* → Esr.Session.*` module-level rename ships as a separate PR BEFORE this spec implements.** "Scope" is the M-1..M-5 era name for "Session"; the slash surface migrated long ago but module names lag. The pre-rename PR is mechanical (sed + slash-routes yaml `command_module:` updates + tests); ~40 files, zero behavior change. This spec then implements on a clean `Session.*`-named base.
+| Layer | Old (concepts.md current) | New (rev-3) |
+|---|---|---|
+| **Class / declarative** | Session | **Realm** (new word) |
+| **Instance / runtime** | Scope | **Session** (operator-aligned) |
+
+**Rationale:** operators say `/session:new` meaning "create a new instance" — that's instance-flavored vocabulary. concepts.md's current "Session = class" mapping fights operator intuition; "Scope = instance" maps to neither everyday English nor programming usage of "scope". The swap aligns code AND operator vocabulary on instance, and introduces "Realm" for the class layer ("Realm of admin operations", "the workspace Realm" reads naturally as kind/category).
+
+The metamodel becomes:
+
+- **4 runtime primitives**: **Session**, Entity, Resource, Interface (was: Scope, Entity, Resource, Interface)
+- **1 declarative primitive**: **Realm** (was: Session)
+- "类比 OOP：**Realm 是 class、Session 是 instance**" (was: Scope 是 instance, Session 是 class)
+- `use SomeRealm` produces a Session
+
+**Carried forward from rev-1/rev-2 (unchanged):**
+
+- **Q1.** `/plugin:agent-types` for the relocated agent-type catalog.
+- **Q2.** Drop PtySocket signed-token auth from this PR (tracked as future hardening).
+- **Q3.** `/cc:tui` ships in the claude_code plugin per rev-3 plugin-cmd D3.
+
+**rev-3 corrections (this revision):**
+
+- **Q4-revised.** A pre-cleanup PR ships **before** this spec implements, with three concerns bundled:
+  1. **`Esr.Scope.* → Esr.Session.*`** rename for runtime modules (~7 modules: `Process`, `Router`, `Supervisor`, `AgentSupervisor`, `AgentInstanceSupervisor`, `Admin`, `Admin.Process`).
+  2. **`Esr.Commands.Scope.* → Esr.Commands.Session.*`** rename for the 6 admin/escript command modules (`New`, `End`, `Switch`, `List`, `BranchNew`, `BranchEnd`). The `Esr.Commands.Session.*` modules added in PR #248 era (`Attach`, `Detach`, `Share`, `AddAgent`, `RemoveAgent`, `SetPrimary`, `New`) are correctly named under the new mapping (they create Session instances) and stay. The collision case `Session.New (103 LOC, post-PR-248) vs Scope.New (449 LOC, M-1..M-5 era)` resolves by **merging** — keep the 449-LOC full-spawn impl as canonical `Esr.Commands.Session.New`.
+  3. **`Esr.Resource.ChatScope.Registry` SPLIT** into two registries (the moduledoc itself flags "Two responsibilities, one GenServer" as a known design smell):
+     - **Responsibility 1**: `(chat_id, app_id) → session_id` chat-routing → moves to `Esr.Session.ChatRouting.Registry`. Rationale: chat is a Channel Resource (per concepts.md §四), but the chat→session binding is session-side state.
+     - **Responsibility 2**: `(env, username, workspace, name) → session_id` URI uniqueness → moves to `Esr.Session.NameIndex.Registry` (mirrors `Esr.Resource.Workspace.NameIndex`).
+- **Companion concepts.md PR ships first** — re-grounds the metamodel (Scope→Session, Session→Realm) so the code rename has documented metamodel backing. Doc-only, ships independently.
+- **§6 implementation surface** updated — every new module added by this spec uses `Esr.Commands.Session.*` (post-cleanup canonical name).
+
+**Slash surface unchanged.** Operator vocabulary `/session:*` was already aligned with instance semantics; rev-3 just makes the code agree.
 
 ## 1. Problem statement
 
@@ -135,11 +163,17 @@ defp category_order("PTY"), do: 5     # already present
 
 ## 6. Implementation surface
 
-Estimate (rev-2, post Scope→Session pre-rename): ~480 LOC + ~330 LOC test = ~810 LOC.
+Estimate (rev-3, post-cleanup): ~480 LOC + ~330 LOC test = ~810 LOC. (This is the grammar-refactor PR only; the cleanup PR's own LOC is ~600-800 mostly mechanical.)
 
-**Prerequisite (separate PR before this spec implements):** `Esr.Scope.* → Esr.Session.*` mechanical module rename. Affects ~40 files (sed + slash-routes yaml `command_module:` field). Zero behavior change.
+**Prerequisites (two independent PRs ship before this spec implements):**
 
-This table assumes the prerequisite PR has landed and module paths use `Session.*`:
+1. **concepts.md PR** — re-grounds the metamodel (Scope→Session for instance role, Session→Realm for class role). Doc-only; ~30 min.
+2. **Cleanup PR** — three bundled changes (~3-4 hours):
+   - `Esr.Scope.* → Esr.Session.*` (runtime layer, ~7 modules + ~80 references)
+   - `Esr.Commands.Scope.* → Esr.Commands.Session.*` (command modules, ~6 modules) + merge `Session.New (103) + Scope.New (449)` into canonical `Session.New (449)`
+   - Split `Esr.Resource.ChatScope.Registry` → `Esr.Session.ChatRouting.Registry` + `Esr.Session.NameIndex.Registry`
+
+This table assumes both prerequisites have landed and the codebase uses `Esr.Session.*` consistently:
 
 | File | Change |
 |---|---|
@@ -192,14 +226,14 @@ Each phase commits independently. No aggregation across phases — the dispatche
 - **I4.** Each renamed slash returns a structured error pointing at the new form when invoked by an operator. Verified by `slash_handler_test.exs` cases for the 5 deprecated slashes (`/session:add-agent` → `/agent:add`, etc.).
 - **I5.** `/cc:tui` is registered via the claude_code plugin's manifest `slash_routes:` block (rev-3 mechanism). Verified by inspecting `Esr.Resource.SlashRoute.Registry` overlay state — `/cc:tui` appears as a feishu-sibling overlay entry, not in the base `slash-routes.default.yaml`.
 
-## 9. Open questions resolved (rev-2)
+## 9. Open questions resolved (rev-3)
 
-All 4 open questions from rev-1 resolved by user 2026-05-08:
+All 4 open questions from rev-1 + rev-2 resolved by user 2026-05-08:
 
 - **Q1 ✓** `/plugin:agent-types` (was `/agent-type:list` in rev-1). Anchored under existing `/plugin:` namespace; agent types are plugin metadata.
-- **Q2 ✓** `/cc:tui` ships in claude_code plugin (was "ship in core" in rev-1). Becomes the second real consumer of rev-3 plugin-scoped command registration mechanism.
-- **Q3 ✓** PtySocket auth deferred (was "in this PR" in rev-1). Single-operator-on-Tailscale doesn't need it today; tracked as future hardening.
-- **Q4 ✓** `Esr.Scope.* → Esr.Session.*` rename ships as a separate PR before this spec implements (was "delete `Scope.List`" in rev-1, but the broader Scope → Session naming inconsistency motivated a full pre-rename pass).
+- **Q2 ✓** `/cc:tui` ships in claude_code plugin (was "ship in core" in rev-1). Becomes the second real consumer of plugin-scoped command registration mechanism.
+- **Q3 ✓** PtySocket signed-token auth deferred (was "in this PR" in rev-1). Tracked as future hardening (`pty_attach_security_hardening` in `docs/futures/todo.md`).
+- **Q4 ✓ (rev-3)** Metamodel inverted: **Realm = class, Session = instance** (was: Session = class, Scope = instance). `Esr.Scope.* → Esr.Session.*` rename + commands rename + ChatScope split, all in one cleanup PR after the concepts.md update PR. See §0 changelog for full rationale.
 
 ## 10. Migration impact summary
 
@@ -210,7 +244,7 @@ All 4 open questions from rev-1 resolved by user 2026-05-08:
 | `esr session attach session=<uuid>` (chat-binding) → `esr session bind-chat session=<uuid>` | Same; old form returns hint at new form |
 | `/agent:list` now lists running instances | Old type-catalog use case → `/plugin:agent-types` (1-time relearn; type-catalog rarely consulted in normal flow) |
 | New `/pty:list`, `/pty:attach`, `/cc:tui`, `/agent:rename`, `/agent:primary`, `/session:list`, `/session:switch` slash | Pure additions; no muscle-memory disruption |
-| `Esr.Scope.* → Esr.Session.*` (separate pre-rename PR) | No operator-visible change; only affects internal tooling that grep'd the old module name |
+| Metamodel + module rename (pre-cleanup PRs): Scope→Session (instance), Session→Realm (class). `Esr.Scope.*` → `Esr.Session.*`, `Esr.Resource.ChatScope.Registry` splits into `Esr.Session.ChatRouting.Registry` + `Esr.Session.NameIndex.Registry`. | No operator-visible change; only affects internal tooling that grep'd old module names |
 
 ## 11. Out-of-scope (future work, tracked elsewhere)
 
