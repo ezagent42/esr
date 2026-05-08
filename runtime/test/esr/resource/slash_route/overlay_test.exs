@@ -27,6 +27,24 @@ defmodule Esr.Resource.SlashRoute.OverlayTest do
     :ok = SlashRouteRegistry.load_snapshot(base_snapshot([simple_route("/help", "help")]))
     :ok = SlashRouteRegistry.unregister_overlay("test_a")
     :ok = SlashRouteRegistry.unregister_overlay("test_b")
+
+    # Clean up overlays at end too — otherwise the last test in this file
+    # leaves overlay state in the singleton SlashRouteRegistry and pollutes
+    # downstream test files (e.g. `Esr.SlashRoutesTest` whose `list_*` /
+    # `dump/1` assertions count entries in the merged ETS view, with no
+    # way to filter out overlays). Restore the priv default snapshot so
+    # subsequent tests see the production base table.
+    on_exit(fn ->
+      :ok = SlashRouteRegistry.unregister_overlay("test_a")
+      :ok = SlashRouteRegistry.unregister_overlay("test_b")
+
+      priv = Application.app_dir(:esr, "priv/slash-routes.default.yaml")
+
+      if File.exists?(priv) do
+        Esr.Resource.SlashRoute.Registry.FileLoader.load(priv)
+      end
+    end)
+
     :ok
   end
 

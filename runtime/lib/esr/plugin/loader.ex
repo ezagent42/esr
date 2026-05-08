@@ -197,10 +197,24 @@ defmodule Esr.Plugin.Loader do
   end
 
   @doc """
-  Phase-1 stub. Phase 2 will tear down per-plugin contributions.
+  Tear down a plugin's contributions in core registries.
+
+  Phase-4 (audit #6 / 2026-05-08-plugin-command-registration spec §5.3):
+  unregister the plugin's slash-route overlay so a future hot-reload
+  doesn't see stale routes from a previous version of the manifest.
+
+  Other contribution types (capabilities, python_sidecars, entities,
+  startup callbacks) don't yet have teardown wired here — they predate
+  this audit and ship without `unregister/1` siblings. Adding those is
+  tracked in the same plan's later phases.
+
+  Idempotent: stopping a plugin that was never started is `:ok`.
   """
   @spec stop_plugin(plugin_name()) :: :ok
-  def stop_plugin(_name), do: :ok
+  def stop_plugin(name) when is_binary(name) do
+    :ok = Esr.Resource.SlashRoute.Registry.unregister_overlay(name)
+    :ok
+  end
 
   @doc """
   PR-3.4 (2026-05-05): invoke every enabled plugin's `startup`
