@@ -521,15 +521,15 @@ internal_kinds:
 
   session_branch_new:
     permission: "session:default/create"
-    command_module: "Esr.Commands.Scope.BranchNew"
+    command_module: "Esr.Commands.Session.BranchNew"
 
   session_switch:
     permission: "session.switch"
-    command_module: "Esr.Commands.Scope.Switch"
+    command_module: "Esr.Commands.Session.Switch"
 
   session_branch_end:
     permission: "session:default/end"
-    command_module: "Esr.Commands.Scope.BranchEnd"
+    command_module: "Esr.Commands.Session.BranchEnd"
 
   grant:
     permission: "cap.manage"
@@ -661,15 +661,15 @@ internal_kinds:
   # The slash-callable forms are now /session:* (Phase 6 colon-namespace).
   session_new:
     permission: "session:default/create"
-    command_module: "Esr.Commands.Scope.New"
+    command_module: "Esr.Commands.Session.New"
 
   session_end:
     permission: "session:default/end"
-    command_module: "Esr.Commands.Scope.End"
+    command_module: "Esr.Commands.Session.End"
 
   session_list:
     permission: "session.list"
-    command_module: "Esr.Commands.Scope.List"
+    command_module: "Esr.Commands.Session.List"
 
   attach:
     permission: null

@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.SwitchTest do
+defmodule Esr.Commands.Session.SwitchTest do
   @moduledoc """
-  DI-10 Task 20 — `Esr.Commands.Scope.Switch` flips
+  DI-10 Task 20 — `Esr.Commands.Session.Switch` flips
   `routing.yaml principals[submitter].active` to the requested branch.
   Pure file update; no shell-out; synchronous but still wrapped in the
   Dispatcher's Task since `execute/1` has a consistent signature across
@@ -9,7 +9,7 @@ defmodule Esr.Commands.Scope.SwitchTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.Switch, as: SessionSwitch
+  alias Esr.Commands.Session.Switch, as: SessionSwitch
 
   setup do
     unique = System.unique_integer([:positive])

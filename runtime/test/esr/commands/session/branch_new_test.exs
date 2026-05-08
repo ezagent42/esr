@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.BranchNewTest do
+defmodule Esr.Commands.Session.BranchNewTest do
   @moduledoc """
-  DI-10 Task 20 — `Esr.Commands.Scope.BranchNew` shells out to
+  DI-10 Task 20 — `Esr.Commands.Session.BranchNew` shells out to
   `scripts/esr-branch.sh new <branch>` via `System.cmd/3` (already
   running inside a Task spawned by the Dispatcher, so blocking is OK),
   parses the single-line JSON stdout, appends the new entry to
@@ -23,7 +23,7 @@ defmodule Esr.Commands.Scope.BranchNewTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.BranchNew, as: SessionBranchNew
+  alias Esr.Commands.Session.BranchNew, as: SessionBranchNew
 
   setup do
     unique = System.unique_integer([:positive])

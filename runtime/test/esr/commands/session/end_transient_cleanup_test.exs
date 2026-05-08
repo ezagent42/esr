@@ -1,4 +1,4 @@
-defmodule Esr.Commands.Scope.EndTransientCleanupTest do
+defmodule Esr.Commands.Session.EndTransientCleanupTest do
   @moduledoc """
   Task 5.2 — transient workspace cleanup hook + Risk #2 race serialisation.
 

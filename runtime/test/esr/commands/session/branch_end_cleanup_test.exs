@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.BranchEndCleanupTest do
+defmodule Esr.Commands.Session.BranchEndCleanupTest do
   @moduledoc """
-  DI-11 Task 25 — `Esr.Commands.Scope.BranchEnd` (formerly
+  DI-11 Task 25 — `Esr.Commands.Session.BranchEnd` (formerly
   `Session.End` before PR-3 P3-9 rename) non-force path: cleanup-check
   handshake via `session.signal_cleanup` MCP tool, with a 30-s soft
   timeout fallback.
@@ -30,7 +30,7 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
     that's covered by `Esr.EntityServerSessionCleanupTest` (Task 24).
   * The `--force` happy paths (branches.yaml prune, routing.yaml
     prune, active fallback) — covered by
-    `Esr.Commands.Scope.BranchEndTest`.
+    `Esr.Commands.Session.BranchEndTest`.
 
   Both ends (Dispatcher routing + Session.BranchEnd blocking receive)
   are exercised together here, so the cleanup flow is covered
@@ -39,7 +39,7 @@ defmodule Esr.Commands.Scope.BranchEndCleanupTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.BranchEnd, as: SessionBranchEnd
+  alias Esr.Commands.Session.BranchEnd, as: SessionBranchEnd
   alias Esr.Slash.CleanupRendezvous
 
   setup do

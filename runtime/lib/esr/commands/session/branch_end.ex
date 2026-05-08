@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.BranchEnd do
+defmodule Esr.Commands.Session.BranchEnd do
   @moduledoc """
-  `Esr.Commands.Scope.BranchEnd` — legacy branch-worktree
+  `Esr.Commands.Session.BranchEnd` — legacy branch-worktree
   teardown command (PR-3 P3-9.1 rename; dispatcher kind
   `session_branch_end`). Tears down the ephemeral esrd + worktree
   for a branch and cleans up routing/branches state

@@ -1,7 +1,7 @@
-defmodule Esr.Commands.Scope.NewResolutionTest do
+defmodule Esr.Commands.Session.NewResolutionTest do
   @moduledoc """
   Phase 5.1 / 5.3 + Phase 6 (M-5) — unit tests for
-  `Esr.Commands.Scope.New.resolve_workspace_if_needed/1`.
+  `Esr.Commands.Session.New.resolve_workspace_if_needed/1`.
 
   These tests exercise the workspace resolution chain directly via the
   `@doc false` public function, without setting up the full session machinery.
@@ -25,7 +25,7 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.New, as: SessionNew
+  alias Esr.Commands.Session.New, as: SessionNew
   alias Esr.Resource.Workspace.{Registry, Struct, NameIndex}
   alias Esr.Resource.ChatScope.Registry, as: ChatReg
 
@@ -208,7 +208,7 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
       args = %{"submitter_username" => "alice"}
       # No explicit, no chat-default, no user-default
       assert {:error, %{"type" => "no_workspace_resolvable"}} =
-               Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
+               Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
 
     test "user-default wins when chat-default absent" do
@@ -217,7 +217,7 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
       :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
 
       args = %{"submitter_username" => "alice"}
-      assert {:ok, "alice-ws"} = Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
+      assert {:ok, "alice-ws"} = Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
 
     test "literal `default` no longer wins as a fallback" do
@@ -229,7 +229,7 @@ defmodule Esr.Commands.Scope.NewResolutionTest do
       # alice has NO user-default link. No chat context.
       args = %{"submitter_username" => "alice"}
       assert {:error, %{"type" => "no_workspace_resolvable"}} =
-               Esr.Commands.Scope.New.resolve_workspace_if_needed(args)
+               Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
   end
 end

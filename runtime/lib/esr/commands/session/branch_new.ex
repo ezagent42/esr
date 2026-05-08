@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.BranchNew do
+defmodule Esr.Commands.Session.BranchNew do
   @moduledoc """
-  `Esr.Commands.Scope.BranchNew` — spawns an ephemeral esrd for
+  `Esr.Commands.Session.BranchNew` — spawns an ephemeral esrd for
   a new **branch worktree** and registers it in the routing/branches
   state (dev-prod-isolation spec §6.4 Session.New bullet, plan DI-10
   Task 20).
@@ -8,7 +8,7 @@ defmodule Esr.Commands.Scope.BranchNew do
   PR-3 P3-8 renamed this module from `Session.New` to `Session.BranchNew`
   to free the `Session.New` name for the agent-session command (D15
   collapse). Dispatcher kind: `session_branch_new`. The agent-session
-  path lives in `Esr.Commands.Scope.New` (kind `session_new`).
+  path lives in `Esr.Commands.Session.New` (kind `session_new`).
 
   Called by `Esr.Admin.Dispatcher` inside `Task.start` when a
   `session_branch_new`-kind command reaches the front of the queue.

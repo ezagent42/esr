@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.End do
+defmodule Esr.Commands.Session.End do
   @moduledoc """
-  `Esr.Commands.Scope.End` — the consolidated agent-session
+  `Esr.Commands.Session.End` — the consolidated agent-session
   teardown admin command (PR-3 P3-9.2; dispatcher kind `session_end`).
 
   ## PR-21g / PR-22 resolution path

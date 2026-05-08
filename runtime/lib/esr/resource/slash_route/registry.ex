@@ -161,7 +161,7 @@ defmodule Esr.Resource.SlashRoute.Registry do
           "requires_user_binding" => false,
           # only when include_internal: true
           "permission" => "session.create",
-          "command_module" => "Esr.Commands.Scope.New"
+          "command_module" => "Esr.Commands.Session.New"
         }, ...],
         "internal_kinds" => [%{
           "kind" => "grant",

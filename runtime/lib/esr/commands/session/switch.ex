@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.Switch do
+defmodule Esr.Commands.Session.Switch do
   @moduledoc """
-  `Esr.Commands.Scope.Switch` — flips the submitter's active
+  `Esr.Commands.Session.Switch` — flips the submitter's active
   routing target to the requested branch (spec §6.4 Session.Switch,
   plan DI-10 Task 20).
 

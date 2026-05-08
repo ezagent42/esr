@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.List do
+defmodule Esr.Commands.Session.List do
   @moduledoc """
-  `Esr.Commands.Scope.List` — list live sessions, optionally
+  `Esr.Commands.Session.List` — list live sessions, optionally
   scoped to a workspace via `args.workspace` (PR-21j).
 
   ## Shapes

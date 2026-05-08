@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.EndTest do
+defmodule Esr.Commands.Session.EndTest do
   @moduledoc """
-  P3-9.2 — `Esr.Commands.Scope.End` (the new, post-D15-collapse
+  P3-9.2 — `Esr.Commands.Session.End` (the new, post-D15-collapse
   agent-session teardown command; dispatcher kind `session_end`) tears
   down a Session supervisor tree by delegating to
   `Esr.Session.Router.end_session/1`.
@@ -20,7 +20,7 @@ defmodule Esr.Commands.Scope.EndTest do
   use ExUnit.Case, async: false
 
 
-  alias Esr.Commands.Scope.End, as: SessionEnd
+  alias Esr.Commands.Session.End, as: SessionEnd
   alias Esr.Resource.Capability.Grants
 
 

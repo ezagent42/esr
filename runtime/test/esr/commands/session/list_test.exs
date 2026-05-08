@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.ListTest do
+defmodule Esr.Commands.Session.ListTest do
   @moduledoc """
-  DI-10 Task 20 — `Esr.Commands.Scope.List` reads routing.yaml
+  DI-10 Task 20 — `Esr.Commands.Session.List` reads routing.yaml
   + branches.yaml, scopes the output to the submitter's principal
   entry, and returns a summary map:
 
@@ -16,7 +16,7 @@ defmodule Esr.Commands.Scope.ListTest do
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.List, as: SessionList
+  alias Esr.Commands.Session.List, as: SessionList
 
   setup do
     unique = System.unique_integer([:positive])

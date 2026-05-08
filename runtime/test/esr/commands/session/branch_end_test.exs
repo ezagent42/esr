@@ -1,6 +1,6 @@
-defmodule Esr.Commands.Scope.BranchEndTest do
+defmodule Esr.Commands.Session.BranchEndTest do
   @moduledoc """
-  DI-10 Task 21 — `Esr.Commands.Scope.BranchEnd` (formerly
+  DI-10 Task 21 — `Esr.Commands.Session.BranchEnd` (formerly
   `Session.End` before PR-3 P3-9 rename) tears down an ephemeral esrd
   + worktree via `scripts/esr-branch.sh end <branch> --force`, then
   removes the branch entry from `branches.yaml` and drops
@@ -17,13 +17,13 @@ defmodule Esr.Commands.Scope.BranchEndTest do
   ## System.cmd mocking
 
   Mirrors the `:spawn_fn` injection pattern in
-  `Esr.Commands.Scope.New` — tests pass a 1-arity stub that
+  `Esr.Commands.Session.New` — tests pass a 1-arity stub that
   receives `{argv}` and returns `{stdout, exit_status}`.
   """
 
   use ExUnit.Case, async: false
 
-  alias Esr.Commands.Scope.BranchEnd, as: SessionBranchEnd
+  alias Esr.Commands.Session.BranchEnd, as: SessionBranchEnd
 
   setup do
     unique = System.unique_integer([:positive])

@@ -384,7 +384,7 @@ defmodule Esr.Entity.CCProcess do
   end
 
   # `{:notification, envelope}` matches the existing admin-side
-  # precedent in `Esr.Commands.Scope.BranchEnd` — ChannelChannel
+  # precedent in `Esr.Commands.Session.BranchEnd` — ChannelChannel
   # handle_info/2 routes both `{:push_envelope, _}` and
   # `{:notification, _}` identically, and sticking with the admin
   # convention keeps the ops + logs consistent.
