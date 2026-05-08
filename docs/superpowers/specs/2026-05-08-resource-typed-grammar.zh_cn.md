@@ -2,7 +2,17 @@
 
 **Spec id:** 2026-05-08-resource-typed-grammar
 **作者：** Allen Woods + Claude
-**状态：** rev-3（元模型重新对齐：**Realm = class、Session = instance** —— concepts.md 待同步更新）
+**状态：** rev-4（post subagent code-review，2026-05-08；详见英文版 § 0.1）
+
+## rev-4 修正（2026-05-08，code-review 后）
+
+英文版 § 0.1 列出 3 处修正：
+
+1. **D5: `/cc:tui` → `/claude_code:tui`** —— manifest validator 强制 slash key 用 `<plugin_name>:` 前缀，plugin 叫 `claude_code` 就只能用 `/claude_code:tui` + kind `claude_code_tui`。代价：操作员多打几个字（一次性）。
+2. **§ 4.4 amended:** `/pty:attach` URL 形态 `/sessions/<actor_id>/attach` —— `path` 段是 PTY actor id，不是 session id。同步顺手修 PtyProcess 的 M-2 latent bug：register key + pubsub broadcast topic 从 `pty:<session_id>` 迁到 `pty:<actor_id>`，多 agent attach 不再串台。Plan Phase A.4 / A.5 落地（~70 LOC code + 50 LOC 隔离回归测试）。
+3. **§ 4.6 amended:** `/help` 类目排序数字更正（spec 原文写 PTY = 5 是 stale；当前是 4）。Phase B.3 重排：Users=1, Workspace=2, Sessions=3, Agents=4, PTY=5, Plugins=6, Capabilities=7。
+
+
 **对应：** rev-4 审计 follow-ups #1、#2、#7（`docs/manual-checks/2026-05-08-post-multi-instance-audit.md` § rev-4）
 **关联：** 2026-05-08-session-first-default-resolution.md、2026-05-08-plugin-command-registration.md（rev-3）
 
@@ -41,7 +51,7 @@ rev-2 落地后用户深入提问，发现 Scope/Session 整套词汇定位需�
 
 - Q1. `/plugin:agent-types`
 - Q2. 本 PR 不做 PtySocket auth
-- Q3. `/cc:tui` 落 claude_code plugin
+- Q3. `/claude_code:tui` 落 claude_code plugin（rev-3 写的 `/cc:tui`，rev-4 重命名）
 
 ## 摘要
 
