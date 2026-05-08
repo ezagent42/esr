@@ -154,6 +154,28 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     list(server, session_id) |> Enum.map(& &1.name)
   end
 
+  @doc """
+  Look up the PTY actor id for `(session_id, name)`.
+
+  Returns `{:ok, pty_actor_id}` or `:not_found`. Used by `/claude_code:tui` and
+  `/pty:list` to resolve agent name → PTY id without going through the
+  side-channel `add_instance_and_spawn/2` return.
+  """
+  @spec pty_actor_id_for(GenServer.server(), String.t(), String.t()) ::
+          {:ok, String.t()} | :not_found
+  def pty_actor_id_for(server \\ __MODULE__, session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    tab = GenServer.call(server, :table_name)
+
+    case :ets.lookup(tab, {session_id, name}) do
+      [{_, %Instance{actor_ids: %{pty: pty_id}}}] when is_binary(pty_id) ->
+        {:ok, pty_id}
+
+      _ ->
+        :not_found
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # GenServer callbacks
   # ---------------------------------------------------------------------------
@@ -278,7 +300,8 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
               type: type,
               name: name,
               config: config,
-              created_at: iso_now()
+              created_at: iso_now(),
+              actor_ids: %{cc: cc_actor_id, pty: pty_actor_id}
             }
 
             :ets.insert(state.table, {{session_id, name}, inst})

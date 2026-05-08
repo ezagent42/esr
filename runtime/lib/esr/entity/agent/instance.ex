@@ -11,6 +11,7 @@ defmodule Esr.Entity.Agent.Instance do
     * `config` — plugin-specific configuration map (validated against plugin's
       `config_schema:` in Phase 7).
     * `created_at` — ISO 8601 string, set at creation.
+    * `actor_ids` — `%{cc: <uuid>, pty: <uuid>}`. Persisted at `add_instance_and_spawn/2` so `/claude_code:tui` (and any future agent-name → PTY-id lookup) resolves without a side-channel return.
   """
 
   @type t :: %__MODULE__{
@@ -19,7 +20,8 @@ defmodule Esr.Entity.Agent.Instance do
           type: String.t() | nil,
           name: String.t() | nil,
           config: map(),
-          created_at: String.t() | nil
+          created_at: String.t() | nil,
+          actor_ids: %{cc: String.t(), pty: String.t()} | nil
         }
 
   defstruct [
@@ -28,6 +30,7 @@ defmodule Esr.Entity.Agent.Instance do
     :type,
     :name,
     :created_at,
+    :actor_ids,
     config: %{}
   ]
 end

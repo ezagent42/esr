@@ -113,4 +113,50 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
       assert Enum.sort(names) == ["x", "y"]
     end
   end
+
+  describe "actor_ids field on %Instance{}" do
+    test "Instance struct carries actor_ids field" do
+      inst = %Esr.Entity.Agent.Instance{
+        id: "11111111-1111-4111-8111-111111111111",
+        session_id: "22222222-2222-4222-8222-222222222222",
+        type: "cc",
+        name: "alice",
+        config: %{},
+        created_at: "2026-05-08T00:00:00Z",
+        actor_ids: %{cc: "cc-uuid", pty: "pty-uuid"}
+      }
+
+      assert inst.actor_ids == %{cc: "cc-uuid", pty: "pty-uuid"}
+    end
+
+    test "pty_actor_id_for/2 returns the persisted PTY id" do
+      sid = "33333333-3333-4333-8333-333333333333"
+      name = "alice"
+
+      case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+        nil -> start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+        _ -> :ok
+      end
+
+      tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
+
+      inst = %Esr.Entity.Agent.Instance{
+        id: "cc-uuid-aaaa",
+        session_id: sid,
+        type: "cc",
+        name: name,
+        config: %{},
+        created_at: "2026-05-08T00:00:00Z",
+        actor_ids: %{cc: "cc-uuid-aaaa", pty: "pty-uuid-bbbb"}
+      }
+
+      :ets.insert(tab, {{sid, name}, inst})
+
+      assert {:ok, "pty-uuid-bbbb"} =
+               Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(sid, name)
+
+      assert :not_found =
+               Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(sid, "no-such")
+    end
+  end
 end
