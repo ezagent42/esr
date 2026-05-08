@@ -346,6 +346,73 @@ defmodule Esr.Plugin.ManifestTest do
     end
   end
 
+  describe "declares.media_types (D5: opt-in)" do
+    test "absent block parses as empty inbound/outbound" do
+      yaml = """
+      name: demo
+      version: 0.1.0
+      declares:
+        capabilities: []
+      """
+
+      {:ok, m} = Esr.Plugin.Manifest.parse_string(yaml)
+      assert m.declares.media_types == %{inbound: [], outbound: []}
+    end
+
+    test "present block parses inbound/outbound atom lists" do
+      yaml = """
+      name: demo
+      version: 0.1.0
+      declares:
+        media_types:
+          inbound:  [image, file]
+          outbound: [image]
+      """
+
+      {:ok, m} = Esr.Plugin.Manifest.parse_string(yaml)
+      assert m.declares.media_types == %{inbound: [:image, :file], outbound: [:image]}
+    end
+
+    test "asymmetric (only inbound) defaults outbound []" do
+      yaml = """
+      name: demo
+      version: 0.1.0
+      declares:
+        media_types:
+          inbound:  [image]
+      """
+
+      {:ok, m} = Esr.Plugin.Manifest.parse_string(yaml)
+      assert m.declares.media_types == %{inbound: [:image], outbound: []}
+    end
+
+    test "asymmetric (only outbound) defaults inbound []" do
+      yaml = """
+      name: demo
+      version: 0.1.0
+      declares:
+        media_types:
+          outbound: [file]
+      """
+
+      {:ok, m} = Esr.Plugin.Manifest.parse_string(yaml)
+      assert m.declares.media_types == %{inbound: [], outbound: [:file]}
+    end
+
+    test "rejects unknown media_type with helpful error" do
+      yaml = """
+      name: demo
+      version: 0.1.0
+      declares:
+        media_types:
+          inbound: [video]
+      """
+
+      assert {:error, msg} = Esr.Plugin.Manifest.parse_string(yaml)
+      assert msg =~ "unknown media_type"
+    end
+  end
+
   describe "slash_routes validation (audit #6)" do
     test "rejects a slash key with the wrong plugin prefix" do
       manifest = %Esr.Plugin.Manifest{
