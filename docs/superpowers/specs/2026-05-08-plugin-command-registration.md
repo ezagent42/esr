@@ -2,7 +2,7 @@
 
 **Spec id:** 2026-05-08-plugin-command-registration  
 **Author:** Allen Woods + Claude  
-**Status:** rev-2 (D4 reversed: physical migration of 3 commands now in scope)  
+**Status:** rev-3 (D4 abandoned: kind names rename to comply with namespace; no back-compat)  
 **Tracks:** post-multi-instance audit task #6  
 **Related:** 2026-05-08-session-first-default-resolution.md (companion)
 
@@ -29,7 +29,7 @@ That is fine for **core** commands (the handful built into ESR proper). It is un
 - **Namespace discipline**: a plugin named `feishu` may only register slashes under `/feishu:*` (or admin kinds prefixed `feishu_`). Enforced at manifest validation time, not after the slash is in production.
 - **Symmetric with existing `capabilities:` / `python_sidecars:` declarations** in `Esr.Plugin.Manifest` — same pattern, same place, same lifecycle.
 - **Prove the mechanism by migrating real plugin-owned commands** in this PR. Audit (§5.6) found 3 such commands today: `bind_feishu`, `unbind_feishu`, and `notify`. They move to the feishu plugin in this PR; future plugins inherit the cleared path.
-- **Zero behavior change for the operator-visible kind names.** `kind: notify`, `kind: user_bind_feishu`, `kind: user_unbind_feishu` stay stable so the escript queue + any external caller continues to dispatch unchanged. Only `command_module:` flips.
+- **Operator-facing rename (rev-3, no back-compat).** Old kind names `notify`, `user_bind_feishu`, `user_unbind_feishu` and old cap `notify.send` violate the per-plugin namespace rule (D3). They rename to `feishu_notify`, `feishu_bind`, `feishu_unbind`, and `feishu/notify-send`. Old forms stop working. The CLI grammar moves from `esr user bind-feishu …` to `esr feishu bind …` — operator commands now have a one-glance source attribution (core verb vs `<plugin>` verb). No external scripts/runbooks rely on the old forms (audited 2026-05-08); only ~10 internal test fixtures + ~5 source-code help-text strings need updating.
 
 ## 3. Non-goals
 
@@ -145,11 +145,15 @@ Belt-and-suspenders:
 
 The audit found exactly **3 commands** in core today that meet the plugin-ownership criteria (directly references plugin runtime, would be meaningless without the plugin, permission already in plugin namespace):
 
-| Command | Current module | Plugin | New module |
+| Old kind / module | New kind / module | Plugin | LOC |
 |---|---|---|---|
-| `kind: user_bind_feishu` (CLI-only) | `Esr.Commands.User.BindFeishu` (105 LOC) | feishu | `Esr.Plugins.Feishu.Commands.BindUser` |
-| `kind: user_unbind_feishu` (CLI-only) | `Esr.Commands.User.UnbindFeishu` (70 LOC) | feishu | `Esr.Plugins.Feishu.Commands.UnbindUser` |
-| `kind: notify` (CLI-only) | `Esr.Commands.Notify` (79 LOC) | feishu | `Esr.Plugins.Feishu.Commands.Notify` |
+| `user_bind_feishu` → `Esr.Commands.User.BindFeishu` | `feishu_bind` → `Esr.Plugins.Feishu.Commands.BindUser` | feishu | 105 |
+| `user_unbind_feishu` → `Esr.Commands.User.UnbindFeishu` | `feishu_unbind` → `Esr.Plugins.Feishu.Commands.UnbindUser` | feishu | 70 |
+| `notify` → `Esr.Commands.Notify` | `feishu_notify` → `Esr.Plugins.Feishu.Commands.Notify` | feishu | 79 |
+
+Caps:
+- `notify.send` → `feishu/notify-send`
+- (new) `feishu/user-bind` (gates the bind/unbind kinds; `user.manage` stays for user_add/remove)
 
 **Migration scope (per audit):**
 - 3 source files moved (~254 LOC, verbatim move).
@@ -158,9 +162,11 @@ The audit found exactly **3 commands** in core today that meet the plugin-owners
 - 0 hard blockers identified.
 - 1 doc-comment fix: `runtime/lib/esr/scope/admin/process.ex:32`.
 
-**Stability contracts kept by the migration:**
-- `kind:` names stay the same (`user_bind_feishu`, `user_unbind_feishu`, `notify`). Only `command_module:` flips. Escript queue + admin dispatcher continue to dispatch unchanged.
-- `permission:` strings stay where they are unless we explicitly rename them as part of this migration. Recommend: keep `notify.send` as-is (plugin namespace already), but rename `user.manage` → `feishu/user-bind` for the bind/unbind commands so the `permission:` field matches the new `<plugin>/<rest>` pattern. Will require a small follow-up cap-rename note in the audit doc, but is a clean improvement.
+**rev-3 stability change (kind names DO rename):**
+- Old kind names violated the per-plugin namespace rule (D3 mandates `<plugin>_` prefix). Rename to: `notify` → `feishu_notify`, `user_bind_feishu` → `feishu_bind`, `user_unbind_feishu` → `feishu_unbind`.
+- Old `notify.send` cap violated the per-plugin cap shape (`<plugin>/<rest>`). Rename to `feishu/notify-send`.
+- New cap `feishu/user-bind` gates the migrated bind/unbind commands (was `user.manage`; that cap stays for user_add/remove).
+- Escript grammar moves: `esr user bind-feishu` → `esr feishu bind`. No back-compat shim. Internal test fixtures (~10 references) and source-code help-text strings (~5 references) update with the rename. No external scripts/runbooks audited 2026-05-08 use the old forms.
 
 **Workspace.BindChat / UnbindChat are explicitly NOT migrated.** Audit determined the `chats[]` data model on a workspace is channel-agnostic (future Slack/Telegram plugins will share it). They correctly belong in core; permission `workspace.create` is core-namespaced; no migration needed.
 
@@ -177,7 +183,8 @@ User-bind data persists under `<user_default_workspace_root>/bindings/feishu.jso
 - **D1.** Plugin commands are declarative-yaml only. No code-side `slash_hook` callback. *Rationale:* matches `capabilities:` pattern; yaml is statically inspectable for `/help` / docs / completion; a code hook would be opaque and harder to disable.
 - **D2.** Collision is a hard error, not a silent override or a precedence rule. *Rationale:* lets two plugins claim `/feishu:bind` is undefined behavior — surface it loudly at startup.
 - **D3.** Per-plugin namespace prefix is mandatory, not advisory. *Rationale:* the user explicitly named "ad-hoc additions causing user understanding difficulty" as the problem to solve. A plugin that can register `/user:foo` is still ad-hoc.
-- **D4.** Migrate exactly 3 plugin-owned commands (`bind_feishu`, `unbind_feishu`, `notify`) to the feishu plugin in this PR. *Rationale:* audit (§5.5) found ~675 LOC of mostly mechanical work with zero hard blockers. Shipping a mechanism without a real consumer ships an untested abstraction; the migration validates the validator + loader + registry overlay end-to-end. `kind:` names stay stable so external dispatchers (escript queue, admin) see no surface change.
+- **D4.** Migrate exactly 3 plugin-owned commands (`bind_feishu`, `unbind_feishu`, `notify`) to the feishu plugin in this PR. *Rationale:* audit (§5.5) found ~675 LOC of mostly mechanical work with zero hard blockers. Shipping a mechanism without a real consumer ships an untested abstraction; the migration validates the validator + loader + registry overlay end-to-end.
+- **D4-rev3 (supersedes earlier "kind names stay stable").** Kind names AND cap names rename to comply with D3 (mandatory `<plugin>_` / `<plugin>/<rest>` prefix). Old: `notify` / `user_bind_feishu` / `user_unbind_feishu` / cap `notify.send`. New: `feishu_notify` / `feishu_bind` / `feishu_unbind` / cap `feishu/notify-send` (+ new cap `feishu/user-bind`). External operator command form changes: `esr user bind-feishu …` → `esr feishu bind …`. *Rationale:* (a) D3 is the spec's core target; the earlier "stay stable" promise was self-contradictory and would have required a whitelist exemption that violates the user-set "let-it-crash; no workarounds" rule. (b) Audited 2026-05-08 — no external caller (scripts, sidecars, operator runbooks) uses the old names; the "external compat" the older D4 protected does not exist. (c) The `esr <plugin> <verb>` grammar makes core-vs-plugin command attribution one-glance obvious — exactly the audit #6 motivation. Implementation locks the new contract via tests-first (red baseline before impl) so the implementer cannot quietly add back-compat shims.
 - **D5.** `cross-plugin caps` are forbidden in declared `permission:` values. *Rationale:* if `feishu` references `claude_code/spawn` it has hidden coupling on `claude_code`'s presence — caught at register time gives the authoring plugin a clear error.
 - **D6.** Overlay map lives in the SlashRoute.Registry GenServer state, not in ETS or persistent_term. *Rationale:* consistent with how the existing snapshot lives behind a single GenServer call; rebuilds are cheap (the merged ETS is the only hot path, and it's rebuilt on every change anyway today).
 

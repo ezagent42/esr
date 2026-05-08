@@ -2,7 +2,7 @@
 
 **Spec id:** 2026-05-08-plugin-command-registration  
 **作者：** Allen Woods + Claude  
-**状态：** rev-2（D4 反转：3 条命令的物理迁移纳入范围）  
+**状态：** rev-3（D4 放弃 kind 名稳定承诺：rename 服从命名空间纪律，无后向兼容）  
 **对应：** post-multi-instance audit 任务 #6  
 **关联：** 2026-05-08-session-first-default-resolution.md（同期 spec）
 
