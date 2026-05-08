@@ -53,7 +53,6 @@ WORKDIR="/tmp/esr-e2e-${ESR_E2E_RUN_ID}/session-19"
 mkdir -p "${WORKDIR}"
 
 SESSION_OUT=$(esr_cli admin submit session_new \
-  --arg agent=cc \
   --arg dir="${WORKDIR}" \
   --arg submitter_username="${USERNAME}" \
   --wait --timeout 30)
@@ -81,10 +80,13 @@ assert_contains "$ADDFOLDER_OUT" "${USERNAME}-default"  "19: add-folder routed t
 
 # --- step 4: /user:use — switch user-default to a different ws -------
 SECOND_WS="${USERNAME}-secondary"
-esr_cli admin submit workspace_new \
+echo "19: creating second workspace ${SECOND_WS}"
+WS_NEW_OUT=$(esr_cli admin submit workspace_new \
   --arg name="${SECOND_WS}" \
   --arg owner="${USERNAME}" \
-  --wait --timeout 30 > /dev/null
+  --wait --timeout 30 2>&1 || true)
+echo "19 workspace_new output: ${WS_NEW_OUT}"
+assert_contains "$WS_NEW_OUT" "ok: true" "19: workspace_new ok"
 
 USE_OUT=$(esr_cli admin submit user_use \
   --arg workspace="${SECOND_WS}" \
@@ -96,8 +98,9 @@ assert_contains "$USE_OUT" "ok: true"                    "19: user_use ok"
 assert_contains "$USE_OUT" "${SECOND_WS}"                "19: user_use returns new ws name"
 
 # --- step 5: re-/session:new — should bind to the NEW user-default ---
+mkdir -p "${WORKDIR}-2"
+
 SESSION2_OUT=$(esr_cli admin submit session_new \
-  --arg agent=cc \
   --arg dir="${WORKDIR}-2" \
   --arg submitter_username="${USERNAME}" \
   --wait --timeout 30)
@@ -113,12 +116,11 @@ DESCRIBE_OUT=$(esr_cli admin submit workspace_describe \
 
 echo "19 describe default: ${DESCRIBE_OUT}"
 assert_contains "$DESCRIBE_OUT" "unknown_workspace" \
-  "19: literal `default` workspace must not exist (M-5/D4)"
+  '19: literal default workspace must not exist (M-5/D4)'
 
 # --- cleanup ----------------------------------------------------------
 esr_cli admin submit session_end \
   --arg session_id="${SID}" \
   --wait --timeout 20 > /dev/null || true
 
-mkdir -p "${WORKDIR}-2"
 echo "PASS: 19_session_first_default"

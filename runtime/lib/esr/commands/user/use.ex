@@ -50,19 +50,38 @@ defmodule Esr.Commands.User.Use do
      }}
   end
 
-  defp resolve_submitter(%{"submitter_username" => username})
-       when is_binary(username) and username != "",
-       do: {:ok, username}
+  # Submitter is sourced from either the cmd top-level (slash plumbing
+  # populates `submitted_by` + sometimes `submitter_username`) or from
+  # `args["submitter_username"]` (admin-submit / e2e harness path that
+  # only nests args). Try both layers; prefer the explicit-username
+  # form over the ou_id lookup.
+  defp resolve_submitter(cmd) do
+    args = Map.get(cmd, "args") || %{}
 
-  defp resolve_submitter(%{"submitted_by" => ou_id}) when is_binary(ou_id) and ou_id != "" do
-    case UserRegistry.lookup_by_feishu_id(ou_id) do
-      {:ok, username} -> {:ok, username}
-      :not_found -> {:error, %{"type" => "unknown_user", "message" => "submitter #{ou_id} has no esr-user binding"}}
+    cond do
+      is_binary(cmd["submitter_username"]) and cmd["submitter_username"] != "" ->
+        {:ok, cmd["submitter_username"]}
+
+      is_binary(args["submitter_username"]) and args["submitter_username"] != "" ->
+        {:ok, args["submitter_username"]}
+
+      is_binary(cmd["submitted_by"]) and cmd["submitted_by"] != "" ->
+        case UserRegistry.lookup_by_feishu_id(cmd["submitted_by"]) do
+          {:ok, username} ->
+            {:ok, username}
+
+          :not_found ->
+            {:error,
+             %{
+               "type" => "unknown_user",
+               "message" => "submitter #{cmd["submitted_by"]} has no esr-user binding"
+             }}
+        end
+
+      true ->
+        {:error, %{"type" => "unknown_user", "message" => "no submitter context"}}
     end
   end
-
-  defp resolve_submitter(_),
-    do: {:error, %{"type" => "unknown_user", "message" => "no submitter context"}}
 
   defp resolve_workspace_id(ws_name) do
     case WsNameIndex.id_for_name(:esr_workspace_name_index, ws_name) do

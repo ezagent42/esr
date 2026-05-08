@@ -128,7 +128,16 @@ defmodule Esr.Commands.Scope.New do
                ),
              :ok <- maybe_claim_uri(args, sid),
              :ok <- bind_session_to_workspace(args, sid) do
-          {:ok, %{"session_id" => sid, "agent" => agent}}
+          # M-5 / spec §4.6: surface the resolved workspace name so the
+          # operator can see which fallback layer the chain hit. nil when
+          # `agent`-only legacy short-circuit was taken (no workspace).
+          base = %{"session_id" => sid, "agent" => agent}
+
+          {:ok,
+           case args["workspace"] do
+             ws when is_binary(ws) and ws != "" -> Map.put(base, "workspace", ws)
+             _ -> base
+           end}
         end
     end
   end
