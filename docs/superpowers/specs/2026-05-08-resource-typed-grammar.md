@@ -2,9 +2,18 @@
 
 **Spec id:** 2026-05-08-resource-typed-grammar
 **Author:** Allen Woods + Claude
-**Status:** rev-1 (draft, awaiting user review)
+**Status:** rev-2 (user-approved 2026-05-08; 4 corrections applied)
 **Tracks:** rev-4 audit follow-ups #1, #2, #7 (`docs/manual-checks/2026-05-08-post-multi-instance-audit.md` § rev-4)
 **Related specs:** 2026-05-08-session-first-default-resolution.md, 2026-05-08-plugin-command-registration.md (rev-3)
+
+## 0. rev-2 changelog (2026-05-08)
+
+User-confirmed corrections to rev-1:
+
+- **Q1 → `/plugin:agent-types` (was `/plugin:agent-types`).** Agent types are plugin metadata declared via manifest; locating them under `/plugin:` is semantically accurate and avoids inventing a new resource axis with no anchoring module.
+- **Q2 → drop PtySocket signed-token auth from this PR.** Single-operator-on-Tailscale doesn't need it today; tracked as future hardening in `docs/futures/todo.md`. Estimate drops by ~100 LOC (impl + tests).
+- **Q3 → `/cc:tui` ships in the claude_code plugin (NOT core).** Per 2026-05-08-plugin-command-registration spec rev-3 D3 ("Per-plugin namespace prefix is mandatory"). `/cc:tui` becomes the second real consumer of the rev-3 mechanism, validating it again. Module: `Esr.Plugins.ClaudeCode.Commands.Tui` under `runtime/lib/esr/plugins/claude_code/commands/tui.ex`.
+- **Q4 → `Esr.Scope.* → Esr.Session.*` module-level rename ships as a separate PR BEFORE this spec implements.** "Scope" is the M-1..M-5 era name for "Session"; the slash surface migrated long ago but module names lag. The pre-rename PR is mechanical (sed + slash-routes yaml `command_module:` updates + tests); ~40 files, zero behavior change. This spec then implements on a clean `Session.*`-named base.
 
 ## 1. Problem statement
 
@@ -25,11 +34,11 @@ Three operator-visible gaps and a structural mis-naming exist in the slash-comma
 ## 2. Goals
 
 - Wire `/session:list` so the documentation gap on `/session:attach`'s description (and the rev-4 audit gap A) closes.
-- Repurpose `/agent:list` to list **agent instances** in the chat-current session. Move the agent-type catalog under a more accurate name.
-- Ship `/pty:list` + `/pty:attach pty=<id>` returning a signed-token URL that authenticates against `EsrWeb.PtySocket`. Close audit step #12 + plug the PTY auth hole as a single change.
-- Provide a thin `/cc:tui name=<agent>` shortcut that resolves to a PTY id and reuses `/pty:attach`'s URL emission. Future plugins can ship analogous shortcuts.
+- Repurpose `/agent:list` to list **agent instances** in the chat-current session. Move the agent-type catalog to `/plugin:agent-types`.
+- Ship `/pty:list` + `/pty:attach pty=<id>` returning a clickable PTY URL. Close audit step #12 (operator can get a TUI URL again).
+- Provide a thin `/cc:tui name=<agent>` shortcut **in the claude_code plugin** that resolves to a PTY id and reuses `/pty:attach`'s URL emission. Future plugins can ship analogous shortcuts via the rev-3 mechanism.
 - Migrate per-agent operations from `/session:*` to `/agent:*` — `/agent:add`, `/agent:remove`, `/agent:set-primary`, `/agent:primary` (read-only), `/agent:rename`.
-- Migrate chat↔session binding from the `attach`/`detach` verb pair to `bind-chat`/`unbind-chat` for symmetry with the workspace family. Add `/session:switch` (change chat-current without unbinding) and slash-wire `/session:end` (destroy session).
+- Migrate chat↔session binding from the `attach`/`detach` verb pair to `bind-chat`/`unbind-chat` for symmetry with the workspace family. Slash-wire the existing `Esr.Commands.Session.Switch` (change chat-current without unbinding) and `Esr.Commands.Session.End` (destroy session).
 - Add a "Users" category to `/help`'s explicit category order so `/user:*` slashes don't fall into the "其他" default bucket.
 
 ## 3. Non-goals
@@ -63,7 +72,7 @@ Three operator-visible gaps and a structural mis-naming exist in the slash-comma
 | `/agent:set-primary` | `agent_set_primary` | `session:<uuid>/spawn` | Replaces `/session:set-primary` |
 | `/agent:primary` | `agent_primary` | (none — chat-bound) | Read-only: show primary agent name |
 | `/agent:rename` | `agent_rename` | `session:<uuid>/spawn` | Per-agent rename (no current equivalent) |
-| `/agent-type:list` | `agent_type_list` | (none) | **Renamed from old `/agent:list`** — lists plugin-declared agent types |
+| `/plugin:agent-types` | `plugin_agent_types` | (none) | **Renamed from old `/agent:list`** — lists agent types declared by enabled plugins |
 | `/pty:list` | `pty_list` | (none — chat-bound) | Lists PTY actors for chat-current session |
 | `/pty:attach` | `pty_attach` | `pty:<actor_id>/attach` | Returns signed-token WebSocket URL |
 | `/cc:tui` | `cc_tui` | `pty:<actor_id>/attach` | Thin shortcut: agent-name → PTY id → `/pty:attach` |
@@ -80,31 +89,17 @@ Three operator-visible gaps and a structural mis-naming exist in the slash-comma
 
 The "removed" slashes don't appear in `slash-routes.default.yaml` anymore. The dispatcher returns `:not_found`. The operator-facing error message is generated by `Esr.Entity.SlashHandler` (existing not-found path) — needs a one-time enrichment to suggest replacements for known-renamed slashes (a small lookup table in slash_handler.ex).
 
-### 4.4 PtySocket signed-token auth
+### 4.4 PtySocket auth — out of scope (rev-2)
 
-Replace today's `params["sid"]`-only auth (`pty_socket.ex:41-50`) with Phoenix.Token verification:
+PtySocket's `connect/1` (`pty_socket.ex:41-50`) accepts any non-empty `sid` query parameter as auth. This is a real security gap (anyone with network reach + sid string can drive the PTY), but for a single-operator-on-Tailscale deployment the practical risk is bounded by network access control.
 
-```elixir
-def connect(params, socket, _connect_info) do
-  with token when is_binary(token) <- params["token"],
-       {:ok, {sid, pty_actor_id, _expires_at}} <-
-         Phoenix.Token.verify(EsrWeb.Endpoint, "pty_attach", token, max_age: 600) do
-    {:ok, assign(socket, sid: sid, pty_actor_id: pty_actor_id)}
-  else
-    _ -> :error
-  end
-end
-```
-
-`/pty:attach`'s command emits the token via `Phoenix.Token.sign(EsrWeb.Endpoint, "pty_attach", {sid, pty_actor_id, exp})` with a 10-minute expiry. The URL shape becomes:
+Tracked as future hardening work in `docs/futures/todo.md` (key: `pty_attach_security_hardening`); not implemented in this spec. The `/pty:attach` command this spec ships emits an unauthenticated URL of the same shape today's orphan `Esr.Commands.Attach` produces:
 
 ```
-https://<host>/sessions/<sid>/attach?token=<base64-signed>
+http://<host>/sessions/<sid>/attach
 ```
 
-The static `/sessions/:sid/attach` HTML shell forwards the token query param through to the WebSocket connect URL (`/attach_socket/websocket?token=…`). 1-line update to the AttachController template.
-
-`check_origin: false` stays — it's needed for the cross-host xterm.js page; the signed token is the actual gate.
+When the hardening pass lands, only the PtySocket connect path + the URL emitter need updating — the slash + plugin command surfaces stay as-is.
 
 ### 4.5 PTY-id lookup by agent name
 
@@ -132,73 +127,79 @@ defp category_order("PTY"), do: 5     # already present
 
 - **D1.** Hard-cutover for renamed slashes. *Rationale:* matches plugin-scoped command registration spec rev-3 D4. Soft deprecation aliases stack cognitive cost on every operator (`/help` shows both, autocomplete ambiguous, etc.) and "let-it-crash" memory rule applies.
 - **D2.** `slash_handler.ex` not-found path enriches the error message for known-renamed slashes. Lookup table is a small `@deprecated_slashes %{"/session:add-agent" => "/agent:add", …}` private map. *Rationale:* the dispatcher already returns "unknown slash" for typos; enriching the small known-renamed subset is one error-message expansion, not a back-compat code path.
-- **D3.** PtySocket gates on signed token, NOT on user identity. *Rationale:* the PTY URL is meant to be shareable (operator pastes it into another browser tab, sends to teammate via Feishu). Tying to a single user identity defeats the use case. The token's expiry + per-`pty_actor_id` scoping is the security guarantee.
-- **D4.** Token expiry is 10 minutes. *Rationale:* long enough for an operator to click through after receiving the message; short enough that a leaked URL becomes useless within a session. Configurable via `Application.get_env(:esr, :pty_attach_token_ttl_seconds, 600)`.
-- **D5.** Agent instance identity persists `actor_ids` on the `%Instance{}` struct. *Rationale:* see §4.5(a) — co-locate with the data it identifies; reduce cross-module coupling.
-- **D6.** `/cc:tui` is the only plugin-shortcut shipped in this PR. Other agent types (future `/voice:tui`, `/web:browser`, etc.) are out of scope and land via the plugin-scoped command registration mechanism (rev-3 spec) when those plugins ship.
-- **D7.** `/agent-type:list` (was `/agent:list`) keeps `category: "Agents"`. *Rationale:* operators looking under Agents in `/help` will find both the type catalog and the instance list; the category clusters them by intent.
+- **D3.** PtySocket auth is out of scope for this PR (rev-2). *Rationale:* single-operator-on-Tailscale deployment doesn't need it today; locating the work in a future security-hardening pass keeps this PR focused on grammar refactor. The unauthenticated `?sid=…` URL stays as-is.
+- **D4.** Agent instance identity persists `actor_ids` on the `%Instance{}` struct. *Rationale:* see §4.5(a) — co-locate with the data it identifies; reduce cross-module coupling.
+- **D5.** `/cc:tui` ships in the **claude_code plugin**, not core. *Rationale:* per 2026-05-08-plugin-command-registration spec rev-3 D3 ("Per-plugin namespace prefix is mandatory"). `/cc:tui` becomes the second real consumer of the rev-3 mechanism (after feishu's bind/unbind/notify), validating the plugin-scoped command registration end-to-end again. Module: `Esr.Plugins.ClaudeCode.Commands.Tui`. Manifest entry under `runtime/lib/esr/plugins/claude_code/manifest.yaml`'s `slash_routes:` block.
+- **D6.** `/plugin:agent-types` (was `/agent:list`) keeps `category: "Plugins"`. *Rationale:* the operation is plugin metadata access; operators looking under Plugins in `/help` find plugin-related state including declared agent types.
+- **D7.** `Esr.Scope.* → Esr.Session.*` module rename ships in a SEPARATE PR before this spec implements. *Rationale:* "Scope" is the M-1..M-5 era code name for what's now operator-conceptually called "Session"; the slash surface migrated long ago but module names lag. Bundling the rename with the grammar refactor mixes mechanical sed work with semantic command additions, making review harder. Pre-rename PR is purely mechanical (sed + slash-routes yaml `command_module:` updates + `mix test` + e2e 14/18/19); zero behavior change.
 
 ## 6. Implementation surface
 
-Estimate: ~580 LOC + ~400 LOC test = ~980 LOC.
+Estimate (rev-2, post Scope→Session pre-rename): ~480 LOC + ~330 LOC test = ~810 LOC.
+
+**Prerequisite (separate PR before this spec implements):** `Esr.Scope.* → Esr.Session.*` mechanical module rename. Affects ~40 files (sed + slash-routes yaml `command_module:` field). Zero behavior change.
+
+This table assumes the prerequisite PR has landed and module paths use `Session.*`:
 
 | File | Change |
 |---|---|
-| `runtime/lib/esr/commands/session/list.ex` (new) | `Esr.Commands.Session.List` — reads `Esr.Resource.ChatScope.Registry` for chat-bound + `Esr.Scope.Registry` for admin-scope sessions |
-| `runtime/lib/esr/commands/session/switch.ex` (new) | `Esr.Commands.Session.Switch` — updates ChatScope.Registry's `current_session` |
-| `runtime/lib/esr/commands/session/bind_chat.ex` (new) | `Esr.Commands.Session.BindChat` — moved logic from `Esr.Commands.Session.Attach` |
-| `runtime/lib/esr/commands/session/unbind_chat.ex` (new) | `Esr.Commands.Session.UnbindChat` — moved logic from `Esr.Commands.Session.Detach` |
-| `runtime/lib/esr/commands/session/end.ex` (existing, slash-wire) | Already exists at `runtime/lib/esr/commands/scope/end.ex`; just needs slash entry in yaml |
+| `runtime/lib/esr/commands/session/list.ex` (new) | `Esr.Commands.Session.List` — replaces the legacy `Esr.Commands.Scope.List` (post-rename: `Esr.Commands.Session.List` already exists for kind `session_list`; rewrite its body to return chat-bound + admin-scope sessions in a uniform shape) |
+| `runtime/lib/esr/commands/session/switch.ex` (existing, slash-wire) | `Esr.Commands.Session.Switch` (post-rename) already exists (kind `session_switch`); just needs slash entry in yaml |
+| `runtime/lib/esr/commands/session/bind_chat.ex` (new) | `Esr.Commands.Session.BindChat` — moves logic from existing `Esr.Commands.Session.Attach` |
+| `runtime/lib/esr/commands/session/unbind_chat.ex` (new) | `Esr.Commands.Session.UnbindChat` — moves logic from existing `Esr.Commands.Session.Detach` |
+| `runtime/lib/esr/commands/session/end.ex` (existing, slash-wire) | Already exists post-rename; just needs slash entry in yaml |
 | Delete: `runtime/lib/esr/commands/session/attach.ex` | Logic moves to bind_chat.ex; module deleted |
 | Delete: `runtime/lib/esr/commands/session/detach.ex` | Logic moves to unbind_chat.ex; module deleted |
-| `runtime/lib/esr/commands/agent/list.ex` (rewrite) | Now lists instances in chat-current session via `InstanceRegistry.list/2`. The old type-catalog logic moves to `agent_type/list.ex`. |
-| `runtime/lib/esr/commands/agent_type/list.ex` (new) | Holds the old `/agent:list` content (type catalog) |
-| `runtime/lib/esr/commands/agent/{add,remove,set_primary,primary,rename}.ex` (new ×5) | Each is a thin reframe of the existing `session/{add_agent,remove_agent,set_primary}` modules; primary + rename are net-new |
+| `runtime/lib/esr/commands/agent/list.ex` (rewrite) | Now lists instances in chat-current session via `InstanceRegistry.list/2`. Old type-catalog logic moves into the plugin namespace |
+| `runtime/lib/esr/commands/plugin/agent_types.ex` (new) | `Esr.Commands.Plugin.AgentTypes` — holds the old `/agent:list` content (lists `Esr.Entity.Agent.Registry.list_agents/0` type catalog) |
+| `runtime/lib/esr/commands/agent/{add,remove,set_primary,primary,rename}.ex` (new ×5) | Each is a thin reframe of the existing `session/{add_agent,remove_agent,set_primary}` modules; `primary` + `rename` are net-new |
 | Delete: `runtime/lib/esr/commands/session/{add_agent,remove_agent,set_primary}.ex` | Logic moves to `agent/*.ex` |
-| `runtime/lib/esr/commands/pty/list.ex` (new) | Lists PTY actors per session via ActorQuery |
-| `runtime/lib/esr/commands/pty/attach.ex` (new) | Generates signed token, returns URL |
-| `runtime/lib/esr/commands/cc/tui.ex` (new) | Resolves agent-name → PTY id → calls Pty.Attach |
-| Delete: `runtime/lib/esr/commands/attach.ex` | Orphan; URL-emission moves to `pty/attach.ex` |
-| `runtime/lib/esr_web/pty_socket.ex` (modify) | `connect/1` now requires `params["token"]`; verifies via `Phoenix.Token.verify` |
-| `runtime/lib/esr_web/controllers/attach_controller.ex` (modify) | Forward `?token=` query param into the WebSocket URL embedded in the HTML page |
-| `runtime/lib/esr/entity/agent/instance.ex` (modify) | Add `actor_ids` field to struct |
+| `runtime/lib/esr/commands/pty/list.ex` (new) | Lists PTY actors per session via `Esr.Entity.Agent.InstanceRegistry.list/2` (uses the new `actor_ids` field from D4) |
+| `runtime/lib/esr/commands/pty/attach.ex` (new) | Returns the unauthenticated URL (today's `Esr.Commands.Attach` logic, properly slash-wired) |
+| `runtime/lib/esr/plugins/claude_code/commands/tui.ex` (new) | `Esr.Plugins.ClaudeCode.Commands.Tui` — resolves agent-name → PTY id → calls `Esr.Commands.Pty.Attach` (D5: lives in plugin per rev-3 D3) |
+| `runtime/lib/esr/plugins/claude_code/manifest.yaml` (modify) | Add `slash_routes:` block declaring `/cc:tui` (per rev-3 mechanism — second real consumer) |
+| Delete: `runtime/lib/esr/commands/attach.ex` | Orphan URL-emitter; functionality moves to `pty/attach.ex` |
+| `runtime/lib/esr/entity/agent/instance.ex` (modify) | Add `actor_ids` field to struct (D4) |
 | `runtime/lib/esr/entity/agent/instance_registry.ex` (modify) | Persist `actor_ids` on `add_instance_and_spawn`; expose `pty_actor_id_for/2` |
-| `runtime/lib/esr/entity/slash_handler.ex` (modify) | Enrich not-found error for `@deprecated_slashes` map (add the 5 renamed slashes) |
-| `runtime/lib/esr/commands/help.ex` (modify) | Add `Users` to category_order; add `Agent Types` separately if needed |
-| `runtime/priv/slash-routes.default.yaml` (modify) | Add 14 new slashes; remove 5 old; update kind names |
-| `runtime/test/esr/commands/session/{list,switch,bind_chat,unbind_chat}_test.exs` (new ×4) | TDD per command |
+| `runtime/lib/esr/entity/slash_handler.ex` (modify) | Enrich not-found error for `@deprecated_slashes` map (the 5 renamed slashes) |
+| `runtime/lib/esr/commands/help.ex` (modify) | Add `Users` to category_order |
+| `runtime/priv/slash-routes.default.yaml` (modify) | Add 13 new slashes (`/session:list`, `/session:switch`, `/session:bind-chat`, `/session:unbind-chat`, `/session:end`, `/agent:list` repurposed, `/agent:add`, `/agent:remove`, `/agent:set-primary`, `/agent:primary`, `/agent:rename`, `/plugin:agent-types`, `/pty:list`, `/pty:attach`); remove 5 old |
+| `runtime/test/esr/commands/session/{list,bind_chat,unbind_chat}_test.exs` (new ×3) | TDD per command (`switch` already has tests post-rename) |
 | `runtime/test/esr/commands/agent/{list,add,remove,set_primary,primary,rename}_test.exs` (new ×6) | TDD per command |
-| `runtime/test/esr/commands/pty/{list,attach}_test.exs` (new ×2) | Including signed-token verify roundtrip |
-| `runtime/test/esr/commands/cc/tui_test.exs` (new) | Integration test |
-| `runtime/test/esr_web/pty_socket_test.exs` (modify) | Token verification: valid token connects; expired token rejected; missing token rejected; tampered token rejected |
-| `tests/e2e/scenarios/20_resource_typed_grammar.sh` (new) | End-to-end: `/agent:add` → `/agent:list` → `/pty:list` → `/pty:attach` → curl URL → check 101 Switching Protocols (without xterm) |
+| `runtime/test/esr/commands/plugin/agent_types_test.exs` (new) | Type catalog test |
+| `runtime/test/esr/commands/pty/{list,attach}_test.exs` (new ×2) | Pty list + URL emit |
+| `runtime/test/esr/plugins/claude_code/commands/tui_test.exs` (new) | Integration test for /cc:tui resolving agent name → PTY id → URL |
+| `runtime/test/esr/entity/slash_handler_test.exs` (modify) | Cases for the 5 renamed-slash error-message enrichment |
+| `tests/e2e/scenarios/20_resource_typed_grammar.sh` (new) | End-to-end: `/agent:add` → `/agent:list` returns instances → `/pty:list` returns the spawned PTYs → `/pty:attach pty=<id>` returns clickable URL → curl URL → check 101 Switching Protocols (without xterm) |
 
 ## 7. Test plan (red→green per phase)
 
-The implementation lands in 5 phases on a single branch + single PR (per project convention). Each phase ships its own commits but the e2e gate (scenario 20) runs only after the final phase:
+The implementation lands in 5 phases on a single branch + single PR (assumes the Scope→Session pre-rename PR has merged). Each phase ships its own commits; the e2e gate (scenario 20) runs only after the final phase:
 
 1. **Phase A — `actor_ids` on `%Instance{}`** (foundation for `/cc:tui`). 1 module change + tests.
-2. **Phase B — `/session:list` + slash-wire `/session:end` + add Users to /help category_order.** Pure additive, no removals.
-3. **Phase C — Per-agent renames (`/agent:add`/`remove`/`set-primary`/`primary`/`rename`).** Migrate 3 existing modules + add 2 new. Delete the 3 `session/{add_agent,remove_agent,set_primary}.ex` files in the same commit. Update `slash-routes.default.yaml`. Update `slash_handler.ex` deprecation table.
-4. **Phase D — Chat-binding renames (`/session:bind-chat`/`unbind-chat`/`switch`).** Move logic from `session/{attach,detach}.ex` into new modules. Delete old modules. Update yaml + deprecation table.
-5. **Phase E — `/pty:*` family + `/cc:tui` + PtySocket auth.** New 4 commands + signed-token verification. Includes the `attach.ex` orphan deletion. e2e scenario 20 lands here.
+2. **Phase B — `/session:list` + slash-wire `/session:switch` + slash-wire `/session:end` + add Users to /help category_order.** Pure additive, no removals.
+3. **Phase C — Per-agent renames (`/agent:add`/`remove`/`set-primary`/`primary`/`rename`) + repurpose `/agent:list` + new `/plugin:agent-types`.** Migrate 3 existing modules + add 2 new (`primary`, `rename`). Delete the 3 `session/{add_agent,remove_agent,set_primary}.ex` files in the same commit. Update `slash-routes.default.yaml`. Update `slash_handler.ex` deprecation table.
+4. **Phase D — Chat-binding renames (`/session:bind-chat`/`unbind-chat`).** Move logic from `session/{attach,detach}.ex` into new modules. Delete old modules. Update yaml + deprecation table.
+5. **Phase E — `/pty:*` family + `/cc:tui` (in claude_code plugin).** New 2 core commands (`pty:list`, `pty:attach`) + 1 plugin command (`cc:tui` via claude_code manifest's `slash_routes:` block per rev-3 mechanism). Includes the `Esr.Commands.Attach` orphan deletion. e2e scenario 20 lands here.
 
 Each phase commits independently. No aggregation across phases — the dispatcher must remain functional after each phase.
 
 ## 8. Invariants (verified by tests)
 
 - **I1.** Every operator-visible slash that operates on agent instances is under `/agent:*`. Verify by grep: `grep -E "^\s*/session:(add-agent|remove-agent|set-primary|rename-agent|detach-agent)" runtime/priv/slash-routes.default.yaml` returns nothing.
-- **I2.** Every operator-visible slash that emits a TUI URL is under `/pty:*` or a registered plugin shortcut. Today only `/pty:attach` and `/cc:tui` exist; plugins can grow `/<plugin>:tui` per rev-3 spec.
-- **I3.** `EsrWeb.PtySocket` rejects connections without a valid Phoenix.Token in the `?token=` query param. Verified by `pty_socket_test.exs` 4 cases (valid / expired / missing / tampered).
-- **I4.** `/agent:list` (chat-current session, no args) returns agent instances, NOT agent types. Verified by e2e scenario 20: spawn cc:alice + cc:bob, `/agent:list` returns 2 lines containing "alice" and "bob".
-- **I5.** Each renamed slash returns a structured error pointing at the new form when invoked by an operator. Verified by `slash_handler_test.exs` cases for the 5 deprecated slashes.
+- **I2.** Every operator-visible slash that emits a TUI URL is under `/pty:*` or a registered plugin shortcut. After this PR `/pty:attach` (core) + `/cc:tui` (claude_code plugin) exist; future plugins grow `/<plugin>:tui` per rev-3 spec.
+- **I3.** `/agent:list` (chat-current session, no args) returns agent instances, NOT agent types. Verified by e2e scenario 20: spawn cc:alice + cc:bob, `/agent:list` returns 2 lines containing "alice" and "bob"; `/plugin:agent-types` returns "cc" (the type catalog).
+- **I4.** Each renamed slash returns a structured error pointing at the new form when invoked by an operator. Verified by `slash_handler_test.exs` cases for the 5 deprecated slashes (`/session:add-agent` → `/agent:add`, etc.).
+- **I5.** `/cc:tui` is registered via the claude_code plugin's manifest `slash_routes:` block (rev-3 mechanism). Verified by inspecting `Esr.Resource.SlashRoute.Registry` overlay state — `/cc:tui` appears as a feishu-sibling overlay entry, not in the base `slash-routes.default.yaml`.
 
-## 9. Open questions for review
+## 9. Open questions resolved (rev-2)
 
-- **Q1.** Is `/agent-type:list` the right name for the relocated type catalog, or should it be `/plugin:agent-types`? *Recommend: `/agent-type:list`* — keeps the `<resource>:<verb>` shape consistent (P1); plugins are not the only source of agent types in principle (a future core-defined type would also live there).
-- **Q2.** Should `/cc:tui` be in core (current spec) or in the `claude_code` plugin's manifest? Per rev-3 spec D3, plugin commands belong in plugin manifests. But `claude_code` is currently considered "core" because it's always installed. *Recommend: ship in core for this PR, refactor under `claude_code` plugin's `slash_routes:` block in a follow-up after the rev-3 mechanism gets exercised by another plugin first.*
-- **Q3.** PtySocket auth applies to ALL connections after this PR — including any existing operator who may have an open browser tab on the old (unauthenticated) URL. They'll see the WebSocket disconnect. *Acceptable risk?* The system is in dev, no production users.
-- **Q4.** Do we keep `Esr.Commands.Scope.List` (the legacy `internal_kind: session_list` impl)? It returns a different shape (active/targets/branches) than the new `Esr.Commands.Session.List` would. *Recommend: deprecate the internal_kind in this PR + delete the file.* The escript path can use the new slash via the standard kind-dispatch; nothing relies on the structured `branches[]` shape today.
+All 4 open questions from rev-1 resolved by user 2026-05-08:
+
+- **Q1 ✓** `/plugin:agent-types` (was `/agent-type:list` in rev-1). Anchored under existing `/plugin:` namespace; agent types are plugin metadata.
+- **Q2 ✓** `/cc:tui` ships in claude_code plugin (was "ship in core" in rev-1). Becomes the second real consumer of rev-3 plugin-scoped command registration mechanism.
+- **Q3 ✓** PtySocket auth deferred (was "in this PR" in rev-1). Single-operator-on-Tailscale doesn't need it today; tracked as future hardening.
+- **Q4 ✓** `Esr.Scope.* → Esr.Session.*` rename ships as a separate PR before this spec implements (was "delete `Scope.List`" in rev-1, but the broader Scope → Session naming inconsistency motivated a full pre-rename pass).
 
 ## 10. Migration impact summary
 
@@ -207,12 +208,12 @@ Each phase commits independently. No aggregation across phases — the dispatche
 | `esr session add-agent type=cc name=alice` → `esr agent add type=cc name=alice` | Update muscle memory; `/help` shows the new form |
 | `esr session set-primary name=alice` → `esr agent set-primary name=alice` | Same |
 | `esr session attach session=<uuid>` (chat-binding) → `esr session bind-chat session=<uuid>` | Same; old form returns hint at new form |
-| `/agent:list` now lists running instances | Old type-catalog use case → `/agent-type:list` (1-time relearn; type-catalog rarely consulted in normal flow) |
-| Browser TUI URLs now require `?token=…` | Old URLs (without token) stop working; operator gets a fresh URL via `/pty:attach` (same flow as before, just authenticated) |
-| New `/pty:list`, `/pty:attach`, `/cc:tui`, `/agent:rename`, `/agent:primary`, `/session:list`, `/session:switch` | Pure additions; no muscle-memory disruption |
+| `/agent:list` now lists running instances | Old type-catalog use case → `/plugin:agent-types` (1-time relearn; type-catalog rarely consulted in normal flow) |
+| New `/pty:list`, `/pty:attach`, `/cc:tui`, `/agent:rename`, `/agent:primary`, `/session:list`, `/session:switch` slash | Pure additions; no muscle-memory disruption |
+| `Esr.Scope.* → Esr.Session.*` (separate pre-rename PR) | No operator-visible change; only affects internal tooling that grep'd the old module name |
 
 ## 11. Out-of-scope (future work, tracked elsewhere)
 
-- Canonical command-list reference doc (rev-4 audit task #8): an `esr admin describe-grammar --format=markdown` generator that produces `docs/grammar/commands.md` from yaml + plugin manifests + EsrWeb router. Independent of this spec.
-- Per-PTY caps (`pty:<actor_id>/attach`) creation/management: this spec uses the cap string in command-level checks but doesn't ship a `/cap:grant` flow for PTY caps. Today PTY caps are auto-granted to the session creator; cross-user PTY-share is a separate feature.
-- Multi-PTY-per-agent support: explicitly excluded; spec assumes 1 PTY per agent (true today via M-2.6's `(CC, PTY)` `:one_for_all`).
+- **PtySocket signed-token auth** (`pty_attach_security_hardening` in `docs/futures/todo.md`): replace today's `?sid=`-only auth with Phoenix.Token + 10min TTL. ~30 LOC + tests when it lands. Stays out of this PR per rev-2 D3.
+- **Canonical command-list reference doc** (rev-4 audit task #8): an `esr admin describe-grammar --format=markdown` generator that produces `docs/grammar/commands.md` from yaml + plugin manifests + EsrWeb router. Independent of this spec.
+- **Multi-PTY-per-agent support**: explicitly excluded; spec assumes 1 PTY per agent (true today via M-2.6's `(CC, PTY)` `:one_for_all`).
