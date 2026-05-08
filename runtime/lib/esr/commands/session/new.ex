@@ -52,6 +52,9 @@ defmodule Esr.Commands.Session.New do
 
   @behaviour Esr.Role.Control
 
+  alias Esr.Resource.Session.Registry, as: SessionRegistry
+  alias Esr.Resource.ChatScope.Registry, as: ChatScopeRegistry
+
   @type result :: {:ok, map()} | {:error, map()}
 
   # Default hooks — both injectable via `execute/2` opts. Tests stub
@@ -113,6 +116,7 @@ defmodule Esr.Commands.Session.New do
         with :ok <- validate_args(agent, dir),
              {:ok, agent_def} <- fetch_agent(agent),
              :ok <- verify_caps(submitter, agent_def.capabilities_required),
+             :ok <- check_name_unique(submitter, args["name"]),
              :ok <- maybe_create_worktree(args),
              {:ok, sid} <-
                spawn_session(
@@ -127,7 +131,9 @@ defmodule Esr.Commands.Session.New do
                  start_session_fn
                ),
              :ok <- maybe_claim_uri(args, sid),
-             :ok <- bind_session_to_workspace(args, sid) do
+             :ok <- bind_session_to_workspace(args, sid),
+             :ok <- persist_session_record(args, sid, submitter, agent),
+             :ok <- maybe_attach_chat(chat_id, app_id, sid) do
           # M-5 / spec §4.6: surface the resolved workspace name so the
           # operator can see which fallback layer the chain hit. nil when
           # `agent`-only legacy short-circuit was taken (no workspace).
@@ -241,6 +247,131 @@ defmodule Esr.Commands.Session.New do
   defp rollback_spawn(sid) do
     _ = Esr.Session.Router.end_session(sid)
     :ok
+  end
+
+  # Spec D6: session names are unique within `(owner_user, name)`.
+  # When the submitter passes args.name, check the Session.Registry's
+  # `:esr_resource_session_name_index` ETS table BEFORE spawning so the
+  # error path doesn't have to roll back a half-built supervisor tree.
+  # Skipped when name is absent — Session.New is also reachable from
+  # admin-CLI / new_chat_thread auto-spawn paths that don't set a name.
+  defp check_name_unique(_owner_user, name) when name in [nil, ""], do: :ok
+
+  defp check_name_unique(owner_user, name) when is_binary(owner_user) and is_binary(name) do
+    case :ets.lookup(:esr_resource_session_name_index, {owner_user, name}) do
+      [] ->
+        :ok
+
+      [{_, _existing_uuid}] ->
+        {:error,
+         %{
+           "type" => "session_name_taken",
+           "message" =>
+             "a session named '#{name}' already exists for owner '#{owner_user}'"
+         }}
+    end
+  rescue
+    # ETS table not running (test env without Session.Registry boot).
+    ArgumentError -> :ok
+  end
+
+  defp check_name_unique(_owner, _name), do: :ok
+
+  # Persist the session record on disk (`<data_dir>/sessions/<sid>/session.json`)
+  # and register it in the in-memory Session.Registry. Pinned to the spawn's
+  # sid via the `:session_id` attr (registry then skips its own UUID minting).
+  # On write failure, roll back the spawned supervisor so the on-disk view
+  # and the live process tree stay consistent.
+  defp persist_session_record(args, sid, submitter, agent) do
+    name = Map.get(args, "name", "")
+    workspace_id = Map.get(args, "workspace_id", "")
+    data_dir = Esr.Paths.runtime_home()
+
+    attrs = %{
+      session_id: sid,
+      name: name,
+      owner_user: submitter,
+      workspace_id: workspace_id,
+      agent: agent
+    }
+
+    case safe_create_session(data_dir, attrs) do
+      :ok ->
+        :ok
+
+      {:ok, _uuid} ->
+        :ok
+
+      {:error, reason} ->
+        rollback_spawn(sid)
+
+        {:error,
+         %{
+           "type" => "session_persist_failed",
+           "message" => "failed to write session.json for #{sid}",
+           "details" => inspect(reason)
+         }}
+    end
+  end
+
+  # Wrap the GenServer call so a missing Session.Registry (test env that
+  # never started the singleton) degrades to a silent skip rather than an
+  # exit. Production always has the registry under Esr.Application.
+  defp safe_create_session(data_dir, attrs) do
+    case Process.whereis(SessionRegistry) do
+      nil -> :ok
+      _pid -> SessionRegistry.create_session(data_dir, attrs)
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  # When the submitter threads chat context, ensure the freshly-spawned
+  # sid is recorded as the chat's current session. Two cases:
+  #
+  #   (a) Real chat-bound spawn: `spawn_session` delegated to
+  #       `Esr.Session.Router.create_session/1`, which already calls
+  #       `Esr.Resource.ChatScope.Registry.register_session/3` with peer
+  #       refs (FeishuChatProxy pid + co.). Re-running `attach_session`
+  #       here would overwrite that 3-tuple entry with the 2-tuple
+  #       attach-shape and silently drop the refs — every inbound
+  #       message after that would miss `%{feishu_chat_proxy: pid}`.
+  #       So skip when the slot already carries this sid.
+  #
+  #   (b) Test stub or admin-CLI fallback: `create_session_fn` was
+  #       stubbed to return `{:ok, sid}` without touching
+  #       ChatScope.Registry. Then no slot exists yet, and the explicit
+  #       `attach_session` is what binds the chat — exactly the
+  #       semantic the legacy 103-LOC `/session:new` provided.
+  defp maybe_attach_chat(chat_id, app_id, sid)
+       when is_binary(chat_id) and chat_id != "" and chat_id != "pending" and
+              is_binary(app_id) and app_id != "" and app_id != "pending" and
+              is_binary(sid) do
+    case slot_already_bound?(chat_id, app_id, sid) do
+      true ->
+        :ok
+
+      false ->
+        _ = ChatScopeRegistry.attach_session(chat_id, app_id, sid)
+        :ok
+    end
+  rescue
+    # ChatScope.Registry not running in some narrow test paths.
+    ArgumentError -> :ok
+  end
+
+  defp maybe_attach_chat(_chat_id, _app_id, _sid), do: :ok
+
+  defp slot_already_bound?(chat_id, app_id, sid) do
+    case :ets.lookup(:esr_chat_scope_chat_index, {chat_id, app_id}) do
+      # Old shape (register_session/3): {key, sid, refs}
+      [{_k, ^sid, _refs}] -> true
+      # New shape (attach/detach): {key, %{current: sid, ...}}
+      [{_k, %{current: ^sid}}] -> true
+      _ -> false
+    end
+  rescue
+    ArgumentError -> false
   end
 
   defp bind_session_to_workspace(%{"workspace" => ws_name}, sid)

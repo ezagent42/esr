@@ -420,4 +420,271 @@ defmodule Esr.Commands.Session.NewTest do
       on_exit(fn -> Esr.Resource.ChatScope.Registry.unregister_session(sid) end)
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Commit 2a — behaviours restored from the deleted 103-LOC `Session.New`
+  # ---------------------------------------------------------------------------
+  #
+  # Spec rev-3 §0 of the cleanup PR assumed the canonical 449-LOC
+  # `Session.New` (formerly `Scope.New`) already covered everything the
+  # 103-LOC `Session.New` (PR #248-era) did. Implementation review
+  # surfaced three behaviours lost in the merge:
+  #
+  #   1. `<data_dir>/sessions/<sid>/session.json` write
+  #   2. `(owner_user, name)` uniqueness gate via
+  #      `:esr_resource_session_name_index` ETS
+  #   3. Explicit chat-attach (subsumed by Router's `register_session/3`
+  #      for the chat-bound path; gated to fire only when Router didn't
+  #      already bind so peer refs aren't clobbered)
+  #
+  # Each describe block below pins one of those behaviours back as a
+  # regression guard.
+
+  describe "session.json persistence (commit 2a)" do
+    @describetag :session_persistence
+
+    setup do
+      tmp =
+        Path.join(System.tmp_dir!(), "esr_session_new_persist_#{:rand.uniform(99_999_999)}")
+
+      File.mkdir_p!(Path.join(tmp, "sessions"))
+
+      prev_home = System.get_env("ESRD_HOME")
+      prev_inst = System.get_env("ESR_INSTANCE")
+      System.put_env("ESRD_HOME", tmp)
+      System.put_env("ESR_INSTANCE", "default")
+
+      # The Session.Registry caches `data_dir` only at call time
+      # (`Esr.Paths.runtime_home/0`), so no reload is required — the
+      # next `create_session/2` call picks up the new env. Just clear
+      # the name-index ETS so prior tests don't bleed name conflicts in.
+      try do
+        :ets.delete_all_objects(:esr_resource_session_name_index)
+      rescue
+        ArgumentError -> :ok
+      end
+
+      on_exit(fn ->
+        if prev_home, do: System.put_env("ESRD_HOME", prev_home), else: System.delete_env("ESRD_HOME")
+        if prev_inst, do: System.put_env("ESR_INSTANCE", prev_inst), else: System.delete_env("ESR_INSTANCE")
+        File.rm_rf!(tmp)
+
+        try do
+          :ets.delete_all_objects(:esr_resource_session_name_index)
+        rescue
+          ArgumentError -> :ok
+        end
+      end)
+
+      {:ok, tmp: tmp}
+    end
+
+    test "writes <data_dir>/sessions/<sid>/session.json after spawn", %{tmp: tmp} do
+      Grants.load_snapshot(%{"ou_persist" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_persist",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/persist", "name" => "persist-#{:rand.uniform(99_999)}"}
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      session_json = Path.join([tmp, "default", "sessions", sid, "session.json"])
+      assert File.exists?(session_json), "expected #{session_json} to be written"
+
+      doc = session_json |> File.read!() |> Jason.decode!()
+      assert doc["id"] == sid
+      assert doc["owner_user"] == "ou_persist"
+    end
+
+    test "session.json carries the owner-supplied name verbatim", %{tmp: tmp} do
+      Grants.load_snapshot(%{"ou_persist" => ["*"]})
+      name = "named-session-#{:rand.uniform(99_999)}"
+
+      cmd = %{
+        "submitted_by" => "ou_persist",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/persist-named", "name" => name}
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      doc =
+        [tmp, "default", "sessions", sid, "session.json"]
+        |> Path.join()
+        |> File.read!()
+        |> Jason.decode!()
+
+      assert doc["name"] == name
+    end
+
+    test "Session.Registry get_by_id resolves the freshly-spawned sid" do
+      # Independent of data_dir layout: the in-memory ETS row must be
+      # inserted by `persist_session_record/4` so subsequent lookups
+      # (e.g. /session:list, /session:show) find the new session.
+      Grants.load_snapshot(%{"ou_persist" => ["*"]})
+      name = "registry-#{:rand.uniform(99_999)}"
+
+      cmd = %{
+        "submitted_by" => "ou_persist",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/persist-reg", "name" => name}
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+      assert {:ok, struct} = Esr.Resource.Session.Registry.get_by_id(sid)
+      assert struct.id == sid
+      assert struct.owner_user == "ou_persist"
+      assert struct.name == name
+    end
+  end
+
+  describe "(owner_user, name) uniqueness (commit 2a)" do
+    @describetag :session_name_uniqueness
+
+    setup do
+      tmp =
+        Path.join(System.tmp_dir!(), "esr_session_new_unique_#{:rand.uniform(99_999_999)}")
+
+      File.mkdir_p!(Path.join(tmp, "sessions"))
+
+      prev_home = System.get_env("ESRD_HOME")
+      prev_inst = System.get_env("ESR_INSTANCE")
+      System.put_env("ESRD_HOME", tmp)
+      System.put_env("ESR_INSTANCE", "default")
+
+      try do
+        :ets.delete_all_objects(:esr_resource_session_name_index)
+      rescue
+        ArgumentError -> :ok
+      end
+
+      on_exit(fn ->
+        if prev_home, do: System.put_env("ESRD_HOME", prev_home), else: System.delete_env("ESRD_HOME")
+        if prev_inst, do: System.put_env("ESR_INSTANCE", prev_inst), else: System.delete_env("ESR_INSTANCE")
+        File.rm_rf!(tmp)
+
+        try do
+          :ets.delete_all_objects(:esr_resource_session_name_index)
+        rescue
+          ArgumentError -> :ok
+        end
+      end)
+
+      :ok
+    end
+
+    test "duplicate (owner_user, name) returns session_name_taken" do
+      Grants.load_snapshot(%{"ou_dup" => ["*"]})
+      name = "dup-name-#{:rand.uniform(99_999)}"
+
+      cmd = %{
+        "submitted_by" => "ou_dup",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/dup1", "name" => name}
+      }
+
+      assert {:ok, %{"session_id" => _sid}} = SessionNew.execute(cmd)
+
+      # Spawn-counts before the duplicate-attempt — the gate is supposed
+      # to fail BEFORE allocating a second supervisor subtree.
+      before_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
+
+      cmd2 = put_in(cmd, ["args", "dir"], "/tmp/dup2")
+      assert {:error, %{"type" => "session_name_taken", "message" => msg}} =
+               SessionNew.execute(cmd2)
+
+      assert msg =~ name
+      assert msg =~ "ou_dup"
+
+      after_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
+
+      assert after_count == before_count,
+             "session_name_taken must short-circuit before spawning a second supervisor"
+    end
+
+    test "same name under a different owner is allowed" do
+      Grants.load_snapshot(%{
+        "ou_alpha" => ["*"],
+        "ou_beta" => ["*"]
+      })
+
+      name = "shared-name-#{:rand.uniform(99_999)}"
+
+      cmd1 = %{
+        "submitted_by" => "ou_alpha",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/share1", "name" => name}
+      }
+
+      cmd2 = %{
+        "submitted_by" => "ou_beta",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/share2", "name" => name}
+      }
+
+      assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
+      assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
+
+      refute sid1 == sid2,
+             "two distinct owners with the same name must yield distinct sessions"
+    end
+
+    test "missing name skips the uniqueness gate (admin-CLI path)" do
+      # Admin submits like `esr admin submit session_new --arg agent=cc
+      # --arg dir=/tmp/x` don't carry a name. The 103-LOC version
+      # rejected such commands outright; the merged 449-LOC accepts
+      # them (legacy admin-CLI use case) and the uniqueness gate has
+      # to be a no-op so it stays compatible.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/no-name"}
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+      assert is_binary(sid)
+    end
+  end
+
+  describe "chat-attach interplay (commit 2a)" do
+    @describetag :chat_attach_interplay
+
+    test "chat-bound spawn preserves Router-side peer refs" do
+      # Regression guard: an earlier draft of the commit-2a fix called
+      # `ChatScope.Registry.attach_session/3` unconditionally after a
+      # successful spawn, which clobbered the 3-tuple
+      # `{key, sid, refs}` row Router writes via `register_session/3`
+      # with the 2-tuple `{key, %{current: sid, attached: …}}` shape.
+      # `lookup_by_chat/2` then returned `{:ok, sid, %{}}` — empty
+      # refs — and the next inbound `FeishuAppAdapter.handle_upstream/2`
+      # missed `%{feishu_chat_proxy: pid}`. The fix gates the explicit
+      # attach on whether the slot already carries this sid; this test
+      # locks that gate in.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/2a-attach",
+          "chat_id" => "oc_2A",
+          "thread_id" => "om_2A",
+          "app_id" => "esr_dev_helper",
+          "name" => "attach-keep-refs-#{:rand.uniform(99_999)}"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
+
+      assert {:ok, ^sid, refs} =
+               Esr.Resource.ChatScope.Registry.lookup_by_chat("oc_2A", "esr_dev_helper")
+
+      # Router populates these via spawn_pipeline/3; the explicit
+      # attach must NOT have wiped them.
+      assert is_pid(refs.feishu_chat_proxy),
+             "expected feishu_chat_proxy pid in refs, got #{inspect(refs)}"
+
+      assert is_pid(refs.cc_process)
+      assert is_pid(refs.pty_process)
+
+      on_exit(fn -> Esr.Resource.ChatScope.Registry.unregister_session(sid) end)
+    end
+  end
 end

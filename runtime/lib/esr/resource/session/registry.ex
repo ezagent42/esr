@@ -127,7 +127,12 @@ defmodule Esr.Resource.Session.Registry do
 
   @impl GenServer
   def handle_call({:create_session, data_dir, attrs}, _from, state) do
-    uuid = generate_uuid()
+    # Allow callers (e.g. `Esr.Commands.Session.New` post-spawn) to pin the
+    # session uuid so the on-disk record matches the supervisor-tree sid.
+    # When omitted, mint a fresh v4 — preserves the original `/2` contract.
+    uuid =
+      Map.get(attrs, :session_id) || Map.get(attrs, "session_id") || generate_uuid()
+
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
     session = %Struct{
