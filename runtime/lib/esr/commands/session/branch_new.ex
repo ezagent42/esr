@@ -47,9 +47,28 @@ defmodule Esr.Commands.Session.BranchNew do
   `:spawn_fn` pattern in `Esr.Commands.RegisterAdapter`.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_branch_new do
+    slash         :none
+    category      "Sessions"
+    description   "spawn an ephemeral esrd for a new branch worktree (CLI-only; dispatcher kind)"
+    permission    "session:default/create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :branch,         required: true,  doc: "branch name to spawn"
+    arg :worktree_base,  required: false, doc: "override default .claude/worktrees base"
+
+    error :invalid_args,        "session_branch_new requires submitted_by and args.branch (non-empty string)"
+    error :branch_spawn_failed, "branch spawn failed: %{details}"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, map()}
+
+  alias Esr.Commands.Render
 
   @spec execute(map()) :: result()
   def execute(cmd), do: execute(cmd, [])
@@ -69,12 +88,7 @@ defmodule Esr.Commands.Session.BranchNew do
   end
 
   def execute(_cmd, _opts) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "session_branch_new requires submitted_by and args.branch (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ------------------------------------------------------------------
@@ -112,18 +126,17 @@ defmodule Esr.Commands.Session.BranchNew do
         {:ok, m}
 
       {:ok, %{"ok" => false, "error" => msg}} ->
-        {:error, %{"type" => "branch_spawn_failed", "details" => to_string(msg)}}
+        Render.error(__MODULE__.command_meta(), :branch_spawn_failed, %{details: to_string(msg)})
 
       {:ok, other} ->
-        {:error,
-         %{"type" => "branch_spawn_failed", "details" => "unexpected script payload: " <> inspect(other)}}
+        Render.error(__MODULE__.command_meta(), :branch_spawn_failed, %{
+          details: "unexpected script payload: " <> inspect(other)
+        })
 
       {:error, %Jason.DecodeError{} = err} ->
-        {:error,
-         %{
-           "type" => "branch_spawn_failed",
-           "details" => "malformed JSON stdout: " <> Exception.message(err)
-         }}
+        Render.error(__MODULE__.command_meta(), :branch_spawn_failed, %{
+          details: "malformed JSON stdout: " <> Exception.message(err)
+        })
     end
   end
 
@@ -160,17 +173,16 @@ defmodule Esr.Commands.Session.BranchNew do
        }}
     else
       {:error, reason} ->
-        {:error,
-         %{"type" => "branch_spawn_failed", "details" => "yaml persist failed: " <> inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :branch_spawn_failed, %{
+          details: "yaml persist failed: " <> inspect(reason)
+        })
     end
   end
 
   defp persist_and_reply(other, _submitter) do
-    {:error,
-     %{
-       "type" => "branch_spawn_failed",
-       "details" => "script payload missing branch/port: " <> inspect(other)
-     }}
+    Render.error(__MODULE__.command_meta(), :branch_spawn_failed, %{
+      details: "script payload missing branch/port: " <> inspect(other)
+    })
   end
 
   defp append_branches_yaml(branch, port, worktree, esrd_home, kind) do

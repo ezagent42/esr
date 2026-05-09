@@ -22,8 +22,26 @@ defmodule Esr.Commands.Session.UnbindChat do
        "new_current" => new_current | nil}}`.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_unbind_chat do
+    slash         "/session:unbind-chat"
+    category      "Sessions"
+    description   "离开当前 session;session 保持运行;可省略 session= 默认 unbind 当前"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :session, required: false, doc: "session UUID v4 (defaults to current)"
+
+    error :invalid_args,         "/session:unbind-chat requires a chat context (chat_id + app_id in envelope)"
+    error :invalid_session_uuid, "session unbind-chat requires a UUID; use /session:list to see available sessions"
+    error :no_current_session,   "no session is currently attached to this chat; pass session=<uuid> explicitly"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @uuid_re ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -55,12 +73,7 @@ defmodule Esr.Commands.Session.UnbindChat do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "/session:unbind-chat requires a chat context (chat_id + app_id in envelope)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ---------------------------------------------------------------------------
@@ -73,11 +86,7 @@ defmodule Esr.Commands.Session.UnbindChat do
   end
 
   defp require_chat_context(_, _) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/session:unbind-chat requires a chat context (chat_id + app_id in envelope)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # Explicit UUID arg supplied
@@ -85,12 +94,7 @@ defmodule Esr.Commands.Session.UnbindChat do
     if Regex.match?(@uuid_re, raw) do
       {:ok, raw}
     else
-      {:error,
-       %{
-         "type" => "invalid_session_uuid",
-         "message" =>
-           "session unbind-chat requires a UUID; use /session:list to see available sessions"
-       }}
+      Render.error(__MODULE__.command_meta(), :invalid_session_uuid)
     end
   end
 
@@ -101,12 +105,7 @@ defmodule Esr.Commands.Session.UnbindChat do
         {:ok, sid}
 
       :not_found ->
-        {:error,
-         %{
-           "type" => "no_current_session",
-           "message" =>
-             "no session is currently attached to this chat; pass session=<uuid> explicitly"
-         }}
+        Render.error(__MODULE__.command_meta(), :no_current_session)
     end
   end
 end

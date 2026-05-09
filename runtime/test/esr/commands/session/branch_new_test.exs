@@ -177,8 +177,10 @@ defmodule Esr.Commands.Session.BranchNewTest do
         {~s({"ok":false,"error":"git worktree add failed"}\n), 1}
       end
 
-      assert {:error, %{"type" => "branch_spawn_failed", "details" => "git worktree add failed"}} =
+      assert {:error, %{"type" => "branch_spawn_failed", "message" => msg}} =
                SessionBranchNew.execute(cmd, spawn_fn: stub)
+
+      assert msg =~ "git worktree add failed"
     end
 
     test "invalid args (missing branch) → invalid_args" do

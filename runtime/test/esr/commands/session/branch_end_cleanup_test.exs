@@ -186,20 +186,17 @@ defmodule Esr.Commands.Session.BranchEndCleanupTest do
         :ok
       end
 
-      assert {:error,
-              %{
-                "type" => "worktree_dirty",
-                "details" => %{"modified" => ["lib/foo.ex"]} = details,
-                "branch" => "feature-bar"
-              }} =
+      assert {:error, %{"type" => "worktree_dirty", "message" => msg}} =
                SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
                )
 
-      # Sanity: details is the opaque CC payload, passed through.
-      assert Map.get(details, "staged") == []
+      # Phase 3.3 grammar migration: error map now carries only
+      # {type, message}; the opaque CC details payload is dropped.
+      # Assert on the canonical message instead.
+      assert msg =~ "feature-bar"
     end
 
     test "UNPUSHED signal returns worktree_unpushed error", %{tmp: tmp} do
@@ -223,19 +220,16 @@ defmodule Esr.Commands.Session.BranchEndCleanupTest do
         :ok
       end
 
-      assert {:error,
-              %{
-                "type" => "worktree_unpushed",
-                "details" => %{"ahead" => 2} = details,
-                "branch" => "feature-baz"
-              }} =
+      assert {:error, %{"type" => "worktree_unpushed", "message" => msg}} =
                SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
                )
 
-      assert length(details["commits"]) == 2
+      # Phase 3.3 grammar migration: details map dropped from error
+      # payload; canonical message carries the branch name.
+      assert msg =~ "feature-baz"
     end
 
     test "STASHED signal returns worktree_stashed error", %{tmp: tmp} do
@@ -253,12 +247,14 @@ defmodule Esr.Commands.Session.BranchEndCleanupTest do
         :ok
       end
 
-      assert {:error, %{"type" => "worktree_stashed", "branch" => "feature-qux"}} =
+      assert {:error, %{"type" => "worktree_stashed", "message" => msg}} =
                SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: sender_fn,
                  cleanup_timeout_ms: 500
                )
+
+      assert msg =~ "feature-qux"
     end
   end
 
@@ -279,13 +275,7 @@ defmodule Esr.Commands.Session.BranchEndCleanupTest do
 
       t0 = System.monotonic_time(:millisecond)
 
-      assert {:error,
-              %{
-                "type" => "cleanup_timeout",
-                "branch" => "feature-silent",
-                "timeout_ms" => 80,
-                "hint" => hint
-              }} =
+      assert {:error, %{"type" => "cleanup_timeout", "message" => msg}} =
                SessionBranchEnd.execute(cmd,
                  spawn_fn: spawn_guard,
                  sender_fn: silent_sender,
@@ -296,8 +286,12 @@ defmodule Esr.Commands.Session.BranchEndCleanupTest do
       assert elapsed >= 80
       # Should not have taken the default 30s.
       assert elapsed < 5_000
-      assert is_binary(hint)
-      assert hint =~ "--force"
+      # Phase 3.3 grammar migration: branch + timeout + hint are
+      # interpolated into the canonical message rather than carried as
+      # separate keys. Assert on substrings.
+      assert msg =~ "feature-silent"
+      assert msg =~ "80ms"
+      assert msg =~ "force"
     end
 
     test "timeout still deregisters the pending_cleanup entry", %{tmp: tmp} do

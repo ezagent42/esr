@@ -214,8 +214,10 @@ defmodule Esr.Commands.Session.ListTest do
         "args" => %{"workspace" => "ghost-ws", "username" => "linyilun", "env" => env}
       }
 
-      assert {:error, %{"type" => "unknown_workspace", "workspace" => "ghost-ws"}} =
+      assert {:error, %{"type" => "unknown_workspace", "message" => msg}} =
                SessionList.execute(cmd)
+
+      assert msg =~ "ghost-ws"
     end
 
     test "no matching sessions → empty list (workspace must exist)" do

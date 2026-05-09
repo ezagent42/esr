@@ -19,9 +19,30 @@ defmodule Esr.Commands.Session.Switch do
       refuses to materialize one out of thin air.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_switch do
+    slash         "/session:switch"
+    category      "Sessions"
+    description   "切换 chat 当前 session(不解绑其它);session=<uuid>"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :session, required: true, doc: "session UUID v4"
+
+    error :invalid_args,    "session_switch requires submitted_by + args.session (with chat_id + app_id) OR submitted_by + args.branch (legacy DI-10)"
+    error :no_such_target,  "no such target"
+    error :not_attached,    "session %{session_id} is not attached to this chat — use /session:attach session=%{session_id} first"
+    error :switch_failed,   "could not switch chat-current session to %{session_id}: %{reason}"
+    error :write_failed,    "routing.yaml write failed: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, map()}
+
+  alias Esr.Commands.Render
 
   @spec execute(map()) :: result()
   # Spec rev-4 §4.2 row 3: `/session:switch session=<uuid>` flips the chat's
@@ -46,21 +67,13 @@ defmodule Esr.Commands.Session.Switch do
          }}
 
       {:error, :not_attached} ->
-        {:error,
-         %{
-           "type" => "not_attached",
-           "message" =>
-             "session #{session_uuid} is not attached to this chat — " <>
-               "use /session:attach session=#{session_uuid} first"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_attached, %{session_id: session_uuid})
 
       {:error, reason} ->
-        {:error,
-         %{
-           "type" => "switch_failed",
-           "message" =>
-             "could not switch chat-current session to #{session_uuid}: #{inspect(reason)}"
-         }}
+        Render.error(__MODULE__.command_meta(), :switch_failed, %{
+          session_id: session_uuid,
+          reason: inspect(reason)
+        })
     end
   end
 
@@ -75,24 +88,23 @@ defmodule Esr.Commands.Session.Switch do
         targets = (principal && Map.get(principal, "targets")) || %{}
 
         cond do
-          is_nil(principal) -> {:error, %{"type" => "no_such_target"}}
-          not Map.has_key?(targets, branch) -> {:error, %{"type" => "no_such_target"}}
-          true -> write_active(path, current, principals, principal, submitter, branch)
+          is_nil(principal) ->
+            Render.error(__MODULE__.command_meta(), :no_such_target)
+
+          not Map.has_key?(targets, branch) ->
+            Render.error(__MODULE__.command_meta(), :no_such_target)
+
+          true ->
+            write_active(path, current, principals, principal, submitter, branch)
         end
 
       {:error, :missing} ->
-        {:error, %{"type" => "no_such_target"}}
+        Render.error(__MODULE__.command_meta(), :no_such_target)
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "session_switch requires submitted_by + args.session (with chat_id + app_id) " <>
-           "OR submitted_by + args.branch (legacy DI-10)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ------------------------------------------------------------------
@@ -113,8 +125,11 @@ defmodule Esr.Commands.Session.Switch do
       Map.put(current, "principals", Map.put(principals, submitter, updated_principal))
 
     case Esr.Yaml.Writer.write(path, updated) do
-      :ok -> {:ok, %{"active_branch" => branch}}
-      {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+      :ok ->
+        {:ok, %{"active_branch" => branch}}
+
+      {:error, reason} ->
+        Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
     end
   end
 

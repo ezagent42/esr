@@ -37,9 +37,27 @@ defmodule Esr.Commands.Session.List do
       }
   """
 
+  use Esr.Commands.Meta
+
+  command :session_list do
+    slash         "/session:list"
+    category      "Sessions"
+    description   "列当前 chat 绑定的 session(无 workspace=);带 workspace= 时按 workspace 列"
+    permission    "session:default/read"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :workspace, required: false, doc: "scope by workspace name"
+
+    error :invalid_args,       "session_list %{detail}"
+    error :unknown_workspace,  "workspace %{workspace} not found"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, map()}
+
+  alias Esr.Commands.Render
 
   @spec execute(map()) :: result()
   def execute(%{"submitted_by" => submitter, "args" => %{"workspace" => ws} = args})
@@ -49,15 +67,12 @@ defmodule Esr.Commands.Session.List do
 
     cond do
       username == "" ->
-        {:error,
-         %{
-           "type" => "invalid_args",
-           "message" =>
-             "session_list with workspace= requires args.username (esr user) too"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_args, %{
+          detail: "with workspace= requires args.username (esr user) too"
+        })
 
       not workspace_exists?(ws) ->
-        {:error, %{"type" => "unknown_workspace", "workspace" => ws}}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{workspace: ws})
 
       true ->
         sessions =
@@ -115,11 +130,9 @@ defmodule Esr.Commands.Session.List do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "session_list requires submitted_by"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "requires submitted_by"
+    })
   end
 
   # ------------------------------------------------------------------

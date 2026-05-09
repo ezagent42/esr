@@ -298,8 +298,10 @@ defmodule Esr.Commands.Session.BranchEndTest do
         {~s({"ok":false,"error":"git worktree remove failed"}\n), 1}
       end
 
-      assert {:error, %{"type" => "branch_end_failed", "details" => "git worktree remove failed"}} =
+      assert {:error, %{"type" => "branch_end_failed", "message" => msg}} =
                SessionBranchEnd.execute(cmd, spawn_fn: stub)
+
+      assert msg =~ "git worktree remove failed"
     end
 
     test "missing args.branch → invalid_args" do
