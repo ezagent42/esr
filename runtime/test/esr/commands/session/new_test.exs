@@ -72,17 +72,19 @@ defmodule Esr.Commands.Session.NewTest do
   end
 
   describe "execute/1 arg validation" do
-    test "missing workspace + agent + no user-default → no_workspace_resolvable (Phase 6 M-5)" do
+    test "missing workspace + agent + no user-default → no_workspace_target (Phase 6 M-5)" do
       # Pre-M-5 (Phase 5.1 + 6.1): the resolution chain fell through to a
       # literal "default" workspace, so this case reached the capability
       # gate. M-5 (Phase 6) removed the literal-default layer — submitters
       # without a user-default now error out at resolution instead.
       #
-      # ou_alice has no user-default link → :no_match → no_workspace_resolvable.
+      # ou_alice has no user-default link → :no_match → no_workspace_target.
+      # (Renamed from no_workspace_resolvable in fix/chat-envelope-arg-fallback
+      # so the error type matches the parallel /agent:add no_session_target.)
       Grants.load_snapshot(%{"ou_alice" => []})
 
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
-      assert {:error, %{"type" => "no_workspace_resolvable"}} = SessionNew.execute(cmd)
+      assert {:error, %{"type" => "no_workspace_target"}} = SessionNew.execute(cmd)
     end
 
     test "missing dir → invalid_args" do

@@ -20,7 +20,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
     * When `args["workspace"]` is already set → `:no_resolution_needed`.
     * When `args["agent"]` is set (legacy agent-only mode) → `:no_resolution_needed`.
 
-  Returns `{:error, %{"type" => "no_workspace_resolvable", ...}}` when none match.
+  Returns `{:error, %{"type" => "no_workspace_target", ...}}` when none match.
   """
 
   use ExUnit.Case, async: false
@@ -133,20 +133,20 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # preferred (specificity ladder: chat-default → user-default → error).
       args = %{"dir" => "/tmp/x"}
 
-      assert {:error, %{"type" => "no_workspace_resolvable"}} =
+      assert {:error, %{"type" => "no_workspace_target"}} =
                SessionNew.resolve_workspace_if_needed(args)
     end
   end
 
   # ---------------------------------------------------------------------------
-  # Test 3: M-5 — no_workspace_resolvable when no chain layer matches.
+  # Test 3: M-5 — no_workspace_target when no chain layer matches.
   #
   # Pre-M-5 this slot held a "fallback to literal 'default'" test. After M-5
   # the literal-default fallback is gone (spec § specificity ladder); only
   # chat-default and user-default fire. Replaced with the negative case.
   # ---------------------------------------------------------------------------
 
-  describe "no_workspace_resolvable error" do
+  describe "no_workspace_target error" do
     test "returns structured error when no chain layer matches" do
       # No explicit workspace, no chat context, no user-default link.
       # Even if a literal "default" workspace happens to exist on the
@@ -155,16 +155,18 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
       assert {:error,
               %{
-                "type" => "no_workspace_resolvable",
+                "type" => "no_workspace_target",
                 "message" => msg
               }} = SessionNew.resolve_workspace_if_needed(args)
 
-      # New error message wording (spec §): points operator at /user:use
-      # or explicit workspace= arg, no longer mentions literal "default".
-      assert msg =~ "workspace not specified"
-      assert msg =~ "no chat-default set"
+      # New error message wording (fix/chat-envelope-arg-fallback): points
+      # operator at /workspace:bind-chat or /user:use or explicit workspace=
+      # arg, names the missing layers explicitly.
+      assert msg =~ "no explicit workspace="
+      assert msg =~ "no chat-current binding"
       assert msg =~ "no user-default"
       assert msg =~ "/user:use"
+      assert msg =~ "/workspace:bind-chat"
     end
   end
 
@@ -182,7 +184,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # With an agent given and no workspace, resolution is skipped entirely.
       # The downstream execute/2 will proceed with the agent, possibly failing
       # at validate_args(agent, nil) for missing dir or at verify_caps — but
-      # NOT with no_workspace_resolvable.
+      # NOT with no_workspace_target.
       assert :no_resolution_needed = SessionNew.resolve_workspace_if_needed(args)
     end
   end
@@ -204,10 +206,10 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       :ok
     end
 
-    test "no_workspace_resolvable when no chain layer matches" do
+    test "no_workspace_target when no chain layer matches" do
       args = %{"submitter_username" => "alice"}
       # No explicit, no chat-default, no user-default
-      assert {:error, %{"type" => "no_workspace_resolvable"}} =
+      assert {:error, %{"type" => "no_workspace_target"}} =
                Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
 
@@ -228,7 +230,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
       # alice has NO user-default link. No chat context.
       args = %{"submitter_username" => "alice"}
-      assert {:error, %{"type" => "no_workspace_resolvable"}} =
+      assert {:error, %{"type" => "no_workspace_target"}} =
                Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
   end

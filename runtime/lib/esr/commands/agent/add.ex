@@ -14,8 +14,41 @@ defmodule Esr.Commands.Agent.Add do
   @behaviour Esr.Role.Control
 
   alias Esr.Entity.Agent.InstanceRegistry
+  alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
+  # Chat-current fallback: when operator omits `session_id=` but the
+  # SlashHandler injected chat_id+app_id from the envelope, resolve the
+  # chat-current session via `ChatRouting.current_session/2` (same helper
+  # /agent:list and /agent:primary use) and recurse with session_id added.
+  # If the chat has no current session, surface `no_session_target` so the
+  # operator sees which gate failed instead of a generic invalid_args.
+  def execute(
+        %{
+          "args" =>
+            %{"chat_id" => chat_id, "app_id" => app_id, "type" => type, "name" => name} = args
+        } = cmd
+      )
+      when is_binary(chat_id) and chat_id != "" and
+             is_binary(app_id) and app_id != "" and
+             is_binary(type) and type != "" and
+             is_binary(name) and name != "" and
+             not is_map_key(args, "session_id") do
+    case ChatRouting.current_session(chat_id, app_id) do
+      {:ok, sid} ->
+        execute(put_in(cmd, ["args", "session_id"], sid))
+
+      :not_found ->
+        {:error,
+         %{
+           "type" => "no_session_target",
+           "message" =>
+             "no chat-current session and session_id= not provided; " <>
+               "use /session:new or pass session_id=<uuid>"
+         }}
+    end
+  end
+
   def execute(%{"args" => %{"session_id" => sid, "type" => type, "name" => name} = args})
       when is_binary(sid) and sid != "" and
              is_binary(type) and type != "" and
@@ -71,12 +104,29 @@ defmodule Esr.Commands.Agent.Add do
     end
   end
 
+  # Args present (type+name) but no session_id and no chat_id+app_id to
+  # resolve from. Operator submitted a malformed command (no target).
+  # Surface `no_session_target` so the message points them at the fix
+  # (`/session:new` or explicit `session_id=`); reserve `invalid_args`
+  # for actually-empty / shape-malformed input handled by the catch-all.
+  def execute(%{"args" => %{"type" => type, "name" => name}})
+      when is_binary(type) and type != "" and is_binary(name) and name != "" do
+    {:error,
+     %{
+       "type" => "no_session_target",
+       "message" =>
+         "no chat-current session and session_id= not provided; " <>
+           "use /session:new or pass session_id=<uuid>"
+     }}
+  end
+
   def execute(_cmd) do
     {:error,
      %{
        "type" => "invalid_args",
        "message" =>
-         "/agent:add requires args.session_id, args.type, and args.name (all non-empty strings)"
+         "/agent:add requires args.type and args.name (non-empty strings); " <>
+           "session_id= is optional when chat-current is set"
      }}
   end
 
