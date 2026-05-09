@@ -74,7 +74,8 @@ defmodule Esr.MixProject do
       {:elixir_uuid, "~> 1.2", hex: :uuid_utils},
       {:ex_json_schema, "~> 0.11", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:meck, "~> 0.9", only: :test}
     ]
   end
 
