@@ -131,16 +131,42 @@ defmodule Esr.Resource.Media do
     System.get_env("ESRD_HOME", System.user_home!() |> Path.join(".esrd"))
   end
 
+  # Streaming SHA-256: read the file in 64 KiB chunks and feed each chunk
+  # through `:crypto.hash_init/update/final` so the BEAM heap holds at
+  # most one chunk at a time. Pre-2026-05-09 this used `File.read/1` and
+  # loaded the entire file into memory — fine for Lark's 30 MB image /
+  # 50 MB file caps but unworkable for the audio/video Phasers that
+  # are coming in subsequent multimedia work. Constant memory regardless
+  # of file size; same hex-encoded output as before.
   defp compute_sha256(path) do
-    case File.read(path) do
-      {:ok, bytes} ->
-        sha = :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
-        {:ok, sha}
+    case File.exists?(path) do
+      false ->
+        {:error, :enoent}
 
-      err ->
-        err
+      true ->
+        try do
+          digest =
+            path
+            |> File.stream!(64 * 1024, [])
+            |> Enum.reduce(:crypto.hash_init(:sha256), fn chunk, ctx ->
+              :crypto.hash_update(ctx, chunk)
+            end)
+            |> :crypto.hash_final()
+            |> Base.encode16(case: :lower)
+
+          {:ok, digest}
+        rescue
+          e in [File.Error, IO.StreamError] ->
+            {:error, {:read_failed, Exception.message(e)}}
+        end
     end
   end
+
+  @doc false
+  # Test hook for `Esr.Resource.Media.MediaStreamingShaTest` — exposes the
+  # otherwise-private `compute_sha256/1` without making it part of the
+  # public API. `@doc false` keeps it out of generated docs.
+  def __compute_sha256__(path), do: compute_sha256(path)
 
   defp extension_of(path) do
     case path |> Path.extname() |> String.downcase() |> String.trim_leading(".") do
