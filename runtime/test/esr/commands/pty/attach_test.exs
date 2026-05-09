@@ -29,7 +29,7 @@ defmodule Esr.Commands.Pty.AttachTest do
     # The actor_id remains in the body fields (display) and uri (esr://)
     # but MUST NOT appear in the http URL — that's the gap this PR closes.
     assert text =~ actor_id
-    assert url =~ "/sessions/attach?token="
+    assert url =~ "/ptys/attach?token="
     refute url =~ actor_id
 
     # The token in the URL must verify back to the actor_id under the

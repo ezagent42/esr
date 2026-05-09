@@ -17,7 +17,12 @@ defmodule EsrWeb.Router do
     # `?token=<phoenix_token>` query param (HMAC-signed actor_id, salt
     # "pty_attach", 10-minute TTL); the path no longer leaks the
     # actor_id. AttachController verifies the token before rendering.
-    get "/sessions/attach", AttachController, :show
+    # Path is `/ptys/attach` to match the slash resource (`/pty:attach`)
+    # and `Esr.Uri` path-style type `ptys` (consistent with `workspaces`,
+    # `sessions`, `users`, etc.). Earlier draft used `/sessions/attach`
+    # but PTY actor_ids are no longer nested under sessions in the
+    # session-first metamodel.
+    get "/ptys/attach", AttachController, :show
   end
 
   # Phase 2 PR-2.1: schema dump for escript / REPL / doc generation.
