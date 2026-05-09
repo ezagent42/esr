@@ -34,7 +34,7 @@ PR-180 series (today) = **Phase 1**: Loader + Manifest + 3 stub manifests + inte
 | Tag | What | Notes |
 |---|---|---|
 | `e2e-14-routing` | Scenario 14: @mention routing via admin submit | session_new (admin-queue) creates a "pending" session with no Feishu binding. MentionParser + resolve_routing/2 only fires on real inbound Feishu messages. Needs mock_feishu → sidecar → runtime inbound path for session_new_surface-created sessions, OR a test-mode admin verb that injects raw inbound routing. |
-| `user-name-index-population` | User.NameIndex never populated | `Esr.Entity.User.NameIndex` ETS tables (`:esr_user_name_to_id`) are never written by `user_add` or the users.yaml file watcher. `User.Registry.handle_call({:load, ...})` only populates `:esr_users_by_name` + `:esr_users_by_feishu_id`. Fix: add `NameIndex.put/3` call inside `handle_call({:load_with_uuids, ...})` so session_share_surface can resolve usernames. |
+| ~~`user-name-index-population` — User.NameIndex never populated~~ | ✅ **CLOSED 2026-05-07** by PR #250 | `Esr.Entity.User.Registry.populate_name_index/2` (line 241) calls `Esr.Entity.User.NameIndex.put/3`; wired from boot `:load_with_uuids` (line 192), `/user:add`, and `/user:remove`. Reverified 2026-05-09. |
 | `e2e-15-principal-isolation` | Scenario 15: true cross-user cap rejection | All admin-queue commands run with submitted_by=ou_admin (wildcard caps). True "bob denied without grant" test needs a per-invocation principal switch (e.g. `ESR_OPERATOR_PRINCIPAL_ID=bob_15 esr_cli ...`) or an unprivileged fixture principal in capabilities.yaml. |
 
 ## Pending — concrete next PRs
