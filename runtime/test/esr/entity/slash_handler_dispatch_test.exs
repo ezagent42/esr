@@ -277,13 +277,20 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
   end
 
   describe "dispatch — error paths" do
-    test "unknown slash → reply with 'unknown command' text" do
+    test "unknown slash → reply with bare-prefix unknown_resource hint (Phase 6)" do
+      # Phase 6 of unified-grammar migration: a single-token unknown
+      # slash like `/totally-fake-slash` no longer falls through to
+      # "unknown command". `Registry.lookup_prefix/1` classifies it as
+      # `{:unknown_resource, "totally-fake-slash"}` and the handler
+      # emits the friendly hint with the resource name + a pointer to
+      # `/` for the top-level list.
       pid = start_handler!()
       ref = make_ref()
       cast_dispatch(pid, envelope("/totally-fake-slash"), self(), ref)
 
       assert_receive {:reply, text, ^ref}, 1000
-      assert text =~ "unknown command"
+      assert text =~ "totally-fake-slash"
+      assert text =~ "resource"
     end
 
     test "requires_workspace_binding without binding → reply with hint" do

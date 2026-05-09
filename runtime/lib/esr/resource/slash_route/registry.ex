@@ -72,6 +72,74 @@ defmodule Esr.Resource.SlashRoute.Registry do
   end
 
   @doc """
+  Fall-back resolution for input that `lookup/1` returned `:not_found`
+  for. Returns one of:
+
+    * `{:resource_help, nil}` — input was just `/`; render top-level resources
+    * `{:resource_help, resource}` — input was `/workspace` or `/workspace:help`
+    * `{:unknown_method, resource, method}` — input was `/workspace:bogus`
+      where `workspace` is a known resource but `bogus` isn't a method
+    * `{:unknown_resource, name}` — first segment doesn't match any resource
+    * `:no_match` — input is a real slash (caller should have used `lookup/1`)
+      or doesn't start with `/`
+
+  Resources are derived from the set of `/<resource>:*` slash entries
+  in the registry. Phase 6 of unified-grammar migration: SlashHandler
+  consults this AFTER `@deprecated_slashes` so renamed-slash hints
+  retain priority.
+  """
+  @spec lookup_prefix(String.t()) ::
+          {:resource_help, String.t() | nil}
+          | {:unknown_method, String.t(), String.t()}
+          | {:unknown_resource, String.t()}
+          | :no_match
+  def lookup_prefix("/"), do: {:resource_help, nil}
+
+  def lookup_prefix("/" <> rest) when is_binary(rest) do
+    # Strip any trailing whitespace/args — only the head matters for
+    # prefix routing.
+    head = rest |> String.split() |> List.first() || ""
+
+    case String.split(head, ":", parts: 2) do
+      [resource, "help"] ->
+        if __lookup_prefix_known_resource?(resource),
+          do: {:resource_help, resource},
+          else: {:unknown_resource, resource}
+
+      [resource, method] ->
+        cond do
+          __lookup_prefix_slash_exists?("/" <> resource <> ":" <> method) -> :no_match
+          __lookup_prefix_known_resource?(resource) -> {:unknown_method, resource, method}
+          true -> {:unknown_resource, resource}
+        end
+
+      [resource] ->
+        cond do
+          __lookup_prefix_slash_exists?("/" <> resource) -> :no_match
+          __lookup_prefix_known_resource?(resource) -> {:resource_help, resource}
+          true -> {:unknown_resource, resource}
+        end
+    end
+  end
+
+  def lookup_prefix(_), do: :no_match
+
+  defp __lookup_prefix_known_resource?(name) do
+    list_slashes()
+    |> Enum.any?(fn route ->
+      slash = route[:slash] || ""
+      String.starts_with?(slash, "/" <> name <> ":")
+    end)
+  end
+
+  defp __lookup_prefix_slash_exists?(slash) do
+    case :ets.lookup(@slash_table, slash) do
+      [_ | _] -> true
+      [] -> false
+    end
+  end
+
+  @doc """
   Resolve a kind (string, e.g. `"session_new"`) to its required
   permission. Returns `nil` if no permission is required (e.g.
   `/help`). Returns `:not_found` if the kind is unknown.
