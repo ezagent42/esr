@@ -29,7 +29,29 @@ defmodule Esr.Commands.Cap.Revoke do
     * `{:error, %{"type" => "invalid_args", ...}}` — malformed command.
   """
 
+  use Esr.Commands.Meta
+
+  command :cap_revoke do
+    slash         "/cap:revoke"
+    category      "Capabilities"
+    description   "撤销用户的 cap；session cap 仅接受 UUID 形式"
+    permission    "cap.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :cap,  required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
+    arg :user, required: true, doc: "principal id"
+
+    error :session_cap_requires_uuid, "%{detail}"
+    error :unknown_workspace,         "no workspace found in capability scope: %{permission}"
+    error :no_matching_capability,    "no matching capability to revoke"
+    error :invalid_args,              "revoke requires args.principal_id and args.permission (non-empty strings)"
+    error :write_failed,              "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -41,24 +63,15 @@ defmodule Esr.Commands.Cap.Revoke do
       do_revoke(pid, translated_perm)
     else
       {:error, {:session_name_in_cap, msg}} ->
-        {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}}
+        Render.error(__MODULE__.command_meta(), :session_cap_requires_uuid, %{detail: msg})
 
       {:error, :unknown_workspace} ->
-        {:error,
-         %{
-           "type" => "unknown_workspace",
-           "message" => "no workspace found in capability scope: #{perm}"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{permission: perm})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "revoke requires args.principal_id and args.permission (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp validate_session_cap(perm) do
@@ -87,14 +100,14 @@ defmodule Esr.Commands.Cap.Revoke do
            }}
 
         {:error, reason} ->
-          {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+          Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
       end
     else
       :no_match ->
-        {:error, %{"type" => "no_matching_capability"}}
+        Render.error(__MODULE__.command_meta(), :no_matching_capability)
 
       _ ->
-        {:error, %{"type" => "no_matching_capability"}}
+        Render.error(__MODULE__.command_meta(), :no_matching_capability)
     end
   end
 

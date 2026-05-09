@@ -15,10 +15,28 @@ defmodule Esr.Commands.User.Add do
   fix/user-name-index-population: wire NameIndex on add.
   """
 
+  use Esr.Commands.Meta
+
+  command :user_add do
+    slash         :none
+    category      "Users"
+    description   "注册新 esr user（写 users.yaml + user.json，建 user-default workspace；首位 user 自动 admin）"
+    permission    "user.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "username（ASCII 字母数字加 - / _）"
+
+    error :invalid_args,    "%{detail}"
+    error :already_exists,  "user '%{name}' already exists"
+    error :write_failed,    "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
   require Logger
 
+  alias Esr.Commands.Render
   alias Esr.Entity.User.NameIndex
 
   @username_regex ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
@@ -37,13 +55,11 @@ defmodule Esr.Commands.User.Add do
       when is_binary(name) and name != "" and is_list(opts) do
     cond do
       not Regex.match?(@username_regex, name) ->
-        {:error,
-         %{
-           "type" => "invalid_args",
-           "message" =>
-             "username #{inspect(name)} must match #{inspect(Regex.source(@username_regex))} " <>
-               "(ASCII alphanumeric, optionally with - and _)"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_args, %{
+          detail:
+            "username #{inspect(name)} must match #{inspect(Regex.source(@username_regex))} " <>
+              "(ASCII alphanumeric, optionally with - and _)"
+        })
 
       true ->
         path = Esr.Paths.users_yaml()
@@ -52,7 +68,7 @@ defmodule Esr.Commands.User.Add do
         users = Map.get(doc, "users") || %{}
 
         if Map.has_key?(users, name) do
-          {:error, %{"type" => "already_exists", "message" => "user '#{name}' already exists"}}
+          Render.error(__MODULE__.command_meta(), :already_exists, %{name: name})
         else
           uuid = UUID.uuid4()
           ws_uuid = UUID.uuid4()
@@ -94,19 +110,16 @@ defmodule Esr.Commands.User.Add do
             {:error, reason} ->
               rollback_partial_add(name, uuid, ws_uuid, ws_name, doc, path)
 
-              {:error,
-               %{"type" => "write_failed", "detail" => inspect(reason)}}
+              Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
           end
         end
     end
   end
 
   def execute(_cmd, _opts) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "user_add requires args.name (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "user_add requires args.name (non-empty string)"
+    })
   end
 
   # ---------------------------------------------------------------------------

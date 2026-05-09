@@ -14,8 +14,25 @@ defmodule Esr.Commands.User.Switch do
   Spec: docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md § 3.6.
   """
 
+  use Esr.Commands.Meta
+
+  command :user_switch do
+    slash         :none
+    category      "Users"
+    description   "切换当前 CLI operator（写 operator.json；CLI-only）"
+    permission    "user.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "目标 username（必须已注册）"
+
+    error :unknown_user,  "user '%{name}' not found"
+    error :invalid_args,  "user_switch requires args.name"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.User.NameIndex
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -26,13 +43,12 @@ defmodule Esr.Commands.User.Switch do
         {:ok, %{"action" => "switched", "username" => name, "principal_id" => uuid}}
 
       :not_found ->
-        {:error, %{"type" => "unknown_user", "message" => "user '#{name}' not found"}}
+        Render.error(__MODULE__.command_meta(), :unknown_user, %{name: name})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{"type" => "invalid_args", "message" => "user_switch requires args.name"}}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp write_operator_json(uuid, name) do

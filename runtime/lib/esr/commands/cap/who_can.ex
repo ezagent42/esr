@@ -11,8 +11,25 @@ defmodule Esr.Commands.Cap.WhoCan do
   Phase B-2 of the Phase 3/4 finish (2026-05-05).
   """
 
+  use Esr.Commands.Meta
+
+  command :cap_who_can do
+    slash         :none
+    category      "Capabilities"
+    description   "反向查找：哪些 principal 具有该 permission（含通配符匹配）"
+    permission    "cap.read"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :permission, required: true, doc: "要反查的 permission"
+
+    error :invalid_args,       "cap_who_can requires args.permission (non-empty string)"
+    error :unknown_workspace,  "no workspace named in capability: %{permission}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Capability.UuidTranslator
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -24,20 +41,12 @@ defmodule Esr.Commands.Cap.WhoCan do
         do_who_can(translated_perm)
 
       {:error, :unknown_workspace} ->
-        {:error,
-         %{
-           "type" => "unknown_workspace",
-           "message" => "no workspace named in capability: #{perm}"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{permission: perm})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "cap_who_can requires args.permission (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp do_who_can(translated_perm) do

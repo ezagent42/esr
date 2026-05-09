@@ -14,8 +14,26 @@ defmodule Esr.Commands.User.Remove do
   fix/user-name-index-population: wire NameIndex cleanup on remove.
   """
 
+  use Esr.Commands.Meta
+
+  command :user_remove do
+    slash         :none
+    category      "Users"
+    description   "移除 esr user（同时清理 NameIndex；不级联撤销 cap）"
+    permission    "user.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "username"
+
+    error :not_found,     "user '%{name}' not found"
+    error :invalid_args,  "user_remove requires args.name (non-empty string)"
+    error :write_failed,  "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.User.NameIndex
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -28,7 +46,7 @@ defmodule Esr.Commands.User.Remove do
     users = Map.get(doc, "users") || %{}
 
     if not Map.has_key?(users, name) do
-      {:error, %{"type" => "not_found", "message" => "user '#{name}' not found"}}
+      Render.error(__MODULE__.command_meta(), :not_found, %{name: name})
     else
       updated_users = Map.delete(users, name)
       updated_doc = Map.put(doc, "users", updated_users)
@@ -44,17 +62,13 @@ defmodule Esr.Commands.User.Remove do
           {:ok, %{"text" => "removed esr user #{name}"}}
 
         {:error, reason} ->
-          {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+          Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
       end
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "user_remove requires args.name (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp read_or_empty(path) do

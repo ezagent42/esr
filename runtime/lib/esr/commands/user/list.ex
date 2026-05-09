@@ -8,6 +8,17 @@ defmodule Esr.Commands.User.List do
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
   """
 
+  use Esr.Commands.Meta
+
+  command :user_list do
+    slash         :none
+    category      "Users"
+    description   "列出所有已注册的 esr user 及其 feishu_id 绑定"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}
