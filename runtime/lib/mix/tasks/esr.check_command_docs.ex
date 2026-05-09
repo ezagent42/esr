@@ -30,7 +30,8 @@ defmodule Mix.Tasks.Esr.CheckCommandDocs do
   @impl Mix.Task
   def run(_args) do
     Mix.Task.run("compile")
-    {:ok, _} = Application.ensure_all_started(:esr)
+    # See esr.gen_slash_routes.ex for why we load (not start) the app.
+    Application.load(:esr)
 
     case check() do
       :ok ->

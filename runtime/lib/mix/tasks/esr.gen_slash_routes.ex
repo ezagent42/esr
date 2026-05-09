@@ -49,7 +49,12 @@ defmodule Mix.Tasks.Esr.GenSlashRoutes do
   @impl Mix.Task
   def run(_args) do
     Mix.Task.run("compile")
-    {:ok, _} = Application.ensure_all_started(:esr)
+    # Load (don't start) the OTP app: we only need :application.get_key
+    # to enumerate the module list + command_meta/0 callbacks at compile
+    # time. Starting the full supervision tree boots the SlashRoute
+    # Watcher which fails on CI Linux runners (no FSEvents/inotify path
+    # at $ESRD_HOME). This task is read-only against compiled BEAM.
+    Application.load(:esr)
 
     yaml = emit()
     path = Path.expand(@target_path, File.cwd!())
