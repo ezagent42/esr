@@ -32,6 +32,44 @@ defmodule Esr.Paths do
   @doc "Path to global-layer plugins.yaml (alias for plugins_yaml/0 — Phase 7)."
   def global_plugins_yaml, do: plugins_yaml()
 
+  # ------------------------------------------------------------------
+  # YAML layout v2 — per-thing directories
+  # (spec: docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md)
+  # ------------------------------------------------------------------
+
+  @doc """
+  Per-plugin global-layer config directory:
+  `$ESRD_HOME/<inst>/plugins/<name>/`. Holds `config.yaml` + future
+  per-plugin state.
+  """
+  def plugin_global_dir(name) when is_binary(name),
+    do: Path.join([runtime_home(), "plugins", name])
+
+  @doc """
+  Per-plugin user-layer config directory:
+  `$ESRD_HOME/<inst>/users/<uuid>/.esr/plugins/<name>/`.
+  """
+  def plugin_user_dir(name, user_uuid) when is_binary(name) and is_binary(user_uuid),
+    do: Path.join([user_dir(user_uuid), ".esr", "plugins", name])
+
+  @doc """
+  Per-plugin workspace-layer config directory:
+  `<workspace_root>/.esr/plugins/<name>/`.
+  """
+  def plugin_workspace_dir(name, workspace_root)
+      when is_binary(name) and is_binary(workspace_root),
+      do: Path.join([workspace_root, ".esr", "plugins", name])
+
+  @doc "Top-level adapters directory: `$ESRD_HOME/<inst>/adapters/`."
+  def adapters_dir, do: Path.join(runtime_home(), "adapters")
+
+  @doc "Per-instance adapter directory: `$ESRD_HOME/<inst>/adapters/<name>/`."
+  def adapter_dir(name) when is_binary(name),
+    do: Path.join(adapters_dir(), name)
+
+  @doc "Disabled-adapters parking lot: `$ESRD_HOME/<inst>/adapters/_disabled/`."
+  def adapter_disabled_dir, do: Path.join(adapters_dir(), "_disabled")
+
   @doc "Top-level dir for ESR-bound workspaces. Per-instance."
   def workspaces_dir, do: Path.join(runtime_home(), "workspaces")
 

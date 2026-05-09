@@ -113,4 +113,39 @@ defmodule Esr.PathsTest do
   test "sessions_dir/0 already exists (verify it's consistent)" do
     assert Esr.Paths.sessions_dir() == "/tmp/pth-test/default/sessions"
   end
+
+  # ------------------------------------------------------------------
+  # YAML layout v2 — per-thing directory helpers (spec § 4.4)
+  # ------------------------------------------------------------------
+
+  test "plugin_global_dir/1 builds <inst>/plugins/<name>" do
+    assert Esr.Paths.plugin_global_dir("feishu") ==
+             "/tmp/pth-test/default/plugins/feishu"
+  end
+
+  test "plugin_user_dir/2 builds <inst>/users/<uuid>/.esr/plugins/<name>" do
+    uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
+
+    assert Esr.Paths.plugin_user_dir("feishu", uuid) ==
+             "/tmp/pth-test/default/users/#{uuid}/.esr/plugins/feishu"
+  end
+
+  test "plugin_workspace_dir/2 builds <root>/.esr/plugins/<name>" do
+    assert Esr.Paths.plugin_workspace_dir("feishu", "/tmp/myrepo") ==
+             "/tmp/myrepo/.esr/plugins/feishu"
+  end
+
+  test "adapters_dir/0 builds <inst>/adapters" do
+    assert Esr.Paths.adapters_dir() == "/tmp/pth-test/default/adapters"
+  end
+
+  test "adapter_dir/1 builds <inst>/adapters/<name>" do
+    assert Esr.Paths.adapter_dir("app_a") ==
+             "/tmp/pth-test/default/adapters/app_a"
+  end
+
+  test "adapter_disabled_dir/0 builds <inst>/adapters/_disabled" do
+    assert Esr.Paths.adapter_disabled_dir() ==
+             "/tmp/pth-test/default/adapters/_disabled"
+  end
 end
