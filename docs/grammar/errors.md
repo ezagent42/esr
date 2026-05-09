@@ -50,7 +50,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `session_cap_requires_uuid` | `cap_revoke` | %{detail} |
 | `unknown_workspace` | `cap_revoke` | no workspace found in capability scope: %{permission} |
 | `write_failed` | `cap_revoke` | %{detail} |
-| `invalid_args` | `cap_show` | cap_show requires args.principal_id (non-empty string) |
+| `invalid_args` | `cap_show` | cap_show requires args.target_principal_id (non-empty string) |
 | `invalid_args` | `cap_who_can` | cap_who_can requires args.permission (non-empty string) |
 | `unknown_workspace` | `cap_who_can` | no workspace named in capability: %{permission} |
 | `invalid_args` | `claude_code_tui` | /claude_code:tui requires name=<agent> and chat context |

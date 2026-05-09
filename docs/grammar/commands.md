@@ -329,10 +329,10 @@ _internal kind only — not slash-callable_
 **description:** 显示 principal 在 capabilities.yaml 里的条目
 
 **args:**
-  - `principal_id` (required) — principal id
+  - `target_principal_id` (required) — principal whose caps to display
 
 **errors:**
-  - `invalid_args` — cap_show requires args.principal_id (non-empty string)
+  - `invalid_args` — cap_show requires args.target_principal_id (non-empty string)
 
 ### `cap_who_can`
 

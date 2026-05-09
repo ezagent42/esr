@@ -112,7 +112,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
 
     {:ok, %{"text" => text}} =
       Show.execute(%{
-        "args" => %{"principal_id" => "linyilun"}
+        "args" => %{"target_principal_id" => "linyilun"}
       })
 
     assert text =~ "<UNKNOWN-99999999>"
