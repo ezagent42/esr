@@ -190,4 +190,76 @@ defmodule Esr.Commands.User.AddTest do
       assert text =~ "added"
     end
   end
+
+  describe "User.Add — first-user-auto-admin" do
+    setup do
+      # Stand up Permission.Bootstrap + Grants so the auto-admin path can
+      # run end-to-end. These siblings are normally owned by
+      # Esr.Resource.Capability.Supervisor in production; tests stand them
+      # up directly for unit-test isolation.
+      case Process.whereis(Esr.Resource.Permission.Registry) do
+        nil -> start_supervised!(Esr.Resource.Permission.Registry)
+        _ -> :ok
+      end
+
+      case Process.whereis(Esr.Resource.Permission.Bootstrap) do
+        nil -> start_supervised!(Esr.Resource.Permission.Bootstrap)
+        _ -> :ok
+      end
+
+      case Process.whereis(Esr.Resource.Capability.Grants) do
+        nil -> start_supervised!(Esr.Resource.Capability.Grants)
+        _ -> :ok
+      end
+
+      # Clear ETS: no admin yet → first /user:add will auto-promote.
+      Esr.Resource.Capability.Grants.load_snapshot(%{})
+
+      :ok
+    end
+
+    test "first /user:add when no admin exists: grants `*` to the new user" do
+      refute Esr.Resource.Capability.Grants.any_admin?()
+
+      name = "auto-admin-#{System.unique_integer([:positive])}"
+
+      assert {:ok,
+              %{
+                "id" => uuid,
+                "auto_admin" => true,
+                "text" => text
+              }} = Esr.Commands.User.Add.execute(%{"args" => %{"name" => name}})
+
+      assert text =~ "auto-admin"
+
+      # The admin grant landed in capabilities.yaml AND the live ETS snapshot.
+      cap_path = Esr.Paths.capabilities_yaml()
+      {:ok, doc} = YamlElixir.read_from_file(cap_path)
+      principals = Map.get(doc, "principals", [])
+      assert Enum.any?(principals, &(&1["id"] == uuid and "*" in &1["capabilities"]))
+
+      assert Esr.Resource.Capability.Grants.has?(uuid, "*")
+      assert Esr.Resource.Capability.Grants.any_admin?()
+    end
+
+    test "second /user:add (admin already exists): no auto-admin grant" do
+      # Seed an existing admin
+      Esr.Resource.Capability.Grants.load_snapshot(%{"existing-admin" => ["*"]})
+      assert Esr.Resource.Capability.Grants.any_admin?()
+
+      name = "second-#{System.unique_integer([:positive])}"
+
+      assert {:ok,
+              %{
+                "id" => uuid,
+                "auto_admin" => false,
+                "text" => text
+              }} = Esr.Commands.User.Add.execute(%{"args" => %{"name" => name}})
+
+      refute text =~ "auto-admin"
+      refute Esr.Resource.Capability.Grants.has?(uuid, "*")
+      # The existing admin is unaffected.
+      assert Esr.Resource.Capability.Grants.has?("existing-admin", "*")
+    end
+  end
 end

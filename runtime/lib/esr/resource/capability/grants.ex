@@ -32,6 +32,26 @@ defmodule Esr.Resource.Capability.Grants do
     end
   end
 
+  @doc """
+  Does ANY principal hold the bare `*` admin wildcard?
+
+  Used by `Esr.Commands.User.Add` to decide whether the new user should be
+  auto-promoted to admin (per audit follow-up #2 / first-user-auto-admin):
+  if zero principals have `*`, the runtime is in a fresh-install state and
+  the new user becomes the bootstrap admin. The check runs against the
+  live ETS snapshot (post-Watcher reload) so it reflects on-disk truth.
+  """
+  @spec any_admin?() :: boolean()
+  def any_admin? do
+    :ets.foldl(
+      fn {_pid, held}, acc -> acc or Enum.member?(held, "*") end,
+      false,
+      @table
+    )
+  rescue
+    ArgumentError -> false
+  end
+
   defp matches?("*", _required), do: true
 
   # PR-21s 2026-04-29: exact-string fallback for flat dotted caps like
