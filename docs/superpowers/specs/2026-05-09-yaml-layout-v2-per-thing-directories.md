@@ -2,7 +2,7 @@
 
 **Spec id:** 2026-05-09-yaml-layout-v2-per-thing-directories
 **Author:** Allen Woods + Claude
-**Status:** rev-1 (draft)
+**Status:** rev-2 (draft — legacy gate dropped per user feedback)
 **Tracks:** follow-up to PR #287 + #283 — `app_secret` ownership disambiguation, generalized to a layout convention
 
 ## 1. Motivation
@@ -35,7 +35,8 @@ This spec aligns the plugin/adapter layout with the existing directory-per-thing
 - No change to the **data model** of plugin configs or adapter configs — only the on-disk layout.
 - No change to `capabilities.yaml`, `users.yaml`, `slash-routes.yaml`, or any other monolithic file unrelated to plugins/adapters.
 - No new configuration sources (no env, no remote, no merging of repository-bundled configs).
-- **No migration tooling.** ESR is pre-launch — existing dev/prod state can be deleted and recreated. See § 5.
+- **No migration tooling.** ESR is pre-launch — existing dev/prod state can be deleted and recreated.
+- **No backward-compat shim.** No boot-time legacy detection, no auto-migration, no v1 read fallback. After this PR, `Esr.Adapters.list/0` simply returns empty if no `adapters/*/` exists; operators notice and re-register. Old `adapters.yaml` files on disk are silently ignored (the readers don't know about that path anymore).
 
 ## 3. Target layout
 
@@ -82,7 +83,7 @@ enabled:
   - feishu
   - claude_code
 ```
-That is the **only** legal top-level key. Presence of `:config` or any other key → boot refuse.
+That is the **only** legal top-level key. Presence of `:config` or any other key → reader raises (per § 4.2).
 
 `plugins/<name>/config.yaml` (any layer):
 ```yaml
@@ -102,7 +103,7 @@ Top-level keys: `type` (required string), `config` (required map). Adapter `name
 
 ### 3.5 Reserved names
 
-The directory name `_disabled` is reserved under `adapters/`. `register_adapter` validation rejects any instance name starting with underscore. `_disabled` itself is created lazily by `Esr.Adapters.disable/1` — operators do not create it manually.
+`Esr.Adapters.list/0` skips any directory under `adapters/` whose name starts with `_`. `_disabled/` is the canonical use; the prefix rule covers any future reserved name (`_trash`, `_experimental`) and any operator-created folder they want runtime to ignore. `register_adapter` validation rejects any user-supplied name starting with `_`.
 
 ## 4. Module surface
 
@@ -129,6 +130,8 @@ def list_layers(name, opts \\ [])  # debug aid: returns all 3 paths and which ex
 
 Empty config dir (e.g., `plugins/feishu/` exists but no `config.yaml`) → that layer contributes nothing; merge falls through to next layer or default. Never an error.
 
+**Malformed yaml** at any layer **raises** (not silent fall-through). A broken `config.yaml` is operator error worth surfacing immediately; silent skip would mask it and produce confusing "default value applied" behavior at the call site.
+
 ### 4.2 `Esr.Plugin.PluginsYaml` (existing — slimmer)
 
 Strip all `:config` handling. Keep only enabled-list operations:
@@ -139,7 +142,7 @@ def enable(name, opts \\ [])           # add to enabled list (atomic write)
 def disable(name, opts \\ [])          # remove from enabled list
 ```
 
-Reading a `plugins.yaml` that contains `:config` or any non-`enabled` top-level key → raise / refuse-to-boot (see § 5).
+Reading a `plugins.yaml` that contains `:config` or any non-`enabled` top-level key → **raises** at read time. (No boot gate — the raise surfaces wherever the read is first called.)
 
 ### 4.3 `Esr.Adapters` (new module)
 
@@ -148,7 +151,9 @@ Reading a `plugins.yaml` that contains `:config` or any non-`enabled` top-level 
 @type adapter :: %{name: instance_name, type: String.t(), config: map()}
 
 @spec list(opts :: keyword()) :: [adapter]
-def list(opts \\ [])                   # scan adapters/*/config.yaml; ignore _disabled/
+def list(opts \\ [])                   # scan adapters/*/config.yaml; ignore any entry whose
+                                       # name starts with `_` (covers _disabled and any other
+                                       # reserved/manual prefix)
 
 @spec list_disabled(opts :: keyword()) :: [adapter]
 def list_disabled(opts \\ [])          # scan adapters/_disabled/*/config.yaml
@@ -164,7 +169,7 @@ def disabled?(name, opts \\ [])
 
 @spec add(instance_name, type :: String.t(), config :: map(), opts) :: :ok | {:error, term}
 def add(name, type, config, opts \\ [])
-# - validates name (not "_disabled", no leading underscore, ASCII identifier)
+# - validates name (no leading underscore, ASCII identifier)
 # - mkdir adapters/<name>/
 # - atomic write adapters/<name>/config.yaml
 
@@ -226,7 +231,11 @@ New command modules in this spec's scope:
 | `Esr.Commands.Adapter.Remove`  | `/adapter:remove name=<n>`  | `Esr.Adapters.remove/1`  |
 | `Esr.Commands.Adapter.List`    | `/adapter:list`             | `Esr.Adapters.list/0` + `list_disabled/0` |
 
-Existing `Esr.Commands.RegisterAdapter` (already DSL-converted) needs only its internal `append_instance_to_yaml/4` body replaced with `Esr.Adapters.add/3` — its DSL `command` block stays unchanged.
+Existing `Esr.Commands.RegisterAdapter` (already DSL-converted) needs only its internal `append_instance_to_yaml/4` body replaced with `Esr.Adapters.add/3` — its DSL `command` block stays unchanged, including its `slash :none` setting.
+
+**Slash discipline** (informal principle for this PR's modules; future amendment to unified-grammar spec may codify it):
+
+> By default, command modules expose **both slash and CLI** — concrete value: discoverability inside chat. The DSL's `slash :none` is reserved for commands whose `arg` set carries credentials or other secrets that should not appear in chat history (`register_adapter` is the canonical example: `app_secret`). The 4 new commands in this spec carry no secrets, so all four expose `slash` + CLI. Note: in current usage `register_adapter` is invoked from admin DM where leak risk is low, but the DSL discipline still favors CLI-only for credential-bearing args.
 
 ### 4.7 Cleanup A subsumed
 
@@ -238,50 +247,20 @@ The previously-planned standalone "Cleanup A" PR (drop `app_secret` plugins.yaml
 
 Do not open a separate Cleanup A PR. The implementation PR for this spec carries the cleanup.
 
-## 5. Compatibility check on boot
+## 5. Test plan
 
-No migration script. ESR is pre-launch; operators delete old state and let runtime recreate. **But** silently ignoring stale files would mask user error — boot should fail loud with a one-line cleanup instruction.
-
-In `Esr.Application.start/2`, before any other init:
-
-```elixir
-defp check_legacy_layout!(esrd_home) do
-  legacy = []
-  legacy = if File.exists?(Path.join(esrd_home, "adapters.yaml")),
-              do: ["#{esrd_home}/adapters.yaml" | legacy], else: legacy
-  legacy = if has_config_key?(Path.join(esrd_home, "plugins.yaml")),
-              do: ["#{esrd_home}/plugins.yaml (contains :config — must be enabled-only)" | legacy], else: legacy
-
-  unless legacy == [] do
-    Logger.error("""
-    Pre-v2 yaml layout detected:
-      #{Enum.join(legacy, "\n  ")}
-
-    ESR is pre-launch and provides no migration. Delete the legacy files:
-      rm #{esrd_home}/adapters.yaml
-      # then edit #{esrd_home}/plugins.yaml to keep only `enabled: [...]`
-    Then re-run `./esr.sh adapter add ...` for each adapter you need.
-    """)
-    System.halt(1)
-  end
-end
-```
-
-Same check on user/workspace `plugins.yaml` is **not** required — those layers were rarely written and any stragglers are silently ignored by the new reader (no `:config` key → no contribution → fall through to global).
-
-## 6. Test plan
-
-### 6.1 Unit (Elixir, ExUnit)
+### 5.1 Unit (Elixir, ExUnit)
 
 - `Esr.Adapters` round-trip: `add/3` → `list/0` returns it → `disable/1` → `list/0` excludes, `list_disabled/0` includes → `enable/1` → `list/0` includes again → `remove/1` → `get/1` returns `:not_found`
 - `Esr.Adapters.add/3` rejects names: `"_disabled"`, `"_anything"`, `""`, `"with/slash"`, non-ASCII
-- `Esr.Adapters.list/0` ignores files at `adapters/<name>/config.yaml.bak`, hidden files, and `adapters/_disabled/`
+- `Esr.Adapters.list/0` ignores files at `adapters/<name>/config.yaml.bak`, hidden files, and any directory whose name starts with `_`
 - `Esr.Plugin.Config.get/3` 3-layer merge order verified with all 8 combinations (each layer present/absent)
 - `Esr.Plugin.Config.get/3` returns default when all 3 layers miss
 - Empty `plugins/<name>/` directory → that layer contributes nothing (no error)
-- `Esr.Application.check_legacy_layout!/1` halts on stale `adapters.yaml`; halts on `plugins.yaml` with `:config` key; passes on clean state
+- Malformed `plugins/<name>/config.yaml` → `Esr.Plugin.Config.get/3` raises (caller-visible, not silent skip)
+- Malformed `plugins.yaml` (e.g., contains `:config`) → `Esr.Plugin.PluginsYaml.list_enabled/0` raises
 
-### 6.2 E2E (bash scenario)
+### 5.2 E2E (bash scenario)
 
 New scenario: `tests/e2e/scenarios/<NN>_yaml_layout_v2.sh`
 - Start with empty `$ESRD_HOME` test instance
@@ -293,12 +272,7 @@ New scenario: `tests/e2e/scenarios/<NN>_yaml_layout_v2.sh`
 - Assert reverse
 - esrd boot: confirm `Esr.Adapters.list/0` picks up app_a; confirm `app_b` (also disabled) does not spawn
 
-### 6.3 Compatibility check test
-
-- Place a stale `adapters.yaml` in test esrd home → start runtime → assert `System.halt(1)` was called (or use `application:start/2` return value if testable)
-- Place `plugins.yaml` with `enabled: [...]` AND `config: ...` → assert halt
-
-## 7. Rollout
+## 6. Rollout
 
 **Single PR.** No staging. No backward compatibility shim.
 
@@ -307,18 +281,18 @@ Scope:
 2. Rewrite `Esr.Plugin.Config` and `Esr.Plugin.PluginsYaml` to per-directory layout
 3. Switch all consumers (table in § 4.5)
 4. Delete `Esr.Paths.adapters_yaml/0` and any code referencing it (CI catches)
-5. Add `check_legacy_layout!/1` to application boot
-6. Update `register_adapter` validation (reserved names: reject `_*`)
-7. Add new command modules `Esr.Commands.Adapter.{Disable,Enable,Remove,List}` per § 4.6 (DSL form, structured errors)
-8. Regenerate `runtime/priv/slash-routes.default.yaml` via the grammar generator (do NOT hand-edit) — adds `/adapter:disable`, `/adapter:enable`, `/adapter:remove`, `/adapter:list` entries derived from command_meta
-9. Tests per § 6
-10. Update operator docs: `README.md` "E2E test scenarios" + `docs/dev-guide.md` "esrd home layout" section + `docs/guides/writing-an-agent-topology.md` if it references `adapters.yaml`
-11. CI: `mix esr.check_command_docs` must pass on the new modules
+5. Update `register_adapter` validation (reserved names: reject `_*`)
+6. Add new command modules `Esr.Commands.Adapter.{Disable,Enable,Remove,List}` per § 4.6 (DSL form, structured errors)
+7. Regenerate `runtime/priv/slash-routes.default.yaml` via the grammar generator (do NOT hand-edit) — adds `/adapter:disable`, `/adapter:enable`, `/adapter:remove`, `/adapter:list` entries derived from command_meta
+8. Tests per § 5
+9. Update operator docs: `README.md` "E2E test scenarios" + `docs/dev-guide.md` "esrd home layout" section + `docs/guides/writing-an-agent-topology.md` if it references `adapters.yaml`
+10. CI: `mix esr.check_command_docs` must pass on the new modules
 
 If a regression appears post-merge: revert the PR; operators delete `adapters/`, `plugins/` directories and recreate via CLI. No data loss because there is no production data to lose.
 
-## 8. Open questions / future
+## 7. Open questions / future
 
 - **Plugin local state** (cache, sqlite, etc.) — this spec creates the `plugins/<name>/` directory, but only specifies `config.yaml` as the inhabitant. A future spec can add conventions for `plugins/<name>/state/` or `plugins/<name>/cache/` without touching this spec.
 - **Schema validation timing** — currently plugin `config_schema` is consulted only on write via `/plugin:set` slash. Whether `Esr.Plugin.Config.get/3` should validate-on-read is left for a separate spec.
 - **`adapters/_disabled/` GC** — disabled adapters accumulate. Whether to prune (and when) is left for ops policy, not this spec.
+- **Slash discipline codification** — § 4.6's "default slash + CLI; opt-out via `slash :none` for credential-bearing args" rule deserves a small amendment to the unified-command-grammar spec. Deferred to a separate PR.
