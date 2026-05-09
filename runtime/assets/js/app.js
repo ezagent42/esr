@@ -24,6 +24,15 @@ if (!sid) {
   throw new Error("ESR_SID not set; AttachController must inject it");
 }
 
+// PR 2026-05-09: WebSocket auth migrated from `?sid=<actor_id>` (open;
+// anyone who learned the actor_id could attach) to `?token=<signed>`
+// (Phoenix.Token, salt "pty_attach", 10-minute TTL). ESR_SID is kept
+// for display/debug only — it does NOT authenticate the WebSocket.
+const token = window.ESR_TOKEN;
+if (!token) {
+  throw new Error("ESR_TOKEN not set; AttachController must inject it");
+}
+
 const theme = {
   background: "#1e1e1e",
   foreground: "#d4d4d4",
@@ -137,9 +146,9 @@ term.attachCustomKeyEventHandler((e) => {
   return true;
 });
 
-// Raw WebSocket to /attach_socket/websocket?sid=<sid>.
+// Raw WebSocket to /attach_socket/websocket?token=<token>.
 const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-const wsUrl = `${wsScheme}//${window.location.host}/attach_socket/websocket?sid=${encodeURIComponent(sid)}`;
+const wsUrl = `${wsScheme}//${window.location.host}/attach_socket/websocket?token=${encodeURIComponent(token)}`;
 const ws = new WebSocket(wsUrl);
 ws.binaryType = "arraybuffer";
 
