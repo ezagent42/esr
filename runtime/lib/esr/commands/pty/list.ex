@@ -14,8 +14,22 @@ defmodule Esr.Commands.Pty.List do
   its `actor_ids` map (Phase A.3) so this is a pure ETS read.
   """
 
+  use Esr.Commands.Meta
+
+  command :pty_list do
+    slash         "/pty:list"
+    category      "PTY"
+    description   "列当前 chat 当前 session 的 PTY actor id"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    error :invalid_args, "/pty:list requires chat context"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -46,7 +60,6 @@ defmodule Esr.Commands.Pty.List do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{"type" => "invalid_args", "message" => "/pty:list requires chat context"}}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

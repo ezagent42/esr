@@ -16,8 +16,24 @@ defmodule Esr.Commands.Pty.Attach do
   `Esr.Commands.Attach` module (deleted in Phase E.6).
   """
 
+  use Esr.Commands.Meta
+
+  command :pty_attach do
+    slash         "/pty:attach"
+    category      "PTY"
+    description   "返回 PTY 的 web URL；pty=<actor_id>"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :pty, required: true, doc: "PTY actor id"
+
+    error :invalid_args, "/pty:attach requires pty=<actor_id>"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Uri, as: EsrUri
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -36,10 +52,6 @@ defmodule Esr.Commands.Pty.Attach do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/pty:attach requires pty=<actor_id>"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end
