@@ -709,6 +709,248 @@ defmodule Esr.Entity.FeishuChatProxyTest do
     end
   end
 
+  describe "non-text inbound async (2026-05-09 pending_media refactor)" do
+    alias Esr.Resource.Media.PluginRegistry
+
+    setup do
+      on_exit(fn -> PluginRegistry.unregister("claude_code") end)
+
+      if pid = Process.whereis(Esr.Entity.CapGuard) do
+        :sys.replace_state(pid, fn state ->
+          Map.put(state, :media_unsupported_last_emit, %{})
+        end)
+      end
+
+      :ok
+    end
+
+    # Regression: pre-2026-05-09 this would fail because FCP's
+    # `build_directive_fn/1` blocked the GenServer mailbox on a `receive
+    # ... after 30_000` until the download_file ack arrived. A text
+    # message arriving during that window had to wait. The async refactor
+    # owns the ack via `handle_info({:directive_ack, ...})` so the
+    # mailbox stays drained.
+    test "text reply is not blocked while a non-text inbound is awaiting directive_ack" do
+      me = self()
+      sid = "s_async_#{System.unique_integer([:positive])}"
+
+      # cc_process relay: just forward everything tagged :cc.
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+
+      # app_proxy relay that does NOT auto-publish a directive_ack —
+      # it stashes the directive id and forwards the outbound to the
+      # test pid for inspection. We never broadcast the ack, so the
+      # download stays "pending" indefinitely (modulo timeout).
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      _ = register_role(cc_process, sid, :cc_process)
+      _ = register_role(app_proxy, sid, :feishu_app_proxy)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_async",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      PluginRegistry.register("claude_code", %{inbound: [:image, :file, :audio], outbound: []})
+
+      [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+
+      # Step 1: send an image inbound. FCP must emit a directive on
+      # the app_proxy and IMMEDIATELY become ready for the next
+      # message — no synchronous receive on the ack.
+      img_envelope = %{
+        "source" => "esr://default@localhost/adapters/feishu/inst",
+        "principal_id" => "ou_async_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_async",
+            "msg_type" => "image",
+            "msg_id" => "om_async_img",
+            "file_key" => "img_key_async",
+            "file_name" => "x.jpg",
+            "sender_id" => "ou_async_user"
+          }
+        }
+      }
+
+      send(fcp_pid, {:feishu_inbound, img_envelope})
+
+      # The directive lands on app_proxy.
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{"kind" => "directive", "id" => _id}}},
+                     1_000
+
+      # pending_media has exactly one entry.
+      state_before = :sys.get_state(fcp_pid)
+      assert map_size(state_before.pending_media) == 1
+
+      # Step 2: while the download is "pending", a follow-up text
+      # inbound must still flow through to cc_process. Pre-refactor
+      # this would block until the prior download timed out.
+      text_envelope = %{
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_async",
+            "content" => "are you there?",
+            "message_id" => "om_async_text"
+          }
+        }
+      }
+
+      send(fcp_pid, {:feishu_inbound, text_envelope})
+
+      assert_receive {:relay, :cc, {:text, "are you there?", _meta}}, 1_000
+
+      # pending_media still holds the original directive entry.
+      state_after = :sys.get_state(fcp_pid)
+      assert map_size(state_after.pending_media) == 1
+    end
+
+    test "directive_ack with ok:true forwards URI to cc_process and clears pending_media" do
+      me = self()
+      sid = "s_ack_ok_#{System.unique_integer([:positive])}"
+
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      _ = register_role(cc_process, sid, :cc_process)
+      _ = register_role(app_proxy, sid, :feishu_app_proxy)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_ack",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      PluginRegistry.register("claude_code", %{inbound: [:image], outbound: []})
+
+      [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+
+      send(fcp_pid, {:feishu_inbound, %{
+        "source" => "esr://default@localhost/adapters/feishu/inst",
+        "principal_id" => "ou_user",
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_ack",
+            "msg_type" => "image",
+            "msg_id" => "om_ack_1",
+            "file_key" => "img_key",
+            "file_name" => "y.jpg",
+            "sender_id" => "ou_user"
+          }
+        }
+      }})
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{"kind" => "directive", "id" => id}}},
+                     1_000
+
+      fake_uri =
+        "esr://test@localhost:4001/resources/image/" <>
+          String.duplicate("c", 64) <> ".jpg"
+
+      # Simulate the adapter's directive_ack arriving on PubSub. FCP
+      # subscribed to "directive_ack:<id>" before emitting, so the
+      # broadcast is delivered to its mailbox and the new
+      # handle_info({:directive_ack, ...}) clause processes it.
+      Phoenix.PubSub.broadcast(
+        EsrWeb.PubSub,
+        "directive_ack:" <> id,
+        {:directive_ack,
+         %{
+           "id" => id,
+           "payload" => %{
+             "ok" => true,
+             "result" => %{
+               "uri" => fake_uri,
+               "sha256" => String.duplicate("c", 64),
+               "path" => "/tmp/fake.jpg"
+             }
+           }
+         }}
+      )
+
+      assert_receive {:relay, :cc, {:text, ^fake_uri, meta}}, 2_000
+      assert meta.msg_type == "image"
+
+      # pending_media cleared.
+      state_after = :sys.get_state(fcp_pid)
+      assert state_after.pending_media == %{}
+    end
+
+    test "pending_media_timeout drops entry + warns when no ack arrives" do
+      import ExUnit.CaptureLog
+
+      me = self()
+      sid = "s_to_#{System.unique_integer([:positive])}"
+
+      cc_process = spawn_link(fn -> relay(me, :cc) end)
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      _ = register_role(cc_process, sid, :cc_process)
+      _ = register_role(app_proxy, sid, :feishu_app_proxy)
+
+      {:ok, _peer} =
+        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+          session_id: sid,
+          chat_id: "oc_to",
+          thread_id: "",
+          proxy_ctx: %{}
+        })
+
+      PluginRegistry.register("claude_code", %{inbound: [:image], outbound: []})
+
+      [{fcp_pid, _}] = Registry.lookup(Esr.Entity.Registry, "thread:" <> sid)
+
+      send(fcp_pid, {:feishu_inbound, %{
+        "payload" => %{
+          "event_type" => "msg_received",
+          "args" => %{
+            "chat_id" => "oc_to",
+            "msg_type" => "image",
+            "msg_id" => "om_to_1",
+            "file_key" => "img_key_to",
+            "file_name" => "z.jpg",
+            "sender_id" => "ou_user"
+          }
+        }
+      }})
+
+      assert_receive {:relay, :app,
+                      {:outbound,
+                       %{"kind" => "directive", "id" => id}}},
+                     1_000
+
+      assert map_size(:sys.get_state(fcp_pid).pending_media) == 1
+
+      # Don't wait for the real 30s timeout — synthesize the message
+      # the timer would have sent.
+      original_level = Logger.level()
+      Logger.configure(level: :warning)
+      on_exit(fn -> Logger.configure(level: original_level) end)
+
+      log =
+        capture_log(fn ->
+          send(fcp_pid, {:pending_media_timeout, id})
+          # round-trip a benign call to flush handle_info
+          _ = :sys.get_state(fcp_pid)
+        end)
+
+      assert log =~ "pending_media timeout"
+      assert :sys.get_state(fcp_pid).pending_media == %{}
+    end
+  end
+
   describe "channel_adapter lifted from ctx (D1)" do
     test "init/1 stores ctx.channel_adapter under string key in state" do
       args = %{

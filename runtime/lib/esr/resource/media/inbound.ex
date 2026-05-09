@@ -5,14 +5,15 @@ defmodule Esr.Resource.Media.Inbound do
   §"Inbound flow":
 
     1. Capability check via `PluginRegistry.supports?(target, :inbound, kind)`
-    2. Invoke `download_file` directive on source adapter (yields URI)
-    3. Build envelope with URI content + meta, ready for downstream peer
+    2. Return a directive descriptor — caller emits `download_file` and
+       resumes the flow asynchronously when the directive_ack arrives
 
-  Caller passes `directive_fn` for testability + decoupling from the
-  adapter_socket layer. In production the directive_fn is a closure
-  that calls `Esr.Adapter.dispatch(:feishu, instance_id, action, args)`
-  (or whatever the runtime's dispatch API is — Phase 2 Task 2.4 wires
-  this from FeishuChatProxy).
+  Pre-2026-05-09 this module took a `directive_fn` closure and blocked
+  on a synchronous receive inside the caller's GenServer mailbox. That
+  stalled the entire FeishuChatProxy mailbox for up to 30 s while
+  waiting on Feishu's download. The function now returns a directive
+  descriptor and lets the caller (FCP) own the async glue
+  (`pending_media`, timeout timers, `handle_info({:directive_ack, ...})`).
   """
 
   alias Esr.Resource.Media.PluginRegistry
@@ -29,31 +30,34 @@ defmodule Esr.Resource.Media.Inbound do
           }
         }
 
-  @type envelope :: %{
+  @type directive_ctx :: %{
           msg_type: String.t(),
-          content: String.t(),
           meta: map()
         }
 
   @doc """
-  Handles a non-text inbound, producing a URI-shaped envelope ready
-  for downstream peer routing.
+  Capability-check a non-text inbound and return a directive descriptor
+  the caller can dispatch on the source adapter.
 
-  Options:
-  - `directive_fn` (REQUIRED): function `(action, args) -> {:ok, map} | {:error, term}`
-    that the caller uses to dispatch directives to the source adapter.
-    In tests, pass a mock; in production, pass a closure that calls the
-    real adapter dispatch API.
+  The `opts` keyword list is reserved for forward-compatible flags but
+  is unused today — kept in the signature so call sites won't have to
+  churn when (e.g.) phaser-selection options land.
 
   Returns:
-  - `{:ok, envelope}` on success
-  - `{:error, :unsupported_kind}` if target doesn't declare the kind
-  - `{:error, {:download_failed, reason}}` if directive returns `{ok: false, error}`
-  - propagates any other directive_fn error tuple as-is
+
+    * `{:directive, action, args, ctx}` — capability check passed; caller
+      should emit `action` (currently always `"download_file"`) with
+      `args` on the source adapter, then resume on directive_ack arrival
+      using `ctx` (a `%{msg_type, meta}` map) to build the downstream
+      envelope.
+    * `{:error, :unsupported_kind}` — target plugin does not declare the
+      msg_type as a supported inbound kind. Caller is expected to emit a
+      "media unsupported" DM via `Esr.Entity.CapGuard`.
   """
-  @spec handle(inbound(), keyword()) :: {:ok, envelope()} | {:error, term()}
-  def handle(inbound, opts) do
-    directive_fn = Keyword.fetch!(opts, :directive_fn)
+  @spec handle(inbound(), keyword()) ::
+          {:directive, String.t(), map(), directive_ctx()}
+          | {:error, :unsupported_kind}
+  def handle(inbound, _opts \\ []) do
     target = inbound.meta.target_plugin
 
     kind =
@@ -71,28 +75,8 @@ defmodule Esr.Resource.Media.Inbound do
         {:error, :unsupported_kind}
 
       true ->
-        invoke_download(inbound, directive_fn)
-    end
-  end
-
-  defp invoke_download(inbound, directive_fn) do
-    case directive_fn.("download_file", inbound.adapter_msg) do
-      {:ok, %{"ok" => true, "result" => %{"uri" => uri}}} ->
-        {:ok,
-         %{
-           msg_type: inbound.msg_type,
-           content: uri,
-           meta: inbound.meta
-         }}
-
-      {:ok, %{"ok" => false, "error" => err}} ->
-        {:error, {:download_failed, err}}
-
-      {:error, _} = err ->
-        err
-
-      other ->
-        {:error, {:directive_unexpected_shape, other}}
+        {:directive, "download_file", inbound.adapter_msg,
+         %{msg_type: inbound.msg_type, meta: inbound.meta}}
     end
   end
 end
