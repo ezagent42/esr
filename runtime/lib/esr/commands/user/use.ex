@@ -18,8 +18,26 @@ defmodule Esr.Commands.User.Use do
                               "unknown_user", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :user_use do
+    slash         "/user:use"
+    category      "Users"
+    description   "设当前 user 的 default workspace（per-user 偏好；/session:new fallback 链中 user-default 这一层）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :workspace, required: true, doc: "目标 workspace 名"
+
+    error :invalid_args,        "/user:use requires args.workspace (non-empty string)"
+    error :unknown_workspace,   "workspace '%{workspace}' not found"
+    error :unknown_user,        "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.User.NameIndex, as: UserNameIndex
   alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
@@ -45,11 +63,7 @@ defmodule Esr.Commands.User.Use do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/user:use requires args.workspace (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # Submitter is sourced from either the cmd top-level (slash plumbing
@@ -73,15 +87,15 @@ defmodule Esr.Commands.User.Use do
             {:ok, username}
 
           :not_found ->
-            {:error,
-             %{
-               "type" => "unknown_user",
-               "message" => "submitter #{cmd["submitted_by"]} has no esr-user binding"
-             }}
+            Render.error(__MODULE__.command_meta(), :unknown_user, %{
+              detail: "submitter #{cmd["submitted_by"]} has no esr-user binding"
+            })
         end
 
       true ->
-        {:error, %{"type" => "unknown_user", "message" => "no submitter context"}}
+        Render.error(__MODULE__.command_meta(), :unknown_user, %{
+          detail: "no submitter context"
+        })
     end
   end
 
@@ -127,13 +141,17 @@ defmodule Esr.Commands.User.Use do
       {:ok, ws_id} ->
         case WsRegistry.get_by_id(ws_id) do
           {:ok, _} -> {:ok, ws_id}
-          :not_found -> {:error, %{"type" => "unknown_workspace", "workspace" => ws_name}}
+          :not_found -> workspace_not_found(ws_name)
         end
 
       :not_found ->
-        {:error, %{"type" => "unknown_workspace", "workspace" => ws_name}}
+        workspace_not_found(ws_name)
     end
   rescue
-    ArgumentError -> {:error, %{"type" => "unknown_workspace", "workspace" => ws_name}}
+    ArgumentError -> workspace_not_found(ws_name)
+  end
+
+  defp workspace_not_found(ws_name) do
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{workspace: ws_name})
   end
 end

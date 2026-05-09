@@ -10,7 +10,24 @@ defmodule Esr.Commands.Cap.Show do
   Phase B-2 of the Phase 3/4 finish (2026-05-05).
   """
 
+  use Esr.Commands.Meta
+
+  command :cap_show do
+    slash         :none
+    category      "Capabilities"
+    description   "显示 principal 在 capabilities.yaml 里的条目"
+    permission    "cap.read"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :principal_id, required: true, doc: "principal id"
+
+    error :invalid_args, "cap_show requires args.principal_id (non-empty string)"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -34,11 +51,7 @@ defmodule Esr.Commands.Cap.Show do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "cap_show requires args.principal_id (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp render_entry(entry) do

@@ -12,6 +12,17 @@ defmodule Esr.Commands.Cap.List do
   `docs/notes/2026-05-05-cli-dual-rail.md`.
   """
 
+  use Esr.Commands.Meta
+
+  command :cap_list do
+    slash         :none
+    category      "Capabilities"
+    description   "列出所有已声明的 permission（来自内存中的 Esr.Resource.Permission.Registry）"
+    permission    "cap.read"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

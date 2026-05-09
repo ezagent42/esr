@@ -30,7 +30,29 @@ defmodule Esr.Commands.Cap.Grant do
     * `{:error, %{"type" => "invalid_args", ...}}` — malformed command.
   """
 
+  use Esr.Commands.Meta
+
+  command :cap_grant do
+    slash         "/cap:grant"
+    category      "Capabilities"
+    description   "授权 cap 给用户；session cap 仅接受 UUID 形式"
+    permission    "cap.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :cap,  required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
+    arg :user, required: true, doc: "principal id"
+
+    error :reserved_principal_id,    "'system:bootstrap' is a reserved sentinel; cannot be granted caps"
+    error :session_cap_requires_uuid, "%{detail}"
+    error :unknown_workspace,         "no workspace found in capability scope: %{permission}"
+    error :invalid_args,              "grant requires args.principal_id and args.permission (non-empty strings)"
+    error :write_failed,              "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -40,12 +62,7 @@ defmodule Esr.Commands.Cap.Grant do
     # sentinel principal_id cannot be granted caps via cap_grant — that
     # would defeat the whole "sentinel can't be poisoned" property the
     # slash-handler bypass relies on. Mirrors the FileLoader rejection.
-    {:error,
-     %{
-       "type" => "reserved_principal_id",
-       "message" =>
-         "'system:bootstrap' is a reserved sentinel; cannot be granted caps"
-     }}
+    Render.error(__MODULE__.command_meta(), :reserved_principal_id)
   end
 
   def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
@@ -55,24 +72,15 @@ defmodule Esr.Commands.Cap.Grant do
       do_grant(pid, translated_perm)
     else
       {:error, {:session_name_in_cap, msg}} ->
-        {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}}
+        Render.error(__MODULE__.command_meta(), :session_cap_requires_uuid, %{detail: msg})
 
       {:error, :unknown_workspace} ->
-        {:error,
-         %{
-           "type" => "unknown_workspace",
-           "message" => "no workspace found in capability scope: #{perm}"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{permission: perm})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "grant requires args.principal_id and args.permission (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp validate_session_cap(perm) do
@@ -103,7 +111,7 @@ defmodule Esr.Commands.Cap.Grant do
          }}
 
       {:error, reason} ->
-        {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
     end
   end
 
