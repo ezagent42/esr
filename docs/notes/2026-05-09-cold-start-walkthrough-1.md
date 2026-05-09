@@ -199,3 +199,46 @@ runtime 影响：当前 0（FileLoader 用 users.yaml 当 canonical，user.json 
 修法：`bind_user.ex` (跟 `unbind_user.ex`) 写完 users.yaml 后，调 `Esr.Entity.User.JsonWriter.update(uuid, fn r -> %{r | feishu_ids: ids} end)` 或类似 atomic 同步。
 
 **优先级**：低-中。属于 C5 同一族（user-bootstrap），归 issue 等同事 user-bootstrap PR pipeline。
+
+---
+
+### 新发现：**C11 — `/session:new` slash schema 缺 `dir` required 标注**
+
+`runtime/priv/slash-routes.default.yaml` 的 `/session:new` route 只声明 `name` + `agent` 两个 args（agent optional default cc）。但 `Esr.Commands.Session.New.execute/1` 在 line 117 调 `validate_args(agent, dir)`，`dir` 必填——nil 直接拒。
+
+`dir` 的真实来源是 agent type 自己的 params declaration（`runtime/test/esr/fixtures/agents/simple.yaml` cc agent 声明 `dir: required: true, type: path`）。但这层 params **不暴露给 slash help**——`/help` 跟 slash schema 都没说 dir 必填。
+
+**复跑实证**：群里发 `/session:new name=test1` 直接 `error: invalid_args`，没具体说哪个字段缺。
+
+**修法**：
+- 选 A: slash schema 静态声明 `dir: required: true` 同步进 slash-routes.default.yaml `/session:new` args
+- 选 B（更优）: slash dispatcher 动态合并 `agent.params` 进 slash help。`/help /session:new` 时把 cc agent 的 params 列出来
+- 都不动 → 错误信息至少要说"`dir` is missing"，不是泛 `invalid_args`
+
+**优先级**：中。冷启动 100% 撞，但有 dir 后能走通。
+
+### 新发现：**C12 — agents.yaml 没零配置 bootstrap，plugin manifest 不声明 default agent**
+
+冷启动后 `~/.esrd/<inst>/agents.yaml` 不存在，`Esr.Entity.Agent.Registry` 启动时空表。即便 `claude_code` plugin 已 enable + `claude_binary` 在 plugins.yaml 配好，ESR **不知道有"cc"这个 agent type 存在**——`/session:new agent=cc` 路径在 `fetch_agent("cc")` 处直接 `:not_found`。
+
+`/agent:add` 命令也救不了——它做的是给 session 加 agent **instance**（Phase 3 multi-agent），第一步就 `validate_agent_type` 查 type 是否在 Registry，发现不存在直接拒。
+
+`/plugin:agent-types` 的 docstring 说"every agent type declared by enabled plugins"——但 wiring 没做，它最终还是读 `Registry.list_agents/0`（即 agents.yaml 内容）。
+
+**当前操作员唯一路径**：手写 agents.yaml 或拷 `runtime/test/esr/fixtures/agents/simple.yaml`。
+
+**plugin / agents.yaml 当前职责重叠**：
+- `plugins.yaml.config.claude_code.claude_binary` — plugin 内部 launcher 用
+- `agents.yaml.agents.cc.pipeline` — `[FeishuChatProxy, CCProxy, CCProcess, PtyProcess]`
+
+但 `claude_code/manifest.yaml` 已声明 `declares.entities` 含 CCProcess + CCProxy——pipeline 的零件**已经在 plugin manifest**。agents.yaml 等于把 plugin 已知信息再写一遍。
+
+**修法（PR 候选）**：
+1. plugin manifest 加 `declares.default_agent: %{name: cc, pipeline: [...], params: [...]}`
+2. `Plugin.Loader.run_startup` / register 时把 default_agent 合并到 Agent Registry（cold-start 立刻有 cc type）
+3. 操作员可选 override：自己写 agents.yaml > plugin default
+4. 同时填 `/plugin:agent-types` 的 wiring：types from manifest + types from agents.yaml 合并展示
+
+→ 冷启动操作员**装 plugin 即得 agent type**，无需手写 agents.yaml。
+
+**优先级**：高。这是 plugin 系统的"零配置"目标的残块——已经做了 #281 + #282 的 user 端零配置，应该把 agent 端补齐。
