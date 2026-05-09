@@ -97,3 +97,21 @@ C1 已被 origin/dev #274 修，rebase 时 git 会自动识别 patch-equivalent 
 - `~/.esrd/default/`（runtime state，整个 archive 到 `~/.esrd/_archive-bootstrap-1/`）
 - `~/.esrd/*.sh` helper scripts（archive 到 `~/.esrd/_archive-bootstrap-1/scripts/`）
 - 旧 tmux esrd session killed
+
+---
+
+## 2026-05-09 复跑 #2 实跑观察（增补）
+
+### 新发现：**C8 — escript 跟 esrd 默认 ESRD_HOME 不对齐**
+
+**现象**：操作员跑 `./esr.sh user_add name=yao` 不带 `--env=prod` 也不 `export ESRD_HOME=~/.esrd` 时，escript 默默把 admin queue YAML 写到 `~/.esrd-dev/default/admin_queue/pending/`，但 esrd 在监听 `~/.esrd/default/admin_queue/pending/` → 命令永远不到 dispatcher → 60 秒 timeout，操作员看到 `esr exec: timed out after 60s waiting for <ulid>`。
+
+**root cause**：default 不一致。`runtime/lib/esr/cli/main.ex:cmd_exec_kind` 用 `~/.esrd-dev` fallback，`runtime/lib/esr/paths.ex:esrd_home/0` 用 `~/.esrd` fallback。两个文件用不同 default 做同一件事。
+
+**dev tip 状态**：未修。**第一跑遗漏没记**——当时全程都设了 `ESRD_HOME=~/.esrd`，没暴露这条。第二跑用户先没设，直接撞坑。
+
+**修法**：统一到一个 default。最简单是把 `cli/main.ex` 的 fallback 改成跟 paths.ex 一致的 `~/.esrd`，或者 esr.sh wrapper **总是** export `ESRD_HOME=~/.esrd`（默认 prod，操作员要 dev 时显式 `--env=dev` 走 `~/.esrd-dev`）。
+
+**优先级**：中。一次性踩到就知道，但 first-time 操作员**绝对**会撞，因为 `--env=prod` 既不是必填也不是默认显眼。
+
+PR 候选 6 → 现在变成 7 个：C2, C3, C4, C5(残留), C6, C7（如果 #281 没完全覆盖）, **C8**.
