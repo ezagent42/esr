@@ -226,7 +226,43 @@ defmodule Esr.Entity.SlashHandler do
             )
 
           _ ->
-            Esr.Slash.ReplyTarget.dispatch(target, {:text, "unknown command: #{head1}"}, ref)
+            # Phase 6 of unified-grammar migration: try bare-prefix help routing
+            # via Esr.Commands.ResourceHelp BEFORE falling through to the
+            # generic "unknown command" message. @deprecated_slashes priority
+            # is preserved by virtue of running in the outer case above.
+            case Esr.Resource.SlashRoute.Registry.lookup_prefix(text) do
+              {:resource_help, resource} ->
+                args =
+                  if resource, do: %{"resource" => resource}, else: %{}
+
+                {:ok, %{"text" => help_text}} =
+                  Esr.Commands.ResourceHelp.execute(%{"args" => args})
+
+                Esr.Slash.ReplyTarget.dispatch(target, {:text, help_text}, ref)
+
+              {:unknown_method, resource, method} ->
+                Esr.Slash.ReplyTarget.dispatch(
+                  target,
+                  {:text,
+                   "/#{resource}:#{method} 不存在；可用方法：用 /#{resource} 看清单"},
+                  ref
+                )
+
+              {:unknown_resource, name} ->
+                Esr.Slash.ReplyTarget.dispatch(
+                  target,
+                  {:text,
+                   "未知 resource: #{name}。用 / 看 top-level resources，/help 看完整清单。"},
+                  ref
+                )
+
+              :no_match ->
+                Esr.Slash.ReplyTarget.dispatch(
+                  target,
+                  {:text, "unknown command: #{head1}"},
+                  ref
+                )
+            end
         end
 
         {:noreply, state}
