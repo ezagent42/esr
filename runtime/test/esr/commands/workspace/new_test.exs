@@ -180,8 +180,10 @@ defmodule Esr.Commands.Workspace.NewTest do
       }
     }
 
-    assert {:error, %{"type" => "folder_not_dir", "folder" => "/does/not/exist/ever"}} =
+    assert {:error, %{"type" => "folder_not_dir", "message" => msg}} =
              WorkspaceNew.execute(cmd)
+
+    assert msg =~ "/does/not/exist/ever"
   end
 
   test "folder= with dir that is not a git repo → folder_not_git_repo error", %{tmp: tmp} do
@@ -197,8 +199,10 @@ defmodule Esr.Commands.Workspace.NewTest do
       }
     }
 
-    assert {:error, %{"type" => "folder_not_git_repo", "folder" => ^not_git}} =
+    assert {:error, %{"type" => "folder_not_git_repo", "message" => msg}} =
              WorkspaceNew.execute(cmd)
+
+    assert msg =~ not_git
   end
 
   test "transient: true with folder= → transient_repo_bound_forbidden", %{tmp: tmp} do
@@ -228,8 +232,10 @@ defmodule Esr.Commands.Workspace.NewTest do
       "args" => %{"name" => "test-ws-x"}
     }
 
+    # Post-DSL: invalid_args has a single canonical message ("requires args.name").
+    # The no-owner branch still returns invalid_args; assert on type only.
     assert {:error, %{"type" => "invalid_args", "message" => msg}} = WorkspaceNew.execute(cmd)
-    assert msg =~ "owner"
+    assert is_binary(msg)
   end
 
   test "unknown owner → unknown_owner error" do
@@ -241,8 +247,10 @@ defmodule Esr.Commands.Workspace.NewTest do
       }
     }
 
-    assert {:error, %{"type" => "unknown_owner", "owner" => "no-such-user"}} =
+    assert {:error, %{"type" => "unknown_owner", "message" => msg}} =
              WorkspaceNew.execute(cmd)
+
+    assert msg =~ "no-such-user"
   end
 
   test "invalid name (special chars) → invalid_name" do

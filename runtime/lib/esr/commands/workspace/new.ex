@@ -31,10 +31,36 @@ defmodule Esr.Commands.Workspace.New do
                             "registry_put_failed", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_new do
+    slash         "/workspace:new"
+    category      "Workspace"
+    description   "创建新 workspace。folder=<path> → repo-bound；不传 → ESR-bound (transient: 可选)"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,      required: true,  doc: "workspace 名（ASCII alnum + - + _）"
+    arg :folder,    required: false, doc: "绝对路径，必须是 git repo（repo-bound 模式）"
+    arg :transient, required: false, default: "false", doc: "true 时 ESR-bound 临时 ws"
+    arg :owner,     required: false, doc: "默认取 args.username（slash threading）"
+
+    error :invalid_args,                "workspace_new requires args.name (non-empty string)"
+    error :invalid_name,                "workspace name must be ASCII alnum + - + _ (matches ^[A-Za-z0-9][A-Za-z0-9_\\-]*$)"
+    error :unknown_owner,               "owner %{owner} not registered in users.yaml; run `esr exec user_add --name=%{owner}` first"
+    error :folder_not_dir,              "folder %{folder} is not a directory"
+    error :folder_not_git_repo,         "folder %{folder} is not a git repo"
+    error :transient_repo_bound_forbidden, "transient: true is not valid for repo-bound workspaces"
+    error :name_exists,                 "workspace %{name} already exists; pick another name or delete the old one (`esr exec workspace_remove --name=%{name}`)"
+    error :registry_put_failed,         "registry write failed: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -52,42 +78,22 @@ defmodule Esr.Commands.Workspace.New do
 
     cond do
       not Regex.match?(@name_re, name) ->
-        {:error,
-         %{
-           "type" => "invalid_name",
-           "name" => name,
-           "message" => "workspace name must be ASCII alnum + - + _ (matches #{inspect(@name_re)})"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_name)
 
       owner == "" ->
-        {:error,
-         %{
-           "type" => "invalid_args",
-           "message" =>
-             "workspace_new requires args.owner (or args.username from slash) — bind your Feishu identity first via `esr feishu bind`"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_args)
 
       not owner_exists?(owner) ->
-        {:error,
-         %{
-           "type" => "unknown_owner",
-           "owner" => owner,
-           "message" =>
-             "owner #{inspect(owner)} not registered in users.yaml; run `esr user add #{owner}` first"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_owner, %{owner: owner})
 
       folder != nil and not File.dir?(folder) ->
-        {:error, %{"type" => "folder_not_dir", "folder" => folder}}
+        Render.error(__MODULE__.command_meta(), :folder_not_dir, %{folder: folder})
 
       folder != nil and not File.exists?(Path.join(folder, ".git")) ->
-        {:error, %{"type" => "folder_not_git_repo", "folder" => folder}}
+        Render.error(__MODULE__.command_meta(), :folder_not_git_repo, %{folder: folder})
 
       folder != nil and transient ->
-        {:error,
-         %{
-           "type" => "transient_repo_bound_forbidden",
-           "message" => "transient: true is not valid for repo-bound workspaces"
-         }}
+        Render.error(__MODULE__.command_meta(), :transient_repo_bound_forbidden)
 
       true ->
         do_create_or_bind(name, owner, folder, transient, chat_id, app_id)
@@ -95,11 +101,7 @@ defmodule Esr.Commands.Workspace.New do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_new requires args.name (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
