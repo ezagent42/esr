@@ -1,833 +1,653 @@
-# slash-routes.yaml — declarative slash command routing.
-#
-# Schema:
-#   schema_version: 1
-#   slashes:
-#     "/<group>:<verb>":
-#       kind: <internal name>
-#       permission: <cap string or null>
-#       command_module: <Elixir module name>
-#       requires_workspace_binding: bool
-#       requires_user_binding: bool
-#       category: <group label for /help rendering>
-#       description: <user-facing text>
-#       args:                                          # list of {name, required, default}
-#         - { name: <kw>, required: bool }
-#   internal_kinds:
-#     <kind>:
-#       permission: <cap string>
-#       command_module: <module>
-#
-# Phase 6 (2026-05-07): hard colon-namespace cutover. ALL slashes renamed to
-# /<group>:<verb> form. Aliases field REMOVED from all entries (complete
-# switch, no aliases). Old forms return a deprecated-slash hint from
-# Esr.Entity.SlashHandler's @deprecated_slashes map.
-#
-# Exceptions (bare meta commands, no resource group):
-#   /help   — keep bare (meta-system)
-#   /doctor — keep bare (meta-system)
-#
-# `slashes:` entries are slash-callable (FAA / Telegram / etc. routes "/"-prefixed
-# inbound text here). `internal_kinds:` entries are kind-only — used by the
-# Esr.Admin.CommandQueue.Watcher CLI path and other internal callers; never
-# appear in /help output.
-
-schema_version: 1
-
-slashes:
-  "/help":
-    kind: help
-    permission: null
-    command_module: "Esr.Commands.Help"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "诊断"
-    description: "显示这份命令清单 / show command reference"
-    args: []
-
-  "/doctor":
-    kind: doctor
-    permission: null
-    command_module: "Esr.Commands.Doctor"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "诊断"
-    description: "状态检查 + 卡在哪步的 bootstrap 步骤建议"
-    args: []
-
-  "/user:whoami":
-    kind: user_whoami
-    permission: null
-    command_module: "Esr.Commands.Whoami"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "诊断"
-    description: "显示你的身份 + chat / workspace 绑定状态"
-    args: []
-
-  "/user:use":
-    kind: user_use
-    permission: "workspace.create"
-    command_module: "Esr.Commands.User.Use"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Users"
-    description: "设当前 user 的 default workspace（per-user 偏好；/session:new fallback 链中 user-default 这一层）"
-    args:
-      - { name: workspace, required: true }
-
-  "/pty:key":
-    kind: pty_key
-    permission: null
-    command_module: "Esr.Commands.Pty.Key"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "PTY"
-    description: "把特殊键盘输入（up/down/enter/esc/tab/c-X 等）发到 chat-current session 的 PTY"
-    args:
-      - { name: keys, required: true }
-
-  "/workspace:new":
-    kind: workspace_new
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.New"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "创建新 workspace，hybrid 存储：folder=<path> 走 repo-bound (<path>/.esr/workspace.json)；不传 folder= 走 ESR-bound ($ESRD_HOME/<inst>/workspaces/<name>/)"
-    args:
-      - { name: name, required: true }
-      - { name: folder, required: false }
-      - { name: transient, required: false, default: "false" }
-      - { name: owner, required: false }
-
-  "/workspace:list":
-    kind: workspace_list
-    permission: "session.list"
-    command_module: "Esr.Commands.Workspace.List"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "列所有已注册 workspace（ESR-bound + repo-bound）"
-    args: []
-
-  "/workspace:edit":
-    kind: workspace_edit
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.Edit"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "改 workspace.json 单个字段；set=<key>=<value>（settings 用扁平 dot-key；env.<NAME>=...；chats/folders 用专门 slash）"
-    args:
-      - { name: name, required: true }
-      - { name: set, required: true }
-
-  "/workspace:add-folder":
-    kind: workspace_add_folder
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.AddFolder"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo；name= 缺省时 fallback 到 chat-current → user-default）"
-    args:
-      - { name: name, required: false }
-      - { name: path, required: true }
-      - { name: folder_name, required: false }
-
-  "/workspace:remove-folder":
-    kind: workspace_remove_folder
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.RemoveFolder"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "从 workspace.folders[] 删一项（repo-bound 不能删 folders[0]，请用 /workspace:forget-repo）"
-    args:
-      - { name: name, required: true }
-      - { name: path, required: true }
-
-  "/workspace:bind-chat":
-    kind: workspace_bind_chat
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.BindChat"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "把 chat 加进 workspace.chats[]；app_id 默认从 envelope 注入"
-    args:
-      - { name: name, required: true }
-      - { name: chat_id, required: true }
-      - { name: app_id, required: false }
-      - { name: kind, required: false, default: "dm" }
-
-  "/workspace:unbind-chat":
-    kind: workspace_unbind_chat
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.UnbindChat"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "从 workspace.chats[] 删 chat；不传 app_id 则删所有该 chat_id 的项"
-    args:
-      - { name: name, required: true }
-      - { name: chat_id, required: true }
-      - { name: app_id, required: false }
-
-  "/workspace:remove":
-    kind: workspace_remove
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.Remove"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）"
-    args:
-      - { name: name, required: true }
-      - { name: force, required: false, default: "false" }
-
-  "/workspace:rename":
-    kind: workspace_rename
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.Rename"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "改 workspace.name（id 不变；caps + sessions 引用按 UUID 不动）"
-    args:
-      - { name: name, required: true }
-      - { name: new_name, required: true }
-
-  "/workspace:use":
-    kind: workspace_use
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.Use"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "设当前 chat 的 default workspace（per-chat 偏好；/session:new 解析时使用）"
-    args:
-      - { name: name, required: true }
-
-  "/workspace:import-repo":
-    kind: workspace_import_repo
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.ImportRepo"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "把一个带 .esr/workspace.json 的 git repo 加进 registered_repos.yaml；下次 esrd 启动会自动加载"
-    args:
-      - { name: path, required: true }
-
-  "/workspace:forget-repo":
-    kind: workspace_forget_repo
-    permission: "workspace.create"
-    command_module: "Esr.Commands.Workspace.ForgetRepo"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "从 registered_repos.yaml 移除 path（repo 内的 .esr/ 不动；如要删本地文件用 /workspace:remove）"
-    args:
-      - { name: path, required: true }
-
-  "/workspace:info":
-    kind: workspace_info
-    permission: "session.list"
-    command_module: "Esr.Commands.Workspace.Info"
-    requires_workspace_binding: true
-    requires_user_binding: true
-    category: "Workspace"
-    description: "显示 workspace 完整配置（id/owner/agent/folders/settings/env/chats/transient/location，含 <folders[0]>/.esr/topology.yaml overlay）"
-    args:
-      - { name: workspace, required: false }
-
-  "/workspace:describe":
-    kind: workspace_describe
-    permission: "session.list"
-    command_module: "Esr.Commands.Workspace.Describe"
-    # requires_workspace_binding: false on purpose. /workspace:describe
-    # uses the security-filtered allowlist in
-    # Esr.Resource.Workspace.Describe (excludes owner/start_cmd/env/
-    # users.yaml). Operators may inspect ANY workspace for diagnostic
-    # reasons; binding to one workspace would defeat the purpose. The
-    # data is already safe to expose; permission `session.list` gates
-    # raw access.
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Workspace"
-    description: "显示 workspace 的安全过滤后视图"
-    args:
-      - { name: workspace, required: true }
-
-  # /workspace:sessions DROPPED — workspace must not depend on session (Rule 6).
-  # Use /session:list instead (wired below).
-
-  # Phase C (resource-typed grammar rev-3 §4.2): /session:add-agent,
-  # /session:remove-agent, /session:set-primary renamed to the /agent:*
-  # family (defined below). slash_handler @deprecated_slashes points
-  # operators who still type the old form to the new name.
-
-  "/session:new":
-    kind: session_new_surface
-    permission: "session:default/create"
-    command_module: "Esr.Commands.Session.New"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "起一个新 session（自动 transient workspace）；name=<X> [agent=cc]"
-    args:
-      - { name: name, required: true }
-      - { name: agent, required: false, default: "cc" }
-
-  "/session:bind-chat":
-    kind: session_bind_chat
-    permission: "session.attach"
-    command_module: "Esr.Commands.Session.BindChat"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "把已有 session 加入当前 chat；UUID-only（用 /session:list 查 UUID）"
-    args:
-      - { name: session, required: true }
-
-  "/session:unbind-chat":
-    kind: session_unbind_chat
-    permission: null
-    command_module: "Esr.Commands.Session.UnbindChat"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "离开当前 session；session 保持运行；可省略 session= 默认 unbind 当前"
-    args:
-      - { name: session, required: false }
-
-  "/session:share":
-    kind: session_share_surface
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Session.Share"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "把 session 访问权授给其他用户；等价于 /cap:grant session:<uuid>/<perm>"
-    args:
-      - { name: session, required: true }
-      - { name: user, required: true }
-      - { name: perm, required: false, default: "attach" }
-
-  "/session:list":
-    kind: session_list
-    permission: "session:default/read"
-    command_module: "Esr.Commands.Session.List"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "列当前 chat 绑定的 session（无 workspace=）；带 workspace= 时按 workspace 列"
-    args:
-      - { name: workspace, required: false }
-
-  "/session:switch":
-    kind: session_switch
-    permission: null
-    command_module: "Esr.Commands.Session.Switch"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "切换 chat 当前 session（不解绑其它）；session=<uuid>"
-    args:
-      - { name: session, required: true }
-
-  "/session:end":
-    kind: session_end
-    permission: "session:default/end"
-    command_module: "Esr.Commands.Session.End"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Sessions"
-    description: "销毁 session；session_id=<uuid> 或 name=<n>"
-    args:
-      - { name: session_id, required: false }
-      - { name: name, required: false }
-
-  # /session:bind-workspace, /session:info — deferred
-  # (command modules not yet implemented; will land as Esr.Commands.Session.*)
-
-  "/agent:list":
-    kind: agent_list
-    permission: null
-    command_module: "Esr.Commands.Agent.List"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "列当前 chat 当前 session 内运行的 agent 实例"
-    args: []
-
-  "/agent:add":
-    kind: agent_add
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Add"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "向当前 session 添加 agent 实例；name 须全局唯一"
-    args:
-      - { name: type, required: true }
-      - { name: name, required: true }
-
-  "/agent:remove":
-    kind: agent_remove
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Remove"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "从当前 session 删除 agent；不能删 primary（先 set-primary）"
-    args:
-      - { name: name, required: true }
-
-  "/agent:set-primary":
-    kind: agent_set_primary
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.SetPrimary"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "设当前 session 的 primary agent"
-    args:
-      - { name: name, required: true }
-
-  "/agent:primary":
-    kind: agent_primary
-    permission: null
-    command_module: "Esr.Commands.Agent.Primary"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "显示当前 session 的 primary agent"
-    args: []
-
-  "/agent:rename":
-    kind: agent_rename
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Rename"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "Agents"
-    description: "重命名 agent；name=<旧> new_name=<新>"
-    args:
-      - { name: name, required: true }
-      - { name: new_name, required: true }
-
-  # Phase E (resource-typed grammar rev-4 §4.2): /pty:list + /pty:attach.
-  # Permissions are null — both are chat-bound (operator already in chat,
-  # PTY URL hardening is the next layer per spec rev-2 D3, tracked in
-  # docs/futures/todo.md as `pty_attach_security_hardening`).
-  "/pty:list":
-    kind: pty_list
-    permission: null
-    command_module: "Esr.Commands.Pty.List"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "PTY"
-    description: "列当前 chat 当前 session 的 PTY actor id"
-    args: []
-
-  "/pty:attach":
-    kind: pty_attach
-    permission: null
-    command_module: "Esr.Commands.Pty.Attach"
-    requires_workspace_binding: false
-    requires_user_binding: true
-    category: "PTY"
-    description: "返回 PTY 的 web URL；pty=<actor_id>"
-    args:
-      - { name: pty, required: true }
-
-  "/actor:list":
-    kind: actor_list
-    permission: null
-    command_module: "Esr.Commands.Actors.List"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "诊断"
-    description: "列所有 live Entity peer (<actor_id>  pid=<0.x.y>)"
-    args: []
-
-  "/plugin:list":
-    kind: plugin_list
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.List"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "列出已安装 plugin + enabled 状态"
-    args: []
-
-  "/plugin:agent-types":
-    kind: plugin_agent_types
-    permission: null
-    command_module: "Esr.Commands.Plugin.AgentTypes"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "列出 enabled plugins 声明的所有 agent 类型（旧 /agent:list 的语义）"
-    args: []
-
-  "/plugin:info":
-    kind: plugin_info
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Info"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "显示某 plugin 的 manifest 摘要"
-    args:
-      - { name: name, required: true }
-
-  "/plugin:install":
-    kind: plugin_install
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Install"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "从本地路径安装 plugin（Phase 1 only local-path）"
-    args:
-      - { name: source, required: true }
-
-  "/plugin:enable":
-    kind: plugin_enable
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Enable"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "启用 plugin（写 plugins.yaml；重启生效）"
-    args:
-      - { name: name, required: true }
-
-  "/plugin:disable":
-    kind: plugin_disable
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Disable"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "禁用 plugin（写 plugins.yaml；重启生效）"
-    args:
-      - { name: name, required: true }
-
-  "/plugin:set":
-    kind: plugin_set
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Set"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "写 plugin config key 到指定 layer（默认 global；重启生效）"
-    args:
-      - { name: plugin, required: true }
-      - { name: key, required: true }
-      - { name: value, required: true }
-      - { name: layer, required: false }
-
-  "/plugin:unset":
-    kind: plugin_unset
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Unset"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "删除 plugin config key（幂等；重启生效）"
-    args:
-      - { name: plugin, required: true }
-      - { name: key, required: true }
-      - { name: layer, required: false }
-
-  "/plugin:show-config":
-    kind: plugin_show_config
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.ShowConfig"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "显示 plugin config（默认 effective = 合并后；可选 layer=global|user|workspace）"
-    args:
-      - { name: plugin, required: true }
-      - { name: layer, required: false }
-
-  "/plugin:list-config":
-    kind: plugin_list_config
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.ListConfig"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "显示所有 enabled plugins 的 effective config"
-    args: []
-
-  "/plugin:reload":
-    kind: plugin_reload
-    permission: "plugin/manage"
-    command_module: "Esr.Commands.Plugin.Reload"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Plugins"
-    description: "触发指定 plugin 的 config reload（plugin manifest 必须 hot_reloadable: true；不传 plugin name = 报错，无 batch reload）"
-    args:
-      - { name: plugin, required: true }
-
-  "/cap:grant":
-    kind: cap_grant
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Grant"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Capabilities"
-    description: "授权 cap 给用户；session cap 仅接受 UUID 形式"
-    args:
-      - { name: cap, required: true }
-      - { name: user, required: true }
-
-  "/cap:revoke":
-    kind: cap_revoke
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Revoke"
-    requires_workspace_binding: false
-    requires_user_binding: false
-    category: "Capabilities"
-    description: "撤销用户的 cap；session cap 仅接受 UUID 形式"
-    args:
-      - { name: cap, required: true }
-      - { name: user, required: true }
-
-# Internal-only kinds. Submitted from CLI tools via
-# Esr.Admin.CommandQueue.Watcher (file-queue path); never appear as
-# slash commands. They share the same Dispatcher dispatch table — yaml
-# is the single source of truth for kind → {permission, command_module}.
+# AUTOGENERATED — DO NOT EDIT BY HAND.
+# Source: command_meta/0 in each Esr.Commands.* / Esr.Plugins.*.Commands.* module.
+# Regenerate: mix esr.gen_slash_routes
+# Drift in this file fails CI via mix esr.check_command_docs.
+---
 internal_kinds:
-  reload:
-    permission: "runtime.reload"
-    command_module: "Esr.Commands.Reload"
-
-  register_adapter:
-    permission: "adapter.register"
-    command_module: "Esr.Commands.RegisterAdapter"
-
-  session_branch_new:
-    permission: "session:default/create"
-    command_module: "Esr.Commands.Session.BranchNew"
-
-  session_switch:
-    permission: null
-    command_module: "Esr.Commands.Session.Switch"
-
-  session_branch_end:
-    permission: "session:default/end"
-    command_module: "Esr.Commands.Session.BranchEnd"
-
-  grant:
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Grant"
-
-  revoke:
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Revoke"
-
-  # Phase B-2 (2026-05-05): cap_* aliases for the escript dispatch
-  # path. The escript's parse_slash now produces kind=`cap_grant`
-  # from `esr cap grant ...` (sub-action concatenation); these
-  # entries route the cap_* names to the same modules as the bare
-  # grant/revoke kinds above. Read-only list/show/who-can are new.
-  # Note: cap_grant and cap_revoke are also slash-callable via /cap:grant
-  # and /cap:revoke (Phase 6). The same kind name is shared; slash table
-  # and kind table are separate ETS tables — no conflict.
-  cap_list:
-    permission: "cap.read"
-    command_module: "Esr.Commands.Cap.List"
-
-  cap_show:
-    permission: "cap.read"
-    command_module: "Esr.Commands.Cap.Show"
-
-  cap_who_can:
-    permission: "cap.read"
-    command_module: "Esr.Commands.Cap.WhoCan"
-
-  cap_grant:
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Grant"
-
-  cap_revoke:
-    permission: "cap.manage"
-    command_module: "Esr.Commands.Cap.Revoke"
-
-  # Phase B-3 (2026-05-05): user_* admin commands. The escript
-  # produces these kinds from `esr user list/add/remove/bind-feishu/
-  # unbind-feishu` via the sub-action concatenation (B-2's
-  # parse_admin_flags). `user_list` is read-only (no permission);
-  # mutations require `user.manage`.
-  user_list:
-    permission: null
-    command_module: "Esr.Commands.User.List"
-
-  user_add:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.Add"
-
-  user_remove:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.Remove"
-
-  # Audit #6 rev-3 (2026-05-08-plugin-command-registration spec §5.5):
-  # `user_bind_feishu` and `user_unbind_feishu` migrated to the feishu
-  # plugin as `feishu_bind` / `feishu_unbind` (cap `feishu/user-bind`).
-  # Declared by runtime/lib/esr/plugins/feishu/manifest.yaml.
-
-  user_use:
-    permission: "workspace.create"
-    command_module: "Esr.Commands.User.Use"
-
-  # 2026-05-09 zero-config bootstrap (spec § 3.6): switch the active CLI
-  # operator (writes operator.json). CLI-only — no slash entry; envelopes
-  # always identify the operator from inbound user_id, so a slash form
-  # would be a footgun. Sentinel does NOT bypass this; admin caps required.
-  user_switch:
-    permission: "user.manage"
-    command_module: "Esr.Commands.User.Switch"
-
-  # 2026-05-05 cli-channel→slash migration:
-  # `cli:deadletter/{list,flush}` migrated from EsrWeb.CliChannel into
-  # `Esr.Commands.Deadletter.{List,Flush}`. Permission `runtime.deadletter`
-  # registered in Esr.Resource.Permission.Bootstrap.
-  deadletter_list:
-    permission: "runtime.deadletter"
-    command_module: "Esr.Commands.Deadletter.List"
-
-  deadletter_flush:
-    permission: "runtime.deadletter"
-    command_module: "Esr.Commands.Deadletter.Flush"
-
-  debug_pause:
-    permission: "runtime.debug"
-    command_module: "Esr.Commands.Debug.Pause"
-
-  debug_resume:
-    permission: "runtime.debug"
-    command_module: "Esr.Commands.Debug.Resume"
-
-  # 2026-05-05 cli-channel→slash migration step 8: `adapters_list`
-  # is the file-read companion to the live `/actor:list` slash. Operators
-  # invoke it via escript as `esr adapters list` (sub-action
-  # concatenation produces kind=`adapters_list`). Pure read of
-  # `~/.esrd/<env>/adapters.yaml` — no runtime dependency beyond the
-  # Esr.Paths helper.
-  adapters_list:
-    permission: null
-    command_module: "Esr.Commands.Adapters.List"
-
-  actors_tree:
-    permission: null
-    command_module: "Esr.Commands.Actors.Tree"
-
   actors_inspect:
-    permission: null
-    command_module: "Esr.Commands.Actors.Inspect"
-
-  trace:
-    permission: null
-    command_module: "Esr.Commands.Trace"
-
-  # 2026-05-05 cli-channel→slash migration step 7: adapter family
-  # (start / refresh / remove / rename) gated by `adapter.manage`.
-  adapter_start:
-    permission: "adapter.manage"
-    command_module: "Esr.Commands.Adapter.Start"
-
+    command_module: Esr.Commands.Actors.Inspect
+    permission:
+  actors_tree:
+    command_module: Esr.Commands.Actors.Tree
+    permission:
   adapter_refresh:
-    permission: "adapter.manage"
-    command_module: "Esr.Commands.Adapter.Refresh"
-
+    command_module: Esr.Commands.Adapter.Refresh
+    permission: adapter.manage
   adapter_remove:
-    permission: "adapter.manage"
-    command_module: "Esr.Commands.Adapter.Remove"
-
+    command_module: Esr.Commands.Adapter.Remove
+    permission: adapter.manage
   adapter_rename:
-    permission: "adapter.manage"
-    command_module: "Esr.Commands.Adapter.Rename"
-
-  # Phase C (resource-typed grammar rev-3 §4.2 / spec C-2 trap):
-  # internal_kinds entries for /agent:* + /plugin:agent-types so the
-  # file-queue admin path dispatches them with the same permissions as
-  # the slash-callable entries above. permissions MUST match the
-  # `slashes:` table (otherwise the registry rebuild path silently
-  # drops one — see registry_test.exs:533 regression).
-  agent_add:
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Add"
-
-  agent_remove:
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Remove"
-
-  agent_set_primary:
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.SetPrimary"
-
-  agent_primary:
-    permission: null
-    command_module: "Esr.Commands.Agent.Primary"
-
-  agent_rename:
-    permission: "session:default/spawn"
-    command_module: "Esr.Commands.Agent.Rename"
-
-  plugin_agent_types:
-    permission: null
-    command_module: "Esr.Commands.Plugin.AgentTypes"
-
+    command_module: Esr.Commands.Adapter.Rename
+    permission: adapter.manage
+  adapter_start:
+    command_module: Esr.Commands.Adapter.Start
+    permission: adapter.manage
+  adapters_list:
+    command_module: Esr.Commands.Adapters.List
+    permission:
+  cap_list:
+    command_module: Esr.Commands.Cap.List
+    permission: cap.read
+  cap_show:
+    command_module: Esr.Commands.Cap.Show
+    permission: cap.read
+  cap_who_can:
+    command_module: Esr.Commands.Cap.WhoCan
+    permission: cap.read
   cross_app_test:
-    permission: "cross_app_test.invoke"
-    command_module: "Esr.Commands.CrossAppTest"
-
-  # Legacy session kinds (Scope.*) — kept for internal queue path compatibility.
-  # The slash-callable forms are now /session:* (Phase 6 colon-namespace).
-  session_new:
-    permission: "session:default/create"
-    command_module: "Esr.Commands.Session.New"
-
-  session_end:
-    permission: "session:default/end"
-    command_module: "Esr.Commands.Session.End"
-
-  session_list:
-    permission: "session:default/read"
-    command_module: "Esr.Commands.Session.List"
-
-  # Phase D (resource-typed grammar rev-3 §4.2 + §4.3): chat-binding
-  # commands renamed from /session:{attach,detach} to /session:{bind,unbind}-chat.
-  # `session.attach` permission gates the slash-table pre-gate; the
-  # per-session cap (session:<uuid>/{attach,admin}) is checked in
-  # Esr.Commands.Session.BindChat.execute/1. Unbind is never gated
-  # (you can always leave a session you're attached to).
-  session_bind_chat:
-    permission: "session.attach"
-    command_module: "Esr.Commands.Session.BindChat"
-
-  session_unbind_chat:
-    permission: null
-    command_module: "Esr.Commands.Session.UnbindChat"
-
-  # Phase E (resource-typed grammar rev-4 §4.2): pty_list + pty_attach
-  # internal_kinds rows mirror the slash table above so the file-queue
-  # admin path dispatches them with the same null permission. Permissions
-  # MUST match the `slashes:` table (otherwise the registry rebuild path
-  # silently drops one — see registry_test.exs priv-default smoke test).
-  pty_list:
-    permission: null
-    command_module: "Esr.Commands.Pty.List"
-
-  pty_attach:
-    permission: null
-    command_module: "Esr.Commands.Pty.Attach"
+    command_module: Esr.Commands.CrossAppTest
+    permission: cross_app_test.invoke
+  deadletter_flush:
+    command_module: Esr.Commands.Deadletter.Flush
+    permission: runtime.deadletter
+  deadletter_list:
+    command_module: Esr.Commands.Deadletter.List
+    permission: runtime.deadletter
+  debug_pause:
+    command_module: Esr.Commands.Debug.Pause
+    permission: runtime.debug
+  debug_resume:
+    command_module: Esr.Commands.Debug.Resume
+    permission: runtime.debug
+  key:
+    command_module: Esr.Commands.Key
+    permission:
+  register_adapter:
+    command_module: Esr.Commands.RegisterAdapter
+    permission: adapter.register
+  reload:
+    command_module: Esr.Commands.Reload
+    permission: runtime.reload
+  session_branch_end:
+    command_module: Esr.Commands.Session.BranchEnd
+    permission: session:default/end
+  session_branch_new:
+    command_module: Esr.Commands.Session.BranchNew
+    permission: session:default/create
+  trace:
+    command_module: Esr.Commands.Trace
+    permission:
+  user_add:
+    command_module: Esr.Commands.User.Add
+    permission: user.manage
+  user_list:
+    command_module: Esr.Commands.User.List
+    permission:
+  user_remove:
+    command_module: Esr.Commands.User.Remove
+    permission: user.manage
+  user_switch:
+    command_module: Esr.Commands.User.Switch
+    permission: user.manage
+schema_version: 1
+slashes:
+  /actor:list:
+    args: []
+    category: 诊断
+    command_module: Esr.Commands.Actors.List
+    description: 列所有 live Entity peer (<actor_id>  pid=<0.x.y>)
+    kind: actor_list
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /agent:add:
+    args:
+      - name: type
+        required: true
+      - name: name
+        required: true
+    category: Agents
+    command_module: Esr.Commands.Agent.Add
+    description: 向当前 session 添加 agent 实例；name 须全局唯一
+    kind: agent_add
+    permission: session:default/spawn
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /agent:list:
+    args: []
+    category: Agents
+    command_module: Esr.Commands.Agent.List
+    description: 列当前 chat 当前 session 内运行的 agent 实例
+    kind: agent_list
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /agent:primary:
+    args: []
+    category: Agents
+    command_module: Esr.Commands.Agent.Primary
+    description: 显示当前 session 的 primary agent
+    kind: agent_primary
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /agent:remove:
+    args:
+      - name: name
+        required: true
+    category: Agents
+    command_module: Esr.Commands.Agent.Remove
+    description: 从当前 session 删除 agent；不能删 primary（先 set-primary）
+    kind: agent_remove
+    permission: session:default/spawn
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /agent:rename:
+    args:
+      - name: name
+        required: true
+      - name: new_name
+        required: true
+    category: Agents
+    command_module: Esr.Commands.Agent.Rename
+    description: 重命名 agent；name=<旧> new_name=<新>
+    kind: agent_rename
+    permission: session:default/spawn
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /agent:set-primary:
+    args:
+      - name: name
+        required: true
+    category: Agents
+    command_module: Esr.Commands.Agent.SetPrimary
+    description: 设当前 session 的 primary agent
+    kind: agent_set_primary
+    permission: session:default/spawn
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /cap:grant:
+    args:
+      - name: cap
+        required: true
+      - name: user
+        required: true
+    category: Capabilities
+    command_module: Esr.Commands.Cap.Grant
+    description: 授权 cap 给用户；session cap 仅接受 UUID 形式
+    kind: cap_grant
+    permission: cap.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /cap:revoke:
+    args:
+      - name: cap
+        required: true
+      - name: user
+        required: true
+    category: Capabilities
+    command_module: Esr.Commands.Cap.Revoke
+    description: 撤销用户的 cap；session cap 仅接受 UUID 形式
+    kind: cap_revoke
+    permission: cap.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /doctor:
+    args:
+      - default: chat
+        name: mode
+        required: false
+    category: 诊断
+    command_module: Esr.Commands.Doctor
+    description: 状态检查 + 卡在哪步的 bootstrap 步骤建议
+    kind: doctor
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /help:
+    args: []
+    category: 诊断
+    command_module: Esr.Commands.Help
+    description: 显示这份命令清单 / show command reference
+    kind: help
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:agent-types:
+    args: []
+    category: Plugins
+    command_module: Esr.Commands.Plugin.AgentTypes
+    description: 列出 enabled plugins 声明的所有 agent 类型（旧 /agent:list 的语义）
+    kind: plugin_agent_types
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:disable:
+    args:
+      - name: name
+        required: true
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Disable
+    description: 禁用 plugin（写 plugins.yaml；重启生效）
+    kind: plugin_disable
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:enable:
+    args:
+      - name: name
+        required: true
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Enable
+    description: 启用 plugin（写 plugins.yaml；重启生效）
+    kind: plugin_enable
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:info:
+    args:
+      - name: name
+        required: true
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Info
+    description: 显示某 plugin 的 manifest 摘要
+    kind: plugin_info
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:install:
+    args:
+      - name: source
+        required: true
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Install
+    description: 从本地路径安装 plugin（Phase 1 only local-path）
+    kind: plugin_install
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:list:
+    args: []
+    category: Plugins
+    command_module: Esr.Commands.Plugin.List
+    description: 列出已安装 plugin + enabled 状态
+    kind: plugin_list
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:list-config:
+    args: []
+    category: Plugins
+    command_module: Esr.Commands.Plugin.ListConfig
+    description: 显示所有 enabled plugins 的 effective config
+    kind: plugin_list_config
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:reload:
+    args:
+      - name: plugin
+        required: true
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Reload
+    description: '触发指定 plugin 的 config reload（plugin manifest 必须 hot_reloadable: true；不传 plugin name = 报错，无 batch reload）'
+    kind: plugin_reload
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:set:
+    args:
+      - name: plugin
+        required: true
+      - name: key
+        required: true
+      - name: value
+        required: true
+      - name: layer
+        required: false
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Set
+    description: 写 plugin config key 到指定 layer（默认 global；重启生效）
+    kind: plugin_set
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:show-config:
+    args:
+      - name: plugin
+        required: true
+      - name: layer
+        required: false
+    category: Plugins
+    command_module: Esr.Commands.Plugin.ShowConfig
+    description: 显示 plugin config（默认 effective = 合并后；可选 layer=global|user|workspace）
+    kind: plugin_show_config
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /plugin:unset:
+    args:
+      - name: plugin
+        required: true
+      - name: key
+        required: true
+      - name: layer
+        required: false
+    category: Plugins
+    command_module: Esr.Commands.Plugin.Unset
+    description: 删除 plugin config key（幂等；重启生效）
+    kind: plugin_unset
+    permission: plugin/manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /pty:attach:
+    args:
+      - name: pty
+        required: true
+    category: PTY
+    command_module: Esr.Commands.Pty.Attach
+    description: 返回 PTY 的 web URL；pty=<actor_id>
+    kind: pty_attach
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /pty:key:
+    args:
+      - name: keys
+        required: true
+    category: PTY
+    command_module: Esr.Commands.Pty.Key
+    description: 把特殊键盘输入（up/down/enter/esc/tab/c-X 等）发到 chat-current session 的 PTY
+    kind: pty_key
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /pty:list:
+    args: []
+    category: PTY
+    command_module: Esr.Commands.Pty.List
+    description: 列当前 chat 当前 session 的 PTY actor id
+    kind: pty_list
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:bind-chat:
+    args:
+      - name: session
+        required: true
+    category: Sessions
+    command_module: Esr.Commands.Session.BindChat
+    description: 把已有 session 加入当前 chat;UUID-only(用 /session:list 查 UUID)
+    kind: session_bind_chat
+    permission: session.attach
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:end:
+    args:
+      - name: session_id
+        required: false
+      - name: name
+        required: false
+    category: Sessions
+    command_module: Esr.Commands.Session.End
+    description: 销毁 session;session_id=<uuid> 或 name=<n>
+    kind: session_end
+    permission: session:default/end
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:list:
+    args:
+      - name: workspace
+        required: false
+    category: Sessions
+    command_module: Esr.Commands.Session.List
+    description: 列当前 chat 绑定的 session(无 workspace=);带 workspace= 时按 workspace 列
+    kind: session_list
+    permission: session:default/read
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:new:
+    args:
+      - name: name
+        required: true
+      - default: cc
+        name: agent
+        required: false
+    category: Sessions
+    command_module: Esr.Commands.Session.New
+    description: 起一个新 session(自动 transient workspace);name=<X> [agent=cc]
+    kind: session_new
+    permission: session:default/create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:share:
+    args:
+      - name: session
+        required: true
+      - name: user
+        required: true
+      - default: attach
+        name: perm
+        required: false
+    category: Sessions
+    command_module: Esr.Commands.Session.Share
+    description: 把 session 访问权授给其他用户;等价于 /cap:grant session:<uuid>/<perm>
+    kind: session_share
+    permission: cap.manage
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:switch:
+    args:
+      - name: session
+        required: true
+    category: Sessions
+    command_module: Esr.Commands.Session.Switch
+    description: 切换 chat 当前 session(不解绑其它);session=<uuid>
+    kind: session_switch
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /session:unbind-chat:
+    args:
+      - name: session
+        required: false
+    category: Sessions
+    command_module: Esr.Commands.Session.UnbindChat
+    description: 离开当前 session;session 保持运行;可省略 session= 默认 unbind 当前
+    kind: session_unbind_chat
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /user:use:
+    args:
+      - name: workspace
+        required: true
+    category: Users
+    command_module: Esr.Commands.User.Use
+    description: 设当前 user 的 default workspace（per-user 偏好；/session:new fallback 链中 user-default 这一层）
+    kind: user_use
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /user:whoami:
+    args: []
+    category: 诊断
+    command_module: Esr.Commands.Whoami
+    description: 显示你的身份 + chat / workspace 绑定状态
+    kind: user_whoami
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /workspace:add-folder:
+    args:
+      - name: name
+        required: false
+      - name: path
+        required: true
+      - name: folder_name
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.AddFolder
+    description: 追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo；name= 缺省时 fallback 到 chat-current → user-default）
+    kind: workspace_add_folder
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:bind-chat:
+    args:
+      - name: name
+        required: true
+      - name: chat_id
+        required: true
+      - name: app_id
+        required: false
+      - default: dm
+        name: kind
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.BindChat
+    description: 把 chat 加进 workspace.chats[]；app_id 默认从 envelope 注入
+    kind: workspace_bind_chat
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:describe:
+    args:
+      - name: workspace
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Describe
+    description: 显示 workspace 的安全过滤后视图
+    kind: workspace_describe
+    permission: session.list
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:edit:
+    args:
+      - name: name
+        required: true
+      - name: set
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Edit
+    description: 改 workspace.json 单个字段；set=<key>=<value>（settings 用扁平 dot-key；env.<NAME>=...；chats/folders 用专门 slash）
+    kind: workspace_edit
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:forget-repo:
+    args:
+      - name: path
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.ForgetRepo
+    description: 从 registered_repos.yaml 移除 path（repo 内的 .esr/ 不动；如要删本地文件用 /workspace:remove）
+    kind: workspace_forget_repo
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:import-repo:
+    args:
+      - name: path
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.ImportRepo
+    description: 把一个带 .esr/workspace.json 的 git repo 加进 registered_repos.yaml；下次 esrd 启动会自动加载
+    kind: workspace_import_repo
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:info:
+    args:
+      - name: workspace
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Info
+    description: 显示 workspace 完整配置（id/owner/agent/folders/settings/env/chats/transient/location，含 <folders[0]>/.esr/topology.yaml overlay）
+    kind: workspace_info
+    permission: session.list
+    requires_user_binding: true
+    requires_workspace_binding: true
+  /workspace:list:
+    args: []
+    category: Workspace
+    command_module: Esr.Commands.Workspace.List
+    description: 列所有已注册 workspace（ESR-bound + repo-bound）
+    kind: workspace_list
+    permission: session.list
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:new:
+    args:
+      - name: name
+        required: true
+      - name: folder
+        required: false
+      - default: 'false'
+        name: transient
+        required: false
+      - name: owner
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.New
+    description: '创建新 workspace。folder=<path> → repo-bound；不传 → ESR-bound (transient: 可选)'
+    kind: workspace_new
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:remove:
+    args:
+      - name: name
+        required: true
+      - default: 'false'
+        name: force
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Remove
+    description: 删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）
+    kind: workspace_remove
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:remove-folder:
+    args:
+      - name: name
+        required: true
+      - name: path
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.RemoveFolder
+    description: 从 workspace.folders[] 删一项（repo-bound 不能删 folders[0]，请用 /workspace:forget-repo）
+    kind: workspace_remove_folder
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:rename:
+    args:
+      - name: name
+        required: true
+      - name: new_name
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Rename
+    description: 改 workspace.name（id 不变；caps + sessions 引用按 UUID 不动）
+    kind: workspace_rename
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:unbind-chat:
+    args:
+      - name: name
+        required: true
+      - name: chat_id
+        required: true
+      - name: app_id
+        required: false
+    category: Workspace
+    command_module: Esr.Commands.Workspace.UnbindChat
+    description: 从 workspace.chats[] 删 chat；不传 app_id 则删所有该 chat_id 的项
+    kind: workspace_unbind_chat
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
+  /workspace:use:
+    args:
+      - name: name
+        required: true
+    category: Workspace
+    command_module: Esr.Commands.Workspace.Use
+    description: 设当前 chat 的 default workspace（per-chat 偏好；/session:new 解析时使用）
+    kind: workspace_use
+    permission: workspace.create
+    requires_user_binding: true
+    requires_workspace_binding: false
