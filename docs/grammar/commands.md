@@ -12,6 +12,64 @@ directly.
 
 ## Adapters
 
+### `adapter_disable`
+
+**slash:** `/adapter:disable`
+
+**module:** `Esr.Commands.Adapter.Disable`
+
+**permission:** `adapter.manage`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 暂停 adapter 实例（移到 adapters/_disabled/）— 不会删配置；可用 /adapter:enable 恢复
+
+**args:**
+  - `name` (required) — adapter instance name
+
+**errors:**
+  - `invalid_args` — adapter:disable requires args.name
+  - `not_found` — no adapter %{name}
+  - `already_disabled` — adapter %{name} is already disabled
+  - `disable_failed` — %{detail}
+
+### `adapter_enable`
+
+**slash:** `/adapter:enable`
+
+**module:** `Esr.Commands.Adapter.Enable`
+
+**permission:** `adapter.manage`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 恢复 adapter 实例（从 adapters/_disabled/ 移回 adapters/）+ refresh
+
+**args:**
+  - `name` (required) — adapter instance name
+
+**errors:**
+  - `invalid_args` — adapter:enable requires args.name
+  - `not_disabled` — adapter %{name} is not in adapters/_disabled/
+  - `already_enabled` — adapter %{name} is already enabled
+  - `enable_failed` — %{detail}
+
+### `adapter_list`
+
+**slash:** `/adapter:list`
+
+**module:** `Esr.Commands.Adapter.List`
+
+**permission:** `null`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 列 adapters/ 下的 adapter 实例（type / app_id）+ adapters/_disabled/ 下的暂停实例
+
+**args:** _none_
+
+**errors:** _none declared_
+
 ### `adapter_refresh`
 
 _internal kind only — not slash-callable_
@@ -90,22 +148,6 @@ _internal kind only — not slash-callable_
 **errors:**
   - `invalid_args` — adapter_start requires args.type and args.instance_id
   - `spawn_failed` — ensure_adapter failed: %{detail}
-
-### `adapters_list`
-
-_internal kind only — not slash-callable_
-
-**module:** `Esr.Commands.Adapters.List`
-
-**permission:** `null`
-
-**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
-
-**description:** 列 adapters.yaml 配置的 adapter 实例（type / app_id / base_url）
-
-**args:** _none_
-
-**errors:** _none declared_
 
 ### `register_adapter`
 

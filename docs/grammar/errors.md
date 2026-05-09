@@ -13,6 +13,14 @@ Generated from `command_meta/0`; do not edit directly.
 | `actor_not_found` | `actors_inspect` | no actor %{actor_id} |
 | `field_not_present` | `actors_inspect` | actor %{actor_id} has no field %{field} |
 | `invalid_args` | `actors_inspect` | actors_inspect requires args.actor_id |
+| `already_disabled` | `adapter_disable` | adapter %{name} is already disabled |
+| `disable_failed` | `adapter_disable` | %{detail} |
+| `invalid_args` | `adapter_disable` | adapter:disable requires args.name |
+| `not_found` | `adapter_disable` | no adapter %{name} |
+| `already_enabled` | `adapter_enable` | adapter %{name} is already enabled |
+| `enable_failed` | `adapter_enable` | %{detail} |
+| `invalid_args` | `adapter_enable` | adapter:enable requires args.name |
+| `not_disabled` | `adapter_enable` | adapter %{name} is not in adapters/_disabled/ |
 | `invalid_args` | `adapter_remove` | adapter_remove requires args.instance_id |
 | `unknown_instance` | `adapter_remove` | no adapter %{instance_id} |
 | `invalid_args` | `adapter_rename` | adapter_rename requires args.old_instance_id and args.new_instance_id |
