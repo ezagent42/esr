@@ -441,10 +441,18 @@ defmodule Esr.Application do
   # (`app_secret missing from AdapterConfig`) and crash-loops if we
   # forward such config straight through. Fall back to the secret
   # stored in plugins.yaml's feishu config (the operator-side
-  # configuration path). Permissive on miss — log a warning and let
+  # configuration path). Permissive on miss — log an error and let
   # the spawn proceed; the operator can re-run register_adapter or
   # set feishu.app_secret in plugins.yaml to recover. We do NOT
   # crash boot just because one adapter row is incomplete.
+  #
+  # Multi-tenant caveat: plugins.yaml carries a single
+  # `feishu.app_secret`. Deployments running multiple feishu adapters
+  # with DIFFERENT Feishu apps cannot rely on this fallback for both —
+  # only adapters whose secret matches the plugins.yaml value will
+  # authenticate. Operators with multiple feishu apps should re-run
+  # `register_adapter` for each so each adapters.yaml row carries its
+  # own secret.
   defp ensure_app_secret("feishu", config) do
     case Map.get(config, "app_secret") do
       secret when is_binary(secret) and secret != "" ->
@@ -464,8 +472,10 @@ defmodule Esr.Application do
             Map.put(config, "app_secret", s)
 
           _ ->
-            Logger.warning(
-              "application: app_secret missing for feishu adapter; sidecar will fail to authenticate"
+            Logger.error(
+              "application: app_secret missing for feishu adapter; sidecar will fail to authenticate. " <>
+                "Re-run `esr exec register_adapter --type=feishu --name=<n> --app_id=<id> --app_secret=<s>` " <>
+                "OR set feishu.app_secret in plugins.yaml."
             )
 
             config
