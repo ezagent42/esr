@@ -131,7 +131,7 @@ defmodule Esr.Resource.Session.Registry do
     # session uuid so the on-disk record matches the supervisor-tree sid.
     # When omitted, mint a fresh v4 — preserves the original `/2` contract.
     uuid =
-      Map.get(attrs, :session_id) || Map.get(attrs, "session_id") || generate_uuid()
+      Map.get(attrs, :session_id) || Map.get(attrs, "session_id") || Esr.Resource.Session.Id.new()
 
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -266,8 +266,6 @@ defmodule Esr.Resource.Session.Registry do
         {:error, {:session_json_missing, reason}}
     end
   end
-
-  defp generate_uuid, do: UUID.uuid4()
 
   defp scan_sessions_dir do
     base = Paths.sessions_dir()
