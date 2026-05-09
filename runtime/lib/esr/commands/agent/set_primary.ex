@@ -10,8 +10,25 @@ defmodule Esr.Commands.Agent.SetPrimary do
   deleted in Task C.9.
   """
 
+  use Esr.Commands.Meta
+
+  command :agent_set_primary do
+    slash         "/agent:set-primary"
+    category      "Agents"
+    description   "设当前 session 的 primary agent"
+    permission    "session:default/spawn"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "agent name to promote to primary"
+
+    error :not_found,    "no agent named '%{name}' in session '%{session_id}'"
+    error :invalid_args, "/agent:set-primary requires args.session_id and args.name (non-empty strings)"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.Agent.InstanceRegistry
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -27,19 +44,11 @@ defmodule Esr.Commands.Agent.SetPrimary do
          }}
 
       {:error, :not_found} ->
-        {:error,
-         %{
-           "type" => "not_found",
-           "message" => "no agent named '#{name}' in session '#{sid}'"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_found, %{name: name, session_id: sid})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/agent:set-primary requires args.session_id and args.name (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

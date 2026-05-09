@@ -6,8 +6,29 @@ defmodule Esr.Commands.Agent.Rename do
   Args: `session_id`, `name`, `new_name` (all required).
   """
 
+  use Esr.Commands.Meta
+
+  command :agent_rename do
+    slash         "/agent:rename"
+    category      "Agents"
+    description   "重命名 agent；name=<旧> new_name=<新>"
+    permission    "session:default/spawn"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,     required: true, doc: "current agent name"
+    arg :new_name, required: true, doc: "new agent name"
+
+    error :not_found, "agent '%{name}' not found in session '%{session_id}'"
+    error :duplicate_agent_name,
+          "agent '%{new_name}' already exists in session '%{session_id}' (pick a different name)"
+    error :invalid_args,
+          "/agent:rename requires args.session_id, args.name, and args.new_name"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.Agent.InstanceRegistry
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -26,28 +47,17 @@ defmodule Esr.Commands.Agent.Rename do
          }}
 
       {:error, :not_found} ->
-        {:error,
-         %{
-           "type" => "not_found",
-           "message" => "agent '#{name}' not found in session '#{sid}'"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_found, %{name: name, session_id: sid})
 
       {:error, :duplicate_agent_name} ->
-        {:error,
-         %{
-           "type" => "duplicate_agent_name",
-           "message" =>
-             "agent '#{new_name}' already exists in session '#{sid}' (pick a different name)"
-         }}
+        Render.error(__MODULE__.command_meta(), :duplicate_agent_name, %{
+          new_name: new_name,
+          session_id: sid
+        })
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "/agent:rename requires args.session_id, args.name, and args.new_name"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end
