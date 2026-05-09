@@ -107,42 +107,21 @@ Top-level keys: `type` (required string), `config` (required map). Adapter `name
 
 ## 4. Module surface
 
-### 4.1 `Esr.Plugin.Config` (existing module — internal change only)
+### 4.1 `Esr.Plugin.Config` (existing module — internal change, **API names unchanged**)
 
-3-layer merge order, **last-wins**: `global → user → workspace`. Workspace overrides user, user overrides global. (Aligns with VS Code / Git config conventions.)
+3-layer merge order, **last-wins**: `global → user → workspace`. Workspace overrides user, user overrides global.
 
-```elixir
-@spec get(plugin_name :: String.t(), key :: String.t(), opts :: keyword()) :: any() | nil
-def get(name, key, opts \\ [])
-# opts:
-#   :global_path     (default: from Esr.Paths.plugin_global_dir/1)
-#   :user_path       (default: nil — skip user layer if not provided)
-#   :workspace_path  (default: nil — skip workspace layer if not provided)
-#   :default         (default: nil — returned if all 3 layers miss)
+The existing public API stays — only internal path resolution changes from `<layer>/plugins.yaml :config[name]` to `<layer>/plugins/<name>/config.yaml`. Existing callers (`commands/plugin/{set,unset,show_config,list_config}.ex`, `plugin/{config_snapshot,loader}.ex`) keep working without code changes.
 
-@spec set(plugin_name :: String.t(), key :: String.t(), value :: any(), layer, opts) :: :ok
-      when layer: :global | {:user, uuid :: String.t()} | {:workspace, root :: Path.t()}
-def set(name, key, value, layer, opts \\ [])
+Existing API (kept verbatim): `get/3`, `resolve/2`, `store_layer/4`, `delete_layer/3`.
 
-@spec list_layers(plugin_name :: String.t(), opts :: keyword()) :: [{layer, Path.t() | nil}]
-def list_layers(name, opts \\ [])  # debug aid: returns all 3 paths and which exist
-```
+Empty config dir → that layer contributes nothing; never an error.
 
-Empty config dir (e.g., `plugins/feishu/` exists but no `config.yaml`) → that layer contributes nothing; merge falls through to next layer or default. Never an error.
+**Malformed yaml** at any layer **raises** (not silent fall-through). Broken `config.yaml` is operator error worth surfacing immediately.
 
-**Malformed yaml** at any layer **raises** (not silent fall-through). A broken `config.yaml` is operator error worth surfacing immediately; silent skip would mask it and produce confusing "default value applied" behavior at the call site.
+### 4.2 `Esr.Plugin.PluginsYaml` (already enabled-only — small addition)
 
-### 4.2 `Esr.Plugin.PluginsYaml` (existing — slimmer)
-
-Strip all `:config` handling. Keep only enabled-list operations:
-
-```elixir
-def list_enabled(opts \\ [])           # read enabled: [...]
-def enable(name, opts \\ [])           # add to enabled list (atomic write)
-def disable(name, opts \\ [])          # remove from enabled list
-```
-
-Reading a `plugins.yaml` that contains `:config` or any non-`enabled` top-level key → **raises** at read time. (No boot gate — the raise surfaces wherever the read is first called.)
+dev's `Esr.Plugin.PluginsYaml` is already enabled-only (`read/0`, `enable/1`, `disable/1`; no `:config` handling). Only addition: reading a `plugins.yaml` that contains `:config` or any non-`enabled` top-level key **raises** at read time. No boot gate.
 
 ### 4.3 `Esr.Adapters` (new module)
 
@@ -181,9 +160,17 @@ def disable(name, opts \\ [])          # mv adapters/<name> adapters/_disabled/<
 
 @spec enable(instance_name, opts) :: :ok | {:error, term}
 def enable(name, opts \\ [])           # mv adapters/_disabled/<name> adapters/<name>
+
+@spec rename(old_name, new_name, opts) :: :ok | {:error, term}
+def rename(old_name, new_name, opts \\ [])  # mv adapters/<old> adapters/<new>; new_name validated
 ```
 
-All writes go through `Esr.Yaml.Writer.write/2` (the canonical atomic writer used by `register_adapter.ex:112` and `workspaces.yaml`). Do not roll a custom tmp+rename — the shared writer already handles FSEvents-friendly atomic semantics on macOS (CLAUDE.md gotcha #2).
+`opts` accepts `:home` (test override for `Esr.Paths.runtime_home/0`).
+
+**Atomicity (rev-3 correction)**: `Esr.Yaml.Writer.write/2` is **NOT atomic** — it's plain `File.write` (overwrite-in-place). The atomic tmp+rename pattern lives in `Esr.Plugin.PluginsYaml` and `Esr.Plugin.Config.update_layer_file`. For `Esr.Adapters`:
+- `add/3` (writes new `config.yaml`): use tmp+rename. Either inline (mirroring `PluginsYaml`) OR extract a new `Esr.Yaml.Writer.write_atomic/2` helper. **Preferred: extraction** (canonical home, future re-use).
+- `disable/1` and `enable/1`: POSIX `rename(2)` on same fs is OS-atomic. No extra work.
+- `remove/1` (`rm -rf`): atomicity not relevant.
 
 ### 4.4 `Esr.Paths` (existing — additions)
 
@@ -204,14 +191,32 @@ def plugins_yaml               # still global enabled-list path, just no :config
 
 ### 4.5 Consumer-side changes
 
-Files that currently read the old layout and need to switch to the new module surface:
+Review pass #1 expanded this from 4 → 11 rows.
+
+**Adapter storage callers** (all touched by `Esr.Paths.adapters_yaml/0` deletion):
 
 | File | Current call | New call |
 |---|---|---|
 | `runtime/lib/esr/application.ex:417` | `Esr.Paths.adapters_yaml() + YamlElixir.read_from_file` | `Esr.Adapters.list/0` |
 | `runtime/lib/esr/commands/register_adapter.ex:76,95` | `adapters_path = Esr.Paths.adapters_yaml()` then `defp append_instance_to_yaml/4` | `Esr.Adapters.add/3` |
-| `runtime/lib/esr/plugins/feishu/bootstrap.ex:48,52` | `def bootstrap(adapters_yaml_path)` reading via `YamlElixir.read_from_file` | `Esr.Adapters.list/1` (with opts for tests) |
-| `runtime/lib/esr/plugin/config.ex` (current 3-layer reader) | reads `plugins.yaml :config` per layer | reads `plugins/<name>/config.yaml` per layer |
+| `runtime/lib/esr/commands/adapter/remove.ex:41,54` | inline yaml read/write | `Esr.Adapters.remove/1` |
+| `runtime/lib/esr/commands/adapter/rename.ex:66,91` | inline yaml read/write | `Esr.Adapters.rename/2` |
+| `runtime/lib/esr/commands/adapters/list.ex:50` | `Esr.Paths.adapters_yaml()` (file also moves to `adapter/list.ex`) | `Esr.Adapters.list/0` + `list_disabled/0` |
+| `runtime/lib/esr/plugins/feishu/bootstrap.ex:48,52` | `def bootstrap(adapters_yaml_path)` reading via `YamlElixir.read_from_file` | `Esr.Adapters.list/1` (`:home` opt for tests) |
+
+**Plugin-config storage callers** (per-directory layout):
+
+| File | Current call | New call |
+|---|---|---|
+| `runtime/lib/esr/plugin/config.ex` (3-layer reader, internal) | reads `plugins.yaml :config` per layer | reads `plugins/<name>/config.yaml` per layer; **public API names unchanged** |
+| `runtime/lib/esr/commands/plugin/show_config.ex:54` | `Esr.Paths.global_plugins_yaml/0` | `Esr.Paths.plugin_global_dir/1` |
+| `runtime/lib/esr/commands/plugin/set.ex:113` | `Esr.Paths.global_plugins_yaml/0` (calls `store_layer/4`) | `Esr.Paths.plugin_global_dir/1` (call signature unchanged — internal only) |
+| `runtime/lib/esr/commands/plugin/unset.ex:86` | `Esr.Paths.global_plugins_yaml/0` (calls `delete_layer/3`) | `Esr.Paths.plugin_global_dir/1` |
+| `runtime/lib/esr/commands/plugin/list_config.ex:27` | `Esr.Paths.global_plugins_yaml/0` | `Esr.Paths.plugin_global_dir/1` |
+
+**Internal callers — no change required** (`resolve/2` API stays):
+- `runtime/lib/esr/plugin/config_snapshot.ex:86` — `Esr.Plugin.Config.resolve/2`. No code change.
+- `runtime/lib/esr/plugin/loader.ex:192` — same. No code change.
 
 ### 4.6 Alignment with unified-command-grammar (PRs #294 → #307)
 
@@ -222,16 +227,21 @@ Files that currently read the old layout and need to switch to the new module su
 - No hand-editing of `runtime/priv/slash-routes.default.yaml` — that file is **derived state**, regenerated from `command_meta/0` via the project's grammar generator (introduced by PR #304)
 - CI gate `mix esr.check_command_docs` enforces that yaml + module declarations stay in sync
 
-New command modules in this spec's scope:
+Command modules in scope (review pass #1 surfaced existing modules — corrected):
 
-| Module | Slash | Wraps |
-|---|---|---|
-| `Esr.Commands.Adapter.Disable` | `/adapter:disable name=<n>` | `Esr.Adapters.disable/1` |
-| `Esr.Commands.Adapter.Enable`  | `/adapter:enable name=<n>`  | `Esr.Adapters.enable/1`  |
-| `Esr.Commands.Adapter.Remove`  | `/adapter:remove name=<n>`  | `Esr.Adapters.remove/1`  |
-| `Esr.Commands.Adapter.List`    | `/adapter:list`             | `Esr.Adapters.list/0` + `list_disabled/0` |
+| Module | Status | Slash | Wraps |
+|---|---|---|---|
+| `Esr.Commands.Adapter.Disable` | **NEW** | `/adapter:disable name=<n>` | `Esr.Adapters.disable/1` |
+| `Esr.Commands.Adapter.Enable`  | **NEW** | `/adapter:enable name=<n>`  | `Esr.Adapters.enable/1`  |
+| `Esr.Commands.Adapter.Remove`  | **REFACTOR** (existing) | `/adapter:remove name=<n>` | `Esr.Adapters.remove/1` (replaces inline yaml r/w) |
+| `Esr.Commands.Adapter.Rename`  | **REFACTOR** (existing) | `/adapter:rename old=<a> new=<b>` (existing) | `Esr.Adapters.rename/2` (replaces inline yaml r/w) |
+| `Esr.Commands.Adapter.List`    | **MOVE+REFACTOR** (`commands/adapters/list.ex` → `commands/adapter/list.ex`) | `/adapter:list` | `Esr.Adapters.list/0` + `list_disabled/0` |
+| `Esr.Commands.Adapter.Refresh` | NO CHANGE (does not touch yaml) | unchanged | unchanged |
+| `Esr.Commands.Adapter.Start`   | NO CHANGE (does not touch yaml) | unchanged | unchanged |
 
-Existing `Esr.Commands.RegisterAdapter` (already DSL-converted) needs only its internal `append_instance_to_yaml/4` body replaced with `Esr.Adapters.add/3` — its DSL `command` block stays unchanged, including its `slash :none` setting.
+**Namespace cleanup**: dev currently has `commands/adapter/` (singular: remove, rename, refresh, start) AND `commands/adapters/` (plural: list). This spec collapses to **singular `adapter/`** by moving `adapters/list.ex` → `adapter/list.ex`. Plural directory is removed.
+
+Existing `Esr.Commands.RegisterAdapter` (already DSL-converted) needs only its internal `append_instance_to_yaml/4` body replaced with `Esr.Adapters.add/3` — its DSL `command` block stays unchanged, including `slash :none`.
 
 **Slash discipline** (informal principle for this PR's modules; future amendment to unified-grammar spec may codify it):
 
@@ -296,3 +306,4 @@ If a regression appears post-merge: revert the PR; operators delete `adapters/`,
 - **Schema validation timing** — currently plugin `config_schema` is consulted only on write via `/plugin:set` slash. Whether `Esr.Plugin.Config.get/3` should validate-on-read is left for a separate spec.
 - **`adapters/_disabled/` GC** — disabled adapters accumulate. Whether to prune (and when) is left for ops policy, not this spec.
 - **Slash discipline codification** — § 4.6's "default slash + CLI; opt-out via `slash :none` for credential-bearing args" rule deserves a small amendment to the unified-command-grammar spec. Deferred to a separate PR.
+- **`Esr.Yaml.Writer` atomic-write upgrade** — current `write/2` is plain `File.write` (overwrite). § 4.3's `Esr.Adapters.add/3` either does inline tmp+rename or extracts `Esr.Yaml.Writer.write_atomic/2` (preferred). Promoting *all* yaml writes to atomic is a separate hygiene PR — not blocked on this spec.
