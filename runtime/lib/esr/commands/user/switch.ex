@@ -40,7 +40,7 @@ defmodule Esr.Commands.User.Switch do
     case NameIndex.id_for_name(:esr_user_name_index, name) do
       {:ok, uuid} ->
         write_operator_json(uuid, name)
-        {:ok, %{"action" => "switched", "username" => name, "principal_id" => uuid}}
+        {:ok, %{"action" => "switched", "username" => name, "target_principal_id" => uuid}}
 
       :not_found ->
         Render.error(__MODULE__.command_meta(), :unknown_user, %{name: name})
@@ -56,7 +56,7 @@ defmodule Esr.Commands.User.Switch do
 
     doc = %{
       "schema_version" => 1,
-      "principal_id" => uuid,
+      "caller_principal_id" => uuid,
       "name" => name,
       "set_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "set_by" => "user_switch"
