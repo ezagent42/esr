@@ -44,7 +44,8 @@ defmodule Mix.Tasks.Esr.GenCommandDocs do
   @impl Mix.Task
   def run(_args) do
     Mix.Task.run("compile")
-    {:ok, _} = Application.ensure_all_started(:esr)
+    # See esr.gen_slash_routes.ex for why we load (not start) the app.
+    Application.load(:esr)
 
     repo_root = Path.expand("..", File.cwd!())
     cmd_path = Path.join(repo_root, @commands_path)
