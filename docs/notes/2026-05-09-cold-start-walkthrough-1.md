@@ -164,3 +164,38 @@ C2 实质是 **manifest schema vs 数据流不一致的 UX/doc 陷阱**：
 → 真需要 PR 的代码 bug：**C2, C5, C8**（外加 C3 / C6 待第二跑确认）
 
 C5 修法精化：user.watcher 改成无条件 watch dirname（boot 时 file 在不在都订阅），同时 `bind_user.ex` 写完 yaml 后主动 call `sync_reload_user_registry/1`（跟 user_add 一致）。两条都做最稳。
+
+### 第二跑实测变化：cap principal 从 feishu_user → esr_user
+
+第一跑 `capabilities.yaml.principals[].kind = feishu_user`、`id = <feishu open_id>`。
+第二跑 b5fe750 (`#281` + `#282`)：`kind = esr_user`、`id = <esr user UUID>`。
+
+cap 表跟 IM 平台**解耦**了。runtime 路径：
+```
+inbound open_id
+   ↓ Registry.lookup_by_feishu_id  → username
+   ↓ Registry users.yaml index     → UUID
+   ↓ Capabilities.Grants by UUID   → ["*"]
+```
+
+正向变化，不是 bug，但**第一跑遗留知识过时了**——以后 rebase 时第一跑那部分文档要更新。
+
+---
+
+### 新发现：**C10 — `bind_user.ex` 不更新 user.json，两源 diverge**
+
+`Esr.Plugins.Feishu.Commands.BindUser.execute` 只调 `Esr.Yaml.Writer.write(users_yaml, ...)`——只写 `users.yaml`，**不更新 `users/<uuid>/user.json.feishu_ids`**。
+
+证据：
+- `users.yaml`：`users.yao.feishu_ids: [ou_aee...]` ✅
+- `users/32399cb8.../user.json`：`feishu_ids: []` ❌ stale
+
+runtime 影响：当前 0（FileLoader 用 users.yaml 当 canonical，user.json 那字段是僵尸）。
+
+风险：
+1. 备份恢复时如果 users.yaml 丢失，`FileLoader.load_from_users_dir/1` 从 user.json 重建 → 所有 feishu binding 静默丢失
+2. schema 演进若把 canonical 切到 user.json → 数据已 stale，需 migration
+
+修法：`bind_user.ex` (跟 `unbind_user.ex`) 写完 users.yaml 后，调 `Esr.Entity.User.JsonWriter.update(uuid, fn r -> %{r | feishu_ids: ids} end)` 或类似 atomic 同步。
+
+**优先级**：低-中。属于 C5 同一族（user-bootstrap），归 issue 等同事 user-bootstrap PR pipeline。
