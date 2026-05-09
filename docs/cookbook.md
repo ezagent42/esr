@@ -1,5 +1,33 @@
 # ESR v0.2 Cookbook
 
+## Zero-config first run
+
+For a fresh-install operator with **no env vars set**:
+
+```bash
+cd /path/to/esr
+alias esr-dev='ESRD_HOME=$HOME/.esrd-dev ESR_INSTANCE=default ./runtime/esr'
+
+# 1. First user_add fires the bootstrap sentinel + auto-admins
+esr-dev exec user_add --name=linyilun
+
+# 2. Register a Feishu app
+esr-dev exec register_adapter --type=feishu --name=esr_helper \
+    --app_id=cli_xxx --app_secret=xxx
+
+# 3. Bind your Feishu open_id (per-app — different ou_xxx for different apps)
+esr-dev exec feishu_bind --name=linyilun --feishu_user_id=ou_xxx
+
+# 4. From Feishu chat:
+#      /session:new
+#      /agent:add type=cc name=esr-developer
+#      /claude_code:tui name=esr-developer    ← click URL for browser TUI
+```
+
+Full walkthrough: [`docs/guides/operator-bootstrap-journey.md`](guides/operator-bootstrap-journey.md).
+Feishu-side specifics (multi-app, hot config, troubleshooting):
+[`docs/guides/feishu-adapter-setup.md`](guides/feishu-adapter-setup.md).
+
 > **2026-05-06 deprecation:** Python click CLI deleted. Operator
 > commands now run via the Elixir escript at `runtime/esr` (or
 > `./esr.sh` wrapper) → admin queue → slash dispatch. Recipes below

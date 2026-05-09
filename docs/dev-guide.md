@@ -28,18 +28,30 @@ through the admin queue.
 
 ## Getting started
 
+> **For a step-by-step zero-config journey, see
+> [`guides/operator-bootstrap-journey.md`](guides/operator-bootstrap-journey.md)
+> and [`guides/feishu-adapter-setup.md`](guides/feishu-adapter-setup.md).**
+> The condensed flow:
+
 1. Ensure a Feishu app exists and its bot is a member of the chat(s) you
    want to drive CC sessions from. Copy `app_id` and `app_secret`.
 2. `bash scripts/esrd.sh start --instance=default`
-3. `runtime/esr exec adapter_start type=feishu instance_id=feishu-prod \
-       app_id=<app_id> app_secret=<app_secret>` (or `./esr.sh ...`).
-4. `runtime/esr exec workspace_new name=esr-dev role=dev \
-       start_cmd=claude \
-       chat_id=<chat_id> app_id=<app_id>`
-5. In Feishu, DM the bot: `/workspace:new name=esr-dev` (then `/session:new`, `/agent:add type=cc name=alice`, etc.)
-6. A tmux window `smoke-root` appears hosting a CC session with
-   `esr-channel` MCP loaded. Subsequent messages to the bot (or with
-   `@root <message>` prefix) get routed into that session's prompt.
+3. `runtime/esr exec user_add --name=<you>` — first user_add fires the
+   bootstrap sentinel + auto-promotes you to admin (PR #281, #282).
+   `operator.json` is written automatically; subsequent CLI calls
+   submit as you with no env vars. To switch active operator later:
+   `runtime/esr exec user_switch --name=<other>`.
+4. `runtime/esr exec register_adapter --type=feishu --name=esr_helper \
+       --app_id=<app_id> --app_secret=<app_secret>`. Persists
+   `(app_id, app_secret)` to `adapters.yaml` and spawns the Python
+   sidecar.
+5. `runtime/esr exec feishu_bind --name=<you> --feishu_user_id=<ou_xxx>`
+   to bind your Feishu identity.
+6. In Feishu, DM the bot: `/session:new`, `/agent:add type=cc
+   name=alice`, `/claude_code:tui name=alice` for the browser TUI.
+7. A tmux window appears hosting the CC session with `esr-channel`
+   MCP loaded. Subsequent messages to the bot get routed into that
+   session's prompt.
 
 ## Writing a new handler
 
