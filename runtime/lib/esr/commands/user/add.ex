@@ -308,7 +308,7 @@ defmodule Esr.Commands.User.Add do
 
     doc = %{
       "schema_version" => 1,
-      "principal_id" => uuid,
+      "caller_principal_id" => uuid,
       "name" => name,
       "set_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "set_by" => "user_add"
