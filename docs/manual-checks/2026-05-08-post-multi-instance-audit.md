@@ -24,7 +24,7 @@ Scope: `runtime/priv/slash-routes.default.yaml`, `runtime/lib/esr/cli/main.ex`, 
 | # | Operator types | I | F | G | Net | Δ vs 2026-05-06 |
 |---|---|---|---|---|---|---|
 | 1 | `esr daemon start` | ✅ | ✅ | ✅ | works | unchanged |
-| 2 | `esr add user linyilun`（auto-admin） | ✅ | ⚠️ | ⚠️ | grammar fixed via colon-namespace; auto-admin still env-driven | grammar improved |
+| 2 | `esr add user linyilun`（auto-admin） | ✅ | ✅ | ✅ | **closed 2026-05-09 by PR `feat/auto-admin-on-first-user`**: User.Add now appends `["*"]` to capabilities.yaml if no admin grant exists; ESR_BOOTSTRAP_PRINCIPAL_ID env stays as complementary seed | **fully closed** |
 | 3 | `esr plugin install feishu` | ✅ | ⚠️ | ⚠️ | colon-namespace shipped; install verb still local-path | grammar improved |
 | 4 | `esr plugin feishu bind linyilun ou_xxx` | ✅ | ✅ | ✅ | **closed by PR #263 (plugin-scoped command registration rev-3)**: now `esr feishu bind <name> <ou_id>`; kind `feishu_bind`; cap `feishu/user-bind`; module `Esr.Plugins.Feishu.Commands.BindUser` | **fully closed** |
 | 5 | `esr plugin install claude_code` | ✅ | ⚠️ | ⚠️ | same as #3; built-in by default | unchanged |
@@ -80,9 +80,9 @@ Workspace VS-Code redesign added `/workspace:add-folder`, `/workspace:use`, `/wo
 
 `docs/notes/concepts.md`'s metamodel **is** session-first (Scope = runtime instance of a Session; workspace = Resource referenced by Scope). Implementation is workspace-first. Tracked as `docs/futures/todo.md` "Migrate to session-first model".
 
-### 4. First-user-auto-admin — **STILL GAP**
+### 4. First-user-auto-admin — **CLOSED 2026-05-09**
 
-`runtime/lib/esr/resource/capability/supervisor.ex:38-46` still requires `ESR_BOOTSTRAP_PRINCIPAL_ID` env var. The "first `user:add` becomes admin if no admin grant exists" path was never wired. ~30 LOC.
+PR `feat/auto-admin-on-first-user` wires the "first `user:add` becomes admin if no admin grant exists" path. `Esr.Resource.Capability.Grants.any_admin?/0` (new) checks the live ETS snapshot for any principal holding `*`; `Esr.Commands.User.Add.maybe_grant_admin/1` (new) appends to capabilities.yaml + sync-reloads. `ESR_BOOTSTRAP_PRINCIPAL_ID` env path stays as the boot-time complementary seed.
 
 ### 5. `esr.sh` references — **CLOSED**
 
@@ -303,7 +303,7 @@ PR `feat/resource-typed-grammar` (~810 LOC, 5 phases A-E) implemented spec [`202
 | # | What | Status |
 |---|---|---|
 | 8 | `docs/grammar/commands.md` generator (`esr admin describe-grammar --format=markdown`) | spec-only — independent of this PR |
-| 9 | First-user-auto-admin | not started — single-file change, ~30 LOC |
+| ~~9~~ | ~~First-user-auto-admin~~ | **CLOSED 2026-05-09** (PR `feat/auto-admin-on-first-user`) |
 | 10 | `esr daemon init` + `esr daemon clear` | not started — first-30-min UX |
 | (security) | `pty_attach_security_hardening` (PtySocket signed-token auth) | tracked in `docs/futures/todo.md`; deferred per rev-2 D3 |
 
@@ -311,7 +311,8 @@ PR `feat/resource-typed-grammar` (~810 LOC, 5 phases A-E) implemented spec [`202
 
 **rev-3 audit:** 9/12 fully closed.
 **rev-4 audit:** 10/12 fully closed.
-**rev-5 (this PR):** 11/12 fully closed (only #9 mental-model remains as a structural thing; everything operator-visible is unblocked).
+**rev-5 (resource-typed grammar PR):** 11/12 fully closed.
+**rev-5.1 (auto-admin follow-up, 2026-05-09):** 12/12 fully closed for the operator path. `/workspace:add` mental-model "gap" reclassified as a vocabulary preference (`/workspace:new` + `/workspace:add-folder` are the accurate verbs; the literal `/workspace:add` is not a separate operation).
 
 The grammar overhaul also closes the cross-cutting "no PTY URL" regression (rev-4 #12) and unifies the operator surface around the resource axis (P1) so future plugin authors have a clear convention to follow.
 
