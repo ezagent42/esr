@@ -4,7 +4,7 @@ defmodule Esr.Commands.Whoami do
   binding state (PR-21κ).
 
   Reads from args:
-    * `principal_id` (Feishu open_id from envelope)
+    * `caller_principal_id` (Feishu open_id from envelope)
     * `chat_id`
     * `app_id`
 
@@ -30,7 +30,7 @@ defmodule Esr.Commands.Whoami do
 
   @spec execute(map()) :: result()
   def execute(%{"args" => args} = _cmd) do
-    principal_id = Map.get(args, "principal_id", "(unknown)")
+    principal_id = Map.get(args, "caller_principal_id", "(unknown)")
     chat_id = Map.get(args, "chat_id", "(unknown)")
     app_id = Map.get(args, "app_id", "(unknown)")
 
