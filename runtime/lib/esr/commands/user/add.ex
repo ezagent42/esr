@@ -78,13 +78,17 @@ defmodule Esr.Commands.User.Add do
           case result do
             :ok ->
               populate_name_index(name, uuid)
+              auto_admin = maybe_grant_admin(uuid)
 
               {:ok,
                %{
-                 "text" => "added esr user #{name}",
+                 "text" =>
+                   "added esr user #{name}" <>
+                     if(auto_admin, do: " (auto-admin: bootstrap)", else: ""),
                  "id" => uuid,
                  "default_workspace" => ws_name,
-                 "default_workspace_id" => ws_uuid
+                 "default_workspace_id" => ws_uuid,
+                 "auto_admin" => auto_admin
                }}
 
             {:error, reason} ->
@@ -239,6 +243,77 @@ defmodule Esr.Commands.User.Add do
         Logger.warning(
           "User.Add: NameIndex.put failed for #{inspect(name)} / #{inspect(uuid)}: #{inspect(reason)}"
         )
+    end
+  end
+
+  # Audit follow-up #2 / "first-user-auto-admin" (capabilities spec §9.1
+  # extension, 2026-05-09): if no principal currently holds the bare `*`
+  # wildcard, the runtime is in a fresh-install state — promote the user
+  # we just created to admin by appending a grant entry to capabilities.yaml.
+  # Subsequent `/user:add` calls find an admin and no-op.
+  #
+  # Returns boolean indicating whether the auto-admin grant was applied,
+  # so the caller's response can surface it (`auto_admin: true`).
+  #
+  # Pre-2026-05-09 the only bootstrap path was `ESR_BOOTSTRAP_PRINCIPAL_ID`
+  # env var (read by `Esr.Resource.Capability.Supervisor.maybe_bootstrap_file/1`
+  # at boot). That stays as a complementary mechanism — env var seeds the
+  # cap file before the supervisor starts; this path covers the case where
+  # the supervisor started without the env var and the operator runs
+  # `esr user add <name>` to set themselves up.
+  defp maybe_grant_admin(uuid) do
+    if Esr.Resource.Capability.Grants.any_admin?() do
+      false
+    else
+      cap_path = Esr.Paths.capabilities_yaml()
+      append_admin_grant(cap_path, uuid)
+      sync_reload_capabilities(cap_path)
+      Logger.info(
+        "User.Add: auto-admin granted to #{uuid} (no prior admin in capabilities.yaml)"
+      )
+      true
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "User.Add: maybe_grant_admin/1 crashed (#{inspect(e)}); skipping auto-admin"
+      )
+      false
+  end
+
+  defp append_admin_grant(path, uuid) do
+    doc =
+      case YamlElixir.read_from_file(path) do
+        {:ok, %{} = m} -> m
+        _ -> %{"principals" => []}
+      end
+
+    principals = Map.get(doc, "principals") || []
+
+    new_entry = %{
+      "id" => uuid,
+      "kind" => "esr_user",
+      "capabilities" => ["*"],
+      "note" => "auto-admin (first user_add, no prior admin in capabilities.yaml)"
+    }
+
+    updated = Map.put(doc, "principals", principals ++ [new_entry])
+
+    :ok = File.mkdir_p(Path.dirname(path))
+    Esr.Yaml.Writer.write(path, updated)
+  end
+
+  defp sync_reload_capabilities(path) do
+    # Pull the new grant into the live ETS snapshot synchronously so
+    # subsequent /user:add calls (or anything reading Grants in the
+    # same VM) see the admin without waiting for the FSEvents Watcher.
+    case Esr.Resource.Capability.FileLoader.load(path) do
+      :ok -> :ok
+      {:error, reason} ->
+        Logger.warning(
+          "User.Add: capabilities reload after auto-admin failed: #{inspect(reason)}"
+        )
+        :ok
     end
   end
 end
