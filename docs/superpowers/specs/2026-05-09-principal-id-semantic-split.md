@@ -278,7 +278,13 @@ Resolved 2026-05-09 — worktree rebased onto `origin/dev` tip (commit f87121f a
 
 ESR is single-operator pre-prod, so this break is acceptable per § 3.5 hard-cut policy. Plan adds a one-task release note that calls this out, plus a `CLAUDE.md` § "Migration notes" entry.
 
-### 7.7 Meta DSL drift gate may catch unrelated changes
+### 7.7 `/feishu:bind` inherits issue #290 (yaml↔json drift)
+
+`SelfBind` (Part B) delegates to existing `BindUser.execute/1`, which writes only `users.yaml` and not the per-uuid `users/<uuid>/user.json` file (issue [#290](https://github.com/ezagent42/esr/issues/290), reproducer in `docs/notes/2026-05-09-cold-start-walkthrough-1.md` C10). The new `/feishu:bind` slash inherits this bug — same yaml↔json drift after self-binding. Today's `FileLoader.load/1` is yaml-canonical so runtime is correct, but backup/restore via `load_from_users_dir/1` would silently drop bindings.
+
+**Out of scope for this PR.** Bug is pre-existing on `origin/dev` tip; this PR doesn't introduce it. Two valid fixes (write both, vs. remove `feishu_ids` from `user.json`) need separate brainstorm. Tracked in `docs/futures/todo.md` alongside #288 ("C5 — user.watcher + bind reload"); both should be fixed together in a follow-up PR.
+
+### 7.8 Meta DSL drift gate may catch unrelated changes
 
 The plan's first task changes Meta DSL `arg :user, ...` → `arg :target_principal_id, ...` for `cap/grant`, `cap/revoke`, `cap/show`. After regen, `mix esr.check_command_docs` runs in CI. Any other DSL drift (e.g., a parallel PR that landed slash-route edits without regen) would surface here. Mitigation: rebase onto latest `origin/dev` immediately before opening the PR (already done 2026-05-09).
 
