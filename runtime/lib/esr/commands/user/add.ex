@@ -78,7 +78,7 @@ defmodule Esr.Commands.User.Add do
           case result do
             :ok ->
               populate_name_index(name, uuid)
-              auto_admin = maybe_grant_admin(uuid)
+              auto_admin = maybe_grant_admin(uuid, name)
 
               {:ok,
                %{
@@ -261,13 +261,17 @@ defmodule Esr.Commands.User.Add do
   # cap file before the supervisor starts; this path covers the case where
   # the supervisor started without the env var and the operator runs
   # `esr user add <name>` to set themselves up.
-  defp maybe_grant_admin(uuid) do
+  defp maybe_grant_admin(uuid, name) do
     if Esr.Resource.Capability.Grants.any_admin?() do
       false
     else
       cap_path = Esr.Paths.capabilities_yaml()
       append_admin_grant(cap_path, uuid)
       sync_reload_capabilities(cap_path)
+      # 2026-05-09 zero-config bootstrap (spec § 3.4): also write
+      # operator.json so the CLI's submitter resolution chain can pick
+      # this user up on subsequent commands without env vars.
+      write_operator_json(uuid, name)
       Logger.info(
         "User.Add: auto-admin granted to #{uuid} (no prior admin in capabilities.yaml)"
       )
@@ -276,9 +280,35 @@ defmodule Esr.Commands.User.Add do
   rescue
     e ->
       Logger.warning(
-        "User.Add: maybe_grant_admin/1 crashed (#{inspect(e)}); skipping auto-admin"
+        "User.Add: maybe_grant_admin/2 crashed (#{inspect(e)}); skipping auto-admin"
       )
       false
+  end
+
+  # 2026-05-09 zero-config bootstrap (spec § 3.4): persist the active
+  # CLI operator pointer so `Esr.Cli.Main.resolve_submitter/0` can read
+  # it without an env var. Best-effort — a write failure logs a warning
+  # and returns :ok so the auto-admin path doesn't crash on a stale
+  # filesystem (the user's caps still landed in capabilities.yaml).
+  defp write_operator_json(uuid, name) do
+    path = Esr.Paths.operator_json()
+
+    doc = %{
+      "schema_version" => 1,
+      "principal_id" => uuid,
+      "name" => name,
+      "set_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "set_by" => "user_add"
+    }
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, Jason.encode!(doc, pretty: true)) do
+      :ok
+    else
+      err ->
+        Logger.warning("User.Add: operator.json write failed: #{inspect(err)}")
+        :ok
+    end
   end
 
   defp append_admin_grant(path, uuid) do

@@ -689,6 +689,14 @@ internal_kinds:
     permission: "workspace.create"
     command_module: "Esr.Commands.User.Use"
 
+  # 2026-05-09 zero-config bootstrap (spec § 3.6): switch the active CLI
+  # operator (writes operator.json). CLI-only — no slash entry; envelopes
+  # always identify the operator from inbound user_id, so a slash form
+  # would be a footgun. Sentinel does NOT bypass this; admin caps required.
+  user_switch:
+    permission: "user.manage"
+    command_module: "Esr.Commands.User.Switch"
+
   # 2026-05-05 cli-channel→slash migration:
   # `cli:deadletter/{list,flush}` migrated from EsrWeb.CliChannel into
   # `Esr.Commands.Deadletter.{List,Flush}`. Permission `runtime.deadletter`

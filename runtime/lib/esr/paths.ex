@@ -17,6 +17,13 @@ defmodule Esr.Paths do
   def adapters_yaml, do: Path.join(runtime_home(), "adapters.yaml")
   def workspaces_yaml, do: Path.join(runtime_home(), "workspaces.yaml")
   def users_yaml, do: Path.join(runtime_home(), "users.yaml")
+
+  @doc """
+  Active CLI operator state file (spec 2026-05-09 § 3.4). Written by
+  `Esr.Commands.User.Add` (auto-admin path) and `Esr.Commands.User.Switch`;
+  read by `Esr.Cli.Main.resolve_submitter/0`.
+  """
+  def operator_json, do: Path.join(runtime_home(), "operator.json")
   def slash_routes_yaml, do: Path.join(runtime_home(), "slash-routes.yaml")
   def commands_compiled_dir, do: Path.join([runtime_home(), "commands", ".compiled"])
   def admin_queue_dir, do: Path.join(runtime_home(), "admin_queue")

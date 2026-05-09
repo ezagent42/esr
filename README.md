@@ -121,6 +121,7 @@ discovering live flows.
 | [`20_feishu_inbound_multimedia.sh`](tests/e2e/scenarios/20_feishu_inbound_multimedia.sh) | Feishu inbound image — PNG → content-addressed `resources/image/<sha>.png` + refs.jsonl | [`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 | [`21_cc_outbound_multimedia.sh`](tests/e2e/scenarios/21_cc_outbound_multimedia.sh) | cc outbound image — `send_file` MCP tool → `resources/image/<sha>.png` + α-wire → mock_feishu file message | [`docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 | [`22_resource_typed_grammar.sh`](tests/e2e/scenarios/22_resource_typed_grammar.sh) | Resource-typed slash grammar — I1-I5 invariants (/agent:* + /pty:list + /pty:attach + /claude_code:tui plugin command) + Phase A.4 multi-agent PTY isolation | [`docs/superpowers/specs/2026-05-08-resource-typed-grammar.md`](docs/superpowers/specs/2026-05-08-resource-typed-grammar.md) |
+| [`23_zero_config_bootstrap.sh`](tests/e2e/scenarios/23_zero_config_bootstrap.sh) | Zero-config CLI journey — `system:bootstrap` sentinel + auto-admin + `operator.json` (no env vars) | [`docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md`](docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md) |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).
@@ -265,6 +266,7 @@ E2E 覆盖在 [`tests/e2e/scenarios/`](tests/e2e/scenarios/)。**新增 scenario
 | [`07_pty_bidir.sh`](tests/e2e/scenarios/07_pty_bidir.sh) | PTY actor 双向 —— keystroke → process → frame 回环 | 同上 |
 | [`20_feishu_inbound_multimedia.sh`](tests/e2e/scenarios/20_feishu_inbound_multimedia.sh) | Feishu inbound 图片 —— PNG → content-addressed `resources/image/<sha>.png` + refs.jsonl | [`2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
 | [`21_cc_outbound_multimedia.sh`](tests/e2e/scenarios/21_cc_outbound_multimedia.sh) | cc outbound 图片 —— `send_file` MCP → `resources/image/<sha>.png` + α-wire → mock_feishu file 消息 | [`2026-05-08-multimedia-content-protocol-design.md`](docs/superpowers/specs/2026-05-08-multimedia-content-protocol-design.md) |
+| [`23_zero_config_bootstrap.sh`](tests/e2e/scenarios/23_zero_config_bootstrap.sh) | 零配置 CLI 引导 —— `system:bootstrap` sentinel + auto-admin + `operator.json`（零环境变量） | [`2026-05-09-zero-config-bootstrap.md`](docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md) |
 
 > 添加新 scenario 时：在本表登记，**并**在
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md) 里记一笔。

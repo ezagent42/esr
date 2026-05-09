@@ -135,6 +135,7 @@ from that spec to code on disk. PRs are tracked under
 | Feishu inbound image → content-addressed storage + refs.jsonl | `tests/e2e/scenarios/20_feishu_inbound_multimedia.sh` |
 | cc outbound image → send_file MCP → store + α-wire → mock_feishu file message | `tests/e2e/scenarios/21_cc_outbound_multimedia.sh` |
 | Resource-typed slash grammar (I1-I5 invariants + multi-agent PTY isolation) | `tests/e2e/scenarios/22_resource_typed_grammar.sh` |
+| Zero-config CLI bootstrap (`system:bootstrap` sentinel + `operator.json`) | `tests/e2e/scenarios/23_zero_config_bootstrap.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |

@@ -55,6 +55,15 @@ defmodule Esr.Resource.Capability.FileLoader do
     end)
   end
 
+  # 2026-05-09 zero-config bootstrap (spec § 3.1, D1): the reserved
+  # sentinel principal_id `"system:bootstrap"` is used by the slash-
+  # handler to bypass cap-check during fresh-install bootstrap. Reject
+  # any yaml entry that tries to grant caps to the sentinel — the only
+  # legitimate code path that uses it is the in-memory submitter on the
+  # admin queue, never a persisted cap row.
+  defp validate_entry(%{"id" => "system:bootstrap"} = entry),
+    do: {:error, {:reserved_principal_id, entry}}
+
   defp validate_entry(%{"id" => pid, "capabilities" => caps} = _entry)
        when is_binary(pid) and is_list(caps) do
     Enum.reduce_while(caps, {:ok, pid, []}, fn cap, {:ok, pid, acc} ->

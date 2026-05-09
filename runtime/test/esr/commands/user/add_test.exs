@@ -240,6 +240,50 @@ defmodule Esr.Commands.User.AddTest do
 
       assert Esr.Resource.Capability.Grants.has?(uuid, "*")
       assert Esr.Resource.Capability.Grants.any_admin?()
+
+      # 2026-05-09 zero-config bootstrap (spec § 3.4): operator.json is
+      # written alongside the auto-admin grant so the CLI's submitter
+      # resolution chain finds the new user without needing
+      # ESR_OPERATOR_PRINCIPAL_ID.
+      operator_path = Esr.Paths.operator_json()
+      assert File.exists?(operator_path), "expected operator.json at #{operator_path}"
+
+      {:ok, op_doc} = Jason.decode(File.read!(operator_path))
+      assert op_doc["principal_id"] == uuid
+      assert op_doc["name"] == name
+      assert op_doc["set_by"] == "user_add"
+      assert op_doc["schema_version"] == 1
+      assert is_binary(op_doc["set_at"])
+    end
+
+    test "second /user:add (admin already exists): does NOT overwrite operator.json" do
+      # Seed an existing admin so auto-admin doesn't fire.
+      Esr.Resource.Capability.Grants.load_snapshot(%{"existing-admin" => ["*"]})
+      assert Esr.Resource.Capability.Grants.any_admin?()
+
+      # Pre-populate operator.json to assert it stays untouched on the
+      # non-auto-admin path.
+      operator_path = Esr.Paths.operator_json()
+      File.mkdir_p!(Path.dirname(operator_path))
+
+      File.write!(
+        operator_path,
+        Jason.encode!(%{
+          "schema_version" => 1,
+          "principal_id" => "alice-uuid",
+          "name" => "alice",
+          "set_at" => "2026-05-09T00:00:00Z",
+          "set_by" => "user_add"
+        })
+      )
+
+      name = "next-#{System.unique_integer([:positive])}"
+      {:ok, %{"auto_admin" => false}} = Esr.Commands.User.Add.execute(%{"args" => %{"name" => name}})
+
+      # operator.json still points at alice (not the second user).
+      {:ok, op_doc} = Jason.decode(File.read!(operator_path))
+      assert op_doc["principal_id"] == "alice-uuid"
+      assert op_doc["name"] == "alice"
     end
 
     test "second /user:add (admin already exists): no auto-admin grant" do

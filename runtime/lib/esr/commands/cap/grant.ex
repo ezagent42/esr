@@ -35,6 +35,19 @@ defmodule Esr.Commands.Cap.Grant do
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
+  def execute(%{"args" => %{"principal_id" => "system:bootstrap"}}) do
+    # 2026-05-09 zero-config bootstrap (spec § 3.1, D1): the reserved
+    # sentinel principal_id cannot be granted caps via cap_grant — that
+    # would defeat the whole "sentinel can't be poisoned" property the
+    # slash-handler bypass relies on. Mirrors the FileLoader rejection.
+    {:error,
+     %{
+       "type" => "reserved_principal_id",
+       "message" =>
+         "'system:bootstrap' is a reserved sentinel; cannot be granted caps"
+     }}
+  end
+
   def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
     with :ok <- validate_session_cap(perm),
