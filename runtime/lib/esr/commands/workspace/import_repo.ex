@@ -14,8 +14,27 @@ defmodule Esr.Commands.Workspace.ImportRepo do
       {:error, %{"type" => "...", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_import_repo do
+    slash         "/workspace:import-repo"
+    category      "Workspace"
+    description   "把一个带 .esr/workspace.json 的 git repo 加进 registered_repos.yaml；下次 esrd 启动会自动加载"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :path, required: true, doc: "绝对路径"
+
+    error :invalid_args,          "workspace_import_repo requires args.path (absolute path)"
+    error :path_not_dir,          "path %{path} is not a directory"
+    error :not_a_workspace_repo,  "no .esr/workspace.json at %{path}"
+    error :invalid_workspace_json, "invalid workspace.json at %{path}: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Registry, RepoRegistry, FileLoader}
   alias Esr.Paths
 
@@ -30,18 +49,13 @@ defmodule Esr.Commands.Workspace.ImportRepo do
 
     cond do
       Path.type(path) != :absolute ->
-        {:error, %{"type" => "invalid_args", "message" => "path must be absolute"}}
+        Render.error(__MODULE__.command_meta(), :invalid_args)
 
       not File.dir?(path) ->
-        {:error, %{"type" => "path_not_dir", "path" => path}}
+        Render.error(__MODULE__.command_meta(), :path_not_dir, %{path: path})
 
       not File.exists?(json_path) ->
-        {:error,
-         %{
-           "type" => "not_a_workspace_repo",
-           "path" => path,
-           "message" => "no .esr/workspace.json at #{path}"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_a_workspace_repo, %{path: path})
 
       true ->
         with {:ok, ws} <- FileLoader.load(json_path, location: {:repo_bound, path}),
@@ -56,21 +70,15 @@ defmodule Esr.Commands.Workspace.ImportRepo do
            }}
         else
           {:error, reason} ->
-            {:error,
-             %{
-               "type" => "invalid_workspace_json",
-               "path" => path,
-               "detail" => inspect(reason)
-             }}
+            Render.error(__MODULE__.command_meta(), :invalid_workspace_json, %{
+              path: path,
+              detail: inspect(reason)
+            })
         end
     end
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_import_repo requires args.path"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

@@ -28,8 +28,29 @@ defmodule Esr.Commands.Workspace.BindChat do
   `action="already_bound"` without writing.
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_bind_chat do
+    slash         "/workspace:bind-chat"
+    category      "Workspace"
+    description   "把 chat 加进 workspace.chats[]；app_id 默认从 envelope 注入"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,    required: true,  doc: "workspace 名"
+    arg :chat_id, required: true,  doc: "chat ID"
+    arg :app_id,  required: false, doc: "envelope 自动注入"
+    arg :kind,    required: false, default: "dm", doc: "chat 类型"
+
+    error :invalid_args,      "workspace_bind_chat requires args.name and args.chat_id"
+    error :missing_app_id,    "bind-chat requires app_id (passed as arg or auto-injected by chat envelope)"
+    error :unknown_workspace, "workspace %{name} not found"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Registry, NameIndex}
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -73,11 +94,7 @@ defmodule Esr.Commands.Workspace.BindChat do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_bind_chat requires args.name and args.chat_id"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -85,12 +102,7 @@ defmodule Esr.Commands.Workspace.BindChat do
   defp validate_app_id(app_id) when is_binary(app_id) and app_id != "", do: :ok
 
   defp validate_app_id(_) do
-    {:error,
-     %{
-       "type" => "missing_app_id",
-       "message" =>
-         "bind-chat requires app_id (passed as arg or auto-injected by chat envelope)"
-     }}
+    Render.error(__MODULE__.command_meta(), :missing_app_id)
   end
 
   defp already_bound?(chats, chat_id, app_id) do
@@ -111,12 +123,7 @@ defmodule Esr.Commands.Workspace.BindChat do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   defp serialise_chats(chats) do

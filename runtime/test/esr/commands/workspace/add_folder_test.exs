@@ -230,7 +230,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "nonexistent-ws-xyz"
+    assert err["message"] =~ "nonexistent-ws-xyz"
   end
 
   # Test 10: missing args → invalid_args

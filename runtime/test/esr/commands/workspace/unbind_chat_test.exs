@@ -125,8 +125,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
              })
 
     assert err["type"] == "chat_not_bound"
-    assert err["chat_id"] == "oc_nothere"
-    assert err["name"] == "ws-unbind-3"
+    assert err["message"] =~ "not bound"
   end
 
   # ── Test 4: same chat_id different app_id, unbind with both args → only matching removed ──
@@ -205,7 +204,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "no-such-ws"
+    assert err["message"] =~ "no-such-ws"
   end
 
   # ── Test 7: missing chat_id → invalid_args ────────────────────────────────────

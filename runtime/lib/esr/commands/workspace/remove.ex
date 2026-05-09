@@ -39,8 +39,27 @@ defmodule Esr.Commands.Workspace.Remove do
   against `Esr.Resource.Workspace.SessionIndex` (or equivalent).
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_remove do
+    slash         "/workspace:remove"
+    category      "Workspace"
+    description   "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,  required: true,  doc: "workspace 名"
+    arg :force, required: false, default: "false", doc: "true 时绕过 active-session guard"
+
+    error :invalid_args,      "workspace_remove requires args.name (non-empty string)"
+    error :unknown_workspace, "workspace %{name} not found"
+    error :workspace_in_use,  "workspace %{name} has %{count} active session(s); use force=true to remove anyway"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Paths
   alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
 
@@ -60,11 +79,7 @@ defmodule Esr.Commands.Workspace.Remove do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_remove requires args.name (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -86,15 +101,10 @@ defmodule Esr.Commands.Workspace.Remove do
         :ok
 
       true ->
-        {:error,
-         %{
-           "type" => "workspace_in_use",
-           "name" => name,
-           "sessions" => sessions,
-           "message" =>
-             "workspace #{inspect(name)} has #{length(sessions)} active session(s); " <>
-               "use force=true to remove anyway"
-         }}
+        Render.error(__MODULE__.command_meta(), :workspace_in_use, %{
+          name: name,
+          count: length(sessions)
+        })
     end
   end
 
@@ -161,12 +171,7 @@ defmodule Esr.Commands.Workspace.Remove do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   defp parse_bool("true"), do: true

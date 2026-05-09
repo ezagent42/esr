@@ -192,7 +192,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked", "set" => "name=other"}})
     assert err["type"] == "field_locked"
-    assert err["field"] == "name"
+    assert err["message"] =~ "name"
   end
 
   # Test 9: id=... → field_locked
@@ -202,7 +202,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked2", "set" => "id=newid"}})
     assert err["type"] == "field_locked"
-    assert err["field"] == "id"
+    assert err["message"] =~ "id"
   end
 
   # Test 10: chats=... → field_locked
@@ -212,7 +212,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked3", "set" => "chats=something"}})
     assert err["type"] == "field_locked"
-    assert err["field"] == "chats"
+    assert err["message"] =~ "chats"
   end
 
   # Test 11: folders=... → field_locked
@@ -222,7 +222,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked4", "set" => "folders=something"}})
     assert err["type"] == "field_locked"
-    assert err["field"] == "folders"
+    assert err["message"] =~ "folders"
   end
 
   # Test 12: location=... → field_locked
@@ -232,7 +232,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-locked5", "set" => "location=something"}})
     assert err["type"] == "field_locked"
-    assert err["field"] == "location"
+    assert err["message"] =~ "location"
   end
 
   # ── Unknown / invalid field errors ───────────────────────────────────────────
@@ -244,7 +244,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-unknown", "set" => "unknown_top=x"}})
     assert err["type"] == "unknown_field"
-    assert err["field"] == "unknown_top"
+    assert err["message"] =~ "unknown_top"
   end
 
   # Test 14: agent.nested=x → invalid_field (agent does not accept dotted suffix)
@@ -295,7 +295,7 @@ defmodule Esr.Commands.Workspace.EditTest do
   test "workspace not found → unknown_workspace error" do
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "nonexistent-ws", "set" => "agent=claude"}})
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "nonexistent-ws"
+    assert err["message"] =~ "nonexistent-ws"
   end
 
   # ── Args errors ───────────────────────────────────────────────────────────────
@@ -345,6 +345,6 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert {:error, err} = WorkspaceEdit.execute(%{"args" => %{"name" => "ws-transient-bad", "set" => "transient=foo"}})
     assert err["type"] == "invalid_value"
-    assert err["field"] == "transient"
+    assert err["message"] =~ "transient"
   end
 end

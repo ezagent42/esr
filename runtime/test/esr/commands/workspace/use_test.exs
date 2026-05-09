@@ -131,7 +131,7 @@ defmodule Esr.Commands.Workspace.UseTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "nonexistent-ws"
+    assert err["message"] =~ "nonexistent-ws"
   end
 
   # Test 5: name present but no chat context (CLI invocation) → missing_chat_context

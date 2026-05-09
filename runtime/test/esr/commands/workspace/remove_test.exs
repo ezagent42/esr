@@ -223,9 +223,8 @@ defmodule Esr.Commands.Workspace.RemoveTest do
              WorkspaceRemove.execute(%{"args" => %{"name" => "esr-ws-busy"}})
 
     assert err["type"] == "workspace_in_use"
-    assert err["name"] == "esr-ws-busy"
-    assert is_list(err["sessions"])
-    assert length(err["sessions"]) > 0
+    assert err["message"] =~ "esr-ws-busy"
+    assert err["message"] =~ "active session"
 
     # Workspace still in registry
     assert {:ok, _} = Registry.get_by_id(id)
@@ -285,7 +284,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
              WorkspaceRemove.execute(%{"args" => %{"name" => "totally-nonexistent"}})
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "totally-nonexistent"
+    assert err["message"] =~ "totally-nonexistent"
   end
 
   # ── Test 9: Missing args → invalid_args ──────────────────────────────────────
