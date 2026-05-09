@@ -273,3 +273,24 @@ Use cases:
 - 跨 mac 迁移（备份 session.json + claude_conversation_id 后另一台 esrd 起 resume — 前提是同一 anthropic 账号 + 同 conversation_id 可见）
 
 **优先级**：中。不挡日常，但**长 conversation 价值高**时丢失上下文非常痛。属于 ESR + claude 集成深度的下一步。
+
+### 新发现：**C14 — agents.yaml `params` 跟实际 command 验证不对齐**
+
+`agents.yaml` 每个 agent type 的 `params:` 列表声明了该 type 接受的 args（每条含 `name / required / type / default`）。但 `Esr.Commands.Session.New.execute/1` 实际处理时:
+
+| 应当 (per params spec) | 实际 (per Session.New code) |
+|---|---|
+| 按 params 列表 iterate，required check 每条 | hardcoded `validate_args(agent, dir)` 只查这两 |
+| 按 `type: path` 等做基本格式校验 | 完全没校验 |
+| `default: "default"` 应作 fallback | 被 hardcoded `Map.get(args, "app_id", "pending")` 覆盖（默认 "pending" 不是 yaml 里的 "default"） |
+| `params` 没声明的 args 应拒 | Session.New 还偷偷 extract `root`, `cwd`, `worktree`, `chat_id`, `thread_id`（因为 maybe_create_worktree 跟 spawn_session 用） |
+
+**当前 params 只有"文档作用 + required 字段"两件事**真的生效。其他都是脱节的设计意图。
+
+**修法（PR 候选）**：
+1. 抽 `validate_params/2(args, agent_def.params)` 通用函数，按声明 iterate 校验
+2. apply default 值进 args 后再传给 spawn_session
+3. params 应当声明 ALL command 实际消费的字段（root/cwd/worktree/chat_id/thread_id 也应在 params 里）
+4. 或反过来：plugin 提供 default agent template（C12）时**只允许声明 params 里的字段**——code 用 params 反查
+
+**优先级**：低-中。今天能跑（hardcoded 路径），但"一个 plugin 一种 agent type"扩展（codex / qwen）时会撞——每种 agent 的 params 不一样，Session.New 写死必查 dir 不合理。
