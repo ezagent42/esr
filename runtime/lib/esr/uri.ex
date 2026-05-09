@@ -31,7 +31,7 @@ defmodule Esr.Uri do
   """
 
   @legacy_types ~w(actor adapter handler command interface)a
-  @path_style_types ~w(adapters workspaces chats users sessions resources)a
+  @path_style_types ~w(adapters workspaces chats users sessions resources ptys)a
   @valid_types @legacy_types ++ @path_style_types
 
   @media_types ~w(image file audio)a
