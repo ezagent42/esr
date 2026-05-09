@@ -41,5 +41,25 @@ defmodule Esr.Plugins.Feishu.MigrationTest do
       assert :not_found = SlashRouteRegistry.command_module_for("user_bind_feishu")
       assert :not_found = SlashRouteRegistry.command_module_for("user_unbind_feishu")
     end
+
+    test "kind: feishu_self_bind resolves to SelfBind" do
+      assert Esr.Plugins.Feishu.Commands.SelfBind ==
+               SlashRouteRegistry.command_module_for("feishu_self_bind")
+    end
+
+    test "kind: feishu_self_unbind resolves to SelfUnbind" do
+      assert Esr.Plugins.Feishu.Commands.SelfUnbind ==
+               SlashRouteRegistry.command_module_for("feishu_self_unbind")
+    end
+
+    test "slash /feishu:bind routes to SelfBind via plugin manifest" do
+      assert {:ok, %{kind: "feishu_self_bind", command_module: Esr.Plugins.Feishu.Commands.SelfBind}} =
+               SlashRouteRegistry.lookup("/feishu:bind")
+    end
+
+    test "slash /feishu:unbind routes to SelfUnbind via plugin manifest" do
+      assert {:ok, %{kind: "feishu_self_unbind", command_module: Esr.Plugins.Feishu.Commands.SelfUnbind}} =
+               SlashRouteRegistry.lookup("/feishu:unbind")
+    end
   end
 end
