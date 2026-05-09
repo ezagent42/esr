@@ -1,0 +1,73 @@
+name: CI
+
+# Phase 5 of the unified-command-grammar migration (spec
+# docs/superpowers/specs/2026-05-09-unified-command-grammar-and-errors.md).
+# Today's only workflow (enforce-pr-from-dev.yml) is a base-branch check;
+# this is the actual build/test/grammar-drift gate.
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    env:
+      MIX_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inotify-tools
+        # Esr.Resource.SlashRoute.Registry.Watcher uses the `:file_system`
+        # package, which backs onto inotify on Linux. Without these tools,
+        # FileSystem.start_link/1 returns :ignore → MatchError on watcher
+        # init when the test suite boots the supervision tree. macOS uses
+        # FSEvents (built in); Ubuntu needs apt.
+        run: sudo apt-get update && sudo apt-get install -y inotify-tools
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '27'
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            runtime/deps
+            runtime/_build
+          key: ${{ runner.os }}-mix-${{ hashFiles('runtime/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Fetch deps
+        working-directory: runtime
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: runtime
+        run: mix compile
+
+      - name: Check command docs (grammar drift gate)
+        working-directory: runtime
+        run: mix esr.check_command_docs
+
+      # TODO(2026-05-09): mix test on Linux CI fails ~22 of 1436 tests
+      # for reasons unrelated to this migration:
+      #   - `claude` CLI not on PATH (used by PTY spawn in some tests)
+      #   - Test isolation bugs that surface only when ordering differs
+      #     from macOS dev (these are real bugs but pre-existing)
+      #   - YAML fixture parse errors expected in some cap tests
+      # Tests pass locally on macOS. Triaging these for Linux CI is a
+      # followup PR; the grammar drift gate above is the load-bearing
+      # check this workflow ships. When the suite is Linux-clean, add:
+      #
+      #   - name: Run tests
+      #     working-directory: runtime
+      #     run: mix test
+      #
+      # Tracking: docs/futures/todo.md "CI mix test on Linux".
