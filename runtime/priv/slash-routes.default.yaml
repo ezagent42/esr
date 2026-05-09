@@ -13,12 +13,6 @@ internal_kinds:
   adapter_refresh:
     command_module: Esr.Commands.Adapter.Refresh
     permission: adapter.manage
-  adapter_remove:
-    command_module: Esr.Commands.Adapter.Remove
-    permission: adapter.manage
-  adapter_rename:
-    command_module: Esr.Commands.Adapter.Rename
-    permission: adapter.manage
   adapter_start:
     command_module: Esr.Commands.Adapter.Start
     permission: adapter.manage
@@ -88,6 +82,30 @@ slashes:
     description: 列所有 live Entity peer (<actor_id>  pid=<0.x.y>)
     kind: actor_list
     permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:remove:
+    args:
+      - name: instance_id
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Remove
+    description: 终止 adapter 实例（sidecar + FAA peer）并从 adapters/<name>/ 移除
+    kind: adapter_remove
+    permission: adapter.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:rename:
+    args:
+      - name: old_instance_id
+        required: true
+      - name: new_instance_id
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Rename
+    description: 重命名 adapter 实例（terminate old + 移动 adapters/<name>/ + refresh）
+    kind: adapter_rename
+    permission: adapter.manage
     requires_user_binding: false
     requires_workspace_binding: false
   /agent:add:

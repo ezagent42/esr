@@ -1,11 +1,16 @@
 defmodule Esr.Plugin.PluginsYaml do
   @moduledoc """
-  Atomically read + write `<runtime_home>/plugins.yaml`.
+  Atomically read + write `<runtime_home>/plugins.yaml` — enabled list
+  only.
 
-  Track 0 Task 0.6 (admin commands `/plugin enable`, `/plugin disable`).
-  Companion to `Esr.Plugin.EnabledList` which only reads — this module
-  also writes, so that `enable/1` and `disable/1` can persist operator
-  changes between restarts.
+  Per yaml-layout-v2 (spec § 4.2): `plugins.yaml` is an **enabled-only**
+  registry. Plugin-specific configuration lives under
+  `plugins/<name>/config.yaml` (handled by `Esr.Plugin.Config`).
+
+  Reading a `plugins.yaml` that contains `:config` or any other
+  top-level key besides `enabled` **raises**. This is hard cutover: no
+  legacy fallback, no auto-migration. Operators that hit the raise edit
+  the file (delete the `:config` block) and restart.
 
   Atomicity: write happens via `tmp_path → rename`. A crash mid-rename
   leaves either the old or the new file in place, never a half-written
@@ -27,9 +32,7 @@ defmodule Esr.Plugin.PluginsYaml do
   Add `name` to the enabled list and persist. Idempotent —
   no-op if `name` is already enabled.
 
-  Persists with an explicit `enabled:` key (never the legacy
-  fallback) so a subsequent `read/0` after `disable/1` returns
-  exactly what was written.
+  Persists with an explicit `enabled:` key.
   """
   @spec enable(String.t()) :: :ok | {:error, term()}
   def enable(name) when is_binary(name) do
@@ -53,11 +56,16 @@ defmodule Esr.Plugin.PluginsYaml do
   # (NOT the legacy default) so enable/disable produce a deterministic
   # config rather than overwriting an absent file with the legacy list.
   defp read_explicit do
-    case File.read(Esr.Paths.plugins_yaml()) do
+    path = Esr.Paths.plugins_yaml()
+
+    case File.read(path) do
       {:ok, content} ->
         case YamlElixir.read_from_string(content) do
           {:ok, %{"enabled" => list}} when is_list(list) ->
             Enum.filter(list, &is_binary/1)
+
+          {:ok, nil} ->
+            []
 
           _ ->
             []

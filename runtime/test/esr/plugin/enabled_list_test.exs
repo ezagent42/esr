@@ -51,9 +51,30 @@ defmodule Esr.Plugin.EnabledListTest do
     assert ["feishu", "voice"] == EnabledList.read(path)
   end
 
-  test "missing `enabled:` key falls back to legacy default" do
+  test "yaml with `config:` key raises (yaml-layout-v2 hard cutover)" do
+    # Per spec § 4.2: `plugins.yaml` is enabled-only. Per-plugin config
+    # moved to `plugins/<name>/config.yaml`. Any leftover `config:`
+    # block is operator error and surfaces as a raise.
+    path =
+      write!("""
+      enabled:
+        - feishu
+      config:
+        feishu:
+          app_secret: "leftover"
+      """)
+
+    assert_raise RuntimeError, ~r/plugins\.yaml.*non-enabled top-level keys.*\["config"\]/s, fn ->
+      EnabledList.read(path)
+    end
+  end
+
+  test "yaml with arbitrary other top-level key raises" do
     path = write!("other_key: 1\n")
-    assert ["feishu", "claude_code"] == EnabledList.read(path)
+
+    assert_raise RuntimeError, ~r/non-enabled top-level keys/, fn ->
+      EnabledList.read(path)
+    end
   end
 
   test "malformed yaml falls back to legacy default" do

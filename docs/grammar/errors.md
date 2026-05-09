@@ -15,13 +15,12 @@ Generated from `command_meta/0`; do not edit directly.
 | `invalid_args` | `actors_inspect` | actors_inspect requires args.actor_id |
 | `invalid_args` | `adapter_remove` | adapter_remove requires args.instance_id |
 | `unknown_instance` | `adapter_remove` | no adapter %{instance_id} |
-| `yaml_read_failed` | `adapter_remove` | %{detail} |
 | `invalid_args` | `adapter_rename` | adapter_rename requires args.old_instance_id and args.new_instance_id |
-| `invalid_new_name` | `adapter_rename` | name %{new} fails %{pattern} |
+| `invalid_new_name` | `adapter_rename` | name %{new} fails the adapter-name pattern (no leading `_`, ^[A-Za-z][A-Za-z0-9_-]{0,62}$) |
 | `new_name_already_exists` | `adapter_rename` | instance %{new} already exists |
 | `old_and_new_match` | `adapter_rename` | old and new must differ |
+| `rename_failed` | `adapter_rename` | %{detail} |
 | `unknown_instance` | `adapter_rename` | no adapter %{old} |
-| `yaml_read_failed` | `adapter_rename` | %{detail} |
 | `invalid_args` | `adapter_start` | adapter_start requires args.type and args.instance_id |
 | `spawn_failed` | `adapter_start` | ensure_adapter failed: %{detail} |
 | `duplicate_agent_name` | `agent_add` | agent name '%{name}' already exists in session '%{session_id}' (pick a different name) |

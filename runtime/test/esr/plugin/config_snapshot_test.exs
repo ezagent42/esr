@@ -61,21 +61,25 @@ defmodule Esr.Plugin.ConfigSnapshotTest do
     # resolved map.
 
     test "update/1 replaces snapshot with current Config.resolve output" do
-      # Seed the global plugins yaml with a known value for "test_plugin".
-      tmp = System.tmp_dir!() |> Path.join("hr1_snapshot_update_#{:rand.uniform(99_999)}.yaml")
-      File.write!(tmp, "config:\n  test_plugin:\n    log_level: \"debug\"\n")
+      # yaml-layout-v2: per-plugin config is `<dir>/config.yaml`.
+      base =
+        System.tmp_dir!()
+        |> Path.join("hr1_snapshot_update_#{:rand.uniform(99_999)}")
+
+      plugin_dir = Path.join(base, "test_plugin")
+      File.mkdir_p!(plugin_dir)
+      File.write!(Path.join(plugin_dir, "config.yaml"), "log_level: \"debug\"\n")
 
       # Init with a stale snapshot.
       :ok = ConfigSnapshot.init("test_plugin", %{"log_level" => "info"})
 
-      # Now call update/1 using the path override mechanism.
-      # update/1 in production calls Config.resolve("test_plugin").
-      # For testing, we call the internal update helper with an explicit path.
-      :ok = ConfigSnapshot.update_with_path("test_plugin", global_path: tmp)
+      # update_with_path/2 forwards opts to Config.resolve/2; pass the
+      # per-plugin directory as :global_path.
+      :ok = ConfigSnapshot.update_with_path("test_plugin", global_path: plugin_dir)
 
       assert %{"log_level" => "debug"} == ConfigSnapshot.get("test_plugin")
 
-      File.rm(tmp)
+      File.rm_rf!(base)
     end
   end
 end

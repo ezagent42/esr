@@ -133,7 +133,8 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
   test "registration key is instance_id, not Feishu-platform app_id (PR-9 T10)",
        %{sup: sup} do
-    # In production the operator-chosen instance name in adapters.yaml
+    # In production the operator-chosen instance name (the directory
+    # basename under `adapters/<instance>/` per yaml-layout-v2)
     # (e.g. "main_bot", "feishu_app_e2e-mock") is distinct from the
     # Feishu-platform app_id (e.g. "cli_a9563cc03d399cc9"). The Python
     # adapter_runner joins `adapter:feishu/<instance_id>`, so the Elixir
