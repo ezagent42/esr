@@ -65,6 +65,7 @@ defmodule Esr.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:yaml_elixir, "~> 2.11"},
+      {:ymlr, "~> 5.0"},
       {:file_system, "~> 1.0"},
       # `Esr.OSProcess` 底座 — native PTY support (for tmux -C) +
       # bidirectional stdin/stdout + BEAM-exit cleanup, all in one.
