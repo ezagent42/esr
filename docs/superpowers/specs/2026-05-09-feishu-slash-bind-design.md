@@ -5,6 +5,20 @@
 **Status:** rev-1 (brainstorm 2026-05-09)
 **Tracks:** Feishu plugin slash surface — adds operator self-service path
 
+## 0. rev-3 changelog (2026-05-09 post subagent plan-review)
+
+A subagent review of the implementation plan caught a real security gap that invalidated rev-2's "core SlashHandler not modified" claim:
+
+- **R1 — `principal_id` user-overwrite gap** — `Esr.Entity.SlashHandler.inject_envelope_args/2` (`slash_handler.ex:662-673`) uses `maybe_put` (= `Map.put_new`) for `principal_id`. So a chat member typing `/feishu:bind name=linyilun principal_id=ou_VICTIM` would have args reach SelfBind with `principal_id=ou_VICTIM` (user value retained, envelope value discarded by `Map.put_new`). The whitelist (rev-2's defence) accepts `principal_id` because it IS an envelope-injected key, so the attack is NOT blocked.
+  **Fix**: change the `principal_id` line in `inject_envelope_args/2` from `maybe_put` to `Map.put` (force-overwrite when envelope has a value). Other envelope-injected keys (`chat_id`, `app_id`, `thread_id`) keep `maybe_put` semantics — `/workspace:bind-chat` legitimately accepts user-supplied `chat_id=`.
+  **Impact audit** (slash-callable consumers of `args["principal_id"]`): `Esr.Commands.Whoami`, `Esr.Commands.Doctor` use it for display only with `(unknown)` fallback — overwrite is correct. Other consumers (`cap/grant`, `cap/revoke`, `cap/show`, `session/share`, `cross_app_test`) are `internal_kinds` CLI-only and do not go through SlashHandler dispatch — unaffected. § 3.5 updated; § 4.3 / § 4.4 reaffirmed; new § 3.5.1 documents the SlashHandler change.
+
+- **R2 — SelfUnbind race UX fix** — when `lookup_owner/1` finds the owning user but a concurrent admin `feishu_unbind` slips in before delegation, `UnbindUser` returns `user_not_found`, which is confusing for self-unbind ("the user isn't gone, the binding raced"). Catch `user_not_found` in `SelfUnbind` and remap to idempotent `{:ok, "no longer bound"}`. § 4.4 updated, test case added.
+
+- **R3 — Test stability** — three plan-level tweaks: (a) idempotent test asserts on parsed yaml structure, not byte-string equality (`Esr.Yaml.Writer` re-emits sorted, would silently break on a future yaml-formatter change); (b) `chmod 0o555` write-fail test guarded by `:os.type/0 + EUID != 0` skip on root/CI; (c) plan adds an IEx pre-check on `Registry.lookup/1` return shape since current feishu manifest has `slashes: {}` (no other slash to verify atom-vs-string keys against).
+
+- **R4 — `username` has the same vulnerability shape, deferred** — `merge_chat_context` (slash_handler.ex:705, 723) also uses `maybe_put("username", ...)`. Anyone typing `username=victim` against `/session:new` etc could spoof username. Out of scope for this spec — added to `docs/futures/todo.md` as separate audit work.
+
 ## 0. rev-2 changelog (2026-05-09 post user review)
 
 User review pass on rev-1 yielded three structural changes:
@@ -49,11 +63,13 @@ Admin-代-bind (binding *another* user's `ou_xxx` for them) stays on the existin
 
 | File | Action | LOC |
 |---|---|---|
+| `runtime/lib/esr/entity/slash_handler.ex` | edit (1 line: `principal_id` `maybe_put` → `Map.put`) | +1/-1 |
+| `runtime/test/esr/entity/slash_handler_test.exs` | edit (1 new test for force-overwrite) | +25 |
 | `runtime/lib/esr/plugins/feishu/commands/self_bind.ex` | new | ~50 (incl. whitelist + telemetry + helpers) |
-| `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex` | new | ~60 (incl. whitelist + telemetry + lookup) |
+| `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex` | new | ~70 (incl. whitelist + telemetry + lookup + race-remap) |
 | `runtime/lib/esr/plugins/feishu/manifest.yaml` | edit `slash_routes:` | +18 |
 | `runtime/test/esr/plugins/feishu/commands/self_bind_test.exs` | new | ~180 (11 cases) |
-| `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs` | new | ~150 (9 cases) |
+| `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs` | new | ~160 (10 cases incl. race-remap) |
 | `runtime/test/esr/plugins/feishu/commands/migration_test.exs` | edit (4 new asserts) | +20 |
 
 Untouched: `bind_user.ex`, `unbind_user.ex`, core `slash_handler.ex`, `slash-routes.default.yaml`, FAA / FAP / FCP, e2e scenarios.
@@ -120,9 +136,52 @@ The slash entry and the `internal_kinds` entry must agree on `permission` and `c
 
 Pure-`ou_xxx`-keyed caps are not used: the codebase is moving to username-keyed caps (`bind_user.ex` moduledoc), and self-bind by definition has no username yet.
 
-### 3.5 SlashHandler integration (no changes)
+### 3.5 SlashHandler integration (one-line surgical change, rev-3)
 
-`Esr.Entity.SlashHandler.inject_envelope_args/2` (`slash_handler.ex:662-673`) already injects `principal_id` into args from `envelope["principal_id"] || envelope["user_id"]`. SelfBind / SelfUnbind read `args["principal_id"]` directly. **Core SlashHandler is not modified** — this avoids the per-plugin lobbying anti-pattern that `merge_chat_context(args, "session_new", _)` already represents.
+**Original rev-1/rev-2 claim withdrawn.** A subagent plan-review caught that `Esr.Entity.SlashHandler.inject_envelope_args/2` (`slash_handler.ex:662-673`) uses `maybe_put` (= `Map.put_new`) for `principal_id`, which retains caller-supplied `principal_id=ou_VICTIM` over the envelope's value. Since this slash uses `permission: null`, anyone in the chat could exploit this to bind any `ou_xxx` to any pre-existing username — the rev-2 whitelist defence is bypassed because `principal_id` IS in the whitelist.
+
+#### 3.5.1 The fix
+
+Change one line in `inject_envelope_args/2`:
+
+```elixir
+# before (rev-1/rev-2):
+args
+|> maybe_put("chat_id", chat_id)
+|> maybe_put("thread_id", thread_id)
+|> maybe_put("app_id", app_id)
+|> maybe_put("principal_id", principal_id)
+
+# after (rev-3):
+args
+|> maybe_put("chat_id", chat_id)        # /workspace:bind-chat legitimately takes user chat_id=
+|> maybe_put("thread_id", thread_id)    # operator may pin a thread
+|> maybe_put("app_id", app_id)          # cross-app workflows may take user app_id=
+|> force_put("principal_id", principal_id)   # identity = envelope-only, never user-supplied
+
+# helper added next to maybe_put:
+defp force_put(map, _key, nil), do: map
+defp force_put(map, key, value), do: Map.put(map, key, value)
+```
+
+#### 3.5.2 Impact audit (slash-callable consumers of `args["principal_id"]`)
+
+| Module | Path | Effect of overwrite | Status |
+|---|---|---|---|
+| `Esr.Commands.Whoami` (`whoami.ex:22`) | slash | display-only, `(unknown)` fallback → caller's identity displayed | OK (in fact correct) |
+| `Esr.Commands.Doctor` (`doctor.ex:27`) | slash | display-only, fallback "(unknown)" | OK |
+| `Esr.Plugins.Feishu.Commands.SelfBind` (NEW) | slash | identity source-of-truth | OK (this spec relies on the fix) |
+| `Esr.Plugins.Feishu.Commands.SelfUnbind` (NEW) | slash | identity source-of-truth | OK |
+| `Esr.Commands.Cap.{Grant,Revoke,Show}` | internal_kind only | not slash-callable; CLI submits via QueueWatcher, does NOT go through `inject_envelope_args` | UNAFFECTED |
+| `Esr.Commands.Session.Share` | internal_kind only | same as above | UNAFFECTED |
+| `Esr.Commands.CrossAppTest` | internal_kind only | same as above | UNAFFECTED |
+| `Esr.Commands.User.{Add,Switch}` | internal_kind only | builds `principal_id` in result map; doesn't read `args["principal_id"]` from input | UNAFFECTED |
+
+The change is genuinely surgical: only `inject_envelope_args/2` (slash-text dispatch path) is touched; the internal-kind / CLI submission path is independent.
+
+#### 3.5.3 Why not also force-overwrite `username`?
+
+`merge_chat_context` (`slash_handler.ex:705`, `723`) also uses `maybe_put("username", ...)`, with the same vulnerability shape — anyone typing `username=victim` against `/session:new` could potentially spoof username. **Out of scope for this spec** — different consumers (session-aware commands), different blast radius (caps key on principal_id, not username), and the audit deserves its own pass. Tracked in `docs/futures/todo.md`.
 
 ## 4. Data flow
 
@@ -302,7 +361,19 @@ defmodule Esr.Plugins.Feishu.Commands.SelfUnbind do
   defp do_unbind(%{"principal_id" => p}) when is_binary(p) and p != "" do
     case lookup_owner(p) do
       nil -> {:ok, %{"text" => "#{p} is not bound to any esr user"}}
-      name -> UnbindUser.execute(%{"args" => %{"name" => name, "feishu_user_id" => p}})
+      name ->
+        case UnbindUser.execute(%{"args" => %{"name" => name, "feishu_user_id" => p}}) do
+          # Race remap (spec § 7.2): if a concurrent admin unbind landed
+          # between our lookup_owner and UnbindUser's read, UnbindUser
+          # returns user_not_found. From the self-unbind caller's
+          # perspective this is identical to "no longer bound" — collapse
+          # to idempotent ok rather than confusing the user with a
+          # principal-namespace error.
+          {:error, %{"type" => "user_not_found"}} ->
+            {:ok, %{"text" => "#{p} is no longer bound (raced concurrent unbind)"}}
+
+          other -> other
+        end
     end
   end
 
@@ -407,7 +478,7 @@ Each test sets up `ESRD_HOME` tmp + a `users.yaml` fixture, calls `SelfBind.exec
 | 10 | telemetry on success — case 1 setup + attached telemetry handler | `[:esr, :slash, :feishu, :self_bind]` event observed with `metadata.result == :ok`, `metadata.name == "linyilun"`, `metadata.principal_id == "ou_X"` |
 | 11 | telemetry on error — case 4 setup + attached telemetry handler | event observed with `metadata.result == "feishu_id_in_use"` |
 
-### 6.2 `self_unbind_test.exs` (unit, 9 cases, `async: false`)
+### 6.2 `self_unbind_test.exs` (unit, 10 cases, `async: false`)
 
 | # | Case | Expected |
 |---|---|---|
@@ -417,9 +488,12 @@ Each test sets up `ESRD_HOME` tmp + a `users.yaml` fixture, calls `SelfBind.exec
 | 4 | invalid — missing `principal_id=` | `{:error, %{"type" => "invalid_args"}}` |
 | 5 | reject `feishu_user_id=` — args carry `principal_id=ou_X` and `feishu_user_id=ou_OTHER` | `{:error, %{"type" => "invalid_args"}}`, yaml unchanged |
 | 6 | reject `name=` — args carry `principal_id=ou_X` and `name=linyilun` (cross-account unbind not allowed) | `{:error, %{"type" => "invalid_args"}}` |
-| 7 | yaml write fails — make `users.yaml` parent dir read-only | `{:error, %{"type" => "write_failed"}}` |
-| 8 | telemetry on success — case 1 setup + attached handler | `[:esr, :slash, :feishu, :self_unbind]` event with `metadata.result == :ok`, `metadata.principal_id == "ou_X"` |
-| 9 | telemetry on idempotent — case 2 setup + attached handler | event with `metadata.result == :ok` (idempotent counts as success) |
+| 7 | yaml write fails — make `users.yaml` parent dir read-only (skip on root/EUID==0) | `{:error, %{"type" => "write_failed"}}` |
+| 8 | race remap — manually invoke with `principal_id=ou_X` against a yaml shape that simulates "lookup_owner found but UnbindUser sees gone" (write yaml between lookup and UnbindUser via mocked path or pre-stage two yaml files) | `:ok`, reply contains `no longer bound`, `raced` |
+| 9 | telemetry on success — case 1 setup + attached handler | `[:esr, :slash, :feishu, :self_unbind]` event with `metadata.result == :ok`, `metadata.principal_id == "ou_X"` |
+| 10 | telemetry on idempotent — case 2 setup + attached handler | event with `metadata.result == :ok` (idempotent counts as success) |
+
+> Implementation note for case 8: simulating the race deterministically without internal hooks is hard. Acceptable patterns: (a) extract `lookup_owner/1` to a public function, mock `:meck` it to return a name that doesn't exist in the on-disk yaml (cleanest); (b) stub `UnbindUser` via `Mox` to return `{:error, %{"type" => "user_not_found"}}`. The plan picks (a) because the codebase doesn't currently use `Mox` for command-level stubs.
 
 ### 6.3 `migration_test.exs` extension (registry, 4 new asserts)
 
@@ -468,9 +542,9 @@ Scenario: admin runs `user_add name=linyilun` ahead of real linyilun showing up;
 
 Mitigation: chat-membership trust + admin operational discipline. Documented in § 3.4. If this becomes a real attack vector, follow-up spec adds claim-token mechanism (see § 8).
 
-### 7.2 `users.yaml` non-atomic read in `SelfUnbind`
+### 7.2 `users.yaml` non-atomic read in `SelfUnbind` (rev-3 mitigation)
 
-`lookup_owner/1` and `UnbindUser.execute/1` each read `users.yaml` independently. A concurrent admin-代-unbind could complete between the two reads, making the second read see no entry — `UnbindUser` then errors `user_not_found` even though `lookup_owner` saw it. Acceptable: low probability, idempotent retry recovers, error message is clear ("re-run /feishu:unbind").
+`lookup_owner/1` and `UnbindUser.execute/1` each read `users.yaml` independently. A concurrent admin-代-unbind could complete between the two reads, making the second read see no entry — `UnbindUser` then errors `user_not_found`. **Rev-3 mitigation**: SelfUnbind catches `user_not_found` from the delegated UnbindUser and remaps it to idempotent `{:ok, "is no longer bound (raced concurrent unbind)"}`. From the self-unbind caller's perspective the binding is gone, which is the correct user-facing semantic. The race is now invisible to the caller. Code lives in § 4.4 `do_unbind/1`; tested by case 8.
 
 ### 7.3 Resolved: telemetry now emitted (rev-2)
 
@@ -489,8 +563,9 @@ Original rev-1 question — should self-bind / self-unbind emit a telemetry even
 2. Permission: `null` (chat-membership trust). Justified by pre-existing `user_add` admin gate + bot-membership operator control.
 3. Bundle bind + unbind in same spec — operationally inseparable (re-bind requires unbind first).
 4. Bind conflict: error with actionable hint, no silent rebind, no `force=` flag.
-5. Implementation: thin wrapper modules (`SelfBind`, `SelfUnbind`) delegating to existing `BindUser` / `UnbindUser`. Core SlashHandler not modified.
+5. Implementation: thin wrapper modules (`SelfBind`, `SelfUnbind`) delegating to existing `BindUser` / `UnbindUser`. **Core SlashHandler is modified by exactly one line** (rev-3) — `principal_id` switches from `maybe_put` (Map.put_new) to `force_put` (Map.put) so envelope identity wins over user-supplied args.
 6. Strict args via per-command `@allowed_keys` whitelist — any non-whitelisted key (incl. caller-supplied `feishu_user_id=`) rejected as `invalid_args`. Project-wide adoption deferred — tracked in `docs/futures/todo.md`.
 7. Telemetry events `[:esr, :slash, :feishu, :self_bind]` and `[:esr, :slash, :feishu, :self_unbind]` emitted on every invocation — security-sensitive identity mutations get an audit trail.
 8. `/feishu:unbind` takes no user-supplied args — always operates on caller's `ou_xxx`. Unbind-by-name stays admin CLI.
-9. SelfUnbind's two-step lookup-then-delegate is non-atomic; race window is documented inline (code comment) and in § 7.2; mitigation deferred (idempotent retry recovers).
+9. SelfUnbind's two-step lookup-then-delegate race is **mitigated** in rev-3 — `user_not_found` from UnbindUser is remapped to idempotent `:ok` so the caller never sees a confusing principal-namespace error.
+10. `username` has the same identity-spoof shape but different blast radius and consumers — out of scope, tracked in `docs/futures/todo.md` for a separate audit.

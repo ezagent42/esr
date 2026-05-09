@@ -4,7 +4,7 @@
 
 **Goal:** Add two plugin-owned slash commands `/feishu:bind name=<n>` and `/feishu:unbind` to let Feishu users self-bind / self-unbind their `ou_xxx` to/from an esr user from inside a Feishu chat. Admin path (CLI `feishu_bind` internal_kind) stays unchanged.
 
-**Architecture:** Two thin wrapper modules (`SelfBind`, `SelfUnbind`) under `Esr.Plugins.Feishu.Commands.*`. Each runs an `@allowed_keys` whitelist on `args`, then delegates to the existing `BindUser` / `UnbindUser` modules. Caller's `ou_xxx` is read from `args["principal_id"]` (envelope-injected by `Esr.Entity.SlashHandler.inject_envelope_args/2`). Plugin manifest declares the slashes; core `SlashHandler` is not modified.
+**Architecture:** Two thin wrapper modules (`SelfBind`, `SelfUnbind`) under `Esr.Plugins.Feishu.Commands.*`. Each runs an `@allowed_keys` whitelist on `args`, then delegates to the existing `BindUser` / `UnbindUser` modules. Caller's `ou_xxx` is read from `args["principal_id"]` (envelope-injected by `Esr.Entity.SlashHandler.inject_envelope_args/2`). Plugin manifest declares the slashes. Core `SlashHandler` gets **one surgical change** (rev-3, Task 1): `principal_id` switches from `maybe_put` to `force_put` so envelope identity wins over user-supplied args (security precondition for `permission: null`).
 
 **Tech Stack:** Elixir 1.17+, Phoenix LiveView 1.x runtime, ExUnit, `:telemetry` library, YamlElixir for parsing, `Esr.Yaml.Writer` for atomic writes.
 
@@ -18,7 +18,7 @@
 |---|---|
 | `Esr.Plugins.Feishu.Commands.BindUser` (`runtime/lib/esr/plugins/feishu/commands/bind_user.ex`) | EXISTS, **DO NOT MODIFY** |
 | `Esr.Plugins.Feishu.Commands.UnbindUser` (`runtime/lib/esr/plugins/feishu/commands/unbind_user.ex`) | EXISTS, **DO NOT MODIFY** |
-| `Esr.Entity.SlashHandler.inject_envelope_args/2` (`runtime/lib/esr/entity/slash_handler.ex:662`) | EXISTS, **DO NOT MODIFY** — already injects `principal_id` |
+| `Esr.Entity.SlashHandler.inject_envelope_args/2` (`runtime/lib/esr/entity/slash_handler.ex:662`) | EXISTS — **Task 1 modifies one line** (`principal_id` `maybe_put` → `force_put`) |
 | `Esr.Resource.SlashRoute.Registry.command_module_for/1` (`runtime/lib/esr/resource/slash_route/registry.ex:95`) | EXISTS, used in tests |
 | `Esr.Resource.SlashRoute.Registry.lookup/1` (`runtime/lib/esr/resource/slash_route/registry.ex:49`) | EXISTS, used in tests |
 | `Esr.Paths.users_yaml/0` (`runtime/lib/esr/paths.ex:19`) | EXISTS — returns `<ESRD_HOME>/<ESR_INSTANCE>/users.yaml` |
@@ -31,11 +31,13 @@
 
 | File | Action | Notes |
 |---|---|---|
+| `runtime/lib/esr/entity/slash_handler.ex` | MODIFY (Task 1) | 1 line `maybe_put` → `force_put` for `principal_id` + 2-line `force_put/3` helper + 1-line test shim |
+| `runtime/test/esr/entity/slash_handler_test.exs` | MODIFY (Task 1) | append 1 test for force-overwrite property |
 | `runtime/lib/esr/plugins/feishu/commands/self_bind.ex` | NEW | ~50 LOC — wrapper for `/feishu:bind` |
-| `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex` | NEW | ~60 LOC — wrapper for `/feishu:unbind` |
+| `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex` | NEW | ~70 LOC — wrapper for `/feishu:unbind` (incl. race-remap) |
 | `runtime/lib/esr/plugins/feishu/manifest.yaml` | MODIFY | replace `slashes: {}` and append two `internal_kinds:` entries |
 | `runtime/test/esr/plugins/feishu/commands/self_bind_test.exs` | NEW | ~180 LOC, 11 cases |
-| `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs` | NEW | ~150 LOC, 9 cases |
+| `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs` | NEW | ~160 LOC, 10 cases (incl. race-remap) |
 | `runtime/test/esr/plugins/feishu/commands/migration_test.exs` | MODIFY | append 4 registry asserts |
 
 ---
@@ -72,7 +74,139 @@ defp read_users_yaml(inst_dir), do: YamlElixir.read_from_file!(Path.join(inst_di
 
 ---
 
-## Task 1: SelfBind — golden path + delegation to BindUser
+## Task 1: SlashHandler `principal_id` force-overwrite (security precondition)
+
+**Why this comes first:** SelfBind / SelfUnbind read `args["principal_id"]` as the caller's identity. The current `inject_envelope_args/2` (`runtime/lib/esr/entity/slash_handler.ex:662-673`) uses `maybe_put` (= `Map.put_new`) which retains user-supplied `principal_id=ou_VICTIM` over the envelope value. This must land before the new slashes ship — otherwise the `permission: null` chat-trust model is exploitable.
+
+Other envelope-injected keys (`chat_id`, `app_id`, `thread_id`) keep `maybe_put` semantics — `/workspace:bind-chat` legitimately accepts a user-supplied `chat_id=`. Only `principal_id` switches.
+
+Spec reference: § 3.5 + § 3.5.1 + § 3.5.2 (impact audit).
+
+**Files:**
+- Modify: `runtime/lib/esr/entity/slash_handler.ex` (1 line + 2-line helper)
+- Modify: `runtime/test/esr/entity/slash_handler_test.exs` (1 new test)
+
+- [ ] **Step 1: Add a failing test for the force-overwrite property**
+
+Open `runtime/test/esr/entity/slash_handler_test.exs` and find an existing `describe` block that exercises `inject_envelope_args/2` (or the dispatch path that uses it). Append a new `describe` block:
+
+```elixir
+  describe "principal_id is envelope-only (rev-3 security fix)" do
+    # User-supplied principal_id= must be discarded in favor of envelope value.
+    # Other envelope-injected keys (chat_id, app_id, thread_id) intentionally
+    # remain user-overridable — see /workspace:bind-chat.
+    test "user-supplied principal_id= is overwritten by envelope's value" do
+      envelope = %{
+        "principal_id" => "ou_real_caller",
+        "user_id" => "ou_real_caller",
+        "payload" => %{
+          "text" => "/feishu:bind name=linyilun principal_id=ou_VICTIM",
+          "args" => %{"app_id" => "cli_xxx"}
+        }
+      }
+
+      # Re-create SlashHandler's internal pipeline without dispatching:
+      # parse text → inject envelope args. The expected outcome is that
+      # args["principal_id"] equals the envelope's value, NOT "ou_VICTIM".
+      args = %{"name" => "linyilun", "principal_id" => "ou_VICTIM"}
+      injected = Esr.Entity.SlashHandler.__inject_envelope_args__(args, envelope)
+
+      assert injected["principal_id"] == "ou_real_caller"
+    end
+  end
+```
+
+(Note: `__inject_envelope_args__/2` is exposed only for testing — Step 3 changes the private `defp inject_envelope_args` to also have a public `def __inject_envelope_args__/2` shim. If the codebase prefers different test exposure conventions, follow them — but the property must be asserted somewhere.)
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `(cd runtime && mix test test/esr/entity/slash_handler_test.exs --only describe:"principal_id is envelope-only")`
+Expected: **FAIL** — `injected["principal_id"]` equals `"ou_VICTIM"` (user value retained by `Map.put_new`).
+
+- [ ] **Step 3: Fix `inject_envelope_args/2` to force-overwrite `principal_id`**
+
+In `runtime/lib/esr/entity/slash_handler.ex`, find the `inject_envelope_args/2` definition (around line 662–673) and the `maybe_put/3` helper near it. Apply this diff:
+
+```elixir
+  # BEFORE
+  defp inject_envelope_args(args, envelope) do
+    chat_id = envelope_chat_id(envelope)
+    thread_id = envelope_thread_id(envelope)
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    principal_id = envelope["principal_id"] || envelope["user_id"]
+
+    args
+    |> maybe_put("chat_id", chat_id)
+    |> maybe_put("thread_id", thread_id)
+    |> maybe_put("app_id", app_id)
+    |> maybe_put("principal_id", principal_id)
+  end
+
+  # AFTER
+  defp inject_envelope_args(args, envelope) do
+    chat_id = envelope_chat_id(envelope)
+    thread_id = envelope_thread_id(envelope)
+    app_id = get_in(envelope, ["payload", "args", "app_id"])
+    principal_id = envelope["principal_id"] || envelope["user_id"]
+
+    args
+    |> maybe_put("chat_id", chat_id)
+    |> maybe_put("thread_id", thread_id)
+    |> maybe_put("app_id", app_id)
+    |> force_put("principal_id", principal_id)   # rev-3: identity is envelope-only
+  end
+
+  # Test-only public shim (rev-3).
+  @doc false
+  def __inject_envelope_args__(args, envelope), do: inject_envelope_args(args, envelope)
+
+  defp force_put(map, _key, nil), do: map
+  defp force_put(map, key, value), do: Map.put(map, key, value)
+```
+
+Place `force_put/3` immediately after `maybe_put/3` (whichever order the existing helpers use; mirror the convention).
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `(cd runtime && mix test test/esr/entity/slash_handler_test.exs --only describe:"principal_id is envelope-only")`
+Expected: PASS.
+
+- [ ] **Step 5: Run the full slash_handler test file — regression check**
+
+Run: `(cd runtime && mix test test/esr/entity/slash_handler_test.exs)`
+Expected: all green. The change is surgical (`maybe_put` → `force_put` for one key only); other tests should be unaffected. Per the audit in spec § 3.5.2: only `Whoami` and `Doctor` are slash-callable consumers of `args["principal_id"]`, both display-only with `(unknown)` fallback — no behavior regression.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add runtime/lib/esr/entity/slash_handler.ex runtime/test/esr/entity/slash_handler_test.exs
+git commit -m "$(cat <<'EOF'
+fix(slash_handler): force-overwrite principal_id from envelope (security)
+
+inject_envelope_args/2 used maybe_put for principal_id, which retained
+user-supplied principal_id=ou_VICTIM over the envelope value. This is
+exploitable by chat members invoking permission:null slashes (e.g. the
+upcoming /feishu:bind) to spoof identity.
+
+Switch principal_id to force_put (Map.put). Other envelope-injected
+keys (chat_id, app_id, thread_id) keep maybe_put — /workspace:bind-chat
+legitimately takes user-supplied chat_id=.
+
+Audit (spec § 3.5.2): Whoami / Doctor are the only slash-callable
+consumers of args["principal_id"] — both display-only, no regression.
+Internal_kind callers (cap/grant, cap/revoke, session/share, etc) do
+not go through inject_envelope_args.
+
+Precondition for spec 2026-05-09-feishu-slash-bind-design.md.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Task 2: SelfBind — golden path + delegation to BindUser
 
 **Files:**
 - Create: `runtime/lib/esr/plugins/feishu/commands/self_bind.ex`
@@ -197,7 +331,7 @@ EOF
 
 ---
 
-## Task 2: SelfBind — delegation edge cases (idempotent / multi-bind / conflict / user_not_found)
+## Task 3: SelfBind — delegation edge cases (idempotent / multi-bind / conflict / user_not_found)
 
 **Files:**
 - Modify: `runtime/test/esr/plugins/feishu/commands/self_bind_test.exs`
@@ -209,21 +343,24 @@ Append to `self_bind_test.exs` inside the same `describe "golden path"` or in a 
 
 ```elixir
   describe "delegation to BindUser" do
-    test "idempotent — already-bound caller returns ok with no yaml change", %{inst_dir: inst_dir} do
+    test "idempotent — already-bound caller returns ok with no semantic change", %{inst_dir: inst_dir} do
       write_users_yaml(inst_dir, """
       users:
         linyilun:
           feishu_ids:
             - ou_X
       """)
-      before = File.read!(Path.join(inst_dir, "users.yaml"))
+      before = read_users_yaml(inst_dir)
 
       assert {:ok, _} =
                SelfBind.execute(%{
                  "args" => %{"name" => "linyilun", "principal_id" => "ou_X"}
                })
 
-      assert before == File.read!(Path.join(inst_dir, "users.yaml"))
+      # Compare parsed structure, not byte-equal — Esr.Yaml.Writer re-emits
+      # with sorted keys; a future yaml-formatter change would silently break
+      # a byte-equality assertion.
+      assert before == read_users_yaml(inst_dir)
     end
 
     test "multi-bind appends caller ou_xxx alongside existing ones", %{inst_dir: inst_dir} do
@@ -292,7 +429,7 @@ Append to `self_bind_test.exs` inside the same `describe "golden path"` or in a 
 - [ ] **Step 2: Run the tests to verify they pass**
 
 Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_bind_test.exs)`
-Expected: **7 tests, 0 failures** (1 from Task 1 + 6 new).
+Expected: **7 tests, 0 failures** (1 from Task 2 + 6 new).
 
 If any case fails: investigate. Most likely cause is a mismatch between BindUser's actual error shape and the test's expected shape — re-read `bind_user.ex:23-69` for the canonical types.
 
@@ -313,7 +450,7 @@ EOF
 
 ---
 
-## Task 3: SelfBind — strict-args whitelist (`@allowed_keys`)
+## Task 4: SelfBind — strict-args whitelist (`@allowed_keys`)
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/commands/self_bind.ex`
@@ -447,7 +584,7 @@ EOF
 
 ---
 
-## Task 4: SelfBind — telemetry events
+## Task 5: SelfBind — telemetry events
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/commands/self_bind.ex`
@@ -600,7 +737,7 @@ EOF
 
 ---
 
-## Task 5: SelfUnbind — golden path + lookup-then-delegate
+## Task 6: SelfUnbind — golden path + lookup-then-delegate
 
 **Files:**
 - Create: `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex`
@@ -740,7 +877,7 @@ EOF
 
 ---
 
-## Task 6: SelfUnbind — idempotent / partial removal / invalid args / write fail
+## Task 7: SelfUnbind — idempotent / partial removal / invalid args / write fail
 
 **Files:**
 - Modify: `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs`
@@ -792,20 +929,29 @@ Append to `self_unbind_test.exs`:
 
   describe "yaml write failure" do
     test "returns write_failed when users.yaml parent is read-only", %{inst_dir: inst_dir} do
-      write_users_yaml(inst_dir, """
-      users:
-        linyilun:
-          feishu_ids:
-            - ou_X
-      """)
+      # Skip on root / EUID==0 — chmod 0o555 is bypassed for root, so the
+      # write would succeed and the assertion would fail. Common in CI
+      # containers running as root.
+      case System.cmd("id", ["-u"]) do
+        {"0\n", 0} ->
+          IO.puts("\n  [skipped on root: chmod 0o555 is bypassed for EUID==0]")
 
-      File.chmod!(inst_dir, 0o555)
+        {_, 0} ->
+          write_users_yaml(inst_dir, """
+          users:
+            linyilun:
+              feishu_ids:
+                - ou_X
+          """)
 
-      try do
-        assert {:error, %{"type" => "write_failed"}} =
-                 SelfUnbind.execute(%{"args" => %{"principal_id" => "ou_X"}})
-      after
-        File.chmod!(inst_dir, 0o755)
+          File.chmod!(inst_dir, 0o555)
+
+          try do
+            assert {:error, %{"type" => "write_failed"}} =
+                     SelfUnbind.execute(%{"args" => %{"principal_id" => "ou_X"}})
+          after
+            File.chmod!(inst_dir, 0o755)
+          end
       end
     end
   end
@@ -814,7 +960,7 @@ Append to `self_unbind_test.exs`:
 - [ ] **Step 2: Run the test file**
 
 Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_unbind_test.exs)`
-Expected: **5 tests, 0 failures** (1 from Task 5 + 4 new). All four delegation cases reuse already-implemented logic.
+Expected: **5 tests, 0 failures** (1 from Task 6 + 4 new). All four delegation cases reuse already-implemented logic.
 
 If `write_failed` test does not produce that error type, inspect `runtime/lib/esr/plugins/feishu/commands/unbind_user.ex` for its actual error shape on `Yaml.Writer` failure, and adjust the assertion accordingly. The spec lists `write_failed` as the existing UnbindUser type.
 
@@ -835,7 +981,7 @@ EOF
 
 ---
 
-## Task 7: SelfUnbind — strict-args whitelist (`@allowed_keys`)
+## Task 8: SelfUnbind — strict-args whitelist (`@allowed_keys`)
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex`
@@ -978,7 +1124,130 @@ EOF
 
 ---
 
-## Task 8: SelfUnbind — telemetry events
+## Task 9: SelfUnbind — race-remap (`user_not_found` → idempotent ok)
+
+**Why:** `lookup_owner/1` and `UnbindUser.execute/1` each read `users.yaml`. A concurrent admin-代-unbind landing between the two reads makes UnbindUser see no entry → returns `{:error, %{"type" => "user_not_found"}}`. From the self-unbind caller's perspective the binding IS gone, so surfacing "user not found" is confusing. Catch and remap to idempotent `:ok`. Spec § 4.4 + § 7.2.
+
+**Files:**
+- Modify: `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex`
+- Modify: `runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs`
+
+- [ ] **Step 1: Add a failing test for the race-remap**
+
+Append to `self_unbind_test.exs`:
+
+```elixir
+  describe "race-remap (spec § 7.2)" do
+    # Simulate the race deterministically by setting up a yaml shape
+    # where lookup_owner returns "linyilun" but the on-disk yaml seen
+    # by UnbindUser has linyilun's feishu_ids already missing ou_X
+    # (as if a concurrent admin unbind landed between the two reads).
+    #
+    # Easiest reproduction: lookup_owner reads YAML once; UnbindUser
+    # re-reads it. We rewrite users.yaml between the two by stubbing
+    # lookup_owner via :meck or by exposing it as public for testing.
+    test "user_not_found from delegated UnbindUser is remapped to idempotent :ok", %{inst_dir: inst_dir} do
+      # Set up users.yaml without ou_X anywhere (so UnbindUser sees nothing)
+      write_users_yaml(inst_dir, """
+      users:
+        linyilun:
+          feishu_ids: []
+      """)
+
+      # But lookup_owner needs to "find" linyilun. Use :meck to override.
+      :meck.new(Esr.Plugins.Feishu.Commands.SelfUnbind, [:passthrough])
+      :meck.expect(Esr.Plugins.Feishu.Commands.SelfUnbind, :lookup_owner, fn _ -> "linyilun" end)
+
+      try do
+        assert {:ok, %{"text" => text}} =
+                 SelfUnbind.execute(%{"args" => %{"principal_id" => "ou_X"}})
+
+        assert text =~ "no longer bound"
+      after
+        :meck.unload(Esr.Plugins.Feishu.Commands.SelfUnbind)
+      end
+    end
+  end
+```
+
+(Pre-req: `:meck` must be in `runtime/mix.exs` test deps. If it isn't, add `{:meck, "~> 0.9", only: :test}` to `deps/0` in mix.exs and run `mix deps.get` before this step. Verify by running `mix deps | grep meck`.)
+
+Alternative (no meck): refactor `SelfUnbind` to take an injected `lookup_owner_fn` argument with a default — but that complicates the public API. The meck approach keeps the production module unchanged.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_unbind_test.exs --only describe:"race-remap")`
+Expected: **FAIL** — without remap, SelfUnbind returns `{:error, %{"type" => "user_not_found"}}`. The test asserts `:ok` with `no longer bound` text.
+
+- [ ] **Step 3: Add the remap to SelfUnbind**
+
+In `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex`, find `do_unbind/1` and replace it:
+
+```elixir
+  defp do_unbind(%{"principal_id" => p}) when is_binary(p) and p != "" do
+    case lookup_owner(p) do
+      nil -> {:ok, %{"text" => "#{p} is not bound to any esr user"}}
+      name ->
+        case UnbindUser.execute(%{"args" => %{"name" => name, "feishu_user_id" => p}}) do
+          # Race remap (spec § 7.2): if a concurrent admin unbind landed
+          # between our lookup_owner and UnbindUser's read, UnbindUser
+          # returns user_not_found. From the self-unbind caller's
+          # perspective this is identical to "no longer bound" — collapse
+          # to idempotent ok rather than confusing the user with a
+          # principal-namespace error.
+          {:error, %{"type" => "user_not_found"}} ->
+            {:ok, %{"text" => "#{p} is no longer bound (raced concurrent unbind)"}}
+
+          other -> other
+        end
+    end
+  end
+```
+
+Also expose `lookup_owner/1` as a public function so `:meck` can patch it (rev-3 test exposure):
+
+```elixir
+  # Was: defp lookup_owner(fid) do ... end
+  # Now: def lookup_owner(fid) do ... end  (test-exposed; keep doc as @doc false)
+  @doc false
+  def lookup_owner(fid) do
+    ...
+  end
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_unbind_test.exs --only describe:"race-remap")`
+Expected: PASS.
+
+- [ ] **Step 5: Run the full self_unbind_test file — regression check**
+
+Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_unbind_test.exs)`
+Expected: all green (8 prior tests + 1 new race-remap = 9 total at this stage).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add runtime/lib/esr/plugins/feishu/commands/self_unbind.ex runtime/test/esr/plugins/feishu/commands/self_unbind_test.exs runtime/mix.exs
+git commit -m "$(cat <<'EOF'
+feat(feishu): SelfUnbind race-remap user_not_found → idempotent ok
+
+A concurrent admin feishu_unbind between lookup_owner and the
+delegated UnbindUser.execute can leave UnbindUser seeing nothing
+even though lookup_owner found the owning user. From the self-unbind
+caller's perspective this is "no longer bound" — collapse to ok with
+a clear message instead of surfacing user_not_found.
+
+Spec 2026-05-09-feishu-slash-bind-design.md § 4.4 + § 7.2.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Task 10: SelfUnbind — telemetry events
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/commands/self_unbind.ex`
@@ -1119,7 +1388,7 @@ end
 - [ ] **Step 4: Run the full test file**
 
 Run: `(cd runtime && mix test test/esr/plugins/feishu/commands/self_unbind_test.exs)`
-Expected: **9 tests, 0 failures.**
+Expected: **10 tests, 0 failures** (8 from Tasks 6-8 + 1 race-remap from Task 9 + 2 telemetry).
 
 - [ ] **Step 5: Commit**
 
@@ -1139,11 +1408,31 @@ EOF
 
 ---
 
-## Task 9: Plugin manifest registration + registry tests
+## Task 11: Plugin manifest registration + registry tests
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/manifest.yaml`
 - Modify: `runtime/test/esr/plugins/feishu/commands/migration_test.exs`
+
+- [ ] **Step 0: Pre-check `Registry.lookup/1` return shape (IEx)**
+
+The current feishu manifest has `slashes: {}`, so the migration_test.exs only exercises `command_module_for/1` (returns just a module). The new tests in this task will assert against `Registry.lookup/1`, which returns `{:ok, route}` — but we don't know if `route` map has atom keys (`%{kind: ...}`) or string keys (`%{"kind" => ...}`) without verifying. **Verify before writing assertions** — pick any existing slash that already works (e.g. `/help`):
+
+```bash
+(cd runtime && iex -S mix)
+```
+
+In the IEx prompt:
+
+```elixir
+Esr.Resource.SlashRoute.Registry.lookup("/help")
+# Expected output shape (one of):
+#   {:ok, %{kind: "help", command_module: Esr.Commands.Help, ...}}    # atom keys
+#   {:ok, %{"kind" => "help", "command_module" => "Esr.Commands.Help", ...}}  # string keys
+System.halt(0)
+```
+
+Note the key shape. The Step 1 assertions below assume **atom keys**; if you see string keys, adjust the test code to match (`%{"kind" => "feishu_self_bind", "command_module" => Esr.Plugins.Feishu.Commands.SelfBind}` and similarly for `/feishu:unbind`).
 
 - [ ] **Step 1: Add failing registry tests**
 
@@ -1262,14 +1551,14 @@ EOF
 
 ---
 
-## Task 10: Final verification — full feishu suite + spec self-check
+## Task 12: Final verification — full feishu suite + spec self-check
 
 **Files:** none modified — verification only.
 
 - [ ] **Step 1: Run the entire feishu plugin test suite**
 
 Run: `(cd runtime && mix test test/esr/plugins/feishu/ --trace)`
-Expected: all green. The `--trace` flag prints test names so you can verify the new files (`self_bind_test.exs`, `self_unbind_test.exs`) produced expected counts (11 + 9 = 20 new tests; 4 new in `migration_test.exs`; 24 total new).
+Expected: all green. The `--trace` flag prints test names so you can verify the new files (`self_bind_test.exs`, `self_unbind_test.exs`) produced expected counts (11 + 10 = 21 new tests in feishu/commands/; 4 new in `migration_test.exs`; 1 new in `slash_handler_test.exs` from Task 1; **26 total new tests**).
 
 - [ ] **Step 2: Run the full runtime test suite — sanity check for unrelated regressions**
 
@@ -1306,11 +1595,11 @@ System.halt(0)
 Open [`docs/superpowers/specs/2026-05-09-feishu-slash-bind-design.md`](../specs/2026-05-09-feishu-slash-bind-design.md) and skim each section. Cross-check:
 
 - § 3.1 file structure → matches what was created/modified.
-- § 3.2 manifest diff → matches Task 9 step 3 verbatim.
-- § 4.3 / § 4.4 SelfBind / SelfUnbind code → matches the modules at end of Task 4 / Task 8.
-- § 4.5 telemetry events → both emitted, both tested (Task 4 + Task 8).
+- § 3.2 manifest diff → matches Task 11 step 3 verbatim.
+- § 4.3 / § 4.4 SelfBind / SelfUnbind code → matches the modules at end of Task 5 / Task 10.
+- § 4.5 telemetry events → both emitted, both tested (Task 5 + Task 10).
 - § 5.1 / § 5.2 error semantics decision tables → all rows have at least one corresponding test.
-- § 6.1 / § 6.2 / § 6.3 test cases → all 11 + 9 + 4 cases implemented.
+- § 6.1 / § 6.2 / § 6.3 test cases → all 11 + 10 + 4 cases implemented (rev-3 added race-remap to § 6.2 → 10 cases there).
 - § 7.2 race comment → present in `self_unbind.ex:lookup_owner/1`.
 
 - [ ] **Step 5: No commit needed — verification task only**
@@ -1323,19 +1612,19 @@ If everything checks out, the implementation is complete. Optionally `git log --
 
 **1. Spec coverage:**
 - § 3.1 files — ✅ Tasks 1-9 touch every listed file.
-- § 3.2 manifest — ✅ Task 9 step 3.
-- § 3.4 permission model — ✅ implicit (`permission: null` in Task 9 manifest).
+- § 3.2 manifest — ✅ Task 11 step 3.
+- § 3.4 permission model — ✅ implicit (`permission: null` in Task 11 manifest).
 - § 4.1–§ 4.4 data flow + module bodies — ✅ Tasks 1-8.
 - § 4.5 telemetry — ✅ Tasks 4 + 8.
 - § 5.1–§ 5.2 error semantics — ✅ test cases in Tasks 1-8 cover every row.
 - § 6.1–§ 6.3 test plan — ✅ tests written exactly as specified.
 - § 6.5 stability constraints — ✅ `async: false` everywhere, no FSEvents dependence.
-- § 7.2 race comment — ✅ inline in Task 5 step 3 + Task 7/8.
+- § 7.2 race comment + remap — ✅ inline in Task 6 step 3; remap added in Task 9; tested via Task 9 + Task 10.
 
 **2. Placeholder scan:** none. Every step has runnable code or exact commands.
 
 **3. Type consistency:**
-- `@allowed_keys` lists checked across SelfBind (Task 3) and SelfUnbind (Task 7) — different key sets are intentional (SelfBind takes user-supplied `name`, SelfUnbind takes none).
+- `@allowed_keys` lists checked across SelfBind (Task 4) and SelfUnbind (Task 8) — different key sets are intentional (SelfBind takes user-supplied `name`, SelfUnbind takes none).
 - `result_tag/1` helper has identical clauses in both modules — intentional duplication; eliminated via Meta in future per spec § 8.
 - Telemetry event names spelled identically in tests, code, and spec: `[:esr, :slash, :feishu, :self_bind]` and `[:esr, :slash, :feishu, :self_unbind]`.
 - `feishu_self_bind` / `feishu_self_unbind` kind names match across manifest, command_module assertions, and test labels.
