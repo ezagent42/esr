@@ -461,13 +461,20 @@ defmodule Esr.Commands.Session.New do
           {:user_default, name} -> {:ok, name}
 
           :no_match ->
+            # Distinguish "resolver chain fully exhausted" from "args
+            # actually malformed" — the latter still flows through
+            # `validate_args/2` below as `invalid_args`. This error means
+            # every layer of the workspace fallback ladder (explicit →
+            # chat-default → user-default) returned empty, which is a
+            # different operator action (bind a workspace) than an
+            # arg-shape fix.
             {:error,
              %{
-               "type" => "no_workspace_resolvable",
+               "type" => "no_workspace_target",
                "message" =>
-                 "workspace not specified, no chat-default set, and " <>
-                   "submitter has no user-default. Run `/user:use workspace=<name>` " <>
-                   "to set one, or pass `workspace=<name>` explicitly."
+                 "no explicit workspace= and no chat-current binding and " <>
+                   "no user-default workspace; bind first with " <>
+                   "/workspace:bind-chat or /user:use, or pass workspace=<name>"
              }}
         end
     end

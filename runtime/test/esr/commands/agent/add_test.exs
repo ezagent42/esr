@@ -24,8 +24,14 @@ defmodule Esr.Commands.Agent.AddTest do
     assert {:error, %{"type" => "spawn_failed"}} = Add.execute(cmd)
   end
 
-  test "missing session_id: returns invalid_args" do
-    assert {:error, %{"type" => "invalid_args"}} =
+  test "missing session_id and no chat context: returns no_session_target" do
+    # fix/chat-envelope-arg-fallback: when `type` + `name` are present
+    # but neither `session_id=` nor a resolvable chat-current target
+    # exist, the operator submitted a command with no session to act on.
+    # Surface `no_session_target` so the message points them at the fix
+    # (`/session:new` or explicit `session_id=`); reserve `invalid_args`
+    # for actually-empty / shape-malformed input.
+    assert {:error, %{"type" => "no_session_target"}} =
              Add.execute(%{"args" => %{"type" => "cc", "name" => "x"}})
   end
 
