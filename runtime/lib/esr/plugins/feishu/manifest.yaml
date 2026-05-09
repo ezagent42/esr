@@ -11,6 +11,12 @@
 # and removes the fallback.
 #
 # Spec: docs/superpowers/specs/2026-05-04-plugin-mechanism-design.md §四.
+#
+# Phase 7.D (2026-05-08): app_id + app_secret moved out of plugin
+# config_schema and into per-instance adapters.yaml `config:`. They
+# are inherently per-Feishu-bot identity attributes (one (app_id,
+# app_secret) pair per Lark App), not plugin-wide settings. Plugin
+# config now retains only truly plugin-wide knobs (log_level).
 
 name: feishu
 version: 0.1.0
@@ -91,17 +97,13 @@ declares:
     outbound: [image, file]
 
 config_schema:
-  app_id:
-    type: string
-    description: "Feishu app ID (cli_xxx). Required for Feishu API calls."
-    default: ""
-
-  app_secret:
-    type: string
-    description: "Feishu app secret. Required for Feishu API calls. Set via /plugin:set feishu key=app_secret or in global plugins.yaml — do not commit to repo."
-    default: ""
-
   log_level:
     type: string
-    description: "Log verbosity for the feishu adapter (debug|info|warning|error)."
+    description: "Log verbosity for the feishu adapter (debug|info|warning|error). Forwarded to the Python sidecar at spawn time; restart sidecar to apply."
     default: "info"
+
+  # NOTE: app_id and app_secret were previously declared here. As of Phase 7.D
+  # (2026-05-08) they live in per-instance `adapters.yaml`:
+  #   instances.<id>.config.app_id
+  #   instances.<id>.config.app_secret
+  # See docs/notes/2026-05-09-cold-start-walkthrough-1.md C2 entry.

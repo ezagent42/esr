@@ -58,8 +58,22 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
           spawn_feishu_app_adapter(sup, instance_id, app_id)
         end
       else
-        _ -> :ok
+        {:error, reason} ->
+          Logger.warning(
+            "feishu plugin: failed to parse #{adapters_yaml_path}: #{inspect(reason)}"
+          )
+
+          :ok
+
+        _ ->
+          :ok
       end
+    else
+      Logger.info(
+        "feishu plugin: no adapters.yaml at #{adapters_yaml_path}; " <>
+          "skipping FeishuAppAdapter spawn (declare instances via " <>
+          "./esr.sh --env=prod adapter_add or write adapters.yaml directly)"
+      )
     end
 
     :ok

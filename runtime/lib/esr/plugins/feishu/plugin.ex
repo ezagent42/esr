@@ -6,16 +6,17 @@ defmodule Esr.Plugins.Feishu.Plugin do
 
   ## Config key behavior
 
-    - `app_id`, `app_secret` — consumed by `FeishuAppAdapter` peers when
-      making Lark REST API calls. The adapter reads config via
-      `Esr.Plugin.Config.get/3` at call time (not cached at start), so
-      new values take effect on the next outbound API call automatically.
-      No rebinding required.
-
     - `log_level` — forwarded to the `feishu_adapter_runner` Python
       sidecar at subprocess start. The sidecar does not support live
       log-level changes at runtime. A warning is logged; the operator
       must restart the sidecar to apply the change.
+
+  Note: `app_id` and `app_secret` are NOT plugin-wide config. They are
+  per-instance attributes of one specific Lark App, declared in
+  `adapters.yaml` under `instances.<id>.config.{app_id,app_secret}`,
+  and flow verbatim into the Python sidecar's `--config-json` payload.
+  Phase 7.D (2026-05-08) moved them out of plugin config; this module
+  no longer handles them.
 
   Return: always `:ok`. The plugin does not enter a fallback state.
 
@@ -36,9 +37,6 @@ defmodule Esr.Plugins.Feishu.Plugin do
       )
     end
 
-    # app_id / app_secret: FeishuAppAdapter reads config at call time via
-    # Esr.Plugin.Config.get/3, so new values take effect on the next
-    # outbound API call automatically. No rebinding needed.
     :ok
   end
 end
