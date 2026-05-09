@@ -21,36 +21,54 @@ defmodule EsrWeb.PtySocket do
 
   ## Connection
 
-  URL: `/attach_socket/websocket?sid=<pty_actor_id>`. The browser passes
-  `sid` as a query param at WebSocket handshake. Phase A.4 (resource-typed
-  grammar) migrated PtyProcess's pubsub topic + register key to
-  `pty:<actor_id>`, so the `?sid=` value is now semantically the
-  pty_actor_id (the URL emitter in Phase E builds URLs with the actor_id
-  UUID). The query-param NAME stays `sid` for backwards compat with the
-  existing `window.ESR_SID` injection in the attach HTML shell.
+  URL: `/attach_socket/websocket?token=<phoenix_token>`. The browser
+  passes a `Phoenix.Token` HMAC-signed payload as the `token` query
+  param at WebSocket handshake. The token's plaintext is the
+  pty_actor_id; salt is `"pty_attach"`; TTL is 600 seconds (10 min).
 
-  On connect we subscribe to PubSub topic `pty:<sid>`; PtyProcess
-  broadcasts `{:pty_stdout, bytes}` there, and we forward bytes
-  unchanged as binary frames. `:pty_closed` closes the socket.
+  Pre-2026-05-09 this used `?sid=<actor_id>` plain — anyone who learned
+  the actor_id (clipboard leak, screenshot, log spillover) could attach
+  to a live PTY. The signed token closes that gap; the actor_id no
+  longer appears in any URL.
+
+  On connect we verify the token and subscribe to PubSub topic
+  `pty:<actor_id>`; PtyProcess broadcasts `{:pty_stdout, bytes}` there,
+  and we forward bytes unchanged as binary frames. `:pty_closed` closes
+  the socket. The internal state field stays named `sid` to keep the
+  downstream code path (init/handle_in/handle_info) unchanged — only
+  the auth path is new.
   """
 
   @behaviour Phoenix.Socket.Transport
 
   require Logger
 
+  # Salt + TTL must match Esr.Commands.Pty.Attach (token signer) and
+  # EsrWeb.AttachController (page-level pre-check).
+  @token_salt "pty_attach"
+  @token_max_age_seconds 600
+
   @impl true
   def child_spec(_opts), do: :ignore
 
   @impl true
-  def connect(%{params: params}) do
-    case Map.get(params, "sid") do
-      sid when is_binary(sid) and sid != "" ->
-        {:ok, %{sid: sid}}
+  def connect(%{params: %{"token" => token}}) when is_binary(token) and token != "" do
+    case Phoenix.Token.verify(EsrWeb.Endpoint, @token_salt, token,
+           max_age: @token_max_age_seconds
+         ) do
+      {:ok, actor_id} when is_binary(actor_id) and actor_id != "" ->
+        Logger.info("pty_socket: connect verified actor_id=#{actor_id}")
+        {:ok, %{sid: actor_id}}
 
-      _ ->
-        Logger.warning("pty_socket: connect rejected — missing sid query param")
+      {:error, reason} ->
+        Logger.warning("pty_socket: connect rejected reason=#{inspect(reason)}")
         :error
     end
+  end
+
+  def connect(_other) do
+    Logger.warning("pty_socket: connect rejected — missing or empty token query param")
+    :error
   end
 
   @impl true

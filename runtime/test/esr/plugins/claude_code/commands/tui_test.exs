@@ -47,7 +47,19 @@ defmodule Esr.Plugins.ClaudeCode.Commands.TuiTest do
     }
 
     assert {:ok, %{"url" => url}} = Tui.execute(cmd)
-    assert url =~ "pty-uuid-tui-aaaa"
+
+    # Per the 2026-05-09 PtySocket auth PR, /pty:attach URLs no longer
+    # contain the actor_id — they carry a Phoenix.Token signed under
+    # salt "pty_attach". Tui delegates verbatim to Pty.Attach so the
+    # contract is the same: actor_id must verify back from the token.
+    assert url =~ "/sessions/attach?token="
+    refute url =~ "pty-uuid-tui-aaaa"
+
+    [_, token] = Regex.run(~r/token=([^"&\s)]+)/, url)
+    raw_token = URI.decode_www_form(token)
+
+    assert {:ok, "pty-uuid-tui-aaaa"} =
+             Phoenix.Token.verify(EsrWeb.Endpoint, "pty_attach", raw_token, max_age: 600)
   end
 
   test "unknown agent name: returns not_found" do
