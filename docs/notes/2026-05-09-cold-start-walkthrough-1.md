@@ -294,3 +294,19 @@ Use cases:
 4. 或反过来：plugin 提供 default agent template（C12）时**只允许声明 params 里的字段**——code 用 params 反查
 
 **优先级**：低-中。今天能跑（hardcoded 路径），但"一个 plugin 一种 agent type"扩展（codex / qwen）时会撞——每种 agent 的 params 不一样，Session.New 写死必查 dir 不合理。
+
+### 新发现：**C15 — ChatScope.attach 跨 app_id attach 时无校验**
+
+`feishu_chat_proxy.ex:47` 把 `app_id` 写进 FCP state（`Esr.Entity.get_param(params, :app_id)`）。outbound 默认走 `state.app_id`（line 523 `app_id = Map.get(args, "app_id") || state.app_id`）—— 只有 claude 显式 reply tool 带 args.app_id 时才进 cross-app 分支（PR-A）。
+
+但 `Esr.Resource.ChatScope.Registry.attach` 跟 `Esr.Commands.Scope.Attach` 没找到 app_id 一致性校验（grep 空）—— 操作员可以把 (chat_X, app_B) attach 给 home=app_A 的 session，inbound from app_B 到达 session 后 reply 默认走 app_A → 用户在 app_B chat 里发问，看到 app_A bot 回。
+
+**两种修法**:
+1. ChatScope.attach 时 warn/拒 chat.app_id ≠ session.app_id
+2. FCP outbound 默认从 inbound envelope 取 app_id（cross-app 由 notify tool 显式覆盖），而不是 state.app_id
+
+选 2 更激进——意味着 session "home app" 概念弱化，session 跟"该回复哪个 app"解耦。但 PR-A 的 cross-app forward 设计**就是依赖** session.app_id 区分 home vs target，去掉概念会破。
+
+→ 选 1 + 加文档：attach 跨 app 是 cross-app forward 的预期使用，操作员显式承担。
+
+**优先级**：低-中。规模化多 bot 部署时会撞，单 bot 部署不影响。
