@@ -1,0 +1,99 @@
+# 2026-05-09 — yao mac cold-start walkthrough #1（首次完整通跑复盘）
+
+> 起源：yao.shengyue 在 mac 上从零起 esrd → 飞书 dog-feed inbound 走通的一次完整尝试。
+> branch: `feat/restore-cli-paths`（branched off `3aede56` = origin/dev 当时 tip）
+> commit:
+>   - `420e398 fix(_ipc_common): inline runtime_home() — drop esr.cli.paths dep`
+>   - `2006bc9 refactor(feishu): move app_id/app_secret out of plugin config (Phase 7.D)`
+> 第二次复跑 (#2) 计划针对 origin/dev HEAD（含 #269..#281），验证哪些坑在新 dev 已修。
+
+## 通跑路径（最终成功的顺序）
+
+1. **环境**：macOS yao.shengyue user (UID 503，非 admin)，brew 已装 elixir 1.19.5/OTP 28、uv、claude 2.1.131、node、pnpm、tmux。
+2. **代码**：`~/Workspace/esr-yao-dev` worktree 从 `origin/dev`(3aede56) 拉 `feat/restore-cli-paths`。
+3. **deps**：`cd runtime && mix deps.get && mix compile`（hex.pm 抖一次，加 `HEX_HTTP_CONCURRENCY=1` 重跑）；`cd py && uv sync --no-dev` + `uv pip install -e ../adapters/feishu -e ../handlers/{feishu_app,feishu_thread,cc_session,cc_adapter_runner}`（PyPI 也抖；跳 dev deps 加速）。
+4. **escript**：`cd runtime && mix escript.build`（产出 `runtime/esr` 给 admin queue 注 commands）。
+5. **配置文件**（手编 `~/.esrd/default/`）：
+   - `plugins.yaml` — 顶层 key **必须是 `config:`**（不是 `plugins:`），feishu 段只放 `log_level`，claude_code 段放 `claude_binary`
+   - `adapters.yaml` — `instances.<id>.config.{app_id, app_secret}`（per-instance，**both 字段都在这**）
+   - `capabilities.yaml` — bootstrap principal + 用户自己的 open_id 都给 `["*"]`
+   - `users.yaml` — `users.<name>.feishu_ids: [<open_id>]`（**通过 escript user_add 创建后必须 restart esrd 才能让 watcher 订阅 + 重 load 含 feishu_ids 的 snapshot**）
+6. **启动**：`tmux new -s esrd -d ~/.esrd/start-esrd.sh`（脚本里 export `ESR_BOOTSTRAP_PRINCIPAL_ID` + `MIX_ENV=dev` 跑 `mix phx.server`）。
+7. **escript 注命令**（admin queue）：必须 `ESR_OPERATOR_PRINCIPAL_ID=<your_open_id> ESRD_HOME=~/.esrd ./esr.sh user_add name=<name>`。env 不设默认是 `ou_unknown`（无 cap）→ `unauthorized`。
+8. **飞书后台**（关键 4 项）：
+   - 「机器人」启用
+   - 「权限管理」勾 `im:message` + `im:message.group_at_msg`（最少；私聊还要 `im:message.p2p_msg`）
+   - 「事件配置」勾 **`接收消息 v2.0` (im.message.receive_v1)**
+   - 「版本管理与发布」**发布版本**（草稿状态收不到事件！）
+9. **改飞书订阅后必须重启 sidecar**：Lark WS 是 connect-time 锁死订阅集，不主动推订阅更新——`pkill feishu_adapter_runner` 让 esrd supervisor respawn。
+
+## 跑出的 7 个代码 bug + dev 修了几条
+
+| # | bug | 发生于 | walkaround | dev 上是否修 |
+|---|---|---|---|---|
+| **C1** | `_ipc_common/url.py:23 from esr.cli import paths` 任何 sidecar 启动死 | feishu_adapter_runner 重 spawn 时 | commit `420e398` 加 `runtime_paths.py` 抽 `runtime_home()` | ✅ **已修** PR #274（同思路 inline `_runtime_home()` 私函数；我们的 commit 重复，rebase 时 drop） |
+| **C2** | Phase 7 `app_secret` 在 plugin config，但 spawn 路径只透传 adapter config → sidecar 拿不到 secret | Lark 鉴权 fail | commit `2006bc9` (Phase 7.D) — secret 移回 adapters.yaml per-instance | ❌ **未修** |
+| **C3** | UnboundChatGuard 文本 `/new-workspace` `/new-session`（pre-Phase-6 名字） | bot 第一次回 onboarding 时 | 没修，告诉用户用真名 (`/workspace:new`) | ❌ **未修** |
+| **C4** | feishu plugin manifest 缺 `declares.commands` → `feishu_bind` `unknown_kind`（即使 `bind_user.ex` 已实现） | escript 跑 feishu_bind 时 | 跳 dispatcher，sed 直接 edit `users.yaml` append open_id | ❌ **未修**（baseline 早有 3 个 migration_test fail 标记这事） |
+| **C5** | `user.watcher` boot 时若 users.yaml 缺席就 `fs_pid: nil` 永不补订阅 | manually edit 后 ETS 不更新 | restart esrd | 🟡 **部分修** PR #280：file 在时改 dir-watch；缺席仍 give up |
+| **C6** | `Bootstrap.bootstrap/0` adapters.yaml 缺失时 silent no-op（无 log） | 首次启动看不出来为啥 FAA 没 spawn | grep 源码 + 写 adapters.yaml 触发 | ❌ **未修** |
+| **C7** | escript 默认 principal `ou_unknown` 无 cap → 任何 admin 命令 `unauthorized` | escript user_add | export `ESR_OPERATOR_PRINCIPAL_ID` env | ❌ **未修** — PR #281 "first /user:add auto-promotes to admin" 部分缓解（首次 user_add 免 cap，但操作员仍要知道用 escript 跑） |
+
+## 跑出的非代码坑（操作员需知 19 条）
+
+按类别：
+
+**CFG 操作员配置**（8 条）：
+- ESRD_HOME 子目录预建多余 (`logs/`, `users/`, `workspaces/` esrd 自建)
+- plugins.yaml 顶层 key 是 `config:` 不是 `plugins:`
+- ESR_BOOTSTRAP_PRINCIPAL_ID plist 默认是别人的 open_id
+- adapters.yaml 必须先创建（不存在 → silent no-op）
+- users.yaml 通过 `escript user_add` 创建后必须 restart esrd
+- feishu binding 需 `escript feishu_bind`，但 dispatcher unknown_kind → 直接 sed 编辑
+- escript 必须先 `mix escript.build` 编译
+- escript 运行需 `ESR_OPERATOR_PRINCIPAL_ID` 显式
+
+**CFG-Lark 飞书后台**（4 条）：
+- 草稿状态不推任何事件 → 必须发布版本
+- 「事件配置」未勾 `im.message.receive_v1` → 只收到 bot.added/deleted
+- WS 老连接锁住老订阅集 → 改后必 restart sidecar
+- @ bot 走 `im:message.group_at_msg`；私聊要 `im:message.p2p_msg`
+
+**DESIGN 设计陷阱**（5 条）：
+- `mix test --max-failures 0` 是 "abort on 0th fail" 跑 0 测假绿
+- Lark WS connect-time 订阅锁死
+- bot 模板"已绑定的 esr user" 是 hardcoded 模板，不真验证
+- principal cap vs esr user identity 两层独立 → 操作员要分别建
+- uv sync silent download phase 让人误以为卡死
+
+**ENV 环境**（2 条）：
+- WSL PyPI Connection refused
+- hex.pm 默认并发 8 偶尔 timeout
+
+详见 [`docs/notes/onboarding-future-work-2026-05-07.md`](onboarding-future-work-2026-05-07.md)（如果搬过来的话）/ 老 path `docs/discuss/note/2026-05-07-onboarding-future-work.md` items 21-30（在 d421212 base 上的 WSL clone）。
+
+## 接下来 PR 候选（已知未修代码 bug）
+
+按优先级：
+
+1. **C2 — `feat/restore-cli-paths` 已 commit `2006bc9`** — push + PR
+2. **C3 — UnboundChatGuard 文本** — `runtime/lib/esr/entity/unbound_chat_guard.ex` 一处字符串 grep replace
+3. **C4 — feishu plugin manifest `declares.commands`** + Plugin.Loader 把 commands kind 注册到 SlashRoute Registry（中等改动；baseline migration_test 3 fail 自动绿）
+4. **C5 残留 — user.watcher** — `runtime/lib/esr/entity/user/watcher.ex` 改成无条件 watch dirname
+5. **C6 — Bootstrap.bootstrap/0** — 加一行 `Logger.info "no adapters.yaml at #{path}; skipping feishu adapter spawn"`
+6. **C7 — escript principal** — UX 改进，可能跟 PR #281 first-user-auto-promote overlap（待第二次跑确认）
+
+C1 已被 origin/dev #274 修，rebase 时 git 会自动识别 patch-equivalent → drop `420e398`。
+
+## meta：第二次通跑（即将开始）
+
+第二次跑的目的：在 `origin/dev` HEAD（b3c683c，含 #269..#281）上从零再走一次：
+- C1 应已不复现
+- C5 在 dir-watch 改进下表现如何
+- C7 是否被 PR #281 完全覆盖？还是仍要 escript？
+- C2/C3/C4/C6 应原样复现 → 据此决定 PR 优先级
+
+第二次跑前已 archive：
+- `~/.esrd/default/`（runtime state，整个 archive 到 `~/.esrd/_archive-bootstrap-1/`）
+- `~/.esrd/*.sh` helper scripts（archive 到 `~/.esrd/_archive-bootstrap-1/scripts/`）
+- 旧 tmux esrd session killed
