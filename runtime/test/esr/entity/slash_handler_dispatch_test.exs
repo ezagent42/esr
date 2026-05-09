@@ -324,6 +324,54 @@ defmodule Esr.Entity.SlashHandlerDispatchTest do
     end
   end
 
+  describe "inject_envelope_args (rev-2 semantic split)" do
+    test "injects caller_principal_id from envelope.principal_id" do
+      envelope = %{
+        "principal_id" => "ou_real_caller",
+        "user_id" => "ou_real_caller",
+        "payload" => %{"text" => "/help", "args" => %{}}
+      }
+
+      args = Esr.Entity.SlashHandler.inject_envelope_args(%{}, envelope)
+
+      assert args["caller_principal_id"] == "ou_real_caller"
+      refute Map.has_key?(args, "principal_id")
+    end
+
+    test "user-supplied caller_principal_id is overwritten by envelope" do
+      envelope = %{
+        "principal_id" => "ou_real",
+        "user_id" => "ou_real",
+        "payload" => %{"text" => "/help", "args" => %{}}
+      }
+
+      args =
+        Esr.Entity.SlashHandler.inject_envelope_args(
+          %{"caller_principal_id" => "ou_VICTIM"},
+          envelope
+        )
+
+      assert args["caller_principal_id"] == "ou_real"
+    end
+
+    test "user-supplied target_principal_id is preserved untouched" do
+      envelope = %{
+        "principal_id" => "ou_caller",
+        "user_id" => "ou_caller",
+        "payload" => %{"text" => "/help", "args" => %{}}
+      }
+
+      args =
+        Esr.Entity.SlashHandler.inject_envelope_args(
+          %{"target_principal_id" => "ou_TARGET"},
+          envelope
+        )
+
+      assert args["target_principal_id"] == "ou_TARGET"
+      assert args["caller_principal_id"] == "ou_caller"
+    end
+  end
+
   # ------------------------------------------------------------------
   # Helpers
   # ------------------------------------------------------------------
