@@ -115,3 +115,18 @@ C1 已被 origin/dev #274 修，rebase 时 git 会自动识别 patch-equivalent 
 **优先级**：中。一次性踩到就知道，但 first-time 操作员**绝对**会撞，因为 `--env=prod` 既不是必填也不是默认显眼。
 
 PR 候选 6 → 现在变成 7 个：C2, C3, C4, C5(残留), C6, C7（如果 #281 没完全覆盖）, **C8**.
+
+### 新发现：**C9 — "instance" 命名歧义**
+
+ESR 里 "instance" 有两个无关含义：
+
+| 含义 | 在哪用 | 个数 |
+|---|---|---|
+| **A: ESR_INSTANCE** | esrd 进程 state 目录命名（`~/.esrd/<inst>/`），LaunchAgent label | 一个 esrd 进程 ↔ 一个 |
+| **B: adapter instance** | `adapters.yaml` 的 `instances:` 顶层 key，每行 = 一个外部 IM app 连接（FAA peer + 1 lark_oapi WS） | 一个 esrd 进程内 ↔ 多个 |
+
+新 operator 看 adapters.yaml `instances:` 时直觉以为是 ESR_INSTANCE 的 list（一份 esrd 多份命名），实际是某个 esrd 内部的多 IM-app 列表。
+
+**修法（candidate）**：把 adapters.yaml 顶层 key `instances:` 重命名为 `adapters:`（schema breaking 但语义清晰）。或起码在 docs 里把这两个 "instance" 的区分写显眼。
+
+**优先级**：低（文档可以解决，不是 blocker）。
