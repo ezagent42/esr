@@ -12,7 +12,26 @@ defmodule Esr.Commands.Adapter.Remove do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:adapters/remove", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :adapter_remove do
+    slash         :none
+    category      "Adapters"
+    description   "终止 adapter 实例（sidecar + FAA peer）并从 adapters.yaml 移除"
+    permission    "adapter.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :instance_id, required: true, doc: "adapter 实例 id"
+
+    error :invalid_args,     "adapter_remove requires args.instance_id"
+    error :unknown_instance, "no adapter %{instance_id}"
+    error :yaml_read_failed, "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -38,19 +57,15 @@ defmodule Esr.Commands.Adapter.Remove do
          %{"text" => "removed #{type} adapter instance_id=#{instance_id}"}}
 
       {:error, :not_found} ->
-        {:error,
-         %{"type" => "unknown_instance", "message" => "no adapter #{instance_id}"}}
+        Render.error(__MODULE__.command_meta(), :unknown_instance, %{instance_id: instance_id})
 
       {:error, reason} ->
-        {:error,
-         %{"type" => "yaml_read_failed", "message" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :yaml_read_failed, %{detail: inspect(reason)})
     end
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{"type" => "invalid_args", "message" => "adapter_remove requires args.instance_id"}}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp read_adapters_yaml(path, instance_id) do
     cond do

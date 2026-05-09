@@ -22,7 +22,26 @@ defmodule Esr.Plugins.Feishu.Commands.Notify do
       without retry (operator action required).
   """
 
+  use Esr.Commands.Meta
+
+  command :feishu_notify do
+    slash         :none
+    category      "Plugins"
+    description   "向 feishu open_id 发一条 reply（admin notify path）"
+    permission    "feishu/notify-send"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :to,   required: true, doc: "目标 feishu open_id"
+    arg :text, required: true, doc: "回复文本"
+
+    error :invalid_args,        "notify requires args.to and args.text"
+    error :no_feishu_adapter,   "no feishu adapter registered"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -45,12 +64,12 @@ defmodule Esr.Plugins.Feishu.Commands.Notify do
         {:ok, %{"delivered_at" => DateTime.utc_now() |> DateTime.to_iso8601()}}
 
       :error ->
-        {:error, %{"type" => "no_feishu_adapter"}}
+        Render.error(__MODULE__.command_meta(), :no_feishu_adapter)
     end
   end
 
   def execute(_cmd) do
-    {:error, %{"type" => "invalid_args", "message" => "notify requires args.to and args.text"}}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # Find the first `adapter:feishu/<app_id>` topic by iterating the

@@ -88,7 +88,7 @@ defmodule Esr.Commands.CrossAppTestTest do
   end
 
   test "no peer registered for session_id returns no_session_peer" do
-    assert {:error, %{"type" => "no_session_peer", "session_id" => "S_NOPE"}} =
+    assert {:error, %{"type" => "no_session_peer", "message" => msg}} =
              CrossAppTest.execute(%{
                "args" => %{
                  "session_id" => "S_NOPE",
@@ -98,6 +98,8 @@ defmodule Esr.Commands.CrossAppTestTest do
                  "principal_id" => "ou_x"
                }
              })
+
+    assert msg =~ "S_NOPE"
   end
 
   test "FCP unresponsive within timeout returns timeout error" do

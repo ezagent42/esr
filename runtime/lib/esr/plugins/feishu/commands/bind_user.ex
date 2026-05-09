@@ -15,7 +15,28 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
   """
 
+  use Esr.Commands.Meta
+
+  command :feishu_bind do
+    slash         :none
+    category      "Plugins"
+    description   "把 feishu open_id 绑定到 esr user"
+    permission    "feishu/user-bind"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name,           required: true, doc: "esr 用户名"
+    arg :feishu_user_id, required: true, doc: "feishu open_id"
+
+    error :invalid_args,     "user_bind_feishu requires args.name and args.feishu_user_id (non-empty strings)"
+    error :user_not_found,   "user '%{name}' not found; run `user_add name=%{name}` first"
+    error :feishu_id_in_use, "feishu_id %{fid} is already bound to '%{other}'; unbind it first"
+    error :write_failed,     "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -29,11 +50,7 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
 
     cond do
       not Map.has_key?(users, name) ->
-        {:error,
-         %{
-           "type" => "user_not_found",
-           "message" => "user '#{name}' not found; run `user_add name=#{name}` first"
-         }}
+        Render.error(__MODULE__.command_meta(), :user_not_found, %{name: name})
 
       already_bound_to?(users, name, fid) ->
         {:ok, %{"text" => "#{fid} already bound to #{name}"}}
@@ -41,12 +58,7 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
       bound_to_other?(users, name, fid) ->
         other = find_other_owner(users, name, fid)
 
-        {:error,
-         %{
-           "type" => "feishu_id_in_use",
-           "message" =>
-             "feishu_id #{fid} is already bound to '#{other}'; unbind it first"
-         }}
+        Render.error(__MODULE__.command_meta(), :feishu_id_in_use, %{fid: fid, other: other})
 
       true ->
         updated_users = append_id(users, name, fid)
@@ -54,18 +66,14 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
 
         case Esr.Yaml.Writer.write(path, updated_doc) do
           :ok -> {:ok, %{"text" => "bound #{fid} to esr user #{name}"}}
-          {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+          {:error, reason} ->
+            Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
         end
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "user_bind_feishu requires args.name and args.feishu_user_id (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp read_or_empty(path) do

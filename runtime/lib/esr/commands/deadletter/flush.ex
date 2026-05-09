@@ -7,6 +7,17 @@ defmodule Esr.Commands.Deadletter.Flush do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:deadletter/flush", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :deadletter_flush do
+    slash         :none
+    category      "诊断"
+    description   "清空 dead-letter queue（返回清掉的条目数）"
+    permission    "runtime.deadletter"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

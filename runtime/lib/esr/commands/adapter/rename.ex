@@ -12,7 +12,30 @@ defmodule Esr.Commands.Adapter.Rename do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:adapters/rename", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :adapter_rename do
+    slash         :none
+    category      "Adapters"
+    description   "重命名 adapter 实例（terminate old + 改 adapters.yaml + refresh）"
+    permission    "adapter.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :old_instance_id, required: true, doc: "原 instance id"
+    arg :new_instance_id, required: true, doc: "新 instance id（^[A-Za-z][A-Za-z0-9_-]{0,62}$）"
+
+    error :invalid_args,            "adapter_rename requires args.old_instance_id and args.new_instance_id"
+    error :invalid_new_name,        "name %{new} fails %{pattern}"
+    error :old_and_new_match,       "old and new must differ"
+    error :new_name_already_exists, "instance %{new} already exists"
+    error :unknown_instance,        "no adapter %{old}"
+    error :yaml_read_failed,        "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @name_pattern ~r/^[A-Za-z][A-Za-z0-9_-]{0,62}$/
 
@@ -23,10 +46,13 @@ defmodule Esr.Commands.Adapter.Rename do
       when is_binary(old) and old != "" and is_binary(new) and new != "" do
     cond do
       not Regex.match?(@name_pattern, new) ->
-        {:error, %{"type" => "invalid_new_name", "message" => "name #{new} fails #{Regex.source(@name_pattern)}"}}
+        Render.error(__MODULE__.command_meta(), :invalid_new_name, %{
+          new: new,
+          pattern: Regex.source(@name_pattern)
+        })
 
       old == new ->
-        {:error, %{"type" => "old_and_new_match", "message" => "old and new must differ"}}
+        Render.error(__MODULE__.command_meta(), :old_and_new_match)
 
       true ->
         do_rename(old, new)
@@ -34,12 +60,7 @@ defmodule Esr.Commands.Adapter.Rename do
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "adapter_rename requires args.old_instance_id and args.new_instance_id"
-       }}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp do_rename(old, new) do
     path = Esr.Paths.adapters_yaml()
@@ -49,8 +70,7 @@ defmodule Esr.Commands.Adapter.Rename do
         instances = doc["instances"] || %{}
 
         if Map.has_key?(instances, new) do
-          {:error,
-           %{"type" => "new_name_already_exists", "message" => "instance #{new} already exists"}}
+          Render.error(__MODULE__.command_meta(), :new_name_already_exists, %{new: new})
         else
           type = instance["type"] || "unknown"
 
@@ -80,10 +100,10 @@ defmodule Esr.Commands.Adapter.Rename do
         end
 
       {:error, :not_found} ->
-        {:error, %{"type" => "unknown_instance", "message" => "no adapter #{old}"}}
+        Render.error(__MODULE__.command_meta(), :unknown_instance, %{old: old})
 
       {:error, reason} ->
-        {:error, %{"type" => "yaml_read_failed", "message" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :yaml_read_failed, %{detail: inspect(reason)})
     end
   end
 

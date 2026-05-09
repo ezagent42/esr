@@ -19,8 +19,25 @@ defmodule Esr.Plugins.ClaudeCode.Commands.Tui do
   paths (feishu only exercises the internal_kinds path).
   """
 
+  use Esr.Commands.Meta
+
+  command :claude_code_tui do
+    slash         "/claude_code:tui"
+    category      "Plugins"
+    description   "把当前 chat 的 session 内某 cc agent 的 PTY URL 发回（/pty:attach 的薄壳 shortcut）"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "agent 名"
+
+    error :invalid_args,  "/claude_code:tui requires name=<agent> and chat context"
+    error :not_found,     "no agent '%{name}' in chat-current session"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -40,19 +57,11 @@ defmodule Esr.Plugins.ClaudeCode.Commands.Tui do
       })
     else
       :not_found ->
-        {:error,
-         %{
-           "type" => "not_found",
-           "message" => "no agent '#{name}' in chat-current session"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_found, %{name: name})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/claude_code:tui requires name=<agent> and chat context"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

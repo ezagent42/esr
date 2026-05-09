@@ -15,6 +15,17 @@ defmodule Esr.Commands.Adapter.Refresh do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:adapters/refresh", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :adapter_refresh do
+    slash         :none
+    category      "Adapters"
+    description   "重新跑一次 adapters 启动流程：restore_adapters_from_disk + plugin startup hooks（不重启 esrd）"
+    permission    "adapter.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

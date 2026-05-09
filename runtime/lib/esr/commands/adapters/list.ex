@@ -15,6 +15,17 @@ defmodule Esr.Commands.Adapters.List do
   module.
   """
 
+  use Esr.Commands.Meta
+
+  command :adapters_list do
+    slash         :none
+    category      "Adapters"
+    description   "列 adapters.yaml 配置的 adapter 实例（type / app_id / base_url）"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

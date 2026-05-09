@@ -8,7 +8,28 @@ defmodule Esr.Plugins.Feishu.Commands.UnbindUser do
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
   """
 
+  use Esr.Commands.Meta
+
+  command :feishu_unbind do
+    slash         :none
+    category      "Plugins"
+    description   "解除 feishu open_id ↔ esr user 的绑定"
+    permission    "feishu/user-bind"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name,           required: true, doc: "esr 用户名"
+    arg :feishu_user_id, required: true, doc: "feishu open_id"
+
+    error :invalid_args,       "user_unbind_feishu requires args.name and args.feishu_user_id (non-empty strings)"
+    error :user_not_found,     "user '%{name}' not found"
+    error :binding_not_found,  "%{fid} not bound to %{name}"
+    error :write_failed,       "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -22,11 +43,10 @@ defmodule Esr.Plugins.Feishu.Commands.UnbindUser do
 
     cond do
       not Map.has_key?(users, name) ->
-        {:error, %{"type" => "user_not_found", "message" => "user '#{name}' not found"}}
+        Render.error(__MODULE__.command_meta(), :user_not_found, %{name: name})
 
       not bound?(users, name, fid) ->
-        {:error,
-         %{"type" => "binding_not_found", "message" => "#{fid} not bound to #{name}"}}
+        Render.error(__MODULE__.command_meta(), :binding_not_found, %{fid: fid, name: name})
 
       true ->
         updated_users = remove_id(users, name, fid)
@@ -34,18 +54,14 @@ defmodule Esr.Plugins.Feishu.Commands.UnbindUser do
 
         case Esr.Yaml.Writer.write(path, updated_doc) do
           :ok -> {:ok, %{"text" => "unbound #{fid} from esr user #{name}"}}
-          {:error, reason} -> {:error, %{"type" => "write_failed", "detail" => inspect(reason)}}
+          {:error, reason} ->
+            Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
         end
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "user_unbind_feishu requires args.name and args.feishu_user_id (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp read_or_empty(path) do

@@ -13,6 +13,17 @@ defmodule Esr.Commands.Actors.Tree do
   Per docs/notes/2026-05-05-cli-channel-migration.md.
   """
 
+  use Esr.Commands.Meta
+
+  command :actors_tree do
+    slash         :none
+    category      "诊断"
+    description   "按 session_id 分组 + 树形渲染所有 live actor"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

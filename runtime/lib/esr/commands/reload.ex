@@ -63,7 +63,28 @@ defmodule Esr.Commands.Reload do
       `launchctl kickstart -k` is idempotent (re-exec the process).
   """
 
+  use Esr.Commands.Meta
+
+  command :reload do
+    slash         :none
+    category      "其他"
+    description   "重启 launchd-supervised esrd（拉起最新代码）"
+    permission    "runtime.reload"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :acknowledge_breaking, required: false, default: false, doc: "确认 BREAKING 后必须设 true"
+
+    error :invalid_args,                "reload requires submitted_by"
+    error :cannot_determine_label,      "cannot determine launchd label from esrd_home suffix"
+    error :unacknowledged_breaking,     "%{commits}"
+    error :write_last_reload_failed,    "%{detail}"
+    error :git_failed,                  "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -86,7 +107,12 @@ defmodule Esr.Commands.Reload do
 
       cond do
         breaking != [] and not ack ->
-          {:error, %{"type" => "unacknowledged_breaking", "commits" => breaking}}
+          {:error,
+           %{
+             "type" => "unacknowledged_breaking",
+             "message" => Enum.join(breaking, "; "),
+             "commits" => breaking
+           }}
 
         true ->
           kickstart(label, opts)
@@ -98,14 +124,16 @@ defmodule Esr.Commands.Reload do
               {:ok, %{"reloaded" => true, "new_sha" => head_sha}}
 
             {:error, reason} ->
-              {:error, %{"type" => "write_last_reload_failed", "detail" => inspect(reason)}}
+              Render.error(__MODULE__.command_meta(), :write_last_reload_failed, %{
+                detail: inspect(reason)
+              })
           end
       end
     end
   end
 
   def execute(_cmd, _opts) do
-    {:error, %{"type" => "invalid_args", "message" => "reload requires submitted_by"}}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ------------------------------------------------------------------
@@ -119,7 +147,7 @@ defmodule Esr.Commands.Reload do
     case Esr.Paths.esrd_home() |> Path.basename() do
       ".esrd" -> {:ok, "com.ezagent.esrd"}
       ".esrd-dev" -> {:ok, "com.ezagent.esrd-dev"}
-      _ -> {:error, %{"type" => "cannot_determine_label"}}
+      _ -> Render.error(__MODULE__.command_meta(), :cannot_determine_label)
     end
   end
 
@@ -136,13 +164,13 @@ defmodule Esr.Commands.Reload do
         clean = String.trim(sha)
 
         if clean == "" do
-          {:error, %{"type" => "git_failed", "detail" => "rev-parse returned empty"}}
+          Render.error(__MODULE__.command_meta(), :git_failed, %{detail: "rev-parse returned empty"})
         else
           {:ok, clean}
         end
 
-      {out, status} ->
-        {:error, %{"type" => "git_failed", "detail" => String.trim(out), "exit" => status}}
+      {out, _status} ->
+        Render.error(__MODULE__.command_meta(), :git_failed, %{detail: String.trim(out)})
     end
   end
 
@@ -186,8 +214,8 @@ defmodule Esr.Commands.Reload do
 
         {:ok, commits}
 
-      {out, status} ->
-        {:error, %{"type" => "git_failed", "detail" => String.trim(out), "exit" => status}}
+      {out, _status} ->
+        Render.error(__MODULE__.command_meta(), :git_failed, %{detail: String.trim(out)})
     end
   end
 

@@ -11,6 +11,17 @@ defmodule Esr.Commands.Help do
   Returns a string under `"text"` for the SlashHandler reply path.
   """
 
+  use Esr.Commands.Meta
+
+  command :help do
+    slash         "/help"
+    category      "诊断"
+    description   "显示这份命令清单 / show command reference"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

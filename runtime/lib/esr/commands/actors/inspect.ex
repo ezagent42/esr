@@ -7,7 +7,27 @@ defmodule Esr.Commands.Actors.Inspect do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:actors/inspect", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :actors_inspect do
+    slash         :none
+    category      "诊断"
+    description   "dump 单个 actor 的 GenServer state（可选 field=<dotted.path> 取子键）"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :actor_id, required: true, doc: "目标 actor id"
+    arg :field,    required: false, doc: "可选 dotted path（state.x.y）"
+
+    error :invalid_args,       "actors_inspect requires args.actor_id"
+    error :actor_not_found,    "no actor %{actor_id}"
+    error :field_not_present,  "actor %{actor_id} has no field %{field}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -25,11 +45,10 @@ defmodule Esr.Commands.Actors.Inspect do
 
             case get_in_nested(full, path) do
               nil ->
-                {:error,
-                 %{
-                   "type" => "field_not_present",
-                   "message" => "actor #{actor_id} has no field #{field}"
-                 }}
+                Render.error(__MODULE__.command_meta(), :field_not_present, %{
+                  actor_id: actor_id,
+                  field: field
+                })
 
               value ->
                 {:ok,
@@ -41,18 +60,12 @@ defmodule Esr.Commands.Actors.Inspect do
         end
 
       :error ->
-        {:error,
-         %{"type" => "actor_not_found", "message" => "no actor #{actor_id}"}}
+        Render.error(__MODULE__.command_meta(), :actor_not_found, %{actor_id: actor_id})
     end
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "actors_inspect requires args.actor_id"
-       }}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp build_full(snap, actor_id) do
     base = %{
