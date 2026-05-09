@@ -259,7 +259,7 @@ defmodule Esr.Cli.Main do
   # lossy (`--wait` / `--timeout VAL` couldn't round-trip).
   defp cmd_exec_kind(kind, args, timeout_ms)
        when is_binary(kind) and is_map(args) and is_integer(timeout_ms) do
-    home = System.get_env("ESRD_HOME") || Path.join(System.user_home!(), ".esrd-dev")
+    home = System.get_env("ESRD_HOME") || Path.join(System.user_home!(), ".esrd")
     instance = System.get_env("ESR_INSTANCE") || "default"
     queue_dir = Path.join([home, instance, "admin_queue"])
     pending_dir = Path.join(queue_dir, "pending")
@@ -602,7 +602,7 @@ defmodule Esr.Cli.Main do
 
     ENV:
       ESR_HOST                      esrd host:port (default 127.0.0.1:4001)
-      ESRD_HOME                     esrd state root (default ~/.esrd-dev)
+      ESRD_HOME                     esrd state root (default ~/.esrd)
       ESR_INSTANCE                  instance name (default `dev` for daemon,
                                     `default` for queue path)
 
