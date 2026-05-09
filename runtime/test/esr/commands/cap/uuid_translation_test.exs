@@ -41,7 +41,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
   test "Cap.Grant rejects session:<name>/<perm> — UUID required at input" do
     assert {:error, %{"type" => "session_cap_requires_uuid", "message" => msg}} =
              Grant.execute(%{
-               "args" => %{"principal_id" => "linyilun", "permission" => "session:esr-dev/create"}
+               "args" => %{"target_principal_id" => "linyilun", "permission" => "session:esr-dev/create"}
              })
 
     assert msg =~ "esr-dev"
@@ -52,7 +52,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
 
     result =
       Grant.execute(%{
-        "args" => %{"principal_id" => "linyilun", "permission" => cap}
+        "args" => %{"target_principal_id" => "linyilun", "permission" => cap}
       })
 
     # Either granted OK or write_failed (no ESRD_HOME caps.yaml in this setup);
@@ -64,7 +64,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
   test "Cap.Revoke rejects session:<name>/<perm> — UUID required at input" do
     assert {:error, %{"type" => "session_cap_requires_uuid"}} =
              Revoke.execute(%{
-               "args" => %{"principal_id" => "linyilun", "permission" => "session:esr-dev/create"}
+               "args" => %{"target_principal_id" => "linyilun", "permission" => "session:esr-dev/create"}
              })
   end
 
@@ -72,7 +72,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
     assert {:error, %{"type" => "session_cap_requires_uuid"}} =
              Grant.execute(%{
                "args" => %{
-                 "principal_id" => "linyilun",
+                 "target_principal_id" => "linyilun",
                  "permission" => "session:ghost-ws/create"
                }
              })
@@ -81,7 +81,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
   test "workspace:<name>/... still translates name → UUID via NameIndex" do
     {:ok, %{"permission" => persisted_perm}} =
       Grant.execute(%{
-        "args" => %{"principal_id" => "linyilun", "permission" => "workspace:esr-dev/read"}
+        "args" => %{"target_principal_id" => "linyilun", "permission" => "workspace:esr-dev/read"}
       })
 
     assert persisted_perm == "workspace:#{@uuid}/read"
@@ -90,7 +90,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
   test "non-workspace-scoped caps pass through unchanged" do
     {:ok, %{"permission" => persisted_perm}} =
       Grant.execute(%{
-        "args" => %{"principal_id" => "linyilun", "permission" => "user.manage"}
+        "args" => %{"target_principal_id" => "linyilun", "permission" => "user.manage"}
       })
 
     assert persisted_perm == "user.manage"
@@ -123,7 +123,7 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
 
     # Grant the UUID-form cap
     Grant.execute(%{
-      "args" => %{"principal_id" => "linyilun", "permission" => cap}
+      "args" => %{"target_principal_id" => "linyilun", "permission" => cap}
     })
 
     {:ok, %{"text" => text}} =
