@@ -109,7 +109,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
     assert {:error, err} = ImportRepo.execute(%{"args" => %{"path" => nonexistent}})
     assert err["type"] == "path_not_dir"
-    assert err["path"] == nonexistent
+    assert err["message"] =~ nonexistent
   end
 
   # Test 5: Path exists but no .esr/workspace.json → not_a_workspace_repo
@@ -119,7 +119,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
     assert {:error, err} = ImportRepo.execute(%{"args" => %{"path" => repo_path}})
     assert err["type"] == "not_a_workspace_repo"
-    assert err["path"] == repo_path
+    assert err["message"] =~ repo_path
   end
 
   # Test 6: .esr/workspace.json exists but is malformed JSON → invalid_workspace_json
@@ -134,8 +134,7 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
 
     assert {:error, err} = ImportRepo.execute(%{"args" => %{"path" => repo_path}})
     assert err["type"] == "invalid_workspace_json"
-    assert err["path"] == repo_path
-    assert is_binary(err["detail"])
+    assert err["message"] =~ repo_path
   end
 
   # Test 7: Missing args → invalid_args

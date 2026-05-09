@@ -16,6 +16,17 @@ defmodule Esr.Commands.Workspace.List do
       {:ok, %{"text" => "no workspaces registered"}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_list do
+    slash         "/workspace:list"
+    category      "Workspace"
+    description   "列所有已注册 workspace（ESR-bound + repo-bound）"
+    permission    "session.list"
+    requires_user_binding      true
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   alias Esr.Resource.Workspace.{Struct, Registry}

@@ -17,8 +17,31 @@ defmodule Esr.Commands.Workspace.AddFolder do
                             "unknown_workspace" | "folder_already_added", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_add_folder do
+    slash         "/workspace:add-folder"
+    category      "Workspace"
+    description   "追加 folder 到 workspace.folders[]（path 必须是绝对路径且为 git repo；name= 缺省时 fallback 到 chat-current → user-default）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,        required: false, doc: "workspace 名（缺省 fallback chat/user default）"
+    arg :path,        required: true,  doc: "绝对路径，必须是 git repo"
+    arg :folder_name, required: false, doc: "可选 display name，默认 Path.basename(path)"
+
+    error :invalid_args,         "workspace_add_folder requires args.name and args.path"
+    error :no_workspace_target,  "name= omitted but no chat-default and no user-default for submitter; pass name=<workspace> explicitly or run `/user:use workspace=<n>` first"
+    error :folder_not_dir,       "path %{path} is not a directory"
+    error :folder_not_git_repo,  "path %{path} is not a git repo"
+    error :folder_already_added, "path %{path} is already in this workspace's folders"
+    error :unknown_workspace,    "workspace %{name} not found"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -35,13 +58,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
         execute(%{cmd | "args" => Map.put(args, "name", name)})
 
       :no_match ->
-        {:error,
-         %{
-           "type" => "no_workspace_target",
-           "message" =>
-             "name= omitted but no chat-default and no user-default for submitter; " <>
-               "pass name=<workspace> explicitly or run `/user:use workspace=<n>` first"
-         }}
+        Render.error(__MODULE__.command_meta(), :no_workspace_target)
     end
   end
 
@@ -68,11 +85,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_add_folder requires args.name and args.path"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -87,11 +100,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
     if Path.type(path) == :absolute do
       :ok
     else
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "path must be an absolute path, got: #{inspect(path)}"
-       }}
+      Render.error(__MODULE__.command_meta(), :invalid_args)
     end
   end
 
@@ -99,7 +108,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
     if File.dir?(expanded) do
       :ok
     else
-      {:error, %{"type" => "folder_not_dir", "path" => expanded}}
+      Render.error(__MODULE__.command_meta(), :folder_not_dir, %{path: expanded})
     end
   end
 
@@ -107,7 +116,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
     if File.exists?(Path.join(expanded, ".git")) do
       :ok
     else
-      {:error, %{"type" => "folder_not_git_repo", "path" => expanded}}
+      Render.error(__MODULE__.command_meta(), :folder_not_git_repo, %{path: expanded})
     end
   end
 
@@ -118,12 +127,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
       end)
 
     if already_in do
-      {:error,
-       %{
-         "type" => "folder_already_added",
-         "path" => expanded,
-         "message" => "path #{inspect(expanded)} is already in this workspace's folders"
-       }}
+      Render.error(__MODULE__.command_meta(), :folder_already_added, %{path: expanded})
     else
       :ok
     end
@@ -143,12 +147,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   defp serialise_folders(folders),

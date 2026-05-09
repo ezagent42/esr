@@ -187,7 +187,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "nonexistent-ws-xyz"
+    assert err["message"] =~ "nonexistent-ws-xyz"
   end
 
   # Test 7: missing args → invalid_args

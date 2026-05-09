@@ -212,7 +212,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "no-such-ws"
+    assert err["message"] =~ "no-such-ws"
   end
 
   # ── Test 8: missing chat_id → invalid_args ────────────────────────────────────

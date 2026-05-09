@@ -14,8 +14,29 @@ defmodule Esr.Commands.Workspace.Rename do
       {:error, %{"type" => "...", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_rename do
+    slash         "/workspace:rename"
+    category      "Workspace"
+    description   "改 workspace.name（id 不变；caps + sessions 引用按 UUID 不动）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,     required: true, doc: "旧 workspace 名"
+    arg :new_name, required: true, doc: "新 workspace 名"
+
+    error :invalid_args,      "workspace_rename requires args.name and args.new_name"
+    error :same_name,         "new name must differ from old name"
+    error :invalid_name,      "name must be alphanumeric, with - or _, starting alnum"
+    error :unknown_workspace, "workspace %{name} not found"
+    error :rename_failed,     "rename failed: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Registry, NameIndex}
 
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
@@ -29,19 +50,10 @@ defmodule Esr.Commands.Workspace.Rename do
       when is_binary(old) and old != "" and is_binary(new) and new != "" do
     cond do
       old == new ->
-        {:error,
-         %{
-           "type" => "same_name",
-           "message" => "new name must differ from old name"
-         }}
+        Render.error(__MODULE__.command_meta(), :same_name)
 
       not Regex.match?(@name_re, new) ->
-        {:error,
-         %{
-           "type" => "invalid_name",
-           "name" => new,
-           "message" => "name must be alphanumeric, with - or _, starting alnum"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_name)
 
       true ->
         do_rename(old, new)
@@ -49,17 +61,12 @@ defmodule Esr.Commands.Workspace.Rename do
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "workspace_rename requires args.name and args.new_name"
-       }}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp do_rename(old, new) do
     case lookup_id(old) do
       :not_found ->
-        {:error, %{"type" => "unknown_workspace", "name" => old}}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: old})
 
       {:ok, id} ->
         case Registry.rename(old, new) do
@@ -67,11 +74,7 @@ defmodule Esr.Commands.Workspace.Rename do
             {:ok, %{"old_name" => old, "new_name" => new, "id" => id}}
 
           {:error, reason} ->
-            {:error,
-             %{
-               "type" => "rename_failed",
-               "detail" => inspect(reason)
-             }}
+            Render.error(__MODULE__.command_meta(), :rename_failed, %{detail: inspect(reason)})
         end
     end
   end

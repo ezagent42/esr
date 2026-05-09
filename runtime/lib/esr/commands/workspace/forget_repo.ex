@@ -17,8 +17,25 @@ defmodule Esr.Commands.Workspace.ForgetRepo do
       {:error, %{"type" => "...", ...}}
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_forget_repo do
+    slash         "/workspace:forget-repo"
+    category      "Workspace"
+    description   "从 registered_repos.yaml 移除 path（repo 内的 .esr/ 不动；如要删本地文件用 /workspace:remove）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :path, required: true, doc: "绝对路径"
+
+    error :invalid_args,         "workspace_forget_repo requires args.path"
+    error :registry_load_failed, "registry load failed: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Registry, RepoRegistry}
   alias Esr.Paths
 
@@ -46,19 +63,11 @@ defmodule Esr.Commands.Workspace.ForgetRepo do
         end
 
       {:error, reason} ->
-        {:error,
-         %{
-           "type" => "registry_load_failed",
-           "detail" => inspect(reason)
-         }}
+        Render.error(__MODULE__.command_meta(), :registry_load_failed, %{detail: inspect(reason)})
     end
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_forget_repo requires args.path"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

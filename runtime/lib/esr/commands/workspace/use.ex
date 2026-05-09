@@ -13,8 +13,26 @@ defmodule Esr.Commands.Workspace.Use do
       }
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_use do
+    slash         "/workspace:use"
+    category      "Workspace"
+    description   "设当前 chat 的 default workspace（per-chat 偏好；/session:new 解析时使用）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "workspace 名"
+
+    error :invalid_args,         "workspace_use requires args.name (and chat_id + app_id from envelope)"
+    error :missing_chat_context, "/workspace use must be invoked from a chat (chat_id + app_id required)"
+    error :unknown_workspace,    "workspace %{name} not found"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.NameIndex
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
@@ -29,7 +47,7 @@ defmodule Esr.Commands.Workspace.Use do
        and is_binary(app_id) and app_id != "" do
     case lookup_id(name) do
       :not_found ->
-        {:error, %{"type" => "unknown_workspace", "name" => name}}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
 
       {:ok, id} ->
         :ok = ChatScopeRegistry.set_default_workspace(chat_id, app_id, id)
@@ -46,20 +64,11 @@ defmodule Esr.Commands.Workspace.Use do
   end
 
   def execute(%{"args" => %{"name" => name}}) when is_binary(name) and name != "" do
-    {:error,
-     %{
-       "type" => "missing_chat_context",
-       "message" => "/workspace use must be invoked from a chat (chat_id + app_id required)"
-     }}
+    Render.error(__MODULE__.command_meta(), :missing_chat_context)
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "workspace_use requires args.name (and chat_id + app_id from envelope)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp lookup_id(name), do: NameIndex.id_for_name(:esr_workspace_name_index, name)

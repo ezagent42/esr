@@ -190,7 +190,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
              })
 
     assert err["type"] == "rename_failed"
-    assert err["detail"] =~ "name_exists"
+    assert err["message"] =~ "name_exists"
   end
 
   # ── Test 7: Old name unknown → unknown_workspace error ──
@@ -202,7 +202,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
              })
 
     assert err["type"] == "unknown_workspace"
-    assert err["name"] == "nonexistent"
+    assert err["message"] =~ "nonexistent"
   end
 
   # ── Test 8: Missing args → invalid_args error ──

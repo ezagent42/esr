@@ -23,8 +23,28 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   ESR-bound workspaces may remove any folder, including position 0.
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_remove_folder do
+    slash         "/workspace:remove-folder"
+    category      "Workspace"
+    description   "从 workspace.folders[] 删一项（repo-bound 不能删 folders[0]，请用 /workspace:forget-repo）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "workspace 名"
+    arg :path, required: true, doc: "要删除的 folder 路径"
+
+    error :invalid_args,             "workspace_remove_folder requires args.name and args.path"
+    error :unknown_workspace,        "workspace %{name} not found"
+    error :folder_not_in_workspace,  "path %{path} is not in this workspace's folders"
+    error :cannot_remove_root_folder, "cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -53,11 +73,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_remove_folder requires args.name and args.path"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -68,24 +84,13 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
     if in_ws do
       :ok
     else
-      {:error,
-       %{
-         "type" => "folder_not_in_workspace",
-         "path" => expanded,
-         "message" => "path #{inspect(expanded)} is not in this workspace's folders"
-       }}
+      Render.error(__MODULE__.command_meta(), :folder_not_in_workspace, %{path: expanded})
     end
   end
 
   defp validate_not_root_folder(%Struct{location: {:repo_bound, _}, folders: [first | _]}, expanded) do
     if Path.expand(first.path) == expanded do
-      {:error,
-       %{
-         "type" => "cannot_remove_root_folder",
-         "path" => expanded,
-         "message" =>
-           "cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead"
-       }}
+      Render.error(__MODULE__.command_meta(), :cannot_remove_root_folder, %{path: expanded})
     else
       :ok
     end
@@ -107,12 +112,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   defp serialise_folders(folders),

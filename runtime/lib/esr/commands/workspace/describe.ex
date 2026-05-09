@@ -7,7 +7,25 @@ defmodule Esr.Commands.Workspace.Describe do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:workspaces/describe", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_describe do
+    slash         "/workspace:describe"
+    category      "Workspace"
+    description   "显示 workspace 的安全过滤后视图"
+    permission    "session.list"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :workspace, required: true, doc: "workspace 名"
+
+    error :invalid_args,      "/workspace describe requires args.workspace"
+    error :unknown_workspace, "no workspace %{workspace}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -19,18 +37,12 @@ defmodule Esr.Commands.Workspace.Describe do
         {:ok, %{"text" => format(data), "data" => data}}
 
       {:error, :unknown_workspace} ->
-        {:error,
-         %{"type" => "unknown_workspace", "message" => "no workspace #{ws_name}"}}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{workspace: ws_name})
     end
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "/workspace describe requires args.workspace"
-       }}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp format(%{"current_workspace" => current}) do
     chats =

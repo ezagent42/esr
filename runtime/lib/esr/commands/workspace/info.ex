@@ -37,10 +37,27 @@ defmodule Esr.Commands.Workspace.Info do
   `Esr.Resource.Workspace.NameIndex` only.
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_info do
+    slash         "/workspace:info"
+    category      "Workspace"
+    description   "显示 workspace 完整配置（id/owner/agent/folders/settings/env/chats/transient/location，含 <folders[0]>/.esr/topology.yaml overlay）"
+    permission    "session.list"
+    requires_user_binding      true
+    requires_workspace_binding true
+
+    arg :workspace, required: false, doc: "workspace 名（可省略，从 chat 解析）"
+
+    error :invalid_args,      "workspace_info requires args.workspace (non-empty string)"
+    error :unknown_workspace, "workspace %{workspace} not found"
+  end
+
   @behaviour Esr.Role.Control
 
   require Logger
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.NameIndex
   alias Esr.Resource.Workspace.Registry
 
@@ -57,11 +74,7 @@ defmodule Esr.Commands.Workspace.Info do
     do: do_info(ws)
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_info requires args.workspace (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals --------------------------------------------------------------
@@ -72,7 +85,7 @@ defmodule Esr.Commands.Workspace.Info do
         {:ok, build_result(ws)}
 
       :not_found ->
-        {:error, %{"type" => "unknown_workspace", "workspace" => ws_name}}
+        Render.error(__MODULE__.command_meta(), :unknown_workspace, %{workspace: ws_name})
     end
   end
 

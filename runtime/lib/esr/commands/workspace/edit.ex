@@ -34,8 +34,33 @@ defmodule Esr.Commands.Workspace.Edit do
     * otherwise → string verbatim
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_edit do
+    slash         "/workspace:edit"
+    category      "Workspace"
+    description   "改 workspace.json 单个字段；set=<key>=<value>（settings 用扁平 dot-key；env.<NAME>=...；chats/folders 用专门 slash）"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true,  doc: "workspace 名（必填）"
+    arg :set,  required: true,  doc: "key=value 字符串"
+
+    error :invalid_args,                "workspace_edit requires args.name (string) and args.set (key=value string)"
+    error :invalid_set,                 "set must be key=value"
+    error :field_locked,                "%{field} is locked; use the dedicated command to change it"
+    error :invalid_field,               "invalid field %{field}: %{detail}"
+    error :invalid_env_key,             "%{detail}"
+    error :unknown_field,               "unknown field %{field}"
+    error :invalid_value,               "invalid value for %{field}: %{detail}"
+    error :unknown_workspace,           "workspace %{name} not found"
+    error :transient_repo_bound_forbidden, "transient: true is not valid for repo-bound workspaces"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
 
   @locked_fields ~w(id name chats folders location)
@@ -68,12 +93,7 @@ defmodule Esr.Commands.Workspace.Edit do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "workspace_edit requires args.name (string) and args.set (key=value string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -86,7 +106,7 @@ defmodule Esr.Commands.Workspace.Edit do
         {:ok, {key, value}}
 
       [_no_equals] ->
-        {:error, %{"type" => "invalid_set", "message" => "set must be key=value"}}
+        Render.error(__MODULE__.command_meta(), :invalid_set)
     end
   end
 
@@ -102,52 +122,39 @@ defmodule Esr.Commands.Workspace.Edit do
   end
 
   defp check_locked_or_known(top, _rest) when top in @locked_fields do
-    {:error,
-     %{
-       "type" => "field_locked",
-       "field" => top,
-       "message" => "#{top} is locked; use the dedicated command to change it"
-     }}
+    Render.error(__MODULE__.command_meta(), :field_locked, %{field: top})
   end
 
   defp check_locked_or_known("agent", nil), do: {:ok, "agent", nil}
 
   defp check_locked_or_known("agent", _rest) do
-    {:error,
-     %{
-       "type" => "invalid_field",
-       "field" => "agent",
-       "message" => "agent does not accept dotted suffix"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_field, %{
+      field: "agent",
+      detail: "agent does not accept dotted suffix"
+    })
   end
 
   defp check_locked_or_known("env", nil) do
-    {:error,
-     %{
-       "type" => "invalid_env_key",
-       "message" => "env requires env.<NAME>=<value>"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_env_key, %{
+      detail: "env requires env.<NAME>=<value>"
+    })
   end
 
   defp check_locked_or_known("env", rest) do
     if String.contains?(rest, ".") do
-      {:error,
-       %{
-         "type" => "invalid_env_key",
-         "message" => "env keys cannot contain dots"
-       }}
+      Render.error(__MODULE__.command_meta(), :invalid_env_key, %{
+        detail: "env keys cannot contain dots"
+      })
     else
       {:ok, "env", rest}
     end
   end
 
   defp check_locked_or_known("settings", nil) do
-    {:error,
-     %{
-       "type" => "invalid_field",
-       "field" => "settings",
-       "message" => "settings requires settings.<key>=<value>"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_field, %{
+      field: "settings",
+      detail: "settings requires settings.<key>=<value>"
+    })
   end
 
   defp check_locked_or_known("settings", rest), do: {:ok, "settings", rest}
@@ -155,20 +162,14 @@ defmodule Esr.Commands.Workspace.Edit do
   defp check_locked_or_known("transient", nil), do: {:ok, "transient", nil}
 
   defp check_locked_or_known("transient", _rest) do
-    {:error,
-     %{
-       "type" => "invalid_field",
-       "field" => "transient",
-       "message" => "transient does not accept dotted suffix"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_field, %{
+      field: "transient",
+      detail: "transient does not accept dotted suffix"
+    })
   end
 
   defp check_locked_or_known(top, _rest) do
-    {:error,
-     %{
-       "type" => "unknown_field",
-       "field" => top
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_field, %{field: top})
   end
 
   # Step 4: Parse the raw string value
@@ -195,32 +196,24 @@ defmodule Esr.Commands.Workspace.Edit do
 
   # Step 4 (continued): Validate field-specific value constraints
   defp validate_field_value("transient", value) when not is_boolean(value) do
-    {:error,
-     %{
-       "type" => "invalid_value",
-       "field" => "transient",
-       "message" => "transient must be true or false"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_value, %{
+      field: "transient",
+      detail: "transient must be true or false"
+    })
   end
 
   defp validate_field_value("agent", value) when not (is_binary(value) and value != "") do
-    {:error,
-     %{
-       "type" => "invalid_value",
-       "field" => "agent",
-       "message" => "agent must be a non-empty string"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_value, %{
+      field: "agent",
+      detail: "agent must be a non-empty string"
+    })
   end
 
   defp validate_field_value(_field, _value), do: :ok
 
   # Check: transient=true forbidden on repo-bound workspaces
   defp check_transient_repo_bound("transient", true, %Struct{location: {:repo_bound, _}}) do
-    {:error,
-     %{
-       "type" => "transient_repo_bound_forbidden",
-       "message" => "transient: true is not valid for repo-bound workspaces"
-     }}
+    Render.error(__MODULE__.command_meta(), :transient_repo_bound_forbidden)
   end
 
   defp check_transient_repo_bound(_top, _value, _ws), do: :ok
@@ -240,12 +233,7 @@ defmodule Esr.Commands.Workspace.Edit do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   # Step 5: Apply the mutation to the workspace struct

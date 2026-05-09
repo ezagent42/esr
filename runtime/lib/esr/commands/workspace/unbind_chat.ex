@@ -23,8 +23,28 @@ defmodule Esr.Commands.Workspace.UnbindChat do
   with that chat_id — `removed_count` reflects how many were removed).
   """
 
+  use Esr.Commands.Meta
+
+  command :workspace_unbind_chat do
+    slash         "/workspace:unbind-chat"
+    category      "Workspace"
+    description   "从 workspace.chats[] 删 chat；不传 app_id 则删所有该 chat_id 的项"
+    permission    "workspace.create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,    required: true,  doc: "workspace 名"
+    arg :chat_id, required: true,  doc: "要删除的 chat ID"
+    arg :app_id,  required: false, doc: "可选；不传时删所有该 chat_id 的项"
+
+    error :invalid_args,      "workspace_unbind_chat requires args.name and args.chat_id"
+    error :unknown_workspace, "workspace %{name} not found"
+    error :chat_not_bound,    "chat is not bound to this workspace"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Workspace.{Registry, NameIndex}
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -40,13 +60,7 @@ defmodule Esr.Commands.Workspace.UnbindChat do
       {remaining, removed_count} = filter_chats(ws.chats, chat_id, app_id)
 
       if removed_count == 0 do
-        {:error,
-         %{
-           "type" => "chat_not_bound",
-           "chat_id" => chat_id,
-           "name" => name,
-           "message" => "chat is not bound to this workspace"
-         }}
+        Render.error(__MODULE__.command_meta(), :chat_not_bound)
       else
         updated_ws = %{ws | chats: remaining}
 
@@ -65,11 +79,7 @@ defmodule Esr.Commands.Workspace.UnbindChat do
   end
 
   def execute(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "workspace_unbind_chat requires args.name and args.chat_id"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   ## Internals ---------------------------------------------------------------
@@ -105,12 +115,7 @@ defmodule Esr.Commands.Workspace.UnbindChat do
   end
 
   defp workspace_not_found(name) do
-    {:error,
-     %{
-       "type" => "unknown_workspace",
-       "name" => name,
-       "message" => "workspace #{inspect(name)} not found"
-     }}
+    Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: name})
   end
 
   defp serialise_chats(chats) do
