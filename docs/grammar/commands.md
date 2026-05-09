@@ -1353,11 +1353,11 @@ _internal kind only — not slash-callable_
   - `chat_id` (required) — cross-app chat_id
   - `app_id` (required) — cross-app app_id
   - `text` (required) — reply 文本
-  - `principal_id` (required) — principal id（FCP cap 检查依据）
+  - `target_principal_id` (required) — 被注入的 caller principal id（FCP cap 检查依据）
   - `req_id` (optional) — 可选；不传自动生成
 
 **errors:**
-  - `invalid_args` — cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing})
+  - `invalid_args` — cross_app_test requires args.{session_id, chat_id, app_id, text, target_principal_id} (missing %{missing})
   - `no_session_peer` — no thread:%{session_id} peer in Entity.Registry
   - `timeout` — FCP did not reply within %{timeout_ms}ms (req_id=%{req_id})
 

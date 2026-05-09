@@ -55,7 +55,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `unknown_workspace` | `cap_who_can` | no workspace named in capability: %{permission} |
 | `invalid_args` | `claude_code_tui` | /claude_code:tui requires name=<agent> and chat context |
 | `not_found` | `claude_code_tui` | no agent '%{name}' in chat-current session |
-| `invalid_args` | `cross_app_test` | cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing}) |
+| `invalid_args` | `cross_app_test` | cross_app_test requires args.{session_id, chat_id, app_id, text, target_principal_id} (missing %{missing}) |
 | `no_session_peer` | `cross_app_test` | no thread:%{session_id} peer in Entity.Registry |
 | `timeout` | `cross_app_test` | FCP did not reply within %{timeout_ms}ms (req_id=%{req_id}) |
 | `actor_not_found` | `debug_pause` | no actor %{actor_id} |
