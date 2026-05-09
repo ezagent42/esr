@@ -52,7 +52,7 @@ defmodule Esr.Plugins.ClaudeCode.Commands.TuiTest do
     # contain the actor_id — they carry a Phoenix.Token signed under
     # salt "pty_attach". Tui delegates verbatim to Pty.Attach so the
     # contract is the same: actor_id must verify back from the token.
-    assert url =~ "/sessions/attach?token="
+    assert url =~ "/ptys/attach?token="
     refute url =~ "pty-uuid-tui-aaaa"
 
     [_, token] = Regex.run(~r/token=([^"&\s)]+)/, url)
