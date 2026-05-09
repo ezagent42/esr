@@ -146,3 +146,21 @@ C2 实质是 **manifest schema vs 数据流不一致的 UX/doc 陷阱**：
 **修法**（commit 2006bc9 已含）：删 manifest config_schema 里 `app_id` + `app_secret`（保留 `log_level` 这条真 plugin-wide 的）、删 dead `get_app_secret/0` + `get_app_id/0`、更新 `plugin.ex` docstring。
 
 **优先级**：中。runtime 不挂，但操作员**绝对**会按 schema 误填一次。一次性踩中就明白；第二次写就对。
+
+### 第二跑实证：bug 现状汇总
+
+| Bug | b5fe750 状态 | 证据 |
+|---|---|---|
+| **C1** paths.py import | ✅ 已修 (#274) | 我们 commit 420e398 重复，rebase drop |
+| **C2** manifest schema vs 数据流不一致 | ❌ 未修 | manifest 仍声明 app_secret 是 plugin-level；操作员按 schema 误填会复现 |
+| **C3** UnboundChatGuard 旧 slash 名 | （待验证）| chat 模板 stale |
+| **C4** feishu_bind unknown_kind | ✅ 已修 | 第二跑直接成功 |
+| **C5** user.watcher boot 时不存在就 give up | ❌ 未修 | 第二跑 feishu_bind 写 yaml 后，bot 仍报"Feishu identity not bound"——ETS 没 reload |
+| **C6** Bootstrap.bootstrap silent no-op | （待验证）|  |
+| **C7** escript ESR_OPERATOR_PRINCIPAL_ID env required | ✅ 已修 (#281+#282) | sentinel + auto-admin 全自动 |
+| **C8** escript vs esrd ESRD_HOME default mismatch | ❌ 未修 | escript 默认 `~/.esrd-dev`，esrd 默认 `~/.esrd` |
+| **C9** "instance" 命名歧义（ESR_INSTANCE vs adapter instance）| ❌ 未修（doc only） |  |
+
+→ 真需要 PR 的代码 bug：**C2, C5, C8**（外加 C3 / C6 待第二跑确认）
+
+C5 修法精化：user.watcher 改成无条件 watch dirname（boot 时 file 在不在都订阅），同时 `bind_user.ex` 写完 yaml 后主动 call `sync_reload_user_registry/1`（跟 user_add 一致）。两条都做最稳。
