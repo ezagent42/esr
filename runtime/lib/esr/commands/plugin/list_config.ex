@@ -7,12 +7,22 @@ defmodule Esr.Commands.Plugin.ListConfig do
   Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_list_config do
+    slash         "/plugin:list-config"
+    category      "Plugins"
+    description   "显示所有 enabled plugins 的 effective config"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   alias Esr.Plugin.Config
   alias Esr.Plugin.EnabledList
 
-  @impl Esr.Role.Control
   def execute(_cmd) do
     global_path = Esr.Paths.global_plugins_yaml()
     enabled = EnabledList.read(global_path)

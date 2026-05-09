@@ -7,11 +7,24 @@ defmodule Esr.Commands.Plugin.ShowConfig do
   Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_show_config do
+    slash         "/plugin:show-config"
+    category      "Plugins"
+    description   "显示 plugin config（默认 effective = 合并后；可选 layer=global|user|workspace）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :plugin, required: true,  doc: "plugin name"
+    arg :layer,  required: false, doc: "effective | global | user | workspace (default: effective)"
+  end
+
   @behaviour Esr.Role.Control
 
   alias Esr.Plugin.Config
 
-  @impl Esr.Role.Control
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     layer_str = args["layer"] || "effective"

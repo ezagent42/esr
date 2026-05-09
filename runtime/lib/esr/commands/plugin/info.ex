@@ -5,6 +5,19 @@ defmodule Esr.Commands.Plugin.Info do
   Track 0 Task 0.6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_info do
+    slash         "/plugin:info"
+    category      "Plugins"
+    description   "显示某 plugin 的 manifest 摘要"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "plugin name"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

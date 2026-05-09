@@ -11,14 +11,38 @@ defmodule Esr.Commands.Plugin.Set do
   Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_set do
+    slash         "/plugin:set"
+    category      "Plugins"
+    description   "写 plugin config key 到指定 layer（默认 global；重启生效）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :plugin, required: true,  doc: "plugin name"
+    arg :key,    required: true,  doc: "config key (must be declared in plugin manifest config_schema)"
+    arg :value,  required: true,  doc: "config value"
+    arg :layer,  required: false, doc: "global | user | workspace (default: global)"
+
+    error :unknown_plugin,       "plugin %{plugin} not found"
+    error :discovery_failed,     "plugin discovery failed: %{reason}"
+    error :no_config_schema,     "plugin %{plugin} declares no config_schema"
+    error :unknown_config_key,   "config key %{key} is not declared in plugin manifest config_schema; valid keys: %{valid_keys}"
+    error :invalid_layer,        "invalid layer %{layer}; valid: %{valid}"
+    error :user_uuid_required,   "layer=user requires user_uuid"
+    error :workspace_id_required, "layer=workspace requires workspace_id"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Plugin.Config
   alias Esr.Plugin.Loader
 
   @valid_layers ~w(global user workspace)
 
-  @impl Esr.Role.Control
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     key = args["key"]
@@ -44,12 +68,15 @@ defmodule Esr.Commands.Plugin.Set do
     case Loader.discover() do
       {:ok, manifests} ->
         case Enum.find(manifests, fn {name, _} -> name == plugin_name end) do
-          nil -> {:error, %{"type" => "unknown_plugin", "plugin" => plugin_name}}
-          {_, manifest} -> {:ok, manifest}
+          nil ->
+            Render.error(__MODULE__.command_meta(), :unknown_plugin, %{plugin: plugin_name})
+
+          {_, manifest} ->
+            {:ok, manifest}
         end
 
       {:error, reason} ->
-        {:error, %{"type" => "discovery_failed", "reason" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :discovery_failed, %{reason: inspect(reason)})
     end
   end
 
@@ -58,15 +85,13 @@ defmodule Esr.Commands.Plugin.Set do
 
     cond do
       map_size(schema) == 0 ->
-        {:error, %{"type" => "no_config_schema", "plugin" => manifest.name}}
+        Render.error(__MODULE__.command_meta(), :no_config_schema, %{plugin: manifest.name})
 
       not Map.has_key?(schema, key) ->
-        {:error,
-         %{
-           "type" => "unknown_config_key",
-           "key" => key,
-           "valid_keys" => Map.keys(schema)
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_config_key, %{
+          key: key,
+          valid_keys: inspect(Map.keys(schema))
+        })
 
       true ->
         :ok
@@ -78,7 +103,10 @@ defmodule Esr.Commands.Plugin.Set do
   end
 
   defp parse_layer(layer_str) do
-    {:error, %{"type" => "invalid_layer", "layer" => layer_str, "valid" => @valid_layers}}
+    Render.error(__MODULE__.command_meta(), :invalid_layer, %{
+      layer: layer_str,
+      valid: inspect(@valid_layers)
+    })
   end
 
   defp resolve_path_opts(:global, args) do
@@ -93,7 +121,7 @@ defmodule Esr.Commands.Plugin.Set do
       path = args["_user_path_override"] || Esr.Paths.user_plugins_yaml(user_uuid)
       {:ok, [user_path: path]}
     else
-      {:error, %{"type" => "user_uuid_required", "message" => "layer=user requires user_uuid"}}
+      Render.error(__MODULE__.command_meta(), :user_uuid_required)
     end
   end
 
@@ -104,11 +132,7 @@ defmodule Esr.Commands.Plugin.Set do
       path = args["_workspace_path_override"] || workspace_plugins_yaml(workspace_id)
       {:ok, [workspace_path: path]}
     else
-      {:error,
-       %{
-         "type" => "workspace_id_required",
-         "message" => "layer=workspace requires workspace_id"
-       }}
+      Render.error(__MODULE__.command_meta(), :workspace_id_required)
     end
   end
 

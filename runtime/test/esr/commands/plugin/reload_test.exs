@@ -65,8 +65,10 @@ defmodule Esr.Commands.Plugin.ReloadTest do
     test "returns {:error, %{type: unknown_plugin}} for non-existent plugin" do
       cmd = %{"args" => %{"plugin" => "nonexistent_plugin_xyz_999"}}
 
-      assert {:error, %{"type" => "unknown_plugin", "plugin" => "nonexistent_plugin_xyz_999"}} =
+      assert {:error, %{"type" => "unknown_plugin", "message" => message}} =
                Reload.execute(cmd)
+
+      assert message =~ "nonexistent_plugin_xyz_999"
     end
   end
 
@@ -96,8 +98,10 @@ defmodule Esr.Commands.Plugin.ReloadTest do
 
       cmd = %{"args" => %{"plugin" => "cold_plugin", "_plugin_root_override" => tmp_dir}}
 
-      assert {:error, %{"type" => "not_hot_reloadable", "plugin" => "cold_plugin"}} =
+      assert {:error, %{"type" => "not_hot_reloadable", "message" => message}} =
                Reload.execute(cmd)
+
+      assert message =~ "cold_plugin"
     end
   end
 

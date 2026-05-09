@@ -9,6 +9,17 @@ defmodule Esr.Commands.Plugin.AgentTypes do
   Spec rev-3 §4.2 (row "/plugin:agent-types"), D6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_agent_types do
+    slash         "/plugin:agent-types"
+    category      "Plugins"
+    description   "列出 enabled plugins 声明的所有 agent 类型（旧 /agent:list 的语义）"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}
