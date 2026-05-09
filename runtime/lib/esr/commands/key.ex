@@ -26,8 +26,36 @@ defmodule Esr.Commands.Key do
   silently dropping a typo and leaving the operator wondering.
   """
 
+  use Esr.Commands.Meta
+
+  command :key do
+    slash         :none
+    category      "PTY"
+    description   "把特殊键盘输入（up/down/enter/esc/tab/c-X 等）发到 chat-current session 的 PTY"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :keys, required: true, doc: "key spec(s); 例 up enter c-c esc"
+
+    error :missing_keys,
+          "usage: /key <keyspec> [<keyspec> …]   examples: /key up enter   /key c-c   /key esc esc"
+
+    error :missing_chat_context,
+          "/key needs chat_id + app_id from the inbound envelope"
+
+    error :no_session,
+          "no chat-current session in this chat — start one with /new-session first"
+
+    error :unknown_key,
+          "unknown key '%{key}'. supported: up/down/left/right, enter, esc, tab, space, bs, c-<letter>"
+
+    error :invalid_args, "/key requires args map with keys + chat context"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -38,26 +66,17 @@ defmodule Esr.Commands.Key do
 
     cond do
       keyspec == "" ->
-        {:error,
-         %{
-           "type" => "missing_keys",
-           "message" =>
-             "usage: /key <keyspec> [<keyspec> …]   examples: /key up enter   /key c-c   /key esc esc"
-         }}
+        Render.error(__MODULE__.command_meta(), :missing_keys)
 
       chat_id == "" or app_id == "" ->
-        {:error,
-         %{
-           "type" => "missing_chat_context",
-           "message" => "/key needs chat_id + app_id from the inbound envelope"
-         }}
+        Render.error(__MODULE__.command_meta(), :missing_chat_context)
 
       true ->
         do_execute(chat_id, app_id, keyspec)
     end
   end
 
-  def execute(_), do: {:error, %{"type" => "invalid_args"}}
+  def execute(_), do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp do_execute(chat_id, app_id, keyspec) do
     case translate_all(keyspec) do
@@ -75,23 +94,11 @@ defmodule Esr.Commands.Key do
             {:ok, %{"text" => "🎹 sent #{byte_size(bytes)} byte(s) to PTY"}}
 
           :not_found ->
-            {:error,
-             %{
-               "type" => "no_session",
-               "message" =>
-                 "no chat-current session in this chat — start one with /new-session first"
-             }}
+            Render.error(__MODULE__.command_meta(), :no_session)
         end
 
       {:error, bad} ->
-        {:error,
-         %{
-           "type" => "unknown_key",
-           "key" => bad,
-           "message" =>
-             "unknown key '#{bad}'. supported: up/down/left/right, enter, esc, tab, " <>
-               "space, bs, c-<letter>"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_key, %{key: bad})
     end
   end
 
