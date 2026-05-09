@@ -15,7 +15,7 @@ defmodule Esr.Commands.DoctorTest do
 
   alias Esr.Commands.Doctor
 
-  test "unbound user → renders bind-feishu guidance" do
+  test "unbound user → renders bind-feishu guidance (post-2026-05-09 grammar)" do
     open_id = "ou_unbound_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{"text" => text}} =
@@ -29,13 +29,15 @@ defmodule Esr.Commands.DoctorTest do
 
     assert text =~ "ESR 状态诊断"
     assert text =~ "未绑定"
-    assert text =~ "feishu bind"
+    # New grammar: kind-form CLI command (was old `esr --env=dev feishu bind ...`)
+    assert text =~ "esr exec user_add"
+    assert text =~ "esr exec feishu_bind"
     assert text =~ open_id
-    # env_hint maps esr_dev_helper → dev
-    assert text =~ "--env=dev"
+    # Old --env= flag is gone (removed with grammar refresh)
+    refute text =~ "--env=dev"
   end
 
-  test "env_hint falls back to <prod|dev> for unknown app_id" do
+  test "unbound user with chat-only branch produces guidance" do
     assert {:ok, %{"text" => text}} =
              Doctor.execute(%{
                "args" => %{
@@ -45,7 +47,9 @@ defmodule Esr.Commands.DoctorTest do
                }
              })
 
-    assert text =~ "--env=<prod|dev>"
+    # User unbound takes precedence; the guidance points at user_add.
+    assert text =~ "未绑定"
+    assert text =~ "esr exec user_add"
   end
 
   test "no args clause returns text" do

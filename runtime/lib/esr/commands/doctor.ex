@@ -114,39 +114,43 @@ defmodule Esr.Commands.Doctor do
     end
   end
 
-  defp next_steps_text(false, _chat_ok, _ws, principal_id, app_id) do
+  defp next_steps_text(false, _chat_ok, _ws, principal_id, _app_id) do
     """
     ## 下一步：先绑定 esr user
 
-    在终端跑：
+    在终端跑（zero-config bootstrap：第一个 user_add 自动 admin）：
 
-      esr --env=#{env_hint(app_id)} user list
-      esr --env=#{env_hint(app_id)} feishu bind <esr_user> #{principal_id}
+      esr exec user_add --name=<your_name>
+      esr exec feishu_bind --name=<your_name> --feishu_user_id=#{principal_id}
 
-    这会顺带 grant `workspace.create` / `session:default/create` 等 4 个
-    基础 cap，你之后就能在 chat 里直接发 slash 命令。
+    `user_add` 会通过 sentinel bypass + auto-admin 自动给新用户 grant
+    `*` 全部 cap，并写 `operator.json` 让 CLI 后续命令自动用这个身份。
+    `feishu_bind` 把当前 Feishu open_id 绑到 esr user。
 
-    需要全权限（admin）的话：
-
-      esr --env=#{env_hint(app_id)} cap grant #{principal_id} admin
+    完整流程见 docs/guides/operator-bootstrap-journey.md。
     """
   end
 
   defp next_steps_text(true, false, _ws, _principal_id, _app_id) do
     """
-    ## 下一步：在本 chat 创建 workspace
+    ## 下一步：在本 chat 创建 / 绑定 workspace + 起 session
 
     直接在这个 chat 里发：
 
-      /new-workspace <workspace_name>
+      /workspace:new name=<workspace_name>
 
-    自动绑当前 chat。然后：
+    或绑定已有 workspace 到当前 chat：
 
-      /new-session <workspace_name> name=<session_name> \\
-          root=<主 git 仓库路径> \\
-          worktree=<分支名>
+      /workspace:bind-chat name=<workspace_name>
 
-    worktree 检出路径自动派生为 `<root>/.worktrees/<分支名>`。
+    然后起 session（首次会自动用 user-default workspace，可省略 workspace=）：
+
+      /session:new name=<session_name>
+
+    再加一个 cc agent + 拿 TUI URL：
+
+      /agent:add type=cc name=<agent_name>
+      /claude_code:tui name=<agent_name>
     """
   end
 
@@ -156,16 +160,18 @@ defmodule Esr.Commands.Doctor do
 
     Workspace `#{ws_name}` 已绑。可用：
 
-      /new-session #{ws_name} name=<session_name> \\
-          root=<repo> worktree=<分支>
-      /sessions
-      /end-session <name>
-
-    worktree 检出路径自动派生为 `<root>/.worktrees/<分支>`。
+      /session:new name=<session_name>
+      /session:list
+      /session:end session=<uuid>
+      /agent:add type=cc name=<agent_name>
+      /claude_code:tui name=<agent_name>     # → 浏览器 TUI URL
     """
   end
 
-  defp env_hint("esr_dev_helper"), do: "dev"
-  defp env_hint("esr_helper"), do: "prod"
-  defp env_hint(_), do: "<prod|dev>"
+  # env_hint/1 was used by the legacy `esr --env=<prod|dev> feishu bind ...`
+  # text rendered before the 2026-05-09 grammar refresh. Post-refresh the
+  # CLI uses operator.json + the kind-form `esr exec feishu_bind` (no
+  # --env flag), so this helper has no callers. Kept here as dead code
+  # for one PR cycle to avoid cross-cutting cleanup; removable in any
+  # follow-up sweep.
 end
