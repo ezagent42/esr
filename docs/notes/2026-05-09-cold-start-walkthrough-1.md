@@ -130,3 +130,19 @@ ESR 里 "instance" 有两个无关含义：
 **修法（candidate）**：把 adapters.yaml 顶层 key `instances:` 重命名为 `adapters:`（schema breaking 但语义清晰）。或起码在 docs 里把这两个 "instance" 的区分写显眼。
 
 **优先级**：低（文档可以解决，不是 blocker）。
+
+### C2 重新分类（基于 b5fe750 复跑实测）
+
+第二跑 secret 放 `adapters.yaml.config.app_secret`（Phase 7.D 形态），sidecar **直接**连上 Lark 成功（log `Handshake-Msg: OK`）。
+
+→ **C2 不是 runtime 数据流 bug**——adapters.yaml 的 config 一直就完整透传给 sidecar (`Jason.encode!(cfg)` in `worker_supervisor.ex`).
+
+C2 实质是 **manifest schema vs 数据流不一致的 UX/doc 陷阱**：
+- `runtime/lib/esr/plugins/feishu/manifest.yaml` 的 `config_schema` 仍声明 `app_secret` 是 plugin-level config key
+- 真实数据流只透传 adapters.yaml `config:` 给 sidecar，plugin config 永不到 sidecar
+- 操作员凭 manifest schema 引导把 secret 写 plugins.yaml → C2 复现
+- 操作员凭"per-instance 直觉" 把 secret 写 adapters.yaml → 自然 work
+
+**修法**（commit 2006bc9 已含）：删 manifest config_schema 里 `app_id` + `app_secret`（保留 `log_level` 这条真 plugin-wide 的）、删 dead `get_app_secret/0` + `get_app_id/0`、更新 `plugin.ex` docstring。
+
+**优先级**：中。runtime 不挂，但操作员**绝对**会按 schema 误填一次。一次性踩中就明白；第二次写就对。
