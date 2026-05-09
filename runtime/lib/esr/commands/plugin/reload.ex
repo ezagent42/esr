@@ -16,8 +16,28 @@ defmodule Esr.Commands.Plugin.Reload do
   Spec: docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md §4.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_reload do
+    slash         "/plugin:reload"
+    category      "Plugins"
+    description   "触发指定 plugin 的 config reload（plugin manifest 必须 hot_reloadable: true；不传 plugin name = 报错，无 batch reload）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :plugin, required: true, doc: "plugin name"
+
+    error :unknown_plugin,           "plugin %{plugin} not found"
+    error :discovery_failed,         "plugin discovery failed: %{reason}"
+    error :not_hot_reloadable,       "plugin %{plugin} must declare hot_reloadable: true in manifest to support reload; restart esrd to apply config changes"
+    error :plugin_module_not_found,  "expected module %{module} to be loaded for plugin %{plugin}; verify the plugin's Plugin module exists"
+    error :callback_not_exported,    "plugin %{plugin} declares hot_reloadable: true but does not export on_config_change/1; check that the module implements Esr.Plugin.Behaviour"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Plugin.Config
   alias Esr.Plugin.ConfigSnapshot
   alias Esr.Plugin.Loader
@@ -26,7 +46,6 @@ defmodule Esr.Commands.Plugin.Reload do
 
   @callback_timeout_ms 5_000
 
-  @impl Esr.Role.Control
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     plugin_root = args["_plugin_root_override"]
@@ -51,14 +70,14 @@ defmodule Esr.Commands.Plugin.Reload do
       {:ok, manifests} ->
         case Enum.find(manifests, fn {name, _} -> name == plugin_name end) do
           nil ->
-            {:error, %{"type" => "unknown_plugin", "plugin" => plugin_name}}
+            Render.error(__MODULE__.command_meta(), :unknown_plugin, %{plugin: plugin_name})
 
           {_, manifest} ->
             {:ok, manifest}
         end
 
       {:error, reason} ->
-        {:error, %{"type" => "discovery_failed", "reason" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :discovery_failed, %{reason: inspect(reason)})
     end
   end
 
@@ -69,14 +88,7 @@ defmodule Esr.Commands.Plugin.Reload do
   defp check_hot_reloadable(%{hot_reloadable: true}), do: :ok
 
   defp check_hot_reloadable(%{name: name}) do
-    {:error,
-     %{
-       "type" => "not_hot_reloadable",
-       "plugin" => name,
-       "message" =>
-         "plugin must declare hot_reloadable: true in manifest to support reload; " <>
-           "restart esrd to apply config changes"
-     }}
+    Render.error(__MODULE__.command_meta(), :not_hot_reloadable, %{plugin: name})
   end
 
   # ------------------------------------------------------------------
@@ -98,15 +110,10 @@ defmodule Esr.Commands.Plugin.Reload do
     if Code.ensure_loaded?(module) do
       {:ok, module}
     else
-      {:error,
-       %{
-         "type" => "plugin_module_not_found",
-         "plugin" => name,
-         "module" => module_name,
-         "message" =>
-           "expected module #{module_name} to be loaded; " <>
-             "verify the plugin's Plugin module exists"
-       }}
+      Render.error(__MODULE__.command_meta(), :plugin_module_not_found, %{
+        plugin: name,
+        module: module_name
+      })
     end
   end
 
@@ -118,14 +125,7 @@ defmodule Esr.Commands.Plugin.Reload do
     if function_exported?(module, :on_config_change, 1) do
       :ok
     else
-      {:error,
-       %{
-         "type" => "callback_not_exported",
-         "plugin" => plugin_name,
-         "message" =>
-           "plugin declares hot_reloadable: true but does not export on_config_change/1; " <>
-             "check that the module implements Esr.Plugin.Behaviour"
-       }}
+      Render.error(__MODULE__.command_meta(), :callback_not_exported, %{plugin: plugin_name})
     end
   end
 

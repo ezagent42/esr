@@ -22,6 +22,19 @@ defmodule Esr.Commands.Plugin.Install do
   manifest, plugin name collision.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_install do
+    slash         "/plugin:install"
+    category      "Plugins"
+    description   "从本地路径安装 plugin（Phase 1 only local-path）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :source, required: true, doc: "local plugin source directory"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

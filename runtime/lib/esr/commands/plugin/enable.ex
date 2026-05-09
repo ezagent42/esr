@@ -6,6 +6,19 @@ defmodule Esr.Commands.Plugin.Enable do
   hot-load plugins yet — Phase 2 territory).
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_enable do
+    slash         "/plugin:enable"
+    category      "Plugins"
+    description   "启用 plugin（写 plugins.yaml；重启生效）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "plugin name"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, term()}

@@ -6,6 +6,17 @@ defmodule Esr.Commands.Plugin.List do
   Track 0 Task 0.6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_list do
+    slash         "/plugin:list"
+    category      "Plugins"
+    description   "列出已安装 plugin + enabled 状态"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

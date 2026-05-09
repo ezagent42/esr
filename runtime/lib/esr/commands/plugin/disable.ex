@@ -5,6 +5,19 @@ defmodule Esr.Commands.Plugin.Disable do
   Track 0 Task 0.6. Takes effect after restart.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_disable do
+    slash         "/plugin:disable"
+    category      "Plugins"
+    description   "禁用 plugin（写 plugins.yaml；重启生效）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "plugin name"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, term()}

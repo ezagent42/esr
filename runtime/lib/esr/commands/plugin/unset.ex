@@ -8,14 +8,35 @@ defmodule Esr.Commands.Plugin.Unset do
   Spec: docs/superpowers/specs/2026-05-07-metamodel-aligned-esr.md §6.
   """
 
+  use Esr.Commands.Meta
+
+  command :plugin_unset do
+    slash         "/plugin:unset"
+    category      "Plugins"
+    description   "删除 plugin config key（幂等；重启生效）"
+    permission    "plugin/manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :plugin, required: true,  doc: "plugin name"
+    arg :key,    required: true,  doc: "config key"
+    arg :layer,  required: false, doc: "global | user | workspace (default: global)"
+
+    error :unknown_plugin,        "plugin %{plugin} not found"
+    error :discovery_failed,      "plugin discovery failed: %{reason}"
+    error :invalid_layer,         "invalid layer %{layer}; valid: %{valid}"
+    error :user_uuid_required,    "layer=user requires user_uuid"
+    error :workspace_id_required, "layer=workspace requires workspace_id"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Plugin.Config
   alias Esr.Plugin.Loader
 
   @valid_layers ~w(global user workspace)
 
-  @impl Esr.Role.Control
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     key = args["key"]
@@ -39,12 +60,15 @@ defmodule Esr.Commands.Plugin.Unset do
     case Loader.discover() do
       {:ok, manifests} ->
         case Enum.find(manifests, fn {name, _} -> name == plugin_name end) do
-          nil -> {:error, %{"type" => "unknown_plugin", "plugin" => plugin_name}}
-          {_, manifest} -> {:ok, manifest}
+          nil ->
+            Render.error(__MODULE__.command_meta(), :unknown_plugin, %{plugin: plugin_name})
+
+          {_, manifest} ->
+            {:ok, manifest}
         end
 
       {:error, reason} ->
-        {:error, %{"type" => "discovery_failed", "reason" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :discovery_failed, %{reason: inspect(reason)})
     end
   end
 
@@ -52,7 +76,10 @@ defmodule Esr.Commands.Plugin.Unset do
     do: {:ok, String.to_atom(layer_str)}
 
   defp parse_layer(layer_str) do
-    {:error, %{"type" => "invalid_layer", "layer" => layer_str, "valid" => @valid_layers}}
+    Render.error(__MODULE__.command_meta(), :invalid_layer, %{
+      layer: layer_str,
+      valid: inspect(@valid_layers)
+    })
   end
 
   defp resolve_path_opts(:global, args) do
@@ -67,7 +94,7 @@ defmodule Esr.Commands.Plugin.Unset do
       path = args["_user_path_override"] || Esr.Paths.user_plugins_yaml(user_uuid)
       {:ok, [user_path: path]}
     else
-      {:error, %{"type" => "user_uuid_required"}}
+      Render.error(__MODULE__.command_meta(), :user_uuid_required)
     end
   end
 
@@ -78,7 +105,7 @@ defmodule Esr.Commands.Plugin.Unset do
       path = args["_workspace_path_override"] || workspace_plugins_yaml(workspace_id)
       {:ok, [workspace_path: path]}
     else
-      {:error, %{"type" => "workspace_id_required"}}
+      Render.error(__MODULE__.command_meta(), :workspace_id_required)
     end
   end
 
