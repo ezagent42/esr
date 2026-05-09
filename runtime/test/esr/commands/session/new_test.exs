@@ -107,8 +107,10 @@ defmodule Esr.Commands.Session.NewTest do
         "args" => %{"agent" => "does-not-exist", "dir" => "/tmp/x"}
       }
 
-      assert {:error, %{"type" => "unknown_agent", "agent" => "does-not-exist"}} =
+      assert {:error, %{"type" => "unknown_agent", "message" => msg}} =
                SessionNew.execute(cmd)
+
+      assert msg =~ "does-not-exist"
     end
   end
 
@@ -146,15 +148,15 @@ defmodule Esr.Commands.Session.NewTest do
         "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
       }
 
-      assert {:error, %{"type" => "missing_capabilities", "caps" => missing}} =
+      assert {:error, %{"type" => "missing_capabilities", "message" => msg}} =
                SessionNew.execute(cmd)
 
+      # Phase 3.3 grammar migration: caps list is interpolated into the
+      # message (comma-joined) rather than carried as a separate key.
       # simple.yaml's cc agent declares the full canonical set.
-      assert Enum.sort(missing) == [
-               "handler:cc_adapter_runner/invoke",
-               "pty:default/spawn",
-               "session:default/create"
-             ]
+      assert msg =~ "handler:cc_adapter_runner/invoke"
+      assert msg =~ "pty:default/spawn"
+      assert msg =~ "session:default/create"
 
       after_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
       assert after_count == before_count, "no new Session should have been created"
@@ -173,8 +175,14 @@ defmodule Esr.Commands.Session.NewTest do
         "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
       }
 
-      assert {:error, %{"type" => "missing_capabilities", "caps" => ["handler:cc_adapter_runner/invoke"]}} =
+      assert {:error, %{"type" => "missing_capabilities", "message" => msg}} =
                SessionNew.execute(cmd)
+
+      # Phase 3.3 grammar migration: only the gap should appear in the
+      # message; sister caps held by the principal must NOT.
+      assert msg =~ "handler:cc_adapter_runner/invoke"
+      refute msg =~ "session:default/create"
+      refute msg =~ "pty:default/spawn"
 
       after_count = DynamicSupervisor.count_children(Esr.Session.Supervisor).active
       assert after_count == before_count, "no new Session should have been created"

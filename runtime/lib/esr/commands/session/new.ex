@@ -50,8 +50,35 @@ defmodule Esr.Commands.Session.New do
   through `Esr.Session.Router.create_session/1` to close that loop.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_new do
+    slash         "/session:new"
+    category      "Sessions"
+    description   "起一个新 session(自动 transient workspace);name=<X> [agent=cc]"
+    permission    "session:default/create"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name,  required: true,  doc: "session 名"
+    arg :agent, required: false, default: "cc", doc: "agent 名(默认 cc)"
+
+    error :invalid_args,            "session_new %{detail}"
+    error :worktree_failed,         "git worktree add failed: %{details}"
+    error :name_collision,          "session name '%{name}' already used by another live session in workspace %{workspace}"
+    error :worktree_collision,      "worktree branch '%{worktree}' already used by another live session in workspace %{workspace}"
+    error :session_name_taken,      "a session named '%{name}' already exists for owner '%{owner_user}'"
+    error :session_persist_failed,  "failed to write session.json for %{session_id}: %{details}"
+    error :workspace_gone,          "workspace %{name} %{detail}"
+    error :no_workspace_target,     "no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name>"
+    error :unknown_agent,           "agent %{agent} not registered in agents.yaml"
+    error :missing_capabilities,    "missing capabilities: %{caps}"
+    error :session_start_failed,    "session start failed: %{details}"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
@@ -174,17 +201,14 @@ defmodule Esr.Commands.Session.New do
         :ok
 
       {:error, {:git_failed, code, output}} ->
-        {:error,
-         %{
-           "type" => "worktree_failed",
-           "details" => "git worktree add failed (exit #{code}): #{output}",
-           "root" => root,
-           "branch" => branch,
-           "cwd" => cwd
-         }}
+        Render.error(__MODULE__.command_meta(), :worktree_failed, %{
+          details: "(exit #{code}): #{output} (root=#{root} branch=#{branch} cwd=#{cwd})"
+        })
 
       {:error, reason} ->
-        {:error, %{"type" => "worktree_failed", "details" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :worktree_failed, %{
+          details: inspect(reason)
+        })
     end
   end
 
@@ -210,31 +234,21 @@ defmodule Esr.Commands.Session.New do
       :ok ->
         :ok
 
-      {:error, {:name_taken, _other_sid}} = err ->
+      {:error, {:name_taken, _other_sid}} ->
         rollback_spawn(sid)
 
-        {:error,
-         %{
-           "type" => "name_collision",
-           "name" => name,
-           "username" => u,
-           "workspace" => ws,
-           "details" => "another live session already uses this name"
-         }}
-        |> tap(fn _ -> _ = err end)
+        Render.error(__MODULE__.command_meta(), :name_collision, %{
+          name: name,
+          workspace: ws
+        })
 
-      {:error, {:worktree_taken, _other_sid}} = err ->
+      {:error, {:worktree_taken, _other_sid}} ->
         rollback_spawn(sid)
 
-        {:error,
-         %{
-           "type" => "worktree_collision",
-           "worktree" => wt,
-           "username" => u,
-           "workspace" => ws,
-           "details" => "another live session already uses this worktree branch"
-         }}
-        |> tap(fn _ -> _ = err end)
+        Render.error(__MODULE__.command_meta(), :worktree_collision, %{
+          worktree: wt,
+          workspace: ws
+        })
 
       {:error, _other} = err ->
         rollback_spawn(sid)
@@ -263,12 +277,10 @@ defmodule Esr.Commands.Session.New do
         :ok
 
       [{_, _existing_uuid}] ->
-        {:error,
-         %{
-           "type" => "session_name_taken",
-           "message" =>
-             "a session named '#{name}' already exists for owner '#{owner_user}'"
-         }}
+        Render.error(__MODULE__.command_meta(), :session_name_taken, %{
+          name: name,
+          owner_user: owner_user
+        })
     end
   rescue
     # ETS table not running (test env without Session.Registry boot).
@@ -305,12 +317,10 @@ defmodule Esr.Commands.Session.New do
       {:error, reason} ->
         rollback_spawn(sid)
 
-        {:error,
-         %{
-           "type" => "session_persist_failed",
-           "message" => "failed to write session.json for #{sid}",
-           "details" => inspect(reason)
-         }}
+        Render.error(__MODULE__.command_meta(), :session_persist_failed, %{
+          session_id: sid,
+          details: inspect(reason)
+        })
     end
   end
 
@@ -388,11 +398,10 @@ defmodule Esr.Commands.Session.New do
           {:error, :workspace_gone} ->
             rollback_spawn(sid)
 
-            {:error,
-             %{
-               "type" => "workspace_gone",
-               "message" => "workspace was deleted while session was being created"
-             }}
+            Render.error(__MODULE__.command_meta(), :workspace_gone, %{
+              name: ws_name,
+              detail: "was deleted while session was being created"
+            })
         end
 
       :not_found ->
@@ -408,13 +417,10 @@ defmodule Esr.Commands.Session.New do
         else
           rollback_spawn(sid)
 
-          {:error,
-           %{
-             "type" => "workspace_gone",
-             "name" => ws_name,
-             "message" =>
-               "workspace was deleted between resolution and session bind (race with transient cleanup)"
-           }}
+          Render.error(__MODULE__.command_meta(), :workspace_gone, %{
+            name: ws_name,
+            detail: "was deleted between resolution and session bind (race with transient cleanup)"
+          })
         end
     end
   rescue
@@ -423,10 +429,11 @@ defmodule Esr.Commands.Session.New do
 
   defp bind_session_to_workspace(_args, _sid), do: :ok
 
-  def execute(_, _opts),
-    do:
-      {:error,
-       %{"type" => "invalid_args", "message" => "submitted_by + args required"}}
+  def execute(_, _opts) do
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "submitted_by + args required"
+    })
+  end
 
   # ---------------------------------------------------------------------------
   # Phase 5.1 / 5.3 + Phase 6 (M-5) — workspace resolution
@@ -468,30 +475,28 @@ defmodule Esr.Commands.Session.New do
             # chat-default → user-default) returned empty, which is a
             # different operator action (bind a workspace) than an
             # arg-shape fix.
-            {:error,
-             %{
-               "type" => "no_workspace_target",
-               "message" =>
-                 "no explicit workspace= and no chat-current binding and " <>
-                   "no user-default workspace; bind first with " <>
-                   "/workspace:bind-chat or /user:use, or pass workspace=<name>"
-             }}
+            Render.error(__MODULE__.command_meta(), :no_workspace_target)
         end
     end
   end
 
-  defp validate_args(nil, _),
-    do: {:error, %{"type" => "invalid_args", "message" => "agent required"}}
+  defp validate_args(nil, _) do
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{detail: "agent required"})
+  end
 
-  defp validate_args(_, nil),
-    do: {:error, %{"type" => "invalid_args", "message" => "dir required"}}
+  defp validate_args(_, nil) do
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{detail: "dir required"})
+  end
 
   defp validate_args(_, _), do: :ok
 
   defp fetch_agent(name) do
     case Esr.Entity.Agent.Registry.agent_def(name) do
-      {:ok, d} -> {:ok, d}
-      {:error, :not_found} -> {:error, %{"type" => "unknown_agent", "agent" => name}}
+      {:ok, d} ->
+        {:ok, d}
+
+      {:error, :not_found} ->
+        Render.error(__MODULE__.command_meta(), :unknown_agent, %{agent: name})
     end
   end
 
@@ -506,7 +511,9 @@ defmodule Esr.Commands.Session.New do
         :ok
 
       {:missing, missing} ->
-        {:error, %{"type" => "missing_capabilities", "caps" => missing}}
+        Render.error(__MODULE__.command_meta(), :missing_capabilities, %{
+          caps: Enum.join(missing, ", ")
+        })
     end
   end
 
@@ -548,7 +555,9 @@ defmodule Esr.Commands.Session.New do
         {:ok, sid}
 
       {:error, reason} ->
-        {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :session_start_failed, %{
+          details: inspect(reason)
+        })
     end
   end
 
@@ -588,7 +597,9 @@ defmodule Esr.Commands.Session.New do
         {:ok, sid}
 
       {:error, reason} ->
-        {:error, %{"type" => "session_start_failed", "details" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :session_start_failed, %{
+          details: inspect(reason)
+        })
     end
   end
 end

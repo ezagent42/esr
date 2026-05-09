@@ -107,10 +107,34 @@ defmodule Esr.Commands.Session.BranchEnd do
       subscriber.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_branch_end do
+    slash         :none
+    category      "Sessions"
+    description   "tear down a branch worktree (CLI-only; dispatcher kind)"
+    permission    "session:default/end"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :branch, required: true, doc: "branch name registered in branches.yaml"
+    arg :force,  required: false, default: "false", doc: "skip cleanup-check handshake"
+
+    error :invalid_args,         "session_branch_end requires submitted_by and args.branch (non-empty string)"
+    error :no_such_branch,       "branch %{branch} not registered in branches.yaml"
+    error :worktree_dirty,       "branch %{branch} has uncommitted changes; commit/discard before ending or pass --force"
+    error :worktree_unpushed,    "branch %{branch} has unpushed commits; push first or pass --force"
+    error :worktree_stashed,     "branch %{branch} has stashed changes; review before ending or pass --force"
+    error :worktree_unknown,     "branch %{branch} CC reported unknown status %{status}"
+    error :cleanup_timeout,      "CC session did not respond to cleanup_check within %{timeout_ms}ms (branch %{branch}). Retry, or re-send /end-session with --force to skip the check."
+    error :branch_end_failed,    "branch end failed: %{details}"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, map()}
 
+  alias Esr.Commands.Render
   require Logger
 
   @default_cleanup_timeout_ms 30_000
@@ -127,7 +151,7 @@ defmodule Esr.Commands.Session.BranchEnd do
       when is_binary(submitter) and is_binary(branch) and branch != "" do
     case branch_registered?(branch) do
       false ->
-        {:error, %{"type" => "no_such_branch"}}
+        Render.error(__MODULE__.command_meta(), :no_such_branch, %{branch: branch})
 
       true ->
         force? = truthy?(Map.get(args, "force", false))
@@ -141,11 +165,7 @@ defmodule Esr.Commands.Session.BranchEnd do
   end
 
   def execute(_cmd, _opts) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "session_branch_end requires submitted_by and args.branch (non-empty string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ------------------------------------------------------------------
@@ -172,37 +192,24 @@ defmodule Esr.Commands.Session.BranchEnd do
         {:cleanup_signal, "CLEANED", _details} ->
           run_shell_and_persist(branch, submitter, _force? = false, opts)
 
-        {:cleanup_signal, status, details} when status in @worktree_error_statuses ->
-          {:error,
-           %{
-             "type" => "worktree_" <> String.downcase(status),
-             "details" => details || %{},
-             "branch" => branch
-           }}
+        {:cleanup_signal, status, _details} when status in @worktree_error_statuses ->
+          code = String.to_atom("worktree_" <> String.downcase(status))
+          Render.error(__MODULE__.command_meta(), code, %{branch: branch})
 
-        {:cleanup_signal, status, details} ->
+        {:cleanup_signal, status, _details} ->
           # CC returned something we don't recognise — surface it as
           # a generic worktree_unknown so the user still sees the raw
           # status rather than waiting out the timeout.
-          {:error,
-           %{
-             "type" => "worktree_unknown",
-             "status" => status,
-             "details" => details || %{},
-             "branch" => branch
-           }}
+          Render.error(__MODULE__.command_meta(), :worktree_unknown, %{
+            branch: branch,
+            status: status
+          })
       after
         timeout_ms ->
-          {:error,
-           %{
-             "type" => "cleanup_timeout",
-             "branch" => branch,
-             "timeout_ms" => timeout_ms,
-             "hint" =>
-               "CC session did not respond to cleanup_check within " <>
-                 "#{timeout_ms}ms. Retry, or re-send /end-session with --force " <>
-                 "to skip the check and tear the worktree down regardless."
-           }}
+          Render.error(__MODULE__.command_meta(), :cleanup_timeout, %{
+            branch: branch,
+            timeout_ms: Integer.to_string(timeout_ms)
+          })
       end
     after
       # Deregister whether we got a signal, a timeout, or a crash — no
@@ -301,11 +308,9 @@ defmodule Esr.Commands.Session.BranchEnd do
           {:ok, %{"branch" => branch}}
         else
           {:error, reason} ->
-            {:error,
-             %{
-               "type" => "branch_end_failed",
-               "details" => "yaml persist failed: " <> inspect(reason)
-             }}
+            Render.error(__MODULE__.command_meta(), :branch_end_failed, %{
+              details: "yaml persist failed: " <> inspect(reason)
+            })
         end
 
       {:error, _} = err ->
@@ -329,21 +334,17 @@ defmodule Esr.Commands.Session.BranchEnd do
         {:ok, m}
 
       {:ok, %{"ok" => false, "error" => msg}} ->
-        {:error, %{"type" => "branch_end_failed", "details" => to_string(msg)}}
+        Render.error(__MODULE__.command_meta(), :branch_end_failed, %{details: to_string(msg)})
 
       {:ok, other} ->
-        {:error,
-         %{
-           "type" => "branch_end_failed",
-           "details" => "unexpected script payload: " <> inspect(other)
-         }}
+        Render.error(__MODULE__.command_meta(), :branch_end_failed, %{
+          details: "unexpected script payload: " <> inspect(other)
+        })
 
       {:error, %Jason.DecodeError{} = err} ->
-        {:error,
-         %{
-           "type" => "branch_end_failed",
-           "details" => "malformed JSON stdout: " <> Exception.message(err)
-         }}
+        Render.error(__MODULE__.command_meta(), :branch_end_failed, %{
+          details: "malformed JSON stdout: " <> Exception.message(err)
+        })
     end
   end
 

@@ -20,8 +20,27 @@ defmodule Esr.Commands.Session.BindChat do
     5. Return `{:ok, %{"session_id" => uuid, "attached" => true}}`.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_bind_chat do
+    slash         "/session:bind-chat"
+    category      "Sessions"
+    description   "把已有 session 加入当前 chat;UUID-only(用 /session:list 查 UUID)"
+    permission    "session.attach"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :session, required: true, doc: "session UUID v4"
+
+    error :invalid_args,         "/session:bind-chat requires args.session (UUID) and a chat context (chat_id + app_id)"
+    error :invalid_session_uuid, "session bind-chat requires a UUID; use /session:list to see available sessions"
+    error :unknown_session,      "session '%{session}' not found"
+    error :not_authorized,       "you do not have 'session:%{session}/attach' or 'session:%{session}/admin'; ask the session owner to run /session:share"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
@@ -49,12 +68,7 @@ defmodule Esr.Commands.Session.BindChat do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "/session:bind-chat requires args.session (UUID) and a chat context (chat_id + app_id)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ---------------------------------------------------------------------------
@@ -65,21 +79,12 @@ defmodule Esr.Commands.Session.BindChat do
     if Regex.match?(@uuid_re, s) do
       :ok
     else
-      {:error,
-       %{
-         "type" => "invalid_session_uuid",
-         "message" =>
-           "session bind-chat requires a UUID; use /session:list to see available sessions"
-       }}
+      Render.error(__MODULE__.command_meta(), :invalid_session_uuid)
     end
   end
 
   defp validate_uuid(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/session:bind-chat requires args.session (non-empty UUID string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp fetch_session(uuid) do
@@ -88,11 +93,7 @@ defmodule Esr.Commands.Session.BindChat do
         ok
 
       :not_found ->
-        {:error,
-         %{
-           "type" => "unknown_session",
-           "message" => "session '#{uuid}' not found"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_session, %{session: uuid})
     end
   end
 
@@ -103,13 +104,7 @@ defmodule Esr.Commands.Session.BindChat do
     if Grants.has?(submitter, attach_cap) or Grants.has?(submitter, admin_cap) do
       :ok
     else
-      {:error,
-       %{
-         "type" => "not_authorized",
-         "message" =>
-           "you do not have '#{attach_cap}' or '#{admin_cap}'; " <>
-             "ask the session owner to run /session:share"
-       }}
+      Render.error(__MODULE__.command_meta(), :not_authorized, %{session: uuid})
     end
   end
 
@@ -119,10 +114,6 @@ defmodule Esr.Commands.Session.BindChat do
   end
 
   defp require_chat_context(_, _) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/session:bind-chat requires a chat context (chat_id + app_id in envelope)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

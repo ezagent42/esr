@@ -36,9 +36,29 @@ defmodule Esr.Commands.Session.End do
     * `{:error, %{"type" => "invalid_args", ...}}`
   """
 
+  use Esr.Commands.Meta
+
+  command :session_end do
+    slash         "/session:end"
+    category      "Sessions"
+    description   "销毁 session;session_id=<uuid> 或 name=<n>"
+    permission    "session:default/end"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :session_id, required: false, doc: "session ULID/UUID (legacy direct lookup)"
+    arg :name,       required: false, doc: "session name (resolved via NameIndex)"
+
+    error :invalid_args,           "session_end %{detail}"
+    error :unknown_session,        "session %{session_id} not found"
+    error :end_failed,             "session end failed: %{details}"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()} | {:error, map()}
+
+  alias Esr.Commands.Render
 
   @spec execute(map()) :: result()
   def execute(%{"args" => %{"session_id" => sid}} = cmd)
@@ -56,18 +76,14 @@ defmodule Esr.Commands.Session.End do
 
     cond do
       username == "" ->
-        {:error,
-         %{
-           "type" => "invalid_args",
-           "message" => "session_end by name requires args.username"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_args, %{
+          detail: "by name requires args.username"
+        })
 
       workspace == "" ->
-        {:error,
-         %{
-           "type" => "invalid_args",
-           "message" => "session_end by name requires args.workspace"
-         }}
+        Render.error(__MODULE__.command_meta(), :invalid_args, %{
+          detail: "by name requires args.workspace"
+        })
 
       true ->
         case Esr.Session.NameIndex.Registry.lookup_by_name(env, username, workspace, name) do
@@ -75,18 +91,15 @@ defmodule Esr.Commands.Session.End do
             end_by_session_id(sid, args)
 
           :not_found ->
-            {:error, %{"type" => "unknown_session", "name" => name}}
+            Render.error(__MODULE__.command_meta(), :unknown_session, %{session_id: name})
         end
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "session_end requires args.session_id OR args.name (with username + workspace)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "requires args.session_id OR args.name (with username + workspace)"
+    })
   end
 
   # ------------------------------------------------------------------
@@ -118,10 +131,10 @@ defmodule Esr.Commands.Session.End do
          }}
 
       {:error, :unknown_session} ->
-        {:error, %{"type" => "unknown_session", "session_id" => sid}}
+        Render.error(__MODULE__.command_meta(), :unknown_session, %{session_id: sid})
 
       {:error, reason} ->
-        {:error, %{"type" => "end_failed", "details" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :end_failed, %{details: inspect(reason)})
     end
   end
 

@@ -24,8 +24,29 @@ defmodule Esr.Commands.Session.Share do
     5. Return `{:ok, %{"session_id" => uuid, "granted_to" => username, "perm" => perm}}`.
   """
 
+  use Esr.Commands.Meta
+
+  command :session_share do
+    slash         "/session:share"
+    category      "Sessions"
+    description   "把 session 访问权授给其他用户;等价于 /cap:grant session:<uuid>/<perm>"
+    permission    "cap.manage"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :session, required: true,  doc: "session UUID v4"
+    arg :user,    required: true,  doc: "target username"
+    arg :perm,    required: false, default: "attach", doc: "attach | admin"
+
+    error :invalid_args,         "/session:share %{detail}"
+    error :invalid_session_uuid, "session share requires a UUID; use /session:list to see available sessions"
+    error :invalid_perm,         "invalid perm '%{perm}'; valid values are: attach, admin"
+    error :user_not_found,       "no user with username '%{username}' is registered"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.User.NameIndex
   alias Esr.Commands.Cap.Grant
 
@@ -58,12 +79,9 @@ defmodule Esr.Commands.Session.Share do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "/session:share requires args.session (UUID), args.user (username), and optional args.perm (attach|admin)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "requires args.session (UUID), args.user (username), and optional args.perm (attach|admin)"
+    })
   end
 
   # ---------------------------------------------------------------------------
@@ -74,42 +92,28 @@ defmodule Esr.Commands.Session.Share do
     if Regex.match?(@uuid_re, s) do
       :ok
     else
-      {:error,
-       %{
-         "type" => "invalid_session_uuid",
-         "message" =>
-           "session share requires a UUID; use /session:list to see available sessions"
-       }}
+      Render.error(__MODULE__.command_meta(), :invalid_session_uuid)
     end
   end
 
   defp validate_session_uuid(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/session:share requires args.session (non-empty UUID string)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "requires args.session (non-empty UUID string)"
+    })
   end
 
   defp validate_user(username) when is_binary(username) and username != "", do: :ok
 
   defp validate_user(_) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/session:share requires args.user (non-empty username)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{
+      detail: "requires args.user (non-empty username)"
+    })
   end
 
   defp validate_perm(p) when p in @valid_perms, do: :ok
 
   defp validate_perm(p) do
-    {:error,
-     %{
-       "type" => "invalid_perm",
-       "message" =>
-         "invalid perm '#{p}'; valid values are: #{Enum.join(@valid_perms, ", ")}"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_perm, %{perm: p})
   end
 
   defp lookup_user(username) do
@@ -118,11 +122,7 @@ defmodule Esr.Commands.Session.Share do
         {:ok, uuid}
 
       :not_found ->
-        {:error,
-         %{
-           "type" => "user_not_found",
-           "message" => "no user with username '#{username}' is registered"
-         }}
+        Render.error(__MODULE__.command_meta(), :user_not_found, %{username: username})
     end
   end
 
