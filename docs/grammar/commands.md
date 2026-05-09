@@ -267,14 +267,14 @@ _internal kind only — not slash-callable_
 **description:** 授权 cap 给用户；session cap 仅接受 UUID 形式
 
 **args:**
-  - `cap` (required) — permission 字符串（session cap 必须是 UUID 形式）
-  - `user` (required) — principal id
+  - `target_principal_id` (required) — principal being granted to (the operation target)
+  - `permission` (required) — permission 字符串（session cap 必须是 UUID 形式）
 
 **errors:**
   - `reserved_principal_id` — 'system:bootstrap' is a reserved sentinel; cannot be granted caps
   - `session_cap_requires_uuid` — %{detail}
   - `unknown_workspace` — no workspace found in capability scope: %{permission}
-  - `invalid_args` — grant requires args.principal_id and args.permission (non-empty strings)
+  - `invalid_args` — grant requires args.target_principal_id and args.permission (non-empty strings)
   - `write_failed` — %{detail}
 
 ### `cap_list`

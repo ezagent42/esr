@@ -158,9 +158,9 @@ slashes:
     requires_workspace_binding: false
   /cap:grant:
     args:
-      - name: cap
+      - name: target_principal_id
         required: true
-      - name: user
+      - name: permission
         required: true
     category: Capabilities
     command_module: Esr.Commands.Cap.Grant

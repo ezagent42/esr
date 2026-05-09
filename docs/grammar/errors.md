@@ -40,7 +40,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `not_found` | `agent_rename` | agent '%{name}' not found in session '%{session_id}' |
 | `invalid_args` | `agent_set_primary` | /agent:set-primary requires args.session_id and args.name (non-empty strings) |
 | `not_found` | `agent_set_primary` | no agent named '%{name}' in session '%{session_id}' |
-| `invalid_args` | `cap_grant` | grant requires args.principal_id and args.permission (non-empty strings) |
+| `invalid_args` | `cap_grant` | grant requires args.target_principal_id and args.permission (non-empty strings) |
 | `reserved_principal_id` | `cap_grant` | 'system:bootstrap' is a reserved sentinel; cannot be granted caps |
 | `session_cap_requires_uuid` | `cap_grant` | %{detail} |
 | `unknown_workspace` | `cap_grant` | no workspace found in capability scope: %{permission} |
