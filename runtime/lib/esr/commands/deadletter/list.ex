@@ -9,6 +9,17 @@ defmodule Esr.Commands.Deadletter.List do
   same data shape — just on the slash registry path now.
   """
 
+  use Esr.Commands.Meta
+
+  command :deadletter_list do
+    slash         :none
+    category      "诊断"
+    description   "列 dead-letter queue 的 envelope 项"
+    permission    "runtime.deadletter"
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

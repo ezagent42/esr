@@ -15,6 +15,17 @@ defmodule Esr.Commands.Actors.List do
   `docs/notes/2026-05-05-cli-dual-rail.md`.
   """
 
+  use Esr.Commands.Meta
+
+  command :actor_list do
+    slash         "/actor:list"
+    category      "诊断"
+    description   "列所有 live Entity peer (<actor_id>  pid=<0.x.y>)"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

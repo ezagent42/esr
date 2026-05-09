@@ -39,7 +39,28 @@ defmodule Esr.Commands.RegisterAdapter do
   `execute/2` with the real `Esr.WorkerSupervisor.ensure_adapter/4`.
   """
 
+  use Esr.Commands.Meta
+
+  command :register_adapter do
+    slash         :none
+    category      "Adapters"
+    description   "持久注册 adapter 实例（写 adapters.yaml + 启动 sidecar）"
+    permission    "adapter.register"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :type,       required: true, doc: "adapter 类型（目前只支持 feishu）"
+    arg :name,       required: true, doc: "instance 名"
+    arg :app_id,     required: true, doc: "Feishu app_id（cli_xxx）"
+    arg :app_secret, required: true, doc: "Feishu app_secret"
+
+    error :invalid_args,             "register_adapter requires args.{type=\"feishu\", name, app_id, app_secret}"
+    error :register_adapter_failed,  "%{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -59,18 +80,12 @@ defmodule Esr.Commands.RegisterAdapter do
       {:ok, %{"adapter_id" => name, "running" => true}}
     else
       {:error, reason} ->
-        {:error,
-         %{"type" => "register_adapter_failed", "detail" => inspect(reason)}}
+        Render.error(__MODULE__.command_meta(), :register_adapter_failed, %{detail: inspect(reason)})
     end
   end
 
   def execute(_cmd, _opts) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "register_adapter requires args.{type=\"feishu\", name, app_id, app_secret}"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   # ------------------------------------------------------------------

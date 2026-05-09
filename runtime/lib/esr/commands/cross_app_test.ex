@@ -42,7 +42,31 @@ defmodule Esr.Commands.CrossAppTest do
     * `{:error, %{"type" => "timeout"}}` if FCP doesn't reply in 5s
   """
 
+  use Esr.Commands.Meta
+
+  command :cross_app_test do
+    slash         :none
+    category      "其他"
+    description   "test-harness：往指定 session 的 FCP 注入一条 tool_invoke（仅 e2e 用）"
+    permission    "cross_app_test.invoke"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :session_id,   required: true, doc: "目标 session"
+    arg :chat_id,      required: true, doc: "cross-app chat_id"
+    arg :app_id,       required: true, doc: "cross-app app_id"
+    arg :text,         required: true, doc: "reply 文本"
+    arg :principal_id, required: true, doc: "principal id（FCP cap 检查依据）"
+    arg :req_id,       required: false, doc: "可选；不传自动生成"
+
+    error :invalid_args,    "cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing})"
+    error :no_session_peer, "no thread:%{session_id} peer in Entity.Registry"
+    error :timeout,         "FCP did not reply within %{timeout_ms}ms (req_id=%{req_id})"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -61,18 +85,13 @@ defmodule Esr.Commands.CrossAppTest do
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id}"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args, %{missing: "args"})
   end
 
   defp fetch_arg(args, key) do
     case Map.get(args, key) do
       v when is_binary(v) and v != "" -> {:ok, v}
-      _ -> {:error, %{"type" => "invalid_args", "missing" => key}}
+      _ -> Render.error(__MODULE__.command_meta(), :invalid_args, %{missing: key})
     end
   end
 
@@ -100,21 +119,14 @@ defmodule Esr.Commands.CrossAppTest do
             {:ok, envelope}
         after
           @reply_timeout_ms ->
-            {:error,
-             %{
-               "type" => "timeout",
-               "req_id" => req_id,
-               "message" => "FCP did not reply within #{@reply_timeout_ms}ms"
-             }}
+            Render.error(__MODULE__.command_meta(), :timeout, %{
+              req_id: req_id,
+              timeout_ms: @reply_timeout_ms
+            })
         end
 
       [] ->
-        {:error,
-         %{
-           "type" => "no_session_peer",
-           "session_id" => session_id,
-           "message" => "no thread:" <> session_id <> " peer in Entity.Registry"
-         }}
+        Render.error(__MODULE__.command_meta(), :no_session_peer, %{session_id: session_id})
     end
   end
 end

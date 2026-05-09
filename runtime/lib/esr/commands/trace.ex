@@ -6,6 +6,19 @@ defmodule Esr.Commands.Trace do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:trace", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :trace do
+    slash         :none
+    category      "诊断"
+    description   "dump 最近 duration_seconds 内的 telemetry buffer 事件（默认 900s）"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :duration_seconds, required: false, default: 900, doc: "回看窗口（秒）"
+  end
+
   @behaviour Esr.Role.Control
 
   alias Esr.Telemetry.Buffer

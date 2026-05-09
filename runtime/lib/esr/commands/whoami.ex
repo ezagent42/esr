@@ -13,6 +13,17 @@ defmodule Esr.Commands.Whoami do
   invoke it via the yaml-driven dispatch table.
   """
 
+  use Esr.Commands.Meta
+
+  command :user_whoami do
+    slash         "/user:whoami"
+    category      "诊断"
+    description   "显示你的身份 + chat / workspace 绑定状态"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

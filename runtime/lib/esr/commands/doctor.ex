@@ -16,6 +16,19 @@ defmodule Esr.Commands.Doctor do
   Pre-PR-21κ the chat-mode body lived in `Esr.Entity.FeishuAppAdapter.doctor_text/3`.
   """
 
+  use Esr.Commands.Meta
+
+  command :doctor do
+    slash         "/doctor"
+    category      "诊断"
+    description   "状态检查 + 卡在哪步的 bootstrap 步骤建议"
+    permission    nil
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :mode, required: false, default: "chat", doc: "chat | system"
+  end
+
   @behaviour Esr.Role.Control
 
   @type result :: {:ok, map()}

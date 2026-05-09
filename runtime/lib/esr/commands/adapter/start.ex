@@ -31,7 +31,26 @@ defmodule Esr.Commands.Adapter.Start do
   Migrated from `EsrWeb.CliChannel.dispatch("cli:adapter/start/<type>", ...)`.
   """
 
+  use Esr.Commands.Meta
+
+  command :adapter_start do
+    slash         :none
+    category      "Adapters"
+    description   "起一个 Python adapter sidecar（不写 adapters.yaml；持久注册请用 register_adapter）"
+    permission    "adapter.manage"
+    requires_user_binding      false
+    requires_workspace_binding false
+
+    arg :type,        required: true, doc: "adapter 类型（feishu …）"
+    arg :instance_id, required: true, doc: "instance id"
+
+    error :invalid_args,  "adapter_start requires args.type and args.instance_id"
+    error :spawn_failed,  "ensure_adapter failed: %{detail}"
+  end
+
   @behaviour Esr.Role.Control
+
+  alias Esr.Commands.Render
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -54,18 +73,12 @@ defmodule Esr.Commands.Adapter.Start do
         {:ok, %{"text" => "#{adapter_type} adapter instance_id=#{instance_id} already running"}}
 
       {:error, reason} ->
-        {:error,
-         %{"type" => "spawn_failed", "message" => "ensure_adapter failed: #{inspect(reason)}"}}
+        Render.error(__MODULE__.command_meta(), :spawn_failed, %{detail: inspect(reason)})
     end
   end
 
   def execute(_),
-    do:
-      {:error,
-       %{
-         "type" => "invalid_args",
-         "message" => "adapter_start requires args.type and args.instance_id"
-       }}
+    do: Render.error(__MODULE__.command_meta(), :invalid_args)
 
   defp phoenix_port do
     case EsrWeb.Endpoint.config(:http) do
