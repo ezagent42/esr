@@ -65,13 +65,15 @@ The legacy `args["principal_id"]` key is **removed** from the args layer entirel
 | `runtime/lib/esr/commands/doctor.ex` | edit | read `args["caller_principal_id"]` |
 | `runtime/lib/esr/commands/cap/grant.ex` | edit | (a) Meta DSL `arg :user, ...` → `arg :target_principal_id, ...` and `arg :cap, ...` → `arg :permission, ...`; (b) execute pattern match `target_principal_id`/`permission`; (c) **output map** key `"principal_id"` → `"target_principal_id"` (rev-2 R1) |
 | `runtime/lib/esr/commands/cap/revoke.ex` | edit | same shape as grant |
-| `runtime/lib/esr/commands/cap/show.ex` | edit | Meta DSL `arg :user` → `arg :target_principal_id`; execute pattern match same |
+| `runtime/lib/esr/commands/cap/show.ex` | edit | Meta DSL `arg :principal_id` → `arg :target_principal_id` (cap/show declares `slash :none` so it has no slash form to fix); execute pattern match same |
 | `runtime/lib/esr/commands/session/share.ex` | edit | call `Grant.execute(%{"args" => %{"target_principal_id" => uuid, "permission" => cap}})` |
 | `runtime/lib/esr/commands/cross_app_test.ex` | edit | `fetch_arg(args, "target_principal_id")` + Meta DSL update |
 | `runtime/lib/esr/commands/user/add.ex` | edit | output map `"principal_id"` → `"target_principal_id"`; operator.json field same (rev-2 R1) |
 | `runtime/lib/esr/commands/user/switch.ex` | edit | output map + operator.json field same (rev-2 R1) — semantically the new caller; rename to **`caller_principal_id`** in operator.json (cli/main.ex reads it as caller) |
 | `runtime/lib/esr/cli/main.ex` | edit | `:320` reads operator.json's `principal_id` field; rename to `caller_principal_id`. Also audit kw→args construction for slash submissions — switch to new arg names. |
-| `runtime/priv/slash-routes.default.yaml` | **regenerated** (NOT hand-edited) | run `mix esr.gen_slash_routes` after Meta DSL changes; commit the regenerated file alongside DSL changes (CI drift gate enforces consistency) |
+| `runtime/priv/slash-routes.default.yaml` | **regenerated** (NOT hand-edited) | run `mix esr.gen_slash_routes` after Meta DSL changes; commit the regenerated file alongside DSL changes |
+| `docs/grammar/commands.md` | **regenerated** (NOT hand-edited) | run `mix esr.gen_command_docs` after Meta DSL changes; commit alongside |
+| `docs/grammar/errors.md` | **regenerated** (NOT hand-edited) | same as above; CI drift gate `mix esr.check_command_docs` enforces all three artifacts in sync |
 
 ### 3.2 Files (Part B — `/feishu:bind` self-service, downstream beneficiary)
 
@@ -169,10 +171,9 @@ After this PR:
     - { name: target_principal_id, required: true }
     - { name: permission, required: true }
 
-"/cap:show":
-  args:
-    - { name: target_principal_id, required: true }
 ```
+
+(`/cap:show` is `slash :none` — internal_kind only; not slash-callable. The DSL `arg :target_principal_id` rename still applies, but no slash form to update.)
 
 Slash UX is verbose (`/cap:grant target_principal_id=ou_xxx permission=foo`) but consistent with cmd. Shorter aliases (`user=`, `cap=`) are a separate UX spec.
 
@@ -199,7 +200,7 @@ TARGET (7 sites in 5 files):
 OUTPUT-ONLY — **also renamed (rev-2 R1, line numbers post-rebase)**:
   runtime/lib/esr/commands/cap/grant.ex:108   (return "principal_id" → "target_principal_id")
   runtime/lib/esr/commands/cap/revoke.ex:97   (return → "target_principal_id")
-  runtime/lib/esr/commands/user/add.ex:311    (output → "target_principal_id"; operator.json field → "caller_principal_id" — see § 7.6)
+  runtime/lib/esr/commands/user/add.ex:311    (operator.json field → "caller_principal_id" — output map uses "id" key, no output rename. See § 7.6)
   runtime/lib/esr/commands/user/switch.ex:43,59 (output → "target_principal_id"; operator.json → "caller_principal_id")
   runtime/lib/esr/cli/main.ex:320             (reads operator.json → "caller_principal_id")
 
@@ -301,6 +302,6 @@ The plan's first task changes Meta DSL `arg :user, ...` → `arg :target_princip
 2. `caller_principal_id` (envelope, force_put by SlashHandler) + `target_principal_id` (user-supplied, untouched).
 3. `/cap:grant`, `/cap:revoke`, `/cap:show` slash schemas updated to match cmd patterns (`target_principal_id, permission`), fixing today's broken-via-slash state as a side effect.
 4. `/feishu:bind` + `/feishu:unbind` ship in this same PR as the downstream beneficiary, using `caller_principal_id` directly. All rev-3 design (whitelist, telemetry, race-remap) carried over.
-5. Output map keys ALSO renamed (rev-2): cap/grant + cap/revoke + user/add output `"principal_id"` → `"target_principal_id"`; user/switch + user/add operator.json field → `"caller_principal_id"`. Symmetry over programmatic stability — single-operator pre-prod accepts the break.
+5. Output map keys ALSO renamed where they exist (rev-2): cap/grant + cap/revoke output `"principal_id"` → `"target_principal_id"`; user/switch output → `"target_principal_id"`. user/add output uses key `"id"` — no rename needed there. operator.json field across user/add + user/switch → `"caller_principal_id"`. Symmetry over programmatic stability — single-operator pre-prod accepts the break.
 6. Envelope/socket/tool_invoke layer unchanged — `principal_id` is unambiguously caller-identity there.
 7. `username` same-shape vulnerability tracked separately in `docs/futures/todo.md`.

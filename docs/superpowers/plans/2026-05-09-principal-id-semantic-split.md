@@ -26,9 +26,11 @@
 ## Helpful commands
 
 ```bash
-# After every Meta DSL change to a command module:
+# After every Meta DSL change to a command module — drift gate covers
+# THREE artifacts (slash-routes.default.yaml + commands.md + errors.md):
 (cd runtime && mix esr.gen_slash_routes)
-(cd runtime && mix esr.check_command_docs)   # verifies regen produced no drift
+(cd runtime && mix esr.gen_command_docs)
+(cd runtime && mix esr.check_command_docs)   # verifies all three are in sync
 
 # Single test file:
 (cd runtime && mix test test/path/to/file_test.exs)
@@ -58,7 +60,7 @@ In `runtime/test/esr/entity/slash_handler_dispatch_test.exs`, append a new `desc
         "payload" => %{"text" => "/help", "args" => %{}}
       }
 
-      args = Esr.Entity.SlashHandler.__inject_envelope_args__(%{}, envelope)
+      args = Esr.Entity.SlashHandler.inject_envelope_args(%{}, envelope)
 
       assert args["caller_principal_id"] == "ou_real_caller"
       refute Map.has_key?(args, "principal_id")
@@ -72,7 +74,7 @@ In `runtime/test/esr/entity/slash_handler_dispatch_test.exs`, append a new `desc
       }
 
       args =
-        Esr.Entity.SlashHandler.__inject_envelope_args__(
+        Esr.Entity.SlashHandler.inject_envelope_args(
           %{"caller_principal_id" => "ou_VICTIM"},
           envelope
         )
@@ -88,7 +90,7 @@ In `runtime/test/esr/entity/slash_handler_dispatch_test.exs`, append a new `desc
       }
 
       args =
-        Esr.Entity.SlashHandler.__inject_envelope_args__(
+        Esr.Entity.SlashHandler.inject_envelope_args(
           %{"target_principal_id" => "ou_TARGET"},
           envelope
         )
@@ -105,7 +107,7 @@ In `runtime/test/esr/entity/slash_handler_dispatch_test.exs`, append a new `desc
 (cd runtime && mix test test/esr/entity/slash_handler_dispatch_test.exs --only describe:"inject_envelope_args (rev-2 semantic split)")
 ```
 
-Expected: `__inject_envelope_args__/2` is undefined.
+Expected: `inject_envelope_args/2` is undefined.
 
 - [ ] **Step 3: Apply SlashHandler changes**
 
@@ -132,11 +134,21 @@ In `runtime/lib/esr/entity/slash_handler.ex`, find the `inject_envelope_args/2` 
   # user chat_id=).
   defp force_put(map, _key, nil), do: map
   defp force_put(map, key, value), do: Map.put(map, key, value)
-
-  # Test-only public shim — not for production use.
-  @doc false
-  def __inject_envelope_args__(args, envelope), do: inject_envelope_args(args, envelope)
 ```
+
+**Decision (subagent review)**: switch `inject_envelope_args/2` from `defp` to `@doc false def`. It's a pure helper with no state coupling, and exposing it as `@doc false` keeps it out of public docs while making it directly testable. No separate test shim needed.
+
+Apply this change to the function above:
+
+```elixir
+# slash_handler.ex
+@doc false
+def inject_envelope_args(args, envelope) do
+  ...
+end
+```
+
+Then update the Step 1 test to call `Esr.Entity.SlashHandler.inject_envelope_args/2` directly (replace `inject_envelope_args` with `inject_envelope_args` in the test body).
 
 - [ ] **Step 4: Run, expect pass**
 
@@ -147,10 +159,10 @@ In `runtime/lib/esr/entity/slash_handler.ex`, find the `inject_envelope_args/2` 
 - [ ] **Step 5: Run regen + drift gate (sanity)**
 
 ```
-(cd runtime && mix esr.gen_slash_routes && mix esr.check_command_docs)
+(cd runtime && mix esr.gen_slash_routes && mix esr.gen_command_docs && mix esr.check_command_docs)
 ```
 
-Expected: silent pass; yaml unchanged (Meta DSL untouched).
+Expected: silent pass; all three artifacts unchanged (Meta DSL untouched in this task).
 
 - [ ] **Step 6: Commit**
 
@@ -324,24 +336,32 @@ Output map (around line 108):
 
 Update the moduledoc Result section: `{"principal_id" => id, ...}` → `{"target_principal_id" => id, ...}`. Update `error :invalid_args` text from "args.principal_id and args.permission" to "args.target_principal_id and args.permission".
 
-- [ ] **Step 4: Regenerate yaml**
+- [ ] **Step 4: Regenerate all 3 derived artifacts**
 
 ```
-(cd runtime && mix esr.gen_slash_routes)
+(cd runtime && mix esr.gen_slash_routes && mix esr.gen_command_docs)
 ```
 
-Verify `runtime/priv/slash-routes.default.yaml` shows `/cap:grant` with `target_principal_id` + `permission` args.
+Verify all three changed:
+- `runtime/priv/slash-routes.default.yaml` shows `/cap:grant` with `target_principal_id` + `permission` args.
+- `docs/grammar/commands.md` — `/cap:grant` section's args and error text.
+- `docs/grammar/errors.md` — `:invalid_args` text under cap_grant.
 
-- [ ] **Step 5: Run, expect pass**
+> **Note (subagent review): all 3 must be regenerated together.** `mix esr.check_command_docs` checks yaml + commands.md + errors.md. Skipping `gen_command_docs` makes Step 6's drift gate fail.
+
+- [ ] **Step 5: Run tests + drift gate, expect pass**
 
 ```
 (cd runtime && mix test test/esr/commands/cap/grant_test.exs test/esr/commands/cap_test.exs)
+(cd runtime && mix esr.check_command_docs)
 ```
+
+> **Caveat for cap_test.exs**: at end of Task 4, only the Grant-related rows in `cap_test.exs` (lines 67–175) have been renamed. The Revoke-related rows (193–267) still use `"principal_id"`, which is fine because `cap/revoke.ex` is also still on the old key. Task 5 flips both Revoke rows + Revoke cmd together. So `cap_test.exs` is green at end of Task 4 too.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add runtime/lib/esr/commands/cap/grant.ex runtime/test/esr/commands/cap/grant_test.exs runtime/test/esr/commands/cap_test.exs runtime/priv/slash-routes.default.yaml
+git add runtime/lib/esr/commands/cap/grant.ex runtime/test/esr/commands/cap/grant_test.exs runtime/test/esr/commands/cap_test.exs runtime/priv/slash-routes.default.yaml docs/grammar/commands.md docs/grammar/errors.md
 git commit -m "$(cat <<'EOF'
 refactor(cap/grant): rename principal_id → target_principal_id (rev-2)
 
@@ -350,7 +370,10 @@ and moduledoc all updated. /cap:grant slash form now declares
 target_principal_id+permission to match the cmd's pattern (also
 fixes today's broken-via-slash schema↔cmd mismatch).
 
-slash-routes.default.yaml regenerated via mix esr.gen_slash_routes.
+All 3 derived artifacts regenerated:
+- runtime/priv/slash-routes.default.yaml
+- docs/grammar/commands.md
+- docs/grammar/errors.md
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -386,21 +409,26 @@ EOF
 - output map (line 97): `"principal_id"` → `"target_principal_id"`
 - moduledoc + error messages
 
-- [ ] **Step 4: Regenerate yaml**
+- [ ] **Step 4: Regenerate all 3 derived artifacts**
 
 ```
-(cd runtime && mix esr.gen_slash_routes)
+(cd runtime && mix esr.gen_slash_routes && mix esr.gen_command_docs)
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [ ] **Step 5: Run tests + drift gate, expect pass**
+
+```
+(cd runtime && mix test test/esr/commands/cap/revoke_test.exs test/esr/commands/cap_test.exs)
+(cd runtime && mix esr.check_command_docs)
+```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add runtime/lib/esr/commands/cap/revoke.ex runtime/test/esr/commands/cap/revoke_test.exs runtime/test/esr/commands/cap_test.exs runtime/priv/slash-routes.default.yaml
+git add runtime/lib/esr/commands/cap/revoke.ex runtime/test/esr/commands/cap/revoke_test.exs runtime/test/esr/commands/cap_test.exs runtime/priv/slash-routes.default.yaml docs/grammar/commands.md docs/grammar/errors.md
 git commit -m "refactor(cap/revoke): rename principal_id → target_principal_id (rev-2)
 
-Mirror of Task 4 for cap/revoke.
+Mirror of Task 4 for cap/revoke. All 3 derived artifacts regenerated.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -428,9 +456,15 @@ Rename `principal_id` → `target_principal_id` in args context for any Show-tou
 
 - [ ] **Step 4: Update cap/show.ex**
 
+cap/show today (origin/dev tip) declares `arg :principal_id` (NOT `arg :user`). Note also `slash :none` — cap/show is internal-kind only (no slash form to fix in yaml).
+
 ```elixir
-# Meta DSL — replace existing arg with:
+# Meta DSL — replace existing `arg :principal_id, ...` line with:
 arg :target_principal_id, required: true, doc: "principal whose caps to display"
+
+# Update the error :invalid_args message text from
+# "cap_show requires args.principal_id (...)" to
+# "cap_show requires args.target_principal_id (...)"
 
 # execute pattern (line 35):
 def execute(%{"args" => %{"target_principal_id" => pid}}) when is_binary(pid) and pid != "" do
@@ -438,14 +472,28 @@ def execute(%{"args" => %{"target_principal_id" => pid}}) when is_binary(pid) an
 end
 ```
 
-cap/show has no output-map principal_id key (returns a list). Output unchanged.
+cap/show returns a list of caps; no output-map principal_id key. Output unchanged.
 
-- [ ] **Step 5: Regenerate yaml + run, expect pass**
+- [ ] **Step 5: Regenerate all 3 + run, expect pass**
+
+```
+(cd runtime && mix esr.gen_slash_routes && mix esr.gen_command_docs)
+(cd runtime && mix test test/esr/commands/cap_test.exs)
+(cd runtime && mix esr.check_command_docs)
+```
+
+(`slash-routes.default.yaml` will be unchanged since cap/show is `slash :none`. `commands.md` + `errors.md` will change to reflect the new arg name + error message.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git commit -m "refactor(cap/show): rename principal_id → target_principal_id (rev-2)"
+git add runtime/lib/esr/commands/cap/show.ex runtime/test/esr/commands/cap_test.exs docs/grammar/commands.md docs/grammar/errors.md
+git commit -m "refactor(cap/show): rename principal_id → target_principal_id (rev-2)
+
+cap/show is slash :none (internal kind only); no yaml change.
+commands.md + errors.md regenerated.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -456,13 +504,17 @@ git commit -m "refactor(cap/show): rename principal_id → target_principal_id (
 - Modify: `runtime/lib/esr/commands/session/share.ex`
 - Modify: `runtime/test/esr/commands/session/share_test.exs`
 
-- [ ] **Step 1: Update test fixtures**
+- [ ] **Step 1: Check test fixtures**
 
-`grep -n principal_id runtime/test/esr/commands/session/share_test.exs` — rename args-context references to `target_principal_id`.
+`grep -n principal_id runtime/test/esr/commands/session/share_test.exs` — likely zero hits (session/share's tests don't directly assert `args["principal_id"]` since it's an internal Grant.execute call). If zero hits, no test changes needed.
 
-- [ ] **Step 2: Run, expect fail**
+- [ ] **Step 2: Run share_test.exs, expect FAIL on the Grant.execute clause**
 
-(session/share builds Grant args internally — Grant now expects target_principal_id, but session/share still passes principal_id, so the Grant call fails clause-match.)
+(session/share builds Grant args internally with `principal_id`. After Tasks 4–6, Grant only accepts `target_principal_id`, so the Grant call falls through to `:invalid_args`, breaking session/share's golden path. Test failures will surface this.)
+
+```
+(cd runtime && mix test test/esr/commands/session/share_test.exs)
+```
 
 - [ ] **Step 3: Update session/share.ex**
 
@@ -496,7 +548,7 @@ git commit -m "refactor(session/share): pass target_principal_id to Grant (rev-2
 
 - [ ] **Step 1: Update test fixtures**
 
-3 sites at 71, 98, 119. Rename `principal_id` → `target_principal_id` (these are the spoofed identity used in cross-app tool_invoke routing).
+3 sites at 71, 98, 121 (verified by `grep -n '"principal_id"' runtime/test/esr/commands/cross_app_test_test.exs`). Rename `principal_id` → `target_principal_id` (these are the spoofed identity used in cross-app tool_invoke routing).
 
 - [ ] **Step 2: Run, expect fail**
 
@@ -514,11 +566,18 @@ Use the new local variable name in the downstream tool_invoke send.
 
 Update the moduledoc and error message text referencing `principal_id`.
 
-- [ ] **Step 4: Regenerate + run**
+- [ ] **Step 4: Regenerate all 3 + run + drift gate**
+
+```
+(cd runtime && mix esr.gen_slash_routes && mix esr.gen_command_docs)
+(cd runtime && mix test test/esr/commands/cross_app_test_test.exs)
+(cd runtime && mix esr.check_command_docs)
+```
 
 - [ ] **Step 5: Commit**
 
 ```bash
+git add runtime/lib/esr/commands/cross_app_test.ex runtime/test/esr/commands/cross_app_test_test.exs docs/grammar/commands.md docs/grammar/errors.md runtime/priv/slash-routes.default.yaml
 git commit -m "refactor(cross_app_test): rename principal_id → target_principal_id (rev-2)"
 ```
 
@@ -555,25 +614,29 @@ git commit -m "test(cap/uuid_translation): rename principal_id → target_princi
 
 ---
 
-## Task 10: `user/add.ex` — output map + operator.json field
+## Task 10: `user/add.ex` — operator.json field rename only
+
+**Note** (subagent review): user/add's execute return map uses key `"id"` (not `"principal_id"`); only the operator.json write needs renaming. All `principal_id` hits in `add_test.exs` (lines 252, 273, 285) are operator.json file-content assertions.
 
 **Files:**
 - Modify: `runtime/lib/esr/commands/user/add.ex`
 - Modify: `runtime/test/esr/commands/user/add_test.exs`
 
-- [ ] **Step 1: Classify test assertions**
+- [ ] **Step 1: Update test assertions**
 
-In `runtime/test/esr/commands/user/add_test.exs` lines 252, 273, 285 — open each and decide:
-- If asserting on the **execute return value** map → rename to `target_principal_id` (the user just added is the target of the add operation).
-- If asserting on **operator.json file content** → rename to `caller_principal_id` (operator.json stores the current operator).
-
-If unclear, look at what the test does between setup and assertion: does it call `Esr.Commands.User.Add.execute(...)` and bind the return, OR does it `File.read!(operator.json)`?
+`grep -n '"principal_id"' runtime/test/esr/commands/user/add_test.exs` — all hits are operator.json reads. Rename each `"principal_id"` to `"caller_principal_id"`.
 
 - [ ] **Step 2: Run, expect fail**
 
+```
+(cd runtime && mix test test/esr/commands/user/add_test.exs)
+```
+
 - [ ] **Step 3: Update user/add.ex**
 
-Find the operator.json write and the result map (both around line 311). The result map's `"principal_id"` → `"target_principal_id"`. The operator.json `"principal_id"` field → `"caller_principal_id"`.
+Find the operator.json write inside `write_operator_json/2` (around line 311). The operator.json `"principal_id"` field → `"caller_principal_id"`.
+
+The output map at line 99-108 uses `"id"` — leave it alone.
 
 - [ ] **Step 4: Run, expect pass**
 
@@ -584,7 +647,9 @@ Find the operator.json write and the result map (both around line 311). The resu
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "refactor(user/add): output → target_principal_id, operator.json → caller_principal_id (rev-2)"
+git commit -m "refactor(user/add): operator.json field principal_id → caller_principal_id (rev-2)
+
+Output map uses key 'id', no output rename needed there."
 ```
 
 ---
@@ -643,13 +708,7 @@ Line 320:
 {:ok, %{"caller_principal_id" => pid}} when is_binary(pid) and pid != "" ->
 ```
 
-Also audit any kw→args translation when the CLI submits slash commands. Specifically `esr cap grant <user> <perm>` should construct args with `target_principal_id` (NOT `principal_id`). Search:
-
-```
-grep -n "principal_id\|cap grant" runtime/lib/esr/cli/main.ex
-```
-
-If you find a slash-args builder that hardcodes `principal_id`, rename it.
+> **Note (subagent verified)**: `cli/main.ex` has no kw→args translation that hardcodes `principal_id` — the only references are line 320 (operator.json read) and 3 docstring mentions. Update the docstrings if they reference the old key. No further code changes here.
 
 - [ ] **Step 4: Run all CLI tests, expect pass**
 
@@ -1512,22 +1571,11 @@ EOF
 **Files:**
 - Modify: `runtime/test/esr/plugins/feishu/commands/migration_test.exs`
 
-- [ ] **Step 0: Pre-check Registry.lookup return shape**
+- [ ] **Step 0: Verify Registry.lookup return shape (read-only)**
 
-Before writing assertions, verify return-shape:
+Read `runtime/lib/esr/resource/slash_route/file_loader.ex:145-156` to confirm the route map shape. Subagent verified: atom-keyed (`%{kind: <binary>, command_module: <module>, ...}`). The patterns below assume atom keys; if the file_loader has changed since 2026-05-09, adjust accordingly.
 
-```
-(cd runtime && iex -S mix)
-```
-
-```elixir
-Esr.Resource.SlashRoute.Registry.lookup("/help")
-# Expected: {:ok, %{kind: "help", command_module: Esr.Commands.Help, ...}}  (atom-keyed)
-# Or:        {:ok, %{"kind" => "help", "command_module" => ...}}  (string-keyed)
-System.halt(0)
-```
-
-If string-keyed, swap atom→string in the patterns below.
+(IEx pre-check skipped — booting `iex -S mix` starts the OTP supervisor which needs FSEvents support; reading the file_loader is sufficient and works in any environment.)
 
 - [ ] **Step 1: Append registry tests**
 
