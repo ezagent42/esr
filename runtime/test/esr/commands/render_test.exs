@@ -69,6 +69,49 @@ defmodule Esr.Commands.RenderTest do
     assert body["message"] == "unknown thing foo"
   end
 
+  test "error/3 interpolates integer detail values via to_string (regression: was producing codepoints)" do
+    spec = %Spec{
+      sample_spec()
+      | errors: [%ErrorDecl{code: :timeout, message: "deadline %{ms} ms"}]
+    }
+
+    {:error, body} = Render.error(spec, :timeout, %{ms: 80})
+    assert body["message"] == "deadline 80 ms"
+  end
+
+  test "error/3 interpolates atom detail values" do
+    spec = %Spec{
+      sample_spec()
+      | errors: [%ErrorDecl{code: :code, message: "kind %{kind}"}]
+    }
+
+    {:error, body} = Render.error(spec, :code, %{kind: :workspace})
+    assert body["message"] == "kind workspace"
+  end
+
+  test "error/3 with non-stringable detail value falls back to inspect" do
+    spec = %Spec{
+      sample_spec()
+      | errors: [%ErrorDecl{code: :nested, message: "got %{detail}"}]
+    }
+
+    {:error, body} = Render.error(spec, :nested, %{detail: %{a: 1}})
+    assert body["message"] =~ "got "
+    assert body["message"] =~ "a: 1"
+  end
+
+  test "error/3 with placeholder for never-seen atom does not crash" do
+    spec = %Spec{
+      sample_spec()
+      | errors: [
+          %ErrorDecl{code: :code, message: "value %{__some_unique_unseen_atom_xyz123__}"}
+        ]
+    }
+
+    {:error, body} = Render.error(spec, :code, %{})
+    assert body["message"] =~ "%{__some_unique_unseen_atom_xyz123__}"
+  end
+
   test "error/3 leaves untouched placeholders for missing detail keys" do
     spec = %Spec{
       sample_spec()

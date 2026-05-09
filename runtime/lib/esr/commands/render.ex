@@ -67,7 +67,25 @@ defmodule Esr.Commands.Render do
 
   defp interpolate(template, detail) when is_map(detail) do
     Regex.replace(~r/%\{(\w+)\}/, template, fn _, key ->
-      Map.get(detail, String.to_existing_atom(key), "%{#{key}}")
+      case Map.get(detail, safe_atom(key), :__missing__) do
+        :__missing__ -> "%{#{key}}"
+        value when is_binary(value) -> value
+        value -> to_string_safe(value)
+      end
     end)
+  end
+
+  defp safe_atom(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> :__missing__
+  end
+
+  defp to_string_safe(value) do
+    if String.Chars.impl_for(value) do
+      to_string(value)
+    else
+      inspect(value)
+    end
   end
 end
