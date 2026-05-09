@@ -21,11 +21,25 @@ defmodule Esr.Commands.Pty.AttachTest do
     :ok
   end
 
-  test "with pty=<id>: emits a URL containing the pty actor id" do
-    cmd = %{"submitted_by" => "linyilun", "args" => %{"pty" => "pty-uuid-attach"}}
-    assert {:ok, %{"text" => text, "url" => url}} = Attach.execute(cmd)
-    assert text =~ "pty-uuid-attach"
-    assert url =~ "pty-uuid-attach"
+  test "with pty=<id>: emits a URL containing a signed token (not the actor_id)" do
+    actor_id = "pty-uuid-attach"
+    cmd = %{"submitted_by" => "linyilun", "args" => %{"pty" => actor_id}}
+    assert {:ok, %{"text" => text, "url" => url, "pty" => ^actor_id}} = Attach.execute(cmd)
+
+    # The actor_id remains in the body fields (display) and uri (esr://)
+    # but MUST NOT appear in the http URL — that's the gap this PR closes.
+    assert text =~ actor_id
+    assert url =~ "/sessions/attach?token="
+    refute url =~ actor_id
+
+    # The token in the URL must verify back to the actor_id under the
+    # same salt + the same 10-minute TTL the PtySocket enforces.
+    [_, token] = Regex.run(~r/token=([^"&\s)]+)/, url)
+
+    assert {:ok, decoded_actor_id} =
+             Phoenix.Token.verify(EsrWeb.Endpoint, "pty_attach", token, max_age: 600)
+
+    assert decoded_actor_id == actor_id
   end
 
   test "missing pty=: returns invalid_args" do
