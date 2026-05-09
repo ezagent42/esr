@@ -421,7 +421,7 @@ defmodule Esr.Application do
            instances when is_map(instances) <- parsed["instances"] || %{} do
         for {name, row} <- instances do
           type = row["type"] || ""
-          config = row["config"] || %{}
+          config = ensure_app_secret(type, row["config"] || %{})
           _ = spawn_fn.(name, type, config)
           # Topology auto-restore of feishu-app-session peers was deleted
           # in P3-13 (Topology module removal). In the peer/session
@@ -434,6 +434,46 @@ defmodule Esr.Application do
 
     :ok
   end
+
+  # Back-compat: stale adapters.yaml entries written before the
+  # 2026-05-09 register_adapter fix had only `app_id` in the config
+  # block. The Python sidecar fails AdapterConfig validation
+  # (`app_secret missing from AdapterConfig`) and crash-loops if we
+  # forward such config straight through. Fall back to the secret
+  # stored in plugins.yaml's feishu config (the operator-side
+  # configuration path). Permissive on miss — log a warning and let
+  # the spawn proceed; the operator can re-run register_adapter or
+  # set feishu.app_secret in plugins.yaml to recover. We do NOT
+  # crash boot just because one adapter row is incomplete.
+  defp ensure_app_secret("feishu", config) do
+    case Map.get(config, "app_secret") do
+      secret when is_binary(secret) and secret != "" ->
+        config
+
+      _ ->
+        require Logger
+
+        case Esr.Plugin.Config.get("feishu", "app_secret",
+               global_path: Esr.Paths.global_plugins_yaml()
+             ) do
+          s when is_binary(s) and s != "" ->
+            Logger.info(
+              "application: app_secret missing from adapters.yaml; injected from plugins.yaml feishu config"
+            )
+
+            Map.put(config, "app_secret", s)
+
+          _ ->
+            Logger.warning(
+              "application: app_secret missing for feishu adapter; sidecar will fail to authenticate"
+            )
+
+            config
+        end
+    end
+  end
+
+  defp ensure_app_secret(_type, config), do: config
 
   defp default_adapter_ws_url, do: ws_url_for("/adapter_hub/socket")
 
