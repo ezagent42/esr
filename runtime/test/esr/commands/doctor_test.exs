@@ -21,7 +21,7 @@ defmodule Esr.Commands.DoctorTest do
     assert {:ok, %{"text" => text}} =
              Doctor.execute(%{
                "args" => %{
-                 "principal_id" => open_id,
+                 "caller_principal_id" => open_id,
                  "chat_id" => "oc_x",
                  "app_id" => "esr_dev_helper"
                }
@@ -41,7 +41,7 @@ defmodule Esr.Commands.DoctorTest do
     assert {:ok, %{"text" => text}} =
              Doctor.execute(%{
                "args" => %{
-                 "principal_id" => "ou_y",
+                 "caller_principal_id" => "ou_y",
                  "chat_id" => "oc_y",
                  "app_id" => "unknown_app"
                }
