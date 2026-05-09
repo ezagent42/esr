@@ -21,7 +21,7 @@ defmodule Esr.Commands.Cap.Revoke do
 
   ## Result
 
-    * `{:ok, %{"principal_id" => id, "permission" => perm, "action" => "revoked"}}`
+    * `{:ok, %{"target_principal_id" => id, "permission" => perm, "action" => "revoked"}}`
     * `{:error, %{"type" => "no_matching_capability"}}` — file missing,
       principal missing, or permission not held. One stable shape so
       the CLI surface can map it to a single "nothing to revoke"
@@ -39,13 +39,13 @@ defmodule Esr.Commands.Cap.Revoke do
     requires_user_binding      false
     requires_workspace_binding false
 
-    arg :cap,  required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
-    arg :user, required: true, doc: "principal id"
+    arg :target_principal_id, required: true, doc: "principal being revoked from (the operation target)"
+    arg :permission,          required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
 
     error :session_cap_requires_uuid, "%{detail}"
     error :unknown_workspace,         "no workspace found in capability scope: %{permission}"
     error :no_matching_capability,    "no matching capability to revoke"
-    error :invalid_args,              "revoke requires args.principal_id and args.permission (non-empty strings)"
+    error :invalid_args,              "revoke requires args.target_principal_id and args.permission (non-empty strings)"
     error :write_failed,              "%{detail}"
   end
 
@@ -56,7 +56,7 @@ defmodule Esr.Commands.Cap.Revoke do
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
+  def execute(%{"args" => %{"target_principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
     with :ok <- validate_session_cap(perm),
          {:ok, translated_perm} <- Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
@@ -94,7 +94,7 @@ defmodule Esr.Commands.Cap.Revoke do
         :ok ->
           {:ok,
            %{
-             "principal_id" => pid,
+             "target_principal_id" => pid,
              "permission" => perm,
              "action" => "revoked"
            }}

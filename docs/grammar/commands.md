@@ -306,14 +306,14 @@ _internal kind only — not slash-callable_
 **description:** 撤销用户的 cap；session cap 仅接受 UUID 形式
 
 **args:**
-  - `cap` (required) — permission 字符串（session cap 必须是 UUID 形式）
-  - `user` (required) — principal id
+  - `target_principal_id` (required) — principal being revoked from (the operation target)
+  - `permission` (required) — permission 字符串（session cap 必须是 UUID 形式）
 
 **errors:**
   - `session_cap_requires_uuid` — %{detail}
   - `unknown_workspace` — no workspace found in capability scope: %{permission}
   - `no_matching_capability` — no matching capability to revoke
-  - `invalid_args` — revoke requires args.principal_id and args.permission (non-empty strings)
+  - `invalid_args` — revoke requires args.target_principal_id and args.permission (non-empty strings)
   - `write_failed` — %{detail}
 
 ### `cap_show`

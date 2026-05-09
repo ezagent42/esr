@@ -45,7 +45,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `session_cap_requires_uuid` | `cap_grant` | %{detail} |
 | `unknown_workspace` | `cap_grant` | no workspace found in capability scope: %{permission} |
 | `write_failed` | `cap_grant` | %{detail} |
-| `invalid_args` | `cap_revoke` | revoke requires args.principal_id and args.permission (non-empty strings) |
+| `invalid_args` | `cap_revoke` | revoke requires args.target_principal_id and args.permission (non-empty strings) |
 | `no_matching_capability` | `cap_revoke` | no matching capability to revoke |
 | `session_cap_requires_uuid` | `cap_revoke` | %{detail} |
 | `unknown_workspace` | `cap_revoke` | no workspace found in capability scope: %{permission} |
