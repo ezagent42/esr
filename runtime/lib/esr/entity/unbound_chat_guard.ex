@@ -84,7 +84,7 @@ defmodule Esr.Entity.UnboundChatGuard do
   # Internals
   # ------------------------------------------------------------------
 
-  defp guide_text(chat_id, app_id, _instance_id) do
+  defp guide_text(chat_id, _app_id, _instance_id) do
     """
     👋 这个 chat 还没在 ESR 注册 workspace，所以收到的消息会被忽略。
 
@@ -92,25 +92,21 @@ defmodule Esr.Entity.UnboundChatGuard do
 
     A. 在本 chat 直接发 slash 命令（推荐 — 自动绑当前 chat）：
 
-       /new-workspace <workspace_name>
+       /workspace:new name=<workspace_name>
 
-       owner 缺省 = 你（已绑定的 esr user）；role / start_cmd 用默认值。
-       PR-22 之后 workspace 不再绑特定 git 仓库——repo 是 per-session 的。
+       owner 缺省 = 当前发消息的 esr user。
 
-    B. 在 esr 仓库 CLI 里跑（注意 --env 选 prod 或 dev）：
+    B. 在 esr 仓库 CLI 里跑（必须 --env=prod 或 --env=dev 对齐 ESRD_HOME）：
 
-       ./esr.sh --env=<prod|dev> workspace add <workspace_name> \\
-           --owner <esr_username> \\
-           --start-cmd claude \\
-           --role dev \\
-           --chat #{chat_id}:#{app_id}:dm
+       ./esr.sh --env=prod workspace_new name=<workspace_name>
+
+       绑当前 chat:  /workspace:bind-chat name=<workspace_name> chat_id=#{chat_id}
 
     注册后给本 bot 发：
 
-      /new-session <workspace_name> name=<session_name> \\
-          root=<主 git 仓库路径> cwd=<worktree 路径> worktree=<分支名>
+       /session:new name=<session_name>
 
-    会话就会拉起来（每个 session 一个独立 worktree，从 origin/main fork）。
+    会话就拉起来（默认 transient；要绑 git repo 用 /workspace:add-folder）。
 
     （这条消息 10 分钟内不会重复发送。）
     """
