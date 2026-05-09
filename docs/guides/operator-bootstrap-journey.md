@@ -81,9 +81,11 @@ ESRD_HOME=$HOME/.esrd-dev bash scripts/esrd.sh start --instance=default
 ```
 
 State lives under `$ESRD_HOME/default/`: `esrd.pid`, `esrd.port`,
-`users.yaml`, `capabilities.yaml`, `adapters.yaml`, `operator.json`
-(written by step 2), and the `admin_queue/{pending,completed,failed}/`
-submission queue.
+`users.yaml`, `capabilities.yaml`, `adapters/<name>/config.yaml`
+(per-instance — see yaml-layout-v2 spec
+`docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md`),
+`operator.json` (written by step 2), and the
+`admin_queue/{pending,completed,failed}/` submission queue.
 
 Set up an alias so every CLI invocation points at this instance:
 
@@ -146,14 +148,16 @@ esr-dev exec register_adapter --type=feishu --name=esr_helper \
     --app_id=cli_xxx --app_secret=xxx
 ```
 
-This appends an entry under `instances.esr_helper` in
-`adapters.yaml` (with **both** `app_id` and `app_secret` in the
-`config:` block — pre-`fix/register-adapter-app-secret`, only `app_id`
-was persisted and the sidecar crash-looped with
-`app_secret missing from AdapterConfig`), then spawns the Python
-sidecar (`feishu_adapter_runner`) under `Esr.WorkerSupervisor`. The
-sidecar opens a long-lived WebSocket to `open.feishu.cn` via Lark's
-`lark_oapi.ws.Client` — **no inbound HTTP callback URL needed.**
+This writes a fresh per-instance directory at
+`adapters/esr_helper/config.yaml` (yaml-layout-v2 — see spec
+`docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md`),
+with **both** `app_id` and `app_secret` in the `config:` block (pre-
+`fix/register-adapter-app-secret`, only `app_id` was persisted and the
+sidecar crash-looped with `app_secret missing from AdapterConfig`),
+then spawns the Python sidecar (`feishu_adapter_runner`) under
+`Esr.WorkerSupervisor`. The sidecar opens a long-lived WebSocket to
+`open.feishu.cn` via Lark's `lark_oapi.ws.Client` — **no inbound HTTP
+callback URL needed.**
 
 Response: `{"adapter_id": "esr_helper", "running": true}`.
 
@@ -403,11 +407,14 @@ esr-dev exec feishu_bind --name=linyilun --feishu_user_id=ou_app2_xxx
 If `actor_list` shows the sidecar repeatedly restarting, the
 common cause was the pre-fix `register_adapter` bug where
 `app_secret` was dropped from the spawn config. With
-`fix/register-adapter-app-secret` applied, `adapters.yaml` carries
-`config.app_secret` and the sidecar reads it on every restore.
-If you registered an adapter on the buggy build, re-run
-`register_adapter` (idempotent on `--name`) or hand-edit
-`adapters.yaml` and restart the daemon.
+`fix/register-adapter-app-secret` applied, `adapters/<name>/config.yaml`
+carries `config.app_secret` and the sidecar reads it on every restore.
+If you registered an adapter on the buggy build, run
+`/adapter:remove name=<n>` then re-run `register_adapter`, or
+hand-edit `adapters/<name>/config.yaml` and restart the daemon. Per
+yaml-layout-v2 (spec § 4.7) the daemon will fail-loud (Logger.error)
+and **skip the spawn** for any feishu row missing `app_secret` — no
+silent `plugins.yaml` fallback.
 
 ## References
 

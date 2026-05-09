@@ -78,28 +78,31 @@ esr exec register_adapter --type=feishu --name=esr_helper \
 | Arg | Meaning |
 |---|---|
 | `--type=feishu` | Adapter implementation. Only `feishu` is wired through `register_adapter` today. |
-| `--name=<n>` | Instance name; becomes the key under `adapters.yaml`'s `instances:` map. Must be unique. Naming convention: `<purpose>_<env>` (e.g. `esr_helper`, `esr_helper_dev`). |
+| `--name=<n>` | Instance name; becomes the directory basename under `adapters/<n>/`. Must be unique; must not start with `_` (reserved prefix). Naming convention: `<purpose>_<env>` (e.g. `esr_helper`, `esr_helper_dev`). |
 | `--app_id=cli_xxx` | Feishu app id from the console. |
-| `--app_secret=xxx` | Feishu app secret. **Persisted to `adapters.yaml`** — make sure file permissions are restrictive (`0600` by default). |
+| `--app_secret=xxx` | Feishu app secret. **Persisted to `adapters/<name>/config.yaml`** — make sure file permissions are restrictive (`0600` by default). |
 
 On success:
 
-1. An entry is appended to `<ESRD_HOME>/<instance>/adapters.yaml`:
+1. A fresh per-instance directory is written at
+   `<ESRD_HOME>/<instance>/adapters/esr_helper/config.yaml` (yaml-
+   layout-v2 — see spec `docs/superpowers/specs/2026-05-09-yaml-layout-
+   v2-per-thing-directories.md`):
 
    ```yaml
-   instances:
-     esr_helper:
-       type: feishu
-       config:
-         app_id: cli_xxx
-         app_secret: xxx
+   type: feishu
+   config:
+     app_id: cli_xxx
+     app_secret: xxx
    ```
 
    Both fields live in the `config:` block — pre-`fix/register-adapter-
    app-secret`, only `app_id` was persisted and the sidecar crash-
    looped with `app_secret missing from AdapterConfig` on every
    restart. The fix ensures both round-trip through `register_adapter`
-   and are available on future esrd reboots.
+   and are available on future esrd reboots. Per yaml-layout-v2 spec
+   § 4.7, a feishu row missing `app_secret` will fail-loud and skip
+   the spawn at boot — there is no longer a `plugins.yaml` fallback.
 
 2. The sidecar is spawned via `Esr.WorkerSupervisor.ensure_adapter/4`
    — the same path `Esr.Application.restore_adapters_from_disk/1` uses
@@ -123,20 +126,30 @@ esr exec register_adapter --type=feishu --name=helper_b \
     --app_id=cli_bbb --app_secret=secret_bbb
 ```
 
-`adapters.yaml` after both calls:
+`adapters/` tree after both calls (yaml-layout-v2):
+
+```
+adapters/
+├── helper_a/config.yaml
+└── helper_b/config.yaml
+```
+
+Each `config.yaml`:
 
 ```yaml
-instances:
-  helper_a:
-    type: feishu
-    config:
-      app_id: cli_aaa
-      app_secret: secret_aaa
-  helper_b:
-    type: feishu
-    config:
-      app_id: cli_bbb
-      app_secret: secret_bbb
+# adapters/helper_a/config.yaml
+type: feishu
+config:
+  app_id: cli_aaa
+  app_secret: secret_aaa
+```
+
+```yaml
+# adapters/helper_b/config.yaml
+type: feishu
+config:
+  app_id: cli_bbb
+  app_secret: secret_bbb
 ```
 
 **Each app has its own `open_id` namespace.** A human bound to
@@ -166,8 +179,8 @@ handled by the `mcp__esr-channel__reply` tool's explicit `app_id` arg
 If you need to rotate `app_secret` (or fix any other config field)
 after the adapter is registered:
 
-1. Edit `<ESRD_HOME>/<instance>/adapters.yaml` directly. Update the
-   `config.app_secret` field for the instance.
+1. Edit `<ESRD_HOME>/<instance>/adapters/<name>/config.yaml` directly.
+   Update the `config.app_secret` field.
 2. Restart the daemon so `Esr.Application.restore_adapters_from_disk/1`
    re-reads the file and respawns the sidecar with the new config.
    For the launchctl-managed dev daemon:
@@ -190,22 +203,25 @@ after the adapter is registered:
 > tested via the boot restore flow. Live secret rotation may land in
 > a future spec.
 
-> Re-running `register_adapter` with the same `--name=` and a
-> different `--app_secret=` also works — it overwrites the
-> `adapters.yaml` entry and respawns the sidecar in one step. Use
-> this when you have CLI access; hand-edit + restart only when you
-> don't.
+> Re-running `register_adapter` with the same `--name=` returns
+> `already_exists` (the per-thing layout treats `add` as create-only,
+> not upsert). To rotate via CLI: `/adapter:remove name=<n>` then
+> `register_adapter` with the new secret. Hand-edit
+> `adapters/<n>/config.yaml` + restart works too when CLI is unavailable.
 
 ## Troubleshooting
 
 ### `app_secret missing from AdapterConfig` (sidecar crash loop)
 
-The `adapters.yaml` entry for this instance lacks
+The `adapters/<name>/config.yaml` entry for this instance lacks
 `config.app_secret`. Either:
 
 - The entry was written by a buggy `register_adapter` (pre
-  `fix/register-adapter-app-secret`). Re-run `register_adapter` with
-  the secret, or hand-edit + restart.
+  `fix/register-adapter-app-secret`). Per yaml-layout-v2 (spec § 4.7)
+  the daemon now fail-loud-skips the spawn for this case at boot —
+  check the boot log for the `register_adapter` hint. Run
+  `/adapter:remove name=<n>` then re-run `register_adapter` with the
+  secret, or hand-edit `adapters/<n>/config.yaml` + restart.
 - The entry was hand-written and the secret was forgotten. Add it.
 
 ### `/help` no response in Feishu
@@ -275,13 +291,23 @@ non-default port and the sidecar can't connect:
 
 ### Re-registering an adapter
 
-`register_adapter` is idempotent on `--name`: re-running with the
-same name overwrites the `adapters.yaml` entry and respawns the
-sidecar. Use this for any of:
+Per yaml-layout-v2, `register_adapter` is **create-only**: re-running
+with the same `--name` returns `already_exists`. To rotate or fix:
+
+```bash
+esr exec adapter_remove --instance_id=<name>
+esr exec register_adapter --type=feishu --name=<name> \
+    --app_id=<id> --app_secret=<new_secret>
+```
+
+This applies for any of:
 
 - Rotating `app_secret`
 - Fixing a typo in `app_id`
 - Switching the instance to a different Feishu app entirely
+
+Hand-editing `adapters/<name>/config.yaml` + restart works too when
+CLI is unavailable.
 
 ## References
 

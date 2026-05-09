@@ -427,21 +427,21 @@ EOF
 }
 
 seed_adapters() {
-  # Boot-seed adapters.yaml so Esr.Application.restore_adapters_from_disk/1
-  # spawns the feishu sidecar with the right base_url pointing at
-  # mock_feishu. register_adapter via admin CLI would build a yaml
-  # WITHOUT base_url (its arg schema doesn't accept it), leaving the
-  # adapter to default to live lark_oapi — which fails silently in
-  # the background. Seeding directly bypasses that gap.
-  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
-  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/adapters.yaml" <<EOF
-instances:
-  feishu_app_e2e-mock:
-    type: feishu
-    config:
-      app_id: e2e-mock
-      app_secret: mock
-      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT}
+  # Boot-seed the per-thing-directory adapter layout (yaml-layout-v2,
+  # spec § 3.1) so Esr.Application.restore_adapters_from_disk/1 spawns
+  # the feishu sidecar with the right base_url pointing at mock_feishu.
+  # `register_adapter` via the admin CLI would build a config WITHOUT
+  # base_url (its arg schema doesn't accept it), leaving the adapter
+  # to default to live lark_oapi — which fails silently in the
+  # background. Seeding directly bypasses that gap.
+  local instance_dir="${ESRD_HOME}/${ESRD_INSTANCE}/adapters/feishu_app_e2e-mock"
+  mkdir -p "${instance_dir}"
+  cat > "${instance_dir}/config.yaml" <<EOF
+type: feishu
+config:
+  app_id: e2e-mock
+  app_secret: mock
+  base_url: http://127.0.0.1:${MOCK_FEISHU_PORT}
 EOF
 }
 
@@ -621,11 +621,11 @@ register_feishu_adapter() {
   # `app_secret=mock` is a deliberate placeholder: mock_feishu never
   # validates tenant_access_tokens, so any non-empty string works.
   # `base_url` is NOT a register_adapter arg — the adapter consumes
-  # `AdapterConfig.base_url` from a separate path (see `adapters.yaml`
-  # seeded by `load_agent_yaml()` or an `esr adapter add` call before
-  # this helper). If a future test needs `base_url=http://127.0.0.1:…`
-  # wired into the adapter config, add it via `esr adapter add` here
-  # and drop this shell comment.
+  # `AdapterConfig.base_url` from a separate path (see
+  # `adapters/<name>/config.yaml` seeded by `seed_adapters` per
+  # yaml-layout-v2 spec § 3.1). If a future test needs
+  # `base_url=http://127.0.0.1:…` wired into the adapter config, add
+  # it via the seed helper before calling this one.
   esr_cli admin submit register_adapter \
       --arg type=feishu \
       --arg name=feishu_app_e2e-mock \
@@ -712,21 +712,25 @@ seed_two_capabilities() {
 }
 
 seed_two_adapters() {
-  mkdir -p "${ESRD_HOME}/${ESRD_INSTANCE}"
-  cat > "${ESRD_HOME}/${ESRD_INSTANCE}/adapters.yaml" <<EOF
-instances:
-  feishu_app_dev:
-    type: feishu
-    config:
-      app_id: feishu_app_dev
-      app_secret: mock
-      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}
-  feishu_app_kanban:
-    type: feishu
-    config:
-      app_id: feishu_app_kanban
-      app_secret: mock
-      base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}
+  # yaml-layout-v2 spec § 3.1 — one directory per instance.
+  local dev_dir="${ESRD_HOME}/${ESRD_INSTANCE}/adapters/feishu_app_dev"
+  local kanban_dir="${ESRD_HOME}/${ESRD_INSTANCE}/adapters/feishu_app_kanban"
+  mkdir -p "${dev_dir}" "${kanban_dir}"
+
+  cat > "${dev_dir}/config.yaml" <<EOF
+type: feishu
+config:
+  app_id: feishu_app_dev
+  app_secret: mock
+  base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_DEV}
+EOF
+
+  cat > "${kanban_dir}/config.yaml" <<EOF
+type: feishu
+config:
+  app_id: feishu_app_kanban
+  app_secret: mock
+  base_url: http://127.0.0.1:${MOCK_FEISHU_PORT_KANBAN}
 EOF
 }
 
