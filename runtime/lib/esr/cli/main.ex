@@ -271,7 +271,7 @@ defmodule Esr.Cli.Main do
     id = ulid()
     pending_path = Path.join(pending_dir, "#{id}.yaml")
 
-    submitted_by = System.get_env("ESR_OPERATOR_PRINCIPAL_ID") || "ou_unknown"
+    submitted_by = resolve_submitter()
 
     yaml = """
     id: #{id}
@@ -295,6 +295,48 @@ defmodule Esr.Cli.Main do
       :timeout ->
         IO.puts(:stderr, "esr exec: timed out after #{div(timeout_ms, 1000)}s waiting for #{id}")
         System.halt(1)
+    end
+  end
+
+  @doc """
+  Resolve the principal_id for the `submitted_by` field of an admin-queue
+  envelope. Spec 2026-05-09 § 3.5 chain (first match wins):
+
+    1. operator.json at `<ESRD_HOME>/<instance>/operator.json` — read
+       `principal_id`. Malformed file → log + fall through.
+    2. `"system:bootstrap"` sentinel — fresh-install state. The CLI
+       prints a hint to stderr so the operator knows.
+
+  ESR_OPERATOR_PRINCIPAL_ID env var is NOT consulted (spec D3 hard
+  cutover). Exposed as `def` for unit testing — not part of the CLI's
+  external interface.
+  """
+  def resolve_submitter do
+    path = Esr.Paths.operator_json()
+
+    case File.read(path) do
+      {:ok, body} ->
+        case Jason.decode(body) do
+          {:ok, %{"principal_id" => pid}} when is_binary(pid) and pid != "" ->
+            pid
+
+          _ ->
+            IO.puts(
+              :stderr,
+              "esr: operator.json malformed at #{path}; using bootstrap sentinel"
+            )
+
+            "system:bootstrap"
+        end
+
+      {:error, _} ->
+        IO.puts(
+          :stderr,
+          "esr: no operator configured; using bootstrap sentinel " <>
+            "(run `esr exec user_add --name=<you>` to bootstrap)"
+        )
+
+        "system:bootstrap"
     end
   end
 
@@ -563,7 +605,13 @@ defmodule Esr.Cli.Main do
       ESRD_HOME                     esrd state root (default ~/.esrd-dev)
       ESR_INSTANCE                  instance name (default `dev` for daemon,
                                     `default` for queue path)
-      ESR_OPERATOR_PRINCIPAL_ID     submitted_by for exec'd commands
+
+    OPERATOR IDENTITY:
+      Active operator is read from <ESRD_HOME>/<instance>/operator.json
+      (written by `esr exec user_add --name=<you>` on first run, or
+      `esr exec user_switch --name=<other>` to switch). Fresh installs
+      submit as the bootstrap sentinel "system:bootstrap" until the
+      first user_add lands.
     """)
   end
 end

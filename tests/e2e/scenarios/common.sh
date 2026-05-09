@@ -407,6 +407,23 @@ seed_capabilities() {
     note: e2e admin (wildcard)
     capabilities: ["*"]'
   printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
+
+  # 2026-05-09 zero-config bootstrap (spec § 3.5): the escript CLI now
+  # reads `submitted_by` from operator.json — `ESR_OPERATOR_PRINCIPAL_ID`
+  # env is ignored (D3 hard cutover). Pair the seeded ou_admin cap row
+  # with an operator.json so existing scenarios that rely on
+  # seed_capabilities + esr_cli (admin submit) continue to submit as
+  # ou_admin without each scenario needing its own `user_add` first.
+  local operator_json="${ESRD_HOME}/${ESRD_INSTANCE}/operator.json"
+  cat > "$operator_json" <<EOF
+{
+  "schema_version": 1,
+  "principal_id": "${ESR_OPERATOR_PRINCIPAL_ID}",
+  "name": "ou_admin",
+  "set_at": "2026-05-09T00:00:00Z",
+  "set_by": "manual"
+}
+EOF
 }
 
 seed_adapters() {

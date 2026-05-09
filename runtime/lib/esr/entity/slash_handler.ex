@@ -44,6 +44,24 @@ defmodule Esr.Entity.SlashHandler do
   # async-worktree improvement.
   @dispatch_timeout_ms 5_000
 
+  # 2026-05-09 zero-config bootstrap (spec § 3.1-3.2): the reserved
+  # principal_id string `"system:bootstrap"` is a runtime sentinel that
+  # bypasses the Capability.has?/2 check at the cap-gate below, but ONLY
+  # when (1) the kind is in @bootstrap_allowed_kinds and (2) zero
+  # principals currently hold the `*` admin wildcard. The bypass logic
+  # lives ONLY here — Capability.has?/2 itself does NOT learn about the
+  # sentinel (centralised attack-surface, easier audit). Once
+  # `Esr.Commands.User.Add.maybe_grant_admin/1` promotes the first user
+  # to admin, `any_admin?/0` flips true and the sentinel deactivates
+  # permanently for the lifetime of capabilities.yaml.
+  #
+  # The sentinel string is also rejected at:
+  #   - capabilities.yaml load (Esr.Resource.Capability.FileLoader)
+  #   - cap_grant submit (Esr.Commands.Cap.Grant)
+  # so it can't be poisoned via yaml-edit or grant-CLI backdoor.
+  @bootstrap_sentinel "system:bootstrap"
+  @bootstrap_allowed_kinds ["user_add"]
+
   # start_link/1 inherits the dual-shape (map | keyword) default from
   # Esr.Entity.Stateful (PR-6 B1). All current callers pass %{}.
 
@@ -352,6 +370,22 @@ defmodule Esr.Entity.SlashHandler do
         emit_telemetry({:error, :unknown_kind}, command, System.monotonic_time(:millisecond))
         {:noreply, state}
 
+      not is_nil(required) and bootstrap_bypass?(submitted_by, kind) ->
+        # 2026-05-09 zero-config bootstrap (spec § 3.2 + § 3.7): all 3
+        # bypass conditions hold — sentinel submitter, allowed kind,
+        # no admin yet. Skip the Capability.has?/2 call and dispatch.
+        Logger.info(
+          "slash_handler: bootstrap-sentinel bypass for kind=#{kind} (no admin yet)"
+        )
+
+        :telemetry.execute(
+          [:esr, :slash, :bootstrap_bypass],
+          %{},
+          %{kind: kind}
+        )
+
+        execute_command_async(command, target, ref, state)
+
       not is_nil(required) and not Esr.Resource.Capability.has?(submitted_by, required) ->
         Esr.Slash.ReplyTarget.dispatch(
           target,
@@ -365,6 +399,17 @@ defmodule Esr.Entity.SlashHandler do
       true ->
         execute_command_async(command, target, ref, state)
     end
+  end
+
+  # 2026-05-09 zero-config bootstrap (spec § 3.2): three-condition guard
+  # for the sentinel cap-check bypass. All three must be true:
+  #   1. submitter is the reserved sentinel string
+  #   2. kind is in the compile-time allowed list (initial: ["user_add"])
+  #   3. no principal currently holds the `*` admin wildcard
+  defp bootstrap_bypass?(submitted_by, kind) do
+    submitted_by == @bootstrap_sentinel and
+      kind in @bootstrap_allowed_kinds and
+      not Esr.Resource.Capability.Grants.any_admin?()
   end
 
   # PR-2.3b-2: spawn a Task to run command_module.execute/1 and send
