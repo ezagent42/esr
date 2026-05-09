@@ -11,8 +11,34 @@ defmodule Esr.Commands.Agent.Add do
   rejects unknown types with `{:error, %{"type" => "unknown_agent_type"}}`.
   """
 
+  use Esr.Commands.Meta
+
+  command :agent_add do
+    slash         "/agent:add"
+    category      "Agents"
+    description   "向当前 session 添加 agent 实例；name 须全局唯一"
+    permission    "session:default/spawn"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :type, required: true, doc: "agent type declared by an enabled plugin"
+    arg :name, required: true, doc: "globally-unique instance name"
+
+    error :no_session_target,
+          "no chat-current session and session_id= not provided; use /session:new or pass session_id=<uuid>"
+    error :duplicate_agent_name,
+          "agent name '%{name}' already exists in session '%{session_id}' (pick a different name)"
+    error :spawn_failed,
+          "failed to spawn agent subtree for '%{name}' in session '%{session_id}': %{reason}"
+    error :unknown_agent_type,
+          "agent type '%{type}' is not declared in any enabled plugin; known types: %{known}"
+    error :invalid_args,
+          "/agent:add requires args.type and args.name (non-empty strings); session_id= is optional when chat-current is set"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.Agent.InstanceRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
@@ -39,13 +65,7 @@ defmodule Esr.Commands.Agent.Add do
         execute(put_in(cmd, ["args", "session_id"], sid))
 
       :not_found ->
-        {:error,
-         %{
-           "type" => "no_session_target",
-           "message" =>
-             "no chat-current session and session_id= not provided; " <>
-               "use /session:new or pass session_id=<uuid>"
-         }}
+        Render.error(__MODULE__.command_meta(), :no_session_target)
     end
   end
 
@@ -76,31 +96,24 @@ defmodule Esr.Commands.Agent.Add do
            }}
 
         {:error, {:duplicate_agent_name, n}} ->
-          {:error,
-           %{
-             "type" => "duplicate_agent_name",
-             "message" =>
-               "agent name '#{n}' already exists in session '#{sid}' (pick a different name)"
-           }}
+          Render.error(__MODULE__.command_meta(), :duplicate_agent_name, %{
+            name: n,
+            session_id: sid
+          })
 
         {:error, {:spawn_failed, reason}} ->
-          {:error,
-           %{
-             "type" => "spawn_failed",
-             "message" =>
-               "failed to spawn agent subtree for '#{name}' in session '#{sid}': #{inspect(reason)}"
-           }}
+          Render.error(__MODULE__.command_meta(), :spawn_failed, %{
+            name: name,
+            session_id: sid,
+            reason: inspect(reason)
+          })
       end
     else
       {:error, :unknown_agent_type} ->
-        known = known_agent_types()
-
-        {:error,
-         %{
-           "type" => "unknown_agent_type",
-           "message" =>
-             "agent type '#{type}' is not declared in any enabled plugin; known types: #{Enum.join(known, ", ")}"
-         }}
+        Render.error(__MODULE__.command_meta(), :unknown_agent_type, %{
+          type: type,
+          known: Enum.join(known_agent_types(), ", ")
+        })
     end
   end
 
@@ -111,23 +124,11 @@ defmodule Esr.Commands.Agent.Add do
   # for actually-empty / shape-malformed input handled by the catch-all.
   def execute(%{"args" => %{"type" => type, "name" => name}})
       when is_binary(type) and type != "" and is_binary(name) and name != "" do
-    {:error,
-     %{
-       "type" => "no_session_target",
-       "message" =>
-         "no chat-current session and session_id= not provided; " <>
-           "use /session:new or pass session_id=<uuid>"
-     }}
+    Render.error(__MODULE__.command_meta(), :no_session_target)
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" =>
-         "/agent:add requires args.type and args.name (non-empty strings); " <>
-           "session_id= is optional when chat-current is set"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
   defp validate_agent_type(type) do

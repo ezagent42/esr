@@ -4,8 +4,23 @@ defmodule Esr.Commands.Agent.Primary do
   chat-current session. Net-new in spec rev-3 §4.2.
   """
 
+  use Esr.Commands.Meta
+
+  command :agent_primary do
+    slash         "/agent:primary"
+    category      "Agents"
+    description   "显示当前 session 的 primary agent"
+    permission    nil
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    error :no_current_session, "no session attached to this chat; /session:bind-chat first"
+    error :invalid_args,       "/agent:primary requires chat context"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -16,19 +31,11 @@ defmodule Esr.Commands.Agent.Primary do
       {:ok, %{"session_id" => sid, "primary" => name}}
     else
       :not_found ->
-        {:error,
-         %{
-           "type" => "no_current_session",
-           "message" => "no session attached to this chat; /session:bind-chat first"
-         }}
+        Render.error(__MODULE__.command_meta(), :no_current_session)
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/agent:primary requires chat context"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end

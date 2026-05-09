@@ -10,8 +10,27 @@ defmodule Esr.Commands.Agent.Remove do
   deleted in Task C.9.
   """
 
+  use Esr.Commands.Meta
+
+  command :agent_remove do
+    slash         "/agent:remove"
+    category      "Agents"
+    description   "从当前 session 删除 agent；不能删 primary（先 set-primary）"
+    permission    "session:default/spawn"
+    requires_user_binding      true
+    requires_workspace_binding false
+
+    arg :name, required: true, doc: "agent name to remove"
+
+    error :cannot_remove_primary,
+          "cannot remove primary agent '%{name}'; use /agent:set-primary to promote another agent first"
+    error :not_found,    "no agent named '%{name}' in session '%{session_id}'"
+    error :invalid_args, "/agent:remove requires args.session_id and args.name (non-empty strings)"
+  end
+
   @behaviour Esr.Role.Control
 
+  alias Esr.Commands.Render
   alias Esr.Entity.Agent.InstanceRegistry
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
@@ -22,27 +41,14 @@ defmodule Esr.Commands.Agent.Remove do
         {:ok, %{"action" => "removed", "session_id" => sid, "name" => name}}
 
       {:error, :cannot_remove_primary} ->
-        {:error,
-         %{
-           "type" => "cannot_remove_primary",
-           "message" =>
-             "cannot remove primary agent '#{name}'; use /agent:set-primary to promote another agent first"
-         }}
+        Render.error(__MODULE__.command_meta(), :cannot_remove_primary, %{name: name})
 
       {:error, :not_found} ->
-        {:error,
-         %{
-           "type" => "not_found",
-           "message" => "no agent named '#{name}' in session '#{sid}'"
-         }}
+        Render.error(__MODULE__.command_meta(), :not_found, %{name: name, session_id: sid})
     end
   end
 
   def execute(_cmd) do
-    {:error,
-     %{
-       "type" => "invalid_args",
-       "message" => "/agent:remove requires args.session_id and args.name (non-empty strings)"
-     }}
+    Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 end
