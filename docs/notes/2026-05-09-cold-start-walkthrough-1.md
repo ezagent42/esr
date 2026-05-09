@@ -242,3 +242,34 @@ runtime 影响：当前 0（FileLoader 用 users.yaml 当 canonical，user.json 
 → 冷启动操作员**装 plugin 即得 agent type**，无需手写 agents.yaml。
 
 **优先级**：高。这是 plugin 系统的"零配置"目标的残块——已经做了 #281 + #282 的 user 端零配置，应该把 agent 端补齐。
+
+### 新发现：**C13 — session 结束后 claude conversation 不能 resume**
+
+`Esr.Plugins.ClaudeCode.Launcher.spawn_cmd/1` 起 claude 时 argv 是固定的：
+```
+claude --permission-mode auto \
+       --dangerously-load-development-channels server:esr-channel \
+       --mcp-config .mcp.json \
+       --add-dir <session-cwd> \
+       [--settings <role>.json]
+```
+**没 `--resume <conversation-id>`**。
+
+所以场景：
+- 操作员 `/session:new` 起 session S1，跟 claude 聊了一阵
+- 不小心 esrd 重启 / `/session:end` / launchctl kickstart
+- 想接着上次的对话继续
+
+→ 现在只能起新 session（新空白 claude）。claude 自己的 history (`~/.claude/projects/<hash>/conversation.jsonl`) 还在，**但 ESR 起 PTY 时不传 `--resume` flag**，所以 claude 不知道要恢复。
+
+**修法（PR 候选）**：
+1. session.json 加 `claude_conversation_id` 字段，PtyProcess 启动时 sniff claude stderr/stdout 拿到 conversation UUID 回写
+2. `/session:new` 加 `resume=<prev-session-uuid>` 参数，从 prev session.json 读 `claude_conversation_id`，spawn_cmd 加 `--resume <id>`
+3. 或加 `/session:resume <uuid>` 专门 slash 命令
+
+Use cases:
+- esrd 重启后跨 chat 共享上下文（Q from 复跑实测）
+- 不小心 `/session:end` 后想恢复
+- 跨 mac 迁移（备份 session.json + claude_conversation_id 后另一台 esrd 起 resume — 前提是同一 anthropic 账号 + 同 conversation_id 可见）
+
+**优先级**：中。不挡日常，但**长 conversation 价值高**时丢失上下文非常痛。属于 ESR + claude 集成深度的下一步。
