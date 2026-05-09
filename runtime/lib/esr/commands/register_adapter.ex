@@ -11,14 +11,16 @@ defmodule Esr.Commands.RegisterAdapter do
   ## Flow
 
     1. Append the instance entry to `<runtime_home>/adapters.yaml` via
-       `Esr.Yaml.Writer` under `instances.<name>`. Missing file is
-       created with a fresh `%{"instances" => %{...}}` skeleton.
-    2. Append `FEISHU_APP_SECRET_<UPPERCASE_NAME>=<secret>` to
-       `<runtime_home>/.env.local`. The file is created if missing and
-       chmod'd to `0o600` so secrets aren't world-readable.
-    3. Call `Esr.WorkerSupervisor.ensure_adapter(type, name, config,
+       `Esr.Yaml.Writer` under `instances.<name>`. The persisted entry
+       includes both `app_id` and `app_secret` in the `config:` block so
+       the Python sidecar can authenticate on every restore. Missing
+       file is created with a fresh `%{"instances" => %{...}}` skeleton.
+    2. Call `Esr.WorkerSupervisor.ensure_adapter(type, name, config,
        url)` — same 4-arity API used at boot by
-       `Esr.Application.restore_adapters_from_disk/1`.
+       `Esr.Application.restore_adapters_from_disk/1`. The spawn config
+       carries `app_secret` so the sidecar's `cfg.app_secret` lookup
+       succeeds (pre-fix it was dropped on the floor and the sidecar
+       crash-looped with `app_secret missing from AdapterConfig`).
 
   ## Result
 
@@ -51,11 +53,9 @@ defmodule Esr.Commands.RegisterAdapter do
       )
       when is_binary(name) and is_binary(app_id) and is_binary(secret) do
     adapters_path = Esr.Paths.adapters_yaml()
-    env_path = Path.join(Esr.Paths.runtime_home(), ".env.local")
 
-    with :ok <- append_instance_to_yaml(adapters_path, name, app_id),
-         :ok <- append_secret_to_env(env_path, name, secret),
-         :ok <- spawn_adapter(name, app_id, opts) do
+    with :ok <- append_instance_to_yaml(adapters_path, name, app_id, secret),
+         :ok <- spawn_adapter(name, app_id, secret, opts) do
       {:ok, %{"adapter_id" => name, "running" => true}}
     else
       {:error, reason} ->
@@ -77,7 +77,7 @@ defmodule Esr.Commands.RegisterAdapter do
   # Internals
   # ------------------------------------------------------------------
 
-  defp append_instance_to_yaml(path, name, app_id) do
+  defp append_instance_to_yaml(path, name, app_id, secret) do
     current =
       case YamlElixir.read_from_file(path) do
         {:ok, %{} = m} -> m
@@ -90,44 +90,14 @@ defmodule Esr.Commands.RegisterAdapter do
       Map.put(current, "instances",
         Map.put(instances, name, %{
           "type" => "feishu",
-          "config" => %{"app_id" => app_id}
+          "config" => %{"app_id" => app_id, "app_secret" => secret}
         })
       )
 
     Esr.Yaml.Writer.write(path, updated)
   end
 
-  defp append_secret_to_env(path, name, secret) do
-    :ok = File.mkdir_p(Path.dirname(path))
-    # Touch + chmod BEFORE writing so the window where the file exists
-    # without 0600 is as short as possible.
-    _ = File.touch(path)
-    _ = File.chmod(path, 0o600)
-
-    existing =
-      case File.read(path) do
-        {:ok, body} -> body
-        _ -> ""
-      end
-
-    body =
-      existing
-      |> ensure_trailing_newline()
-      |> Kernel.<>("FEISHU_APP_SECRET_#{String.upcase(name)}=#{secret}\n")
-
-    with :ok <- File.write(path, body),
-         :ok <- File.chmod(path, 0o600) do
-      :ok
-    end
-  end
-
-  defp ensure_trailing_newline(""), do: ""
-
-  defp ensure_trailing_newline(s) do
-    if String.ends_with?(s, "\n"), do: s, else: s <> "\n"
-  end
-
-  defp spawn_adapter(name, app_id, opts) do
+  defp spawn_adapter(name, app_id, secret, opts) do
     spawn_fn =
       Keyword.get(opts, :spawn_fn, fn {type, instance, config, url} ->
         case Esr.WorkerSupervisor.ensure_adapter(type, instance, config, url) do
@@ -139,7 +109,7 @@ defmodule Esr.Commands.RegisterAdapter do
       end)
 
     url = Keyword.get(opts, :adapter_ws_url, default_adapter_ws_url())
-    config = %{"app_id" => app_id}
+    config = %{"app_id" => app_id, "app_secret" => secret}
 
     case spawn_fn.({"feishu", name, config, url}) do
       :ok -> :ok

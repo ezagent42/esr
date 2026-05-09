@@ -1,9 +1,15 @@
 defmodule Esr.Commands.RegisterAdapterTest do
   @moduledoc """
   DI-8 Task 16 — `Esr.Commands.RegisterAdapter` persists a new
-  adapter instance to `adapters.yaml`, appends the secret to
-  `.env.local` (chmod 0600), and calls `WorkerSupervisor.ensure_adapter`
-  to hot-load the adapter subprocess post-boot.
+  adapter instance to `adapters.yaml` (with `app_id` AND `app_secret`
+  in the config block) and calls `WorkerSupervisor.ensure_adapter` to
+  hot-load the adapter subprocess post-boot.
+
+  Pre-2026-05-09: secret was written to `<runtime_home>/.env.local`,
+  but no consumer ever read it (`adapter_process.ex`'s os_env/1 only
+  injects ESR_SPAWN_TOKEN + PYTHONUNBUFFERED). Sidecar crash-looped
+  with `app_secret missing from AdapterConfig`. Fix: secret now flows
+  through adapters.yaml's config block on every spawn AND restore.
 
   ## Why the spawn_fn injection
 
@@ -38,7 +44,9 @@ defmodule Esr.Commands.RegisterAdapterTest do
   end
 
   describe "execute/2 happy path" do
-    test "appends to adapters.yaml + writes 0600 .env.local + calls spawn_fn", %{tmp: tmp} do
+    test "appends to adapters.yaml (with app_secret in config block) + calls spawn_fn", %{
+      tmp: tmp
+    } do
       parent = self()
 
       cmd = %{
@@ -58,7 +66,9 @@ defmodule Esr.Commands.RegisterAdapterTest do
                  end
                )
 
-      # adapters.yaml was written with the new instance.
+      # adapters.yaml was written with both app_id AND app_secret in
+      # the config block — sidecar AdapterConfig validation requires
+      # both keys, this is the production-bug regression guard.
       adapters_path = Path.join([tmp, "default", "adapters.yaml"])
       assert File.exists?(adapters_path)
       {:ok, parsed} = YamlElixir.read_from_file(adapters_path)
@@ -67,24 +77,23 @@ defmodule Esr.Commands.RegisterAdapterTest do
                "instances" => %{
                  "esr_dev_helper" => %{
                    "type" => "feishu",
-                   "config" => %{"app_id" => "cli_test_app_id"}
+                   "config" => %{
+                     "app_id" => "cli_test_app_id",
+                     "app_secret" => "sekret123"
+                   }
                  }
                }
              } = parsed
 
-      # .env.local has the FEISHU_APP_SECRET line + mode 0600.
-      env_path = Path.join([tmp, "default", ".env.local"])
-      assert File.exists?(env_path)
-      body = File.read!(env_path)
-      assert body =~ "FEISHU_APP_SECRET_ESR_DEV_HELPER=sekret123"
-
-      %File.Stat{mode: mode} = File.stat!(env_path)
-      # File.Stat mode masks POSIX permission bits as the low 9 bits.
-      assert Bitwise.band(mode, 0o777) == 0o600
-
-      # spawn_fn saw the right args (type, name, config, url).
+      # spawn_fn saw the right args (type, name, config, url) — config
+      # MUST carry app_secret, otherwise the Python sidecar crash-loops
+      # with `app_secret missing from AdapterConfig`.
       assert_received {:spawned,
-                       {"feishu", "esr_dev_helper", %{"app_id" => "cli_test_app_id"}, url}}
+                       {"feishu", "esr_dev_helper",
+                        %{
+                          "app_id" => "cli_test_app_id",
+                          "app_secret" => "sekret123"
+                        }, url}}
 
       assert is_binary(url)
       assert url =~ "/adapter_hub/socket/websocket"
@@ -119,10 +128,11 @@ defmodule Esr.Commands.RegisterAdapterTest do
       assert Map.has_key?(parsed["instances"], "new_helper")
       assert parsed["instances"]["existing_helper"]["config"]["app_id"] == "cli_existing"
       assert parsed["instances"]["new_helper"]["config"]["app_id"] == "cli_new"
+      assert parsed["instances"]["new_helper"]["config"]["app_secret"] == "new_secret"
     end
 
-    test "appending a second secret preserves the first line", %{tmp: tmp} do
-      env_path = Path.join([tmp, "default", ".env.local"])
+    test "registering a second adapter preserves the first instance + its secret", %{tmp: tmp} do
+      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
 
       # First command.
       assert {:ok, _} =
@@ -152,13 +162,11 @@ defmodule Esr.Commands.RegisterAdapterTest do
                  spawn_fn: fn _ -> :ok end
                )
 
-      body = File.read!(env_path)
-      assert body =~ "FEISHU_APP_SECRET_FIRST=s1"
-      assert body =~ "FEISHU_APP_SECRET_SECOND=s2"
-
-      # Still 0600 after the second write.
-      %File.Stat{mode: mode} = File.stat!(env_path)
-      assert Bitwise.band(mode, 0o777) == 0o600
+      {:ok, parsed} = YamlElixir.read_from_file(adapters_path)
+      assert parsed["instances"]["first"]["config"]["app_id"] == "a1"
+      assert parsed["instances"]["first"]["config"]["app_secret"] == "s1"
+      assert parsed["instances"]["second"]["config"]["app_id"] == "a2"
+      assert parsed["instances"]["second"]["config"]["app_secret"] == "s2"
     end
   end
 
@@ -260,6 +268,49 @@ defmodule Esr.Commands.RegisterAdapterTest do
       # produced it.
       assert captured =~ ~r|^ws://127\.0\.0\.1:\d+/adapter_hub/socket/websocket|,
              "default_adapter_ws_url returned #{inspect(captured)} — expected ws://127.0.0.1:<port>/..."
+    end
+  end
+
+  describe "spawn config carries app_secret (2026-05-09 sidecar-auth fix)" do
+    test "spawn_fn is invoked with config containing both app_id and app_secret" do
+      test_pid = self()
+
+      spawn_stub = fn {type, instance, config, _url} ->
+        send(test_pid, {:spawn_called, type, instance, config})
+        :ok
+      end
+
+      cmd = %{
+        "args" => %{
+          "type" => "feishu",
+          "name" => "esr_helper",
+          "app_id" => "cli_test",
+          "app_secret" => "sekret123"
+        }
+      }
+
+      assert {:ok, _} = RegisterAdapter.execute(cmd, spawn_fn: spawn_stub)
+
+      assert_receive {:spawn_called, "feishu", "esr_helper",
+                      %{"app_id" => "cli_test", "app_secret" => "sekret123"}},
+                     1_000
+    end
+
+    test "adapters.yaml gets app_secret persisted in config block", %{tmp: tmp} do
+      cmd = %{
+        "args" => %{
+          "type" => "feishu",
+          "name" => "esr_persist_test",
+          "app_id" => "cli_pX",
+          "app_secret" => "secret_pX"
+        }
+      }
+
+      assert {:ok, _} = RegisterAdapter.execute(cmd, spawn_fn: fn _ -> :ok end)
+
+      {:ok, doc} = YamlElixir.read_from_file(Path.join([tmp, "default", "adapters.yaml"]))
+      assert get_in(doc, ["instances", "esr_persist_test", "config", "app_secret"]) == "secret_pX"
+      assert get_in(doc, ["instances", "esr_persist_test", "config", "app_id"]) == "cli_pX"
     end
   end
 end
