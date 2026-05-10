@@ -3,7 +3,7 @@ defmodule Esr.Commands.Key do
   `/key <keyspec> [<keyspec> …]` — send special keystrokes to the
   chat-current session's PTY (PR-24 step 2 follow-up).
 
-  The boot bridge (`Esr.Entity.FeishuChatProxy`) routes plain Feishu
+  The boot bridge (`Esr.Plugins.Feishu.FeishuChatProxy`) routes plain Feishu
   text + `\\r` into the PTY when `cc_mcp_ready=false`, which covers
   most boot dialogs ("type 1 + Enter"). For dialogs that need cursor
   navigation, `Esc`, or control characters, this command translates

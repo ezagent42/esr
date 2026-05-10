@@ -13,7 +13,7 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entity.FeishuChatProxy
+          impl: Esr.Plugins.Feishu.FeishuChatProxy
       outbound:
         - feishu_chat_proxy
     proxies:
@@ -36,7 +36,7 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entity.FeishuChatProxy
+          impl: Esr.Plugins.Feishu.FeishuChatProxy
       outbound:
         - feishu_chat_proxy
     proxies:

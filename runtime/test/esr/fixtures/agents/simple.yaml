@@ -8,7 +8,7 @@ agents:
     pipeline:
       inbound:
         - name: feishu_chat_proxy
-          impl: Esr.Entity.FeishuChatProxy
+          impl: Esr.Plugins.Feishu.FeishuChatProxy
         - name: cc_proxy
           impl: Esr.Entity.CCProxy
         - name: cc_process
