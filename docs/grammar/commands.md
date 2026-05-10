@@ -884,11 +884,12 @@ _internal kind only — not slash-callable_
 
 **bindings:** requires_user_binding=`true` requires_workspace_binding=`false`
 
-**description:** 起一个新 session(自动 transient workspace);name=<X> [agent=cc]
+**description:** 起一个新 session(自动 transient workspace);name=<X> [template=feishu-cc] [agent=cc]
 
 **args:**
   - `name` (required) — session 名
   - `agent` (optional) default=`"cc"` — agent 名(默认 cc)
+  - `template` (optional) — session template name (defaults to operator-configured default)
 
 **errors:**
   - `invalid_args` — session_new %{detail}
@@ -900,6 +901,9 @@ _internal kind only — not slash-callable_
   - `workspace_gone` — workspace %{name} %{detail}
   - `no_workspace_target` — no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name>
   - `unknown_agent` — agent %{agent} not registered in agents.yaml
+  - `no_default_template` — no default session template configured + no template= arg; available: %{available} — set via `/plugin:set plugin=session key=default_template value=<name>`
+  - `unknown_template` — session template '%{template}' not found; available: %{available}
+  - `template_materialize_failed` — session template '%{template}' could not be materialized: %{details}
   - `missing_capabilities` — missing capabilities: %{caps}
   - `session_start_failed` — session start failed: %{details}
 

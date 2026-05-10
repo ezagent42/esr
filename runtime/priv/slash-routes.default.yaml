@@ -449,9 +449,11 @@ slashes:
       - default: cc
         name: agent
         required: false
+      - name: template
+        required: false
     category: Sessions
     command_module: Esr.Commands.Session.New
-    description: 起一个新 session(自动 transient workspace);name=<X> [agent=cc]
+    description: 起一个新 session(自动 transient workspace);name=<X> [template=feishu-cc] [agent=cc]
     kind: session_new
     permission: session:default/create
     requires_user_binding: true
