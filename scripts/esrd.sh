@@ -3,7 +3,7 @@
 #
 # Usage:
 #   scripts/esrd.sh start  --instance=<name>
-#   scripts/esrd.sh stop   --instance=<name>
+#   scripts/esrd.sh stop   --instance=<name> [--launchd-restart]
 #   scripts/esrd.sh status --instance=<name>
 #
 # State layout:
@@ -14,6 +14,23 @@
 # ESRD_HOME defaults to ~/.esrd. For tests, export ESRD_CMD_OVERRIDE to
 # substitute a trivial command (e.g. "sleep 60") instead of actually
 # running `mix phx.server`.
+#
+# DUAL-MANAGER WARNING (added 2026-05-10):
+#   When esrd is launchd-managed (per scripts/launchd/install.sh installs
+#   ~/Library/LaunchAgents/com.ezagent.esrd-${instance}.plist with
+#   KeepAlive=true), this script's start/stop ARE NOT the right tool —
+#   launchd is the lifecycle manager. The pidfile-based stop here will
+#   succeed in killing the BEAM, but launchd auto-respawns within seconds,
+#   making the operator believe their stop was ineffective. Use:
+#     scripts/launchd/install.sh --env=<dev|prod|both>     (one-time setup)
+#     scripts/launchd/uninstall.sh --env=<dev|prod|both>   (full unload)
+#     launchctl kickstart -k gui/$UID/com.ezagent.esrd-<instance>  (restart)
+#
+#   This script (esrd.sh) is for the pidfile-based dev workflow when no
+#   launchd plist is installed. cmd_stop detects an installed plist and
+#   refuses to act with a pointer to the right tool, unless invoked with
+#   --launchd-restart which delegates to `launchctl kickstart -k`.
+#   See docs/operations/esrd-management.md for the full operator guide.
 set -u
 
 # Auto-source local env overrides if present. Gitignored .env.local is the
@@ -99,8 +116,47 @@ cmd_start() {
   echo "esrd[$instance] started (pid=$(cat "$pidfile"))"
 }
 
+is_launchd_managed() {
+  # Returns 0 (true) if a launchd plist exists for this instance AND
+  # `launchctl list` reports the label as loaded. Both checks matter:
+  # a stale plist file with no loaded service should still fall through
+  # to the pidfile path (the operator may have manually `bootout`-ed it
+  # but not removed the file).
+  local instance="$1"
+  local label="com.ezagent.esrd-${instance}"
+  local plist="${HOME}/Library/LaunchAgents/${label}.plist"
+  [[ -f "$plist" ]] || return 1
+  # `launchctl list` exits non-zero on filter miss, so just grep the
+  # output (works on macOS 10.10+; user is on Darwin 25 per env).
+  launchctl list 2>/dev/null | grep -q "${label}\$" || return 1
+  return 0
+}
+
 cmd_stop() {
   local instance; instance=$(parse_instance "$@")
+  local launchd_restart=0
+  for arg in "$@"; do
+    case "$arg" in
+      --launchd-restart) launchd_restart=1 ;;
+    esac
+  done
+
+  # 2026-05-10 fix: detect launchd-managed instance and refuse pidfile
+  # stop. Without this, operator's `esrd.sh stop` succeeds at killing
+  # the BEAM but launchd's KeepAlive=true respawns immediately — the
+  # operator concludes their stop "didn't work" and the loop produces
+  # zombie BEAMs from racing kill+respawn. The right tool is launchctl.
+  if is_launchd_managed "$instance"; then
+    local label="com.ezagent.esrd-${instance}"
+    if (( launchd_restart )); then
+      launchctl kickstart -k "gui/$(id -u)/${label}" 2>/dev/null || true
+      echo "esrd[$instance] launchd-managed — kicked via launchctl kickstart -k gui/$(id -u)/${label}"
+      return 0
+    fi
+    echo "esrd[$instance] is launchd-managed (${label}). Use 'scripts/launchd/uninstall.sh --env=${instance}' to fully stop, or 'launchctl kickstart -k gui/$(id -u)/${label}' to restart. Re-run with --launchd-restart to delegate the kickstart from this command. (See docs/operations/esrd-management.md for the full guide.)"
+    return 0
+  fi
+
   local pidfile="$ESRD_HOME/$instance/esrd.pid"
 
   if [[ ! -s "$pidfile" ]]; then
