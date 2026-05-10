@@ -68,7 +68,7 @@ defmodule Esr.Commands.CrossAppTestTest do
           "chat_id" => "oc_target",
           "app_id" => "feishu_target",
           "text" => "ping",
-          "principal_id" => "ou_admin"
+          "target_principal_id" => "ou_admin"
         }
       })
 
@@ -95,7 +95,7 @@ defmodule Esr.Commands.CrossAppTestTest do
                  "chat_id" => "oc_x",
                  "app_id" => "f_x",
                  "text" => "x",
-                 "principal_id" => "ou_x"
+                 "target_principal_id" => "ou_x"
                }
              })
 
@@ -118,7 +118,7 @@ defmodule Esr.Commands.CrossAppTestTest do
           "chat_id" => "oc_t",
           "app_id" => "f_t",
           "text" => "t",
-          "principal_id" => "ou_t"
+          "target_principal_id" => "ou_t"
         }
       })
   end

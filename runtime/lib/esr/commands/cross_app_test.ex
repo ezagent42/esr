@@ -11,7 +11,7 @@ defmodule Esr.Commands.CrossAppTest do
   even with system-test framing. The auth gate then never fires
   because no `tool_invoke` reaches the runtime. This command is the
   deterministic injection path: it sends the same arity-6
-  `{:tool_invoke, req_id, "reply", args, channel_pid, principal_id}`
+  `{:tool_invoke, req_id, "reply", args, channel_pid, target_principal_id}`
   shape that `EsrWeb.ChannelChannel.handle_in("envelope", …)`
   forwards to FCP for an MCP-driven tool call, and synchronously
   receives the `{:push_envelope, %{"req_id" => …, "ok" => …}}`
@@ -29,7 +29,9 @@ defmodule Esr.Commands.CrossAppTest do
     * `chat_id` — the cross-app chat (passed to FCP as args["chat_id"])
     * `app_id` — the cross-app app_id (passed to FCP as args["app_id"])
     * `text` — the reply text
-    * `principal_id` — the principal whose caps FCP gates on
+    * `target_principal_id` — the spoofed caller principal whose caps
+      FCP gates on (cross-app routing tests inject this to exercise
+      the auth gate from a chosen identity)
     * `req_id` (optional) — defaults to a fresh UUID; lets the test
       correlate result with request
 
@@ -52,14 +54,14 @@ defmodule Esr.Commands.CrossAppTest do
     requires_user_binding      false
     requires_workspace_binding false
 
-    arg :session_id,   required: true, doc: "目标 session"
-    arg :chat_id,      required: true, doc: "cross-app chat_id"
-    arg :app_id,       required: true, doc: "cross-app app_id"
-    arg :text,         required: true, doc: "reply 文本"
-    arg :principal_id, required: true, doc: "principal id（FCP cap 检查依据）"
-    arg :req_id,       required: false, doc: "可选；不传自动生成"
+    arg :session_id,          required: true, doc: "目标 session"
+    arg :chat_id,             required: true, doc: "cross-app chat_id"
+    arg :app_id,              required: true, doc: "cross-app app_id"
+    arg :text,                required: true, doc: "reply 文本"
+    arg :target_principal_id, required: true, doc: "被注入的 caller principal id（FCP cap 检查依据）"
+    arg :req_id,              required: false, doc: "可选；不传自动生成"
 
-    error :invalid_args,    "cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing})"
+    error :invalid_args,    "cross_app_test requires args.{session_id, chat_id, app_id, text, target_principal_id} (missing %{missing})"
     error :no_session_peer, "no thread:%{session_id} peer in Entity.Registry"
     error :timeout,         "FCP did not reply within %{timeout_ms}ms (req_id=%{req_id})"
   end
@@ -78,9 +80,9 @@ defmodule Esr.Commands.CrossAppTest do
          {:ok, chat_id} <- fetch_arg(args, "chat_id"),
          {:ok, app_id} <- fetch_arg(args, "app_id"),
          {:ok, text} <- fetch_arg(args, "text"),
-         {:ok, principal_id} <- fetch_arg(args, "principal_id") do
+         {:ok, target_principal_id} <- fetch_arg(args, "target_principal_id") do
       req_id = Map.get(args, "req_id") || generate_req_id()
-      send_tool_invoke(session_id, chat_id, app_id, text, principal_id, req_id)
+      send_tool_invoke(session_id, chat_id, app_id, text, target_principal_id, req_id)
     end
   end
 
@@ -99,7 +101,7 @@ defmodule Esr.Commands.CrossAppTest do
     "cat-" <> (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
   end
 
-  defp send_tool_invoke(session_id, chat_id, app_id, text, principal_id, req_id) do
+  defp send_tool_invoke(session_id, chat_id, app_id, text, target_principal_id, req_id) do
     peer_name = "thread:" <> session_id
 
     case Registry.lookup(Esr.Entity.Registry, peer_name) do
@@ -112,7 +114,7 @@ defmodule Esr.Commands.CrossAppTest do
 
         # Pass `self()` as channel_pid; FCP will send
         # `{:push_envelope, %{"req_id" => req_id, ...}}` back.
-        send(peer_pid, {:tool_invoke, req_id, "reply", tool_args, self(), principal_id})
+        send(peer_pid, {:tool_invoke, req_id, "reply", tool_args, self(), target_principal_id})
 
         receive do
           {:push_envelope, %{"req_id" => ^req_id} = envelope} ->

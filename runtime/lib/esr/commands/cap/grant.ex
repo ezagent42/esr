@@ -26,7 +26,7 @@ defmodule Esr.Commands.Cap.Grant do
 
   ## Result
 
-    * `{:ok, %{"principal_id" => id, "permission" => perm, "action" => "granted"}}`
+    * `{:ok, %{"target_principal_id" => id, "permission" => perm, "action" => "granted"}}`
     * `{:error, %{"type" => "invalid_args", ...}}` — malformed command.
   """
 
@@ -40,13 +40,13 @@ defmodule Esr.Commands.Cap.Grant do
     requires_user_binding      false
     requires_workspace_binding false
 
-    arg :cap,  required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
-    arg :user, required: true, doc: "principal id"
+    arg :target_principal_id, required: true, doc: "principal being granted to (the operation target)"
+    arg :permission,          required: true, doc: "permission 字符串（session cap 必须是 UUID 形式）"
 
     error :reserved_principal_id,    "'system:bootstrap' is a reserved sentinel; cannot be granted caps"
     error :session_cap_requires_uuid, "%{detail}"
     error :unknown_workspace,         "no workspace found in capability scope: %{permission}"
-    error :invalid_args,              "grant requires args.principal_id and args.permission (non-empty strings)"
+    error :invalid_args,              "grant requires args.target_principal_id and args.permission (non-empty strings)"
     error :write_failed,              "%{detail}"
   end
 
@@ -57,7 +57,7 @@ defmodule Esr.Commands.Cap.Grant do
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"principal_id" => "system:bootstrap"}}) do
+  def execute(%{"args" => %{"target_principal_id" => "system:bootstrap"}}) do
     # 2026-05-09 zero-config bootstrap (spec § 3.1, D1): the reserved
     # sentinel principal_id cannot be granted caps via cap_grant — that
     # would defeat the whole "sentinel can't be poisoned" property the
@@ -65,7 +65,7 @@ defmodule Esr.Commands.Cap.Grant do
     Render.error(__MODULE__.command_meta(), :reserved_principal_id)
   end
 
-  def execute(%{"args" => %{"principal_id" => pid, "permission" => perm}})
+  def execute(%{"args" => %{"target_principal_id" => pid, "permission" => perm}})
       when is_binary(pid) and pid != "" and is_binary(perm) and perm != "" do
     with :ok <- validate_session_cap(perm),
          {:ok, translated_perm} <- Esr.Resource.Capability.UuidTranslator.name_to_uuid(perm) do
@@ -105,7 +105,7 @@ defmodule Esr.Commands.Cap.Grant do
       :ok ->
         {:ok,
          %{
-           "principal_id" => pid,
+           "target_principal_id" => pid,
            "permission" => perm,
            "action" => "granted"
          }}

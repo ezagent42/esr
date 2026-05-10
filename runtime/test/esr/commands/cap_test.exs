@@ -64,13 +64,13 @@ defmodule Esr.Commands.CapTest do
 
       assert {:ok,
               %{
-                "principal_id" => "ou_new_user",
+                "target_principal_id" => "ou_new_user",
                 "permission" => "user.manage",
                 "action" => "granted"
               }} =
                Grant.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_new_user",
+                   "target_principal_id" => "ou_new_user",
                    "permission" => "user.manage"
                  }
                })
@@ -105,7 +105,7 @@ defmodule Esr.Commands.CapTest do
       assert {:ok, %{"action" => "granted"}} =
                Grant.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_alice",
+                   "target_principal_id" => "ou_alice",
                    "permission" => "runtime.deadletter"
                  }
                })
@@ -135,7 +135,7 @@ defmodule Esr.Commands.CapTest do
       assert {:ok, %{"action" => "granted"}} =
                Grant.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_alice",
+                   "target_principal_id" => "ou_alice",
                    "permission" => "user.manage"
                  }
                })
@@ -151,7 +151,7 @@ defmodule Esr.Commands.CapTest do
       assert {:ok, _} =
                Grant.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_loader_test",
+                   "target_principal_id" => "ou_loader_test",
                    "permission" => "adapter.manage"
                  }
                })
@@ -167,12 +167,12 @@ defmodule Esr.Commands.CapTest do
 
     test "invalid args — missing permission returns invalid_args" do
       assert {:error, %{"type" => "invalid_args"}} =
-               Grant.execute(%{"args" => %{"principal_id" => "ou_x"}})
+               Grant.execute(%{"args" => %{"target_principal_id" => "ou_x"}})
     end
 
     test "invalid args — empty strings rejected" do
       assert {:error, %{"type" => "invalid_args"}} =
-               Grant.execute(%{"args" => %{"principal_id" => "", "permission" => "x"}})
+               Grant.execute(%{"args" => %{"target_principal_id" => "", "permission" => "x"}})
     end
   end
 
@@ -190,13 +190,13 @@ defmodule Esr.Commands.CapTest do
 
       assert {:ok,
               %{
-                "principal_id" => "ou_alice",
+                "target_principal_id" => "ou_alice",
                 "permission" => "adapter.manage",
                 "action" => "revoked"
               }} =
                Revoke.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_alice",
+                   "target_principal_id" => "ou_alice",
                    "permission" => "adapter.manage"
                  }
                })
@@ -221,7 +221,7 @@ defmodule Esr.Commands.CapTest do
       assert {:error, %{"type" => "no_matching_capability"}} =
                Revoke.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_alice",
+                   "target_principal_id" => "ou_alice",
                    "permission" => "runtime.deadletter"
                  }
                })
@@ -241,7 +241,7 @@ defmodule Esr.Commands.CapTest do
       assert {:error, %{"type" => "no_matching_capability"}} =
                Revoke.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_nobody",
+                   "target_principal_id" => "ou_nobody",
                    "permission" => "user.manage"
                  }
                })
@@ -253,7 +253,7 @@ defmodule Esr.Commands.CapTest do
       assert {:error, %{"type" => "no_matching_capability"}} =
                Revoke.execute(%{
                  "args" => %{
-                   "principal_id" => "ou_alice",
+                   "target_principal_id" => "ou_alice",
                    "permission" => "user.manage"
                  }
                })
@@ -264,7 +264,7 @@ defmodule Esr.Commands.CapTest do
 
     test "invalid args — missing permission returns invalid_args" do
       assert {:error, %{"type" => "invalid_args"}} =
-               Revoke.execute(%{"args" => %{"principal_id" => "ou_x"}})
+               Revoke.execute(%{"args" => %{"target_principal_id" => "ou_x"}})
     end
   end
 

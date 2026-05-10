@@ -20,7 +20,7 @@ defmodule Esr.Commands.Session.Share do
          `"attach"` → `"session:<uuid>/attach"`
          `"admin"`  → `"session:<uuid>/admin"`
     4. Delegate to `Esr.Commands.Cap.Grant.execute/1` with
-       `%{"args" => %{"principal_id" => user_uuid, "permission" => cap}}`.
+       `%{"args" => %{"target_principal_id" => user_uuid, "permission" => cap}}`.
     5. Return `{:ok, %{"session_id" => uuid, "granted_to" => username, "perm" => perm}}`.
   """
 
@@ -67,7 +67,7 @@ defmodule Esr.Commands.Session.Share do
          cap = build_cap(raw_session, perm),
          {:ok, _grant_result} <-
            Grant.execute(%{
-             "args" => %{"principal_id" => user_uuid, "permission" => cap}
+             "args" => %{"target_principal_id" => user_uuid, "permission" => cap}
            }) do
       {:ok,
        %{

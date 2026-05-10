@@ -20,9 +20,9 @@ defmodule Esr.Commands.Cap.Show do
     requires_user_binding      false
     requires_workspace_binding false
 
-    arg :principal_id, required: true, doc: "principal id"
+    arg :target_principal_id, required: true, doc: "principal whose caps to display"
 
-    error :invalid_args, "cap_show requires args.principal_id (non-empty string)"
+    error :invalid_args, "cap_show requires args.target_principal_id (non-empty string)"
   end
 
   @behaviour Esr.Role.Control
@@ -32,7 +32,7 @@ defmodule Esr.Commands.Cap.Show do
   @type result :: {:ok, map()} | {:error, map()}
 
   @spec execute(map()) :: result()
-  def execute(%{"args" => %{"principal_id" => pid}}) when is_binary(pid) and pid != "" do
+  def execute(%{"args" => %{"target_principal_id" => pid}}) when is_binary(pid) and pid != "" do
     path = Esr.Paths.capabilities_yaml()
 
     case YamlElixir.read_from_file(path) do

@@ -299,11 +299,11 @@ defmodule Esr.Cli.Main do
   end
 
   @doc """
-  Resolve the principal_id for the `submitted_by` field of an admin-queue
-  envelope. Spec 2026-05-09 § 3.5 chain (first match wins):
+  Resolve the caller_principal_id for the `submitted_by` field of an
+  admin-queue envelope. Spec 2026-05-09 § 3.5 chain (first match wins):
 
     1. operator.json at `<ESRD_HOME>/<instance>/operator.json` — read
-       `principal_id`. Malformed file → log + fall through.
+       `caller_principal_id`. Malformed file → log + fall through.
     2. `"system:bootstrap"` sentinel — fresh-install state. The CLI
        prints a hint to stderr so the operator knows.
 
@@ -317,7 +317,7 @@ defmodule Esr.Cli.Main do
     case File.read(path) do
       {:ok, body} ->
         case Jason.decode(body) do
-          {:ok, %{"principal_id" => pid}} when is_binary(pid) and pid != "" ->
+          {:ok, %{"caller_principal_id" => pid}} when is_binary(pid) and pid != "" ->
             pid
 
           _ ->

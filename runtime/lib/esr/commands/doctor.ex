@@ -10,7 +10,7 @@ defmodule Esr.Commands.Doctor do
 
   Reads from args:
     * `mode` (optional, "chat" | "system" — default "chat")
-    * `principal_id` (Feishu open_id from envelope; chat mode only)
+    * `caller_principal_id` (Feishu open_id from envelope; chat mode only)
     * `chat_id` / `app_id` (chat mode only)
 
   Pre-PR-21κ the chat-mode body lived in `Esr.Entity.FeishuAppAdapter.doctor_text/3`.
@@ -37,7 +37,7 @@ defmodule Esr.Commands.Doctor do
   def execute(%{"args" => %{"mode" => "system"}} = _cmd), do: {:ok, %{"text" => system_snapshot_text(), "data" => system_snapshot_data()}}
 
   def execute(%{"args" => args} = _cmd) do
-    principal_id = Map.get(args, "principal_id", "(unknown)")
+    principal_id = Map.get(args, "caller_principal_id", "(unknown)")
     chat_id = Map.get(args, "chat_id", "(unknown)")
     app_id = Map.get(args, "app_id", "(unknown)")
 

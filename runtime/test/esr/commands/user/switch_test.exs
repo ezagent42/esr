@@ -47,14 +47,14 @@ defmodule Esr.Commands.User.SwitchTest do
               %{
                 "action" => "switched",
                 "username" => ^name,
-                "principal_id" => ^uuid
+                "target_principal_id" => ^uuid
               }} = Switch.execute(%{"args" => %{"name" => name}})
 
       operator_path = Esr.Paths.operator_json()
       assert File.exists?(operator_path)
 
       {:ok, op_doc} = Jason.decode(File.read!(operator_path))
-      assert op_doc["principal_id"] == uuid
+      assert op_doc["caller_principal_id"] == uuid
       assert op_doc["name"] == name
       assert op_doc["set_by"] == "user_switch"
       assert op_doc["schema_version"] == 1
@@ -70,11 +70,11 @@ defmodule Esr.Commands.User.SwitchTest do
 
       {:ok, _} = Switch.execute(%{"args" => %{"name" => n1}})
       {:ok, op1} = Jason.decode(File.read!(Esr.Paths.operator_json()))
-      assert op1["principal_id"] == u1
+      assert op1["caller_principal_id"] == u1
 
       {:ok, _} = Switch.execute(%{"args" => %{"name" => n2}})
       {:ok, op2} = Jason.decode(File.read!(Esr.Paths.operator_json()))
-      assert op2["principal_id"] == u2
+      assert op2["caller_principal_id"] == u2
       assert op2["name"] == n2
     end
   end
