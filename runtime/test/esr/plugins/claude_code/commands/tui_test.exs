@@ -27,19 +27,26 @@ defmodule Esr.Plugins.ClaudeCode.Commands.TuiTest do
     sid = "11111111-aaaa-4aaa-8aaa-111111111111"
     :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-    tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
+    # Phase 7 layout: register via public API, then patch the actor_ids
+    # field directly on the metadata-table row (the public API has no
+    # set-actor_ids method — only add_instance_and_spawn does, and that
+    # path needs a real Scope tree).
+    :ok = Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+            session_id: sid,
+            type: "cc",
+            name: "alice",
+            config: %{}
+          })
 
-    inst = %Esr.Entity.Agent.Instance{
-      id: "cc-uuid-tui",
-      session_id: sid,
-      type: "cc",
-      name: "alice",
-      config: %{},
-      created_at: "2026-05-08T00:00:00Z",
-      actor_ids: %{cc: "cc-uuid-tui", pty: "pty-uuid-tui-aaaa"}
-    }
+    [{_, instance_id}] =
+      :ets.lookup(:"#{Esr.Entity.Agent.InstanceRegistry}__nameix", {sid, "alice"})
 
-    :ets.insert(tab, {{sid, "alice"}, inst})
+    [{_, inst_record}] = :ets.lookup(Esr.Entity.Agent.InstanceRegistry, instance_id)
+
+    :ets.insert(
+      Esr.Entity.Agent.InstanceRegistry,
+      {instance_id, %{inst_record | actor_ids: %{cc: instance_id, pty: "pty-uuid-tui-aaaa"}}}
+    )
 
     cmd = %{
       "submitted_by" => "linyilun",

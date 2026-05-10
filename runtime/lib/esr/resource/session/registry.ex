@@ -4,19 +4,25 @@ defmodule Esr.Resource.Session.Registry do
 
   ETS layout:
     * `:esr_resource_sessions_by_uuid` — UUID-keyed: `{uuid, %Struct{}}`.
-    * `:esr_resource_session_name_index` — composite-keyed: `{{owner_user_uuid, name}, uuid}`.
-      Composite key per spec D6: session names unique within (owner_user, name), not globally.
+    * `:esr_resource_session_name_index` — composite-keyed:
+      `{{owner_user_uuid, name}, uuid}`. Composite key per spec D6:
+      session names unique within (owner_user, name), not globally.
 
-  Public API (Phase 1 — read-side + reload):
+  Public API:
     * `start_link/1`, `reload/0`
-    * `get_by_id/1` — returns `{:ok, Struct.t()} | :not_found`
-    * `list_all/0` — returns `[Struct.t()]`
-
-  Phase 3 additions (multi-agent per session):
+    * `get_by_id/1`, `list_all/0`
     * `create_session/2` — writes session.json + registers in ETS
     * `get_session/1` — alias for get_by_id/1
-    * `add_agent_to_session/5` — write-through to InstanceRegistry + persists to disk
-    * `remove_agent_from_session/3` — write-through to InstanceRegistry + persists to disk
+    * `add_agent_to_session/5` — write-through to InstanceRegistry +
+      persists to disk (per-instance JSON file + session.json's
+      agent_ids array)
+    * `remove_agent_from_session/3` — write-through to InstanceRegistry
+      + persists to disk
+
+  Phase 7 (2026-05-10) hardcut: agents are stored as one JSON file per
+  instance at `sessions/<sid>/agents/<instance_uuid>.json` (validated
+  by `priv/schemas/agent_instance.v2.json`). session.json now carries
+  only `agent_ids: [<uuid>...]` (no embedded structs).
   """
 
   @behaviour Esr.Role.State
@@ -25,6 +31,7 @@ defmodule Esr.Resource.Session.Registry do
 
   alias Esr.Paths
   alias Esr.Resource.Session.{Struct, FileLoader}
+  alias Esr.Entity.Agent.InstanceJson
 
   @uuid_table :esr_resource_sessions_by_uuid
   @name_index :esr_resource_session_name_index
@@ -62,11 +69,6 @@ defmodule Esr.Resource.Session.Registry do
 
   @doc """
   Create a new session on disk and register it in the ETS tables.
-
-  Writes `<data_dir>/sessions/<uuid>/session.json` using `JsonWriter`.
-  A fresh UUID v4 is assigned as the session `id`.
-
-  Returns `{:ok, session_uuid}` on success.
   """
   @spec create_session(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
   def create_session(data_dir, attrs) when is_binary(data_dir) and is_map(attrs) do
@@ -75,11 +77,6 @@ defmodule Esr.Resource.Session.Registry do
 
   @doc """
   Add an agent instance to the session with `session_id`.
-
-  Delegates name-uniqueness enforcement to `Esr.Entity.Agent.InstanceRegistry`.
-  On success, writes the updated agents list back to `session.json`.
-
-  Returns `:ok` or `{:error, {:duplicate_agent_name, name}}`.
   """
   @spec add_agent_to_session(String.t(), String.t(), String.t(), String.t(), map()) ::
           :ok | {:error, {:duplicate_agent_name, String.t()}}
@@ -94,8 +91,6 @@ defmodule Esr.Resource.Session.Registry do
 
   @doc """
   Remove the agent named `name` from the session with `session_id`.
-
-  Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
   """
   @spec remove_agent_from_session(String.t(), String.t(), String.t()) ::
           :ok | {:error, :cannot_remove_primary | :not_found}
@@ -127,9 +122,6 @@ defmodule Esr.Resource.Session.Registry do
 
   @impl GenServer
   def handle_call({:create_session, data_dir, attrs}, _from, state) do
-    # Allow callers (e.g. `Esr.Commands.Session.New` post-spawn) to pin the
-    # session uuid so the on-disk record matches the supervisor-tree sid.
-    # When omitted, mint a fresh v4 — preserves the original `/2` contract.
     uuid =
       Map.get(attrs, :session_id) || Map.get(attrs, "session_id") || Esr.Resource.Session.Id.new()
 
@@ -140,7 +132,7 @@ defmodule Esr.Resource.Session.Registry do
       name: Map.get(attrs, :name) || Map.get(attrs, "name", ""),
       owner_user: Map.get(attrs, :owner_user) || Map.get(attrs, "owner_user", ""),
       workspace_id: Map.get(attrs, :workspace_id) || Map.get(attrs, "workspace_id", ""),
-      agents: [],
+      agent_ids: [],
       primary_agent: nil,
       attached_chats: [],
       created_at: now,
@@ -221,6 +213,10 @@ defmodule Esr.Resource.Session.Registry do
     :ok
   end
 
+  # Phase 7: persist agents as one JSON file per instance under
+  # sessions/<sid>/agents/<uuid>.json, plus the agent_ids array on
+  # session.json. Each instance is written to its CANONICAL path —
+  # the agents/ dir under its primary (originating) session_id.
   defp persist_agents(data_dir, session_id) do
     instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
 
@@ -230,8 +226,15 @@ defmodule Esr.Resource.Session.Registry do
         :not_found -> nil
       end
 
-    agents_json =
-      Enum.map(instances, fn i -> %{"type" => i.type, "name" => i.name, "config" => i.config} end)
+    # Write per-instance file for each instance.
+    Enum.each(instances, fn inst ->
+      canonical_sid = List.first(inst.session_ids) || session_id
+      path = Path.join([data_dir, "sessions", canonical_sid, "agents", inst.id <> ".json"])
+      _ = InstanceJson.write(path, inst)
+    end)
+
+    # Update session.json's agent_ids list.
+    agent_ids = Enum.map(instances, & &1.id)
 
     session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
 
@@ -240,20 +243,19 @@ defmodule Esr.Resource.Session.Registry do
         doc =
           raw
           |> Jason.decode!()
-          |> Map.put("agents", agents_json)
+          |> Map.put("agent_ids", agent_ids)
           |> Map.put("primary_agent", primary)
+          # v2 hardcut: drop any v1 leftover field if present.
+          |> Map.delete("agents")
 
         tmp_path = session_json_path <> ".tmp"
         File.write!(tmp_path, Jason.encode!(doc, pretty: true))
         File.rename!(tmp_path, session_json_path)
 
-        # Also update ETS with the fresh agents list.
+        # Also update ETS with the fresh agent_ids list.
         case :ets.lookup(@uuid_table, session_id) do
           [{^session_id, s}] ->
-            agents_atoms =
-              Enum.map(instances, fn i -> %{type: i.type, name: i.name, config: i.config} end)
-
-            updated = %{s | agents: agents_atoms, primary_agent: primary}
+            updated = %{s | agent_ids: agent_ids, primary_agent: primary}
             :ets.insert(@uuid_table, {session_id, updated})
 
           [] ->

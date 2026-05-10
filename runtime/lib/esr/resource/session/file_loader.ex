@@ -3,9 +3,10 @@ defmodule Esr.Resource.Session.FileLoader do
   Read a session.json file from disk and return an
   `%Esr.Resource.Session.Struct{}` or a structured error.
 
-  Validates schema_version, UUID format for id, non-empty owner_user.
-  Does not validate owner_user format against UUID regex — the registry
-  does cross-reference checks at boot.
+  Phase 7 (2026-05-10) hardcut: schema_version = 2. session.json now
+  carries `agent_ids:` (UUID array) instead of an embedded `agents:[]`
+  array; the per-instance records live in sibling files at
+  `sessions/<sid>/agents/<instance_uuid>.json`.
   """
 
   alias Esr.Resource.Session.Struct
@@ -40,7 +41,7 @@ defmodule Esr.Resource.Session.FileLoader do
     end
   end
 
-  defp check_schema_version(%{"schema_version" => 1}), do: :ok
+  defp check_schema_version(%{"schema_version" => 2}), do: :ok
   defp check_schema_version(%{"schema_version" => v}), do: {:error, {:bad_schema_version, v}}
   defp check_schema_version(_), do: {:error, {:bad_schema_version, nil}}
 
@@ -70,19 +71,13 @@ defmodule Esr.Resource.Session.FileLoader do
       name: doc["name"],
       owner_user: doc["owner_user"],
       workspace_id: doc["workspace_id"],
-      agents: Enum.map(doc["agents"] || [], &normalize_agent/1),
+      agent_ids: doc["agent_ids"] || [],
       primary_agent: doc["primary_agent"],
       attached_chats: Enum.map(doc["attached_chats"] || [], &normalize_chat/1),
       created_at: doc["created_at"],
       transient: doc["transient"] || false
     }
   end
-
-  defp normalize_agent(%{"type" => t, "name" => n, "config" => c}),
-    do: %{type: t, name: n, config: c}
-
-  defp normalize_agent(%{"type" => t, "name" => n}),
-    do: %{type: t, name: n, config: %{}}
 
   defp normalize_chat(%{"chat_id" => cid, "app_id" => aid, "attached_by" => by, "attached_at" => at}),
     do: %{chat_id: cid, app_id: aid, attached_by: by, attached_at: at}

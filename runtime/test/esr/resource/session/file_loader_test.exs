@@ -5,14 +5,15 @@ defmodule Esr.Resource.Session.FileLoaderTest do
   @uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
   @owner_uuid "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
   @ws_uuid "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
+  @inst_uuid "d4e5f6a7-b8c9-4d0e-9f1a-b2c3d4e5f6a7"
 
   @valid %{
-    "schema_version" => 1,
+    "schema_version" => 2,
     "id" => @uuid,
     "name" => "esr-dev",
     "owner_user" => @owner_uuid,
     "workspace_id" => @ws_uuid,
-    "agents" => [%{"type" => "cc", "name" => "esr-dev", "config" => %{}}],
+    "agent_ids" => [@inst_uuid],
     "primary_agent" => "esr-dev",
     "attached_chats" => [],
     "created_at" => "2026-05-07T12:00:00Z",
@@ -32,14 +33,14 @@ defmodule Esr.Resource.Session.FileLoaderTest do
     path
   end
 
-  test "loads a valid session.json", %{tmp: tmp} do
+  test "loads a valid session.json (v2 hardcut)", %{tmp: tmp} do
     path = write_fixture(tmp, @valid)
     assert {:ok, %Struct{} = s} = FileLoader.load(path, [])
     assert s.id == @uuid
     assert s.name == "esr-dev"
     assert s.owner_user == @owner_uuid
     assert s.workspace_id == @ws_uuid
-    assert s.agents == [%{type: "cc", name: "esr-dev", config: %{}}]
+    assert s.agent_ids == [@inst_uuid]
     assert s.primary_agent == "esr-dev"
     assert s.transient == false
   end
@@ -48,9 +49,9 @@ defmodule Esr.Resource.Session.FileLoaderTest do
     assert {:error, :file_missing} = FileLoader.load(Path.join(tmp, "nofile.json"), [])
   end
 
-  test "rejects wrong schema_version", %{tmp: tmp} do
-    path = write_fixture(tmp, Map.put(@valid, "schema_version", 2))
-    assert {:error, {:bad_schema_version, 2}} = FileLoader.load(path, [])
+  test "rejects wrong schema_version (v1 hardcut)", %{tmp: tmp} do
+    path = write_fixture(tmp, Map.put(@valid, "schema_version", 1))
+    assert {:error, {:bad_schema_version, 1}} = FileLoader.load(path, [])
   end
 
   test "rejects malformed UUID in id", %{tmp: tmp} do

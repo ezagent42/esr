@@ -12,6 +12,15 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
   channel_pid, principal_id}` peer message that
   `EsrWeb.ChannelChannel` used to deliver — same dispatch, new
   transport.
+
+  Phase 7 (2026-05-10): every session-scoped tool gains an optional
+  `current_session_id` argument. When a CCProcess is attached to
+  multiple sessions, the inbound `<channel>` notification carries the
+  inbound's session_id; claude is instructed to echo it back on each
+  tool call so the runtime routes the response to the right
+  `cli:channel/<sid>` topic + `*_chat_proxy`. When omitted, the
+  runtime falls back to the chat_id → session lookup it has always
+  used.
   """
 
   @reply %{
@@ -58,6 +67,15 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
               "responds to. When present, the runtime un-reacts any " <>
               "delivery-ack emoji the per-IM proxy added on inbound " <>
               "receive. Stripped automatically on cross-app reply."
+        },
+        "current_session_id" => %{
+          "type" => "string",
+          "description" =>
+            "Phase 7 multi-session-per-instance hint. Echo the value " <>
+              "from the inbound `<channel>` notification's " <>
+              "current_session_id field so the runtime routes this " <>
+              "reply to the same session the inbound came from. Omit " <>
+              "to fall back to the legacy chat_id → session lookup."
         }
       },
       "required" => ["chat_id", "app_id", "text"]
@@ -80,6 +98,14 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
         "file_path" => %{
           "type" => "string",
           "description" => "Absolute path to local file"
+        },
+        "current_session_id" => %{
+          "type" => "string",
+          "description" =>
+            "Phase 7 multi-session-per-instance hint. Echo the inbound " <>
+              "<channel>'s current_session_id so the runtime routes the " <>
+              "upload to the right session. Omit to fall back to legacy " <>
+              "chat_id → session lookup."
         }
       },
       "required" => ["chat_id", "file_path"]

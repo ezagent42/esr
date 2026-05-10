@@ -27,19 +27,24 @@ defmodule Esr.Commands.Pty.ListTest do
     sid = "99999999-9999-4999-8999-999999999999"
     :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-    tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
+    # Phase 7 layout: use public API to seed, then patch actor_ids onto
+    # the metadata-table row directly.
+    :ok = Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+            session_id: sid,
+            type: "cc",
+            name: "alice",
+            config: %{}
+          })
 
-    inst = %Esr.Entity.Agent.Instance{
-      id: "cc-uuid-pl",
-      session_id: sid,
-      type: "cc",
-      name: "alice",
-      config: %{},
-      created_at: "2026-05-08T00:00:00Z",
-      actor_ids: %{cc: "cc-uuid-pl", pty: "pty-uuid-pl"}
-    }
+    [{_, instance_id}] =
+      :ets.lookup(:"#{Esr.Entity.Agent.InstanceRegistry}__nameix", {sid, "alice"})
 
-    :ets.insert(tab, {{sid, "alice"}, inst})
+    [{_, inst_record}] = :ets.lookup(Esr.Entity.Agent.InstanceRegistry, instance_id)
+
+    :ets.insert(
+      Esr.Entity.Agent.InstanceRegistry,
+      {instance_id, %{inst_record | actor_ids: %{cc: instance_id, pty: "pty-uuid-pl"}}}
+    )
 
     cmd = %{"submitted_by" => "linyilun", "args" => %{"chat_id" => chat, "app_id" => app}}
     assert {:ok, %{"ptys" => [pty]}} = PtyList.execute(cmd)

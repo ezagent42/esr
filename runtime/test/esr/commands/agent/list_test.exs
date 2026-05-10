@@ -21,30 +21,26 @@ defmodule Esr.Commands.Agent.ListTest do
     sid = "cccccccc-3333-4333-8333-333333333333"
     :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-    tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
+    # Phase 7 two-table layout: use public API to seed names, then patch
+    # actor_ids onto each metadata-table row directly.
+    for {agent_name, pty_id} <- [{"alice", "pty-uuid-a"}, {"bob", "pty-uuid-b"}] do
+      :ok = Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+              session_id: sid,
+              type: "cc",
+              name: agent_name,
+              config: %{}
+            })
 
-    inst_a = %Esr.Entity.Agent.Instance{
-      id: "cc-uuid-a",
-      session_id: sid,
-      type: "cc",
-      name: "alice",
-      config: %{},
-      created_at: "2026-05-08T00:00:00Z",
-      actor_ids: %{cc: "cc-uuid-a", pty: "pty-uuid-a"}
-    }
+      [{_, instance_id}] =
+        :ets.lookup(:"#{Esr.Entity.Agent.InstanceRegistry}__nameix", {sid, agent_name})
 
-    inst_b = %Esr.Entity.Agent.Instance{
-      id: "cc-uuid-b",
-      session_id: sid,
-      type: "cc",
-      name: "bob",
-      config: %{},
-      created_at: "2026-05-08T00:00:00Z",
-      actor_ids: %{cc: "cc-uuid-b", pty: "pty-uuid-b"}
-    }
+      [{_, inst_record}] = :ets.lookup(Esr.Entity.Agent.InstanceRegistry, instance_id)
 
-    :ets.insert(tab, {{sid, "alice"}, inst_a})
-    :ets.insert(tab, {{sid, "bob"}, inst_b})
+      :ets.insert(
+        Esr.Entity.Agent.InstanceRegistry,
+        {instance_id, %{inst_record | actor_ids: %{cc: instance_id, pty: pty_id}}}
+      )
+    end
 
     cmd = %{
       "submitted_by" => "linyilun",

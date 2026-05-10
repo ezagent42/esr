@@ -160,7 +160,21 @@ defmodule EsrWeb.McpController do
 
   defp dispatch("tools/call", %{"name" => tool, "arguments" => args}, session_id)
        when is_binary(tool) and is_map(args) do
-    invoke_tool_via_peer(session_id, tool, args)
+    # Phase 7 (2026-05-10): if claude echoed `current_session_id` back
+    # from the inbound notification, prefer it as the dispatch target —
+    # the URL-path session_id is just the cc_mcp connection session
+    # (the originating session of the CCProcess), but for a multi-
+    # session-per-instance setup the inbound came from a different
+    # attached session that has its own thread:<sid> peer. Falls back
+    # to the URL-path session_id when claude omits the field (cross-
+    # version or explicit single-session intent).
+    target_sid =
+      case Map.get(args, "current_session_id") do
+        s when is_binary(s) and s != "" -> s
+        _ -> session_id
+      end
+
+    invoke_tool_via_peer(target_sid, tool, args)
   end
 
   defp dispatch("notifications/initialized", _params, _session_id), do: {:ok, %{}}

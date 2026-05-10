@@ -4,6 +4,7 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
 
   @sess1 "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
   @sess2 "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
+  @sess3 "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
 
   setup do
     # Each test uses a fresh GenServer under a unique name to isolate ETS state.
@@ -18,6 +19,7 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
       assert {:ok, inst} = InstanceRegistry.get(reg, @sess1, "dev")
       assert inst.type == "cc"
       assert inst.name == "dev"
+      assert inst.session_ids == [@sess1]
     end
 
     test "rejects duplicate name in same session regardless of type", %{reg: reg} do
@@ -41,6 +43,22 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
       :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "bob", config: %{}})
       assert {:ok, "alice"} = InstanceRegistry.primary(reg, @sess1)
     end
+
+    test "session_ids array can be passed directly", %{reg: reg} do
+      assert :ok = InstanceRegistry.add_instance(reg, %{
+               session_ids: [@sess1, @sess2],
+               type: "cc",
+               name: "shared",
+               config: %{}
+             })
+
+      assert {:ok, inst} = InstanceRegistry.get(reg, @sess1, "shared")
+      assert inst.session_ids == [@sess1, @sess2]
+
+      # Same instance is reachable via the second session too.
+      assert {:ok, inst2} = InstanceRegistry.get(reg, @sess2, "shared")
+      assert inst2.id == inst.id
+    end
   end
 
   describe "remove_instance/3" do
@@ -61,13 +79,33 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
     test "remove last agent clears primary", %{reg: reg} do
       :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "only", config: %{}})
       :ok = InstanceRegistry.set_primary(reg, @sess1, "only")
-      # Must set_primary to something else first — but there is nothing else.
-      # This tests that remove guard fires correctly.
       assert {:error, :cannot_remove_primary} = InstanceRegistry.remove_instance(reg, @sess1, "only")
     end
 
     test "returns :not_found for unknown agent", %{reg: reg} do
       assert {:error, :not_found} = InstanceRegistry.remove_instance(reg, @sess1, "ghost")
+    end
+
+    test "removes from one session only — instance survives if attached to others", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{
+              session_ids: [@sess1, @sess2],
+              type: "cc",
+              name: "shared",
+              config: %{}
+            })
+
+      # Make a second agent in @sess1 the primary so we can detach `shared` from @sess1.
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "primary_agent", config: %{}})
+      :ok = InstanceRegistry.set_primary(reg, @sess1, "primary_agent")
+
+      assert :ok = InstanceRegistry.remove_instance(reg, @sess1, "shared")
+
+      # Gone from @sess1.
+      assert :not_found = InstanceRegistry.get(reg, @sess1, "shared")
+
+      # Still alive in @sess2 — name-index untouched.
+      assert {:ok, inst} = InstanceRegistry.get(reg, @sess2, "shared")
+      assert inst.session_ids == [@sess2]
     end
   end
 
@@ -114,11 +152,62 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
     end
   end
 
+  describe "attach_to_session/4 — Phase 7 multi-session-per-instance" do
+    test "appends a new session to an existing instance", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+
+      assert :ok = InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess2)
+
+      # Same instance reachable via both sessions.
+      {:ok, from_a} = InstanceRegistry.get(reg, @sess1, "alice")
+      {:ok, from_b} = InstanceRegistry.get(reg, @sess2, "alice")
+      assert from_a.id == from_b.id
+      assert from_a.session_ids == [@sess1, @sess2]
+    end
+
+    test "is idempotent (re-attaching to same session is a no-op)", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      :ok = InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess2)
+      assert :ok = InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess2)
+
+      {:ok, inst} = InstanceRegistry.get(reg, @sess1, "alice")
+      # @sess2 appears exactly once.
+      assert Enum.count(inst.session_ids, fn s -> s == @sess2 end) == 1
+    end
+
+    test "rejects when target session already hosts an instance with the same name", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess2, type: "cc", name: "alice", config: %{}})
+
+      assert {:error, {:name_taken_in_target, @sess2}} =
+               InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess2)
+    end
+
+    test "returns :not_found if instance doesn't exist in source session", %{reg: reg} do
+      assert {:error, :not_found} =
+               InstanceRegistry.attach_to_session(reg, "ghost", @sess1, @sess2)
+    end
+
+    test "instance attached to N sessions can be queried via any of them", %{reg: reg} do
+      :ok = InstanceRegistry.add_instance(reg, %{session_id: @sess1, type: "cc", name: "alice", config: %{}})
+      :ok = InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess2)
+      :ok = InstanceRegistry.attach_to_session(reg, "alice", @sess1, @sess3)
+
+      ids =
+        for s <- [@sess1, @sess2, @sess3] do
+          {:ok, inst} = InstanceRegistry.get(reg, s, "alice")
+          inst.id
+        end
+
+      assert length(Enum.uniq(ids)) == 1, "all three lookups should resolve to the same instance"
+    end
+  end
+
   describe "actor_ids field on %Instance{}" do
     test "Instance struct carries actor_ids field" do
       inst = %Esr.Entity.Agent.Instance{
         id: "11111111-1111-4111-8111-111111111111",
-        session_id: "22222222-2222-4222-8222-222222222222",
+        session_ids: ["22222222-2222-4222-8222-222222222222"],
         type: "cc",
         name: "alice",
         config: %{},
@@ -138,19 +227,25 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
         _ -> :ok
       end
 
-      tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
+      tab = :ets.info(Esr.Entity.Agent.InstanceRegistry)
+      _ = tab
 
-      inst = %Esr.Entity.Agent.Instance{
-        id: "cc-uuid-aaaa",
-        session_id: sid,
-        type: "cc",
-        name: name,
-        config: %{},
-        created_at: "2026-05-08T00:00:00Z",
-        actor_ids: %{cc: "cc-uuid-aaaa", pty: "pty-uuid-bbbb"}
-      }
+      # Use the public API so we don't have to touch the (now-internal)
+      # two-table layout from a test.
+      :ok = Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+              session_id: sid,
+              type: "cc",
+              name: name,
+              config: %{}
+            })
 
-      :ets.insert(tab, {{sid, name}, inst})
+      # Inject actor_ids — `add_instance/2` doesn't take spawn refs;
+      # rewrite the row through the metadata table.
+      [{instance_id, inst_record}] = :ets.lookup(Esr.Entity.Agent.InstanceRegistry, lookup_instance_id(sid, name))
+      :ets.insert(
+        Esr.Entity.Agent.InstanceRegistry,
+        {instance_id, %{inst_record | actor_ids: %{cc: instance_id, pty: "pty-uuid-bbbb"}}}
+      )
 
       assert {:ok, "pty-uuid-bbbb"} =
                Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(sid, name)
@@ -158,5 +253,10 @@ defmodule Esr.Entity.Agent.InstanceRegistryTest do
       assert :not_found =
                Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(sid, "no-such")
     end
+  end
+
+  defp lookup_instance_id(sid, name) do
+    [{_, instance_id}] = :ets.lookup(:"#{Esr.Entity.Agent.InstanceRegistry}__nameix", {sid, name})
+    instance_id
   end
 end

@@ -30,8 +30,12 @@ defmodule Esr.Commands.Agent.PrimaryTest do
     sid = "66666666-6666-4666-8666-666666666666"
     :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-    tab = GenServer.call(Esr.Entity.Agent.InstanceRegistry, :table_name)
-    :ets.insert(tab, {{sid, :__primary__}, "alice"})
+    # Phase 7: primary key shape changed from `{sid, :__primary__}` to
+    # `{:primary, sid}` and lives in the metadata table directly. Use
+    # the public API to seed an instance, then set_primary.
+    :ok = Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+            session_id: sid, type: "cc", name: "alice", config: %{}
+          })
 
     cmd = %{"submitted_by" => "linyilun", "args" => %{"chat_id" => chat, "app_id" => app}}
     assert {:ok, %{"primary" => "alice", "session_id" => ^sid}} = Primary.execute(cmd)

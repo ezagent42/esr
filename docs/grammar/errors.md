@@ -36,6 +36,10 @@ Generated from `command_meta/0`; do not edit directly.
 | `no_session_target` | `agent_add` | no chat-current session and session_id= not provided; use /session:new or pass session_id=<uuid> |
 | `spawn_failed` | `agent_add` | failed to spawn agent subtree for '%{name}' in session '%{session_id}': %{reason} |
 | `unknown_agent_type` | `agent_add` | agent type '%{type}' is not declared in any enabled plugin; known types: %{known} |
+| `instance_not_found` | `agent_add_session` | no agent named '%{name}' in source session '%{source}' |
+| `invalid_args` | `agent_add_session` | /agent:add-session requires args.session (UUID) and args.name (non-empty string) |
+| `name_taken_in_target` | `agent_add_session` | target session '%{target}' already has a different agent named '%{name}' |
+| `no_source_session` | `agent_add_session` | no chat-current session and source_session_id= not provided; can't locate instance '%{name}' |
 | `invalid_args` | `agent_list` | /agent:list requires chat context (chat_id + app_id in envelope) |
 | `invalid_args` | `agent_primary` | /agent:primary requires chat context |
 | `no_current_session` | `agent_primary` | no session attached to this chat; /session:bind-chat first |
