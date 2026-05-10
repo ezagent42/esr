@@ -176,6 +176,50 @@ defmodule Esr.Plugin.LoaderTest do
     test "stop_plugin/1 is a no-op stub returning :ok (Phase 1)" do
       assert :ok == Loader.stop_plugin("anything")
     end
+
+    # 2026-05-10 SessionTemplate + Channel migration, Phase 1: Loader
+    # registers each plugin's `channels:` entries into
+    # `Esr.Channel.Registry` at start_plugin/2 time.
+    test "registers manifest channels into Esr.Channel.Registry" do
+      manifest = %Manifest{
+        name: "demo",
+        version: "0.1.0",
+        description: "x",
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{},
+        channels: [
+          %{name: "chat_proxy", module: Esr.Entity.Server, config_schema: nil},
+          %{name: "mcp_http", module: Esr.Entity.PtyProcess, config_schema: %{"k" => "v"}}
+        ]
+      }
+
+      # The Channel.Registry is a named GenServer. The test suite boots
+      # Esr.Application before tests, so it's already running here. Just
+      # clear it to start clean and verify the post-condition.
+      :ok = Esr.Channel.Registry.clear()
+
+      assert {:ok, _} = Loader.start_plugin("demo", manifest)
+      assert {:ok, Esr.Entity.Server} == Esr.Channel.Registry.lookup("demo.chat_proxy")
+      assert {:ok, Esr.Entity.PtyProcess} == Esr.Channel.Registry.lookup("demo.mcp_http")
+
+      # cleanup
+      :ok = Esr.Channel.Registry.clear()
+    end
+
+    test "manifest with empty channels: leaves the Channel.Registry untouched" do
+      manifest = %Manifest{
+        name: "demo",
+        version: "0.1.0",
+        description: "x",
+        depends_on: %{core: ">= 0.0.0", plugins: []},
+        declares: %{},
+        channels: []
+      }
+
+      :ok = Esr.Channel.Registry.clear()
+      assert {:ok, _} = Loader.start_plugin("demo", manifest)
+      assert [] == Esr.Channel.Registry.list_kinds()
+    end
   end
 
   describe "depends_on.core enforcement (Phase 7.3)" do

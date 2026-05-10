@@ -1,185 +1,187 @@
 defmodule Esr.ApplicationRestoreAdaptersTest do
+  @moduledoc """
+  Per yaml-layout-v2 (spec § 4.7) — `restore_adapters_from_disk/2`
+  reads the per-thing-directory layout via `Esr.Adapters.list/1`. The
+  legacy `plugins.yaml :config.feishu.app_secret` fallback is removed:
+  a feishu row missing `app_secret` fails loud (Logger.error) and is
+  skipped (no spawn). The cleanup-A standalone PR is subsumed here.
+  """
+
   use ExUnit.Case, async: false
+
+  import ExUnit.CaptureLog
 
   setup do
     prev = System.get_env("ESRD_HOME")
+
     on_exit(fn ->
       if prev, do: System.put_env("ESRD_HOME", prev), else: System.delete_env("ESRD_HOME")
     end)
+
     :ok
   end
 
-  test "adapters.yaml restoration calls spawn_fn per instance" do
+  defp with_tmp_home(suffix, fun) do
     unique = System.unique_integer([:positive])
-    tmp = Path.join(System.tmp_dir!(), "esr-adapt-test-#{unique}")
-    instance_name = "feishu-test-#{unique}"
-
+    tmp = Path.join(System.tmp_dir!(), "esr-restore-#{suffix}-#{unique}")
     File.mkdir_p!(Path.join(tmp, "default"))
-    path = Path.join([tmp, "default", "adapters.yaml"])
-
-    File.write!(path, """
-    instances:
-      #{instance_name}:
-        type: feishu
-        config:
-          app_id: cli_x
-          app_secret: secret
-    """)
-
-    parent = self()
-
     System.put_env("ESRD_HOME", tmp)
 
-    :ok =
-      Esr.Application.restore_adapters_from_disk(tmp,
-        spawn_fn: fn instance, type, config ->
-          send(parent, {:spawned, instance, type, config})
-          :ok
-        end
-      )
-
-    assert_received {:spawned, ^instance_name, "feishu", %{"app_id" => "cli_x", "app_secret" => "secret"}}
-
-    File.rm_rf!(tmp)
-  end
-
-  test "restore_adapters_from_disk is a no-op when adapters.yaml is missing" do
-    tmp = Path.join(System.tmp_dir!(), "esr-adapt-empty-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(tmp)
-
-    parent = self()
-
-    System.put_env("ESRD_HOME", tmp)
-
-    assert :ok =
-             Esr.Application.restore_adapters_from_disk(tmp,
-               spawn_fn: fn _, _, _ ->
-                 send(parent, :should_not_fire)
-                 :ok
-               end
-             )
-
-    refute_received :should_not_fire
-
-    File.rm_rf!(tmp)
-  end
-
-  test "restore_adapters_from_disk handles multiple instances" do
-    unique = System.unique_integer([:positive])
-    tmp = Path.join(System.tmp_dir!(), "esr-adapt-multi-#{unique}")
-    File.mkdir_p!(Path.join(tmp, "default"))
-    path = Path.join([tmp, "default", "adapters.yaml"])
-
-    File.write!(path, """
-    instances:
-      a-#{unique}:
-        type: feishu
-        config: {}
-      b-#{unique}:
-        type: feishu
-        config: {}
-    """)
-
-    parent = self()
-
-    System.put_env("ESRD_HOME", tmp)
-
-    :ok =
-      Esr.Application.restore_adapters_from_disk(tmp,
-        spawn_fn: fn name, _type, _cfg ->
-          send(parent, {:got, name})
-          :ok
-        end
-      )
-
-    assert_received {:got, _}
-    assert_received {:got, _}
-
-    File.rm_rf!(tmp)
-  end
-
-  describe "ensure_app_secret fallback (2026-05-09 sidecar-auth fix)" do
-    test "pulls app_secret from plugins.yaml when adapters.yaml row is missing it" do
-      unique = System.unique_integer([:positive])
-      tmp = Path.join(System.tmp_dir!(), "esr-adapt-fallback-#{unique}")
-      File.mkdir_p!(Path.join(tmp, "default"))
-
-      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
-      plugins_path = Path.join([tmp, "default", "plugins.yaml"])
-      instance_name = "feishu-stale-#{unique}"
-
-      # Pre-fix-shape adapters.yaml: app_id only, no app_secret. This is
-      # what an operator's on-disk file looks like if they registered
-      # before the 2026-05-09 register_adapter fix landed.
-      File.write!(adapters_path, """
-      instances:
-        #{instance_name}:
-          type: feishu
-          config:
-            app_id: cli_stale
-      """)
-
-      # plugins.yaml carries the secret in feishu plugin config — the
-      # operator-side configuration source we fall back to.
-      File.write!(plugins_path, """
-      config:
-        feishu:
-          app_secret: "from_plugins_yaml"
-      """)
-
-      parent = self()
-      System.put_env("ESRD_HOME", tmp)
-
-      :ok =
-        Esr.Application.restore_adapters_from_disk(tmp,
-          spawn_fn: fn _name, type, config ->
-            send(parent, {:spawned, type, config})
-            :ok
-          end
-        )
-
-      assert_receive {:spawned, "feishu", config}, 1_000
-      assert config["app_id"] == "cli_stale"
-      assert config["app_secret"] == "from_plugins_yaml"
-
+    try do
+      fun.(tmp)
+    after
       File.rm_rf!(tmp)
     end
+  end
 
-    test "leaves config alone (warns) when neither adapters.yaml nor plugins.yaml has app_secret" do
-      unique = System.unique_integer([:positive])
-      tmp = Path.join(System.tmp_dir!(), "esr-adapt-nosecret-#{unique}")
-      File.mkdir_p!(Path.join(tmp, "default"))
+  test "per-instance directories restoration calls spawn_fn per active instance" do
+    with_tmp_home("ok", fn tmp ->
+      instance_name = "feishu_test_#{System.unique_integer([:positive])}"
 
-      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
-      instance_name = "feishu-nosecret-#{unique}"
-
-      File.write!(adapters_path, """
-      instances:
-        #{instance_name}:
-          type: feishu
-          config:
-            app_id: cli_lonely
-      """)
+      :ok =
+        Esr.Adapters.add(
+          instance_name,
+          "feishu",
+          %{"app_id" => "cli_x", "app_secret" => "secret"}
+        )
 
       parent = self()
-      System.put_env("ESRD_HOME", tmp)
 
-      # Boot must NOT crash — fallback is permissive on miss; sidecar
-      # will fail authentication at runtime but the rest of the
-      # supervision tree stays healthy.
       :ok =
         Esr.Application.restore_adapters_from_disk(tmp,
-          spawn_fn: fn _name, _type, config ->
-            send(parent, {:spawned, config})
+          spawn_fn: fn name, type, config ->
+            send(parent, {:spawned, name, type, config})
             :ok
           end
         )
 
-      assert_receive {:spawned, config}, 1_000
-      assert config["app_id"] == "cli_lonely"
-      refute Map.has_key?(config, "app_secret")
+      assert_received {:spawned, ^instance_name, "feishu",
+                       %{"app_id" => "cli_x", "app_secret" => "secret"}}
+    end)
+  end
 
-      File.rm_rf!(tmp)
+  test "no adapters/ tree → no-op (empty list)" do
+    with_tmp_home("empty", fn tmp ->
+      parent = self()
+
+      assert :ok =
+               Esr.Application.restore_adapters_from_disk(tmp,
+                 spawn_fn: fn _, _, _ ->
+                   send(parent, :should_not_fire)
+                   :ok
+                 end
+               )
+
+      refute_received :should_not_fire
+    end)
+  end
+
+  test "handles multiple active instances" do
+    with_tmp_home("multi", fn tmp ->
+      :ok = Esr.Adapters.add("a_inst", "feishu", %{"app_id" => "a", "app_secret" => "1"})
+      :ok = Esr.Adapters.add("b_inst", "feishu", %{"app_id" => "b", "app_secret" => "2"})
+
+      parent = self()
+
+      :ok =
+        Esr.Application.restore_adapters_from_disk(tmp,
+          spawn_fn: fn name, _type, _cfg ->
+            send(parent, {:got, name})
+            :ok
+          end
+        )
+
+      assert_received {:got, "a_inst"}
+      assert_received {:got, "b_inst"}
+    end)
+  end
+
+  test "disabled instances under adapters/_disabled/ are NOT spawned" do
+    with_tmp_home("disabled", fn tmp ->
+      :ok = Esr.Adapters.add("active_one", "feishu", %{"app_id" => "a", "app_secret" => "s"})
+      :ok = Esr.Adapters.add("paused_one", "feishu", %{"app_id" => "b", "app_secret" => "s"})
+      :ok = Esr.Adapters.disable("paused_one")
+
+      parent = self()
+
+      :ok =
+        Esr.Application.restore_adapters_from_disk(tmp,
+          spawn_fn: fn name, _, _ ->
+            send(parent, {:spawned, name})
+            :ok
+          end
+        )
+
+      assert_received {:spawned, "active_one"}
+      refute_received {:spawned, "paused_one"}
+    end)
+  end
+
+  describe "cleanup A subsumed (no plugins.yaml app_secret fallback)" do
+    test "feishu row missing app_secret fails loud, does NOT spawn" do
+      with_tmp_home("nosecret", fn tmp ->
+        :ok = Esr.Adapters.add("feishu_lonely", "feishu", %{"app_id" => "cli_lonely"})
+
+        parent = self()
+
+        log =
+          capture_log(fn ->
+            :ok =
+              Esr.Application.restore_adapters_from_disk(tmp,
+                spawn_fn: fn name, _type, _cfg ->
+                  send(parent, {:should_not_fire, name})
+                  :ok
+                end
+              )
+          end)
+
+        # Skip-spawn: the feishu row with no secret never reaches spawn_fn.
+        refute_received {:should_not_fire, "feishu_lonely"}
+
+        # Fail-loud: error log carries the actionable cleanup hint.
+        assert log =~ ~r/feishu adapter 'feishu_lonely' missing app_secret in adapters\/feishu_lonely\/config\.yaml/
+        assert log =~ "register_adapter"
+      end)
+    end
+
+    test "non-feishu rows missing app_secret are unaffected (no spawn-skip)" do
+      with_tmp_home("nonfeishu", fn tmp ->
+        :ok = Esr.Adapters.add("ccmcp_inst", "cc_mcp", %{})
+
+        parent = self()
+
+        :ok =
+          Esr.Application.restore_adapters_from_disk(tmp,
+            spawn_fn: fn name, type, _ ->
+              send(parent, {:spawned, name, type})
+              :ok
+            end
+          )
+
+        assert_received {:spawned, "ccmcp_inst", "cc_mcp"}
+      end)
+    end
+
+    test "other valid feishu rows still spawn even when one row is skipped" do
+      with_tmp_home("mixed", fn tmp ->
+        :ok = Esr.Adapters.add("good_row", "feishu", %{"app_id" => "g", "app_secret" => "yes"})
+        :ok = Esr.Adapters.add("bad_row", "feishu", %{"app_id" => "b"})
+
+        parent = self()
+
+        capture_log(fn ->
+          :ok =
+            Esr.Application.restore_adapters_from_disk(tmp,
+              spawn_fn: fn name, _, _ ->
+                send(parent, {:spawned, name})
+                :ok
+              end
+            )
+        end)
+
+        assert_received {:spawned, "good_row"}
+        refute_received {:spawned, "bad_row"}
+      end)
     end
   end
 end

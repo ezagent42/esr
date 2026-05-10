@@ -66,22 +66,21 @@ defmodule Esr.Commands.RegisterAdapterTest do
                  end
                )
 
-      # adapters.yaml was written with both app_id AND app_secret in
-      # the config block — sidecar AdapterConfig validation requires
-      # both keys, this is the production-bug regression guard.
-      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
-      assert File.exists?(adapters_path)
-      {:ok, parsed} = YamlElixir.read_from_file(adapters_path)
+      # adapters/<name>/config.yaml was written with both app_id AND
+      # app_secret in the config block (yaml-layout-v2 spec § 4.3) —
+      # sidecar AdapterConfig validation requires both keys, this is the
+      # production-bug regression guard.
+      adapter_config_path =
+        Path.join([tmp, "default", "adapters", "esr_dev_helper", "config.yaml"])
+
+      assert File.exists?(adapter_config_path)
+      {:ok, parsed} = YamlElixir.read_from_file(adapter_config_path)
 
       assert %{
-               "instances" => %{
-                 "esr_dev_helper" => %{
-                   "type" => "feishu",
-                   "config" => %{
-                     "app_id" => "cli_test_app_id",
-                     "app_secret" => "sekret123"
-                   }
-                 }
+               "type" => "feishu",
+               "config" => %{
+                 "app_id" => "cli_test_app_id",
+                 "app_secret" => "sekret123"
                }
              } = parsed
 
@@ -99,16 +98,15 @@ defmodule Esr.Commands.RegisterAdapterTest do
       assert url =~ "/adapter_hub/socket/websocket"
     end
 
-    test "merges into existing adapters.yaml without clobbering prior instances", %{tmp: tmp} do
-      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
-
-      File.write!(adapters_path, """
-      instances:
-        existing_helper:
-          type: feishu
-          config:
-            app_id: cli_existing
-      """)
+    test "adding a new instance does not disturb a pre-existing one (per-thing isolation)",
+         %{tmp: tmp} do
+      # Pre-existing instance written manually under the v2 layout.
+      :ok =
+        Esr.Adapters.add(
+          "existing_helper",
+          "feishu",
+          %{"app_id" => "cli_existing", "app_secret" => "preexisting"}
+        )
 
       cmd = %{
         "args" => %{
@@ -122,18 +120,23 @@ defmodule Esr.Commands.RegisterAdapterTest do
       assert {:ok, _} =
                RegisterAdapter.execute(cmd, spawn_fn: fn _ -> :ok end)
 
-      {:ok, parsed} = YamlElixir.read_from_file(adapters_path)
+      existing_path =
+        Path.join([tmp, "default", "adapters", "existing_helper", "config.yaml"])
 
-      assert Map.has_key?(parsed["instances"], "existing_helper")
-      assert Map.has_key?(parsed["instances"], "new_helper")
-      assert parsed["instances"]["existing_helper"]["config"]["app_id"] == "cli_existing"
-      assert parsed["instances"]["new_helper"]["config"]["app_id"] == "cli_new"
-      assert parsed["instances"]["new_helper"]["config"]["app_secret"] == "new_secret"
+      new_path = Path.join([tmp, "default", "adapters", "new_helper", "config.yaml"])
+      assert File.exists?(existing_path)
+      assert File.exists?(new_path)
+
+      {:ok, existing} = YamlElixir.read_from_file(existing_path)
+      {:ok, new} = YamlElixir.read_from_file(new_path)
+
+      assert existing["config"]["app_id"] == "cli_existing"
+      assert existing["config"]["app_secret"] == "preexisting"
+      assert new["config"]["app_id"] == "cli_new"
+      assert new["config"]["app_secret"] == "new_secret"
     end
 
     test "registering a second adapter preserves the first instance + its secret", %{tmp: tmp} do
-      adapters_path = Path.join([tmp, "default", "adapters.yaml"])
-
       # First command.
       assert {:ok, _} =
                RegisterAdapter.execute(
@@ -162,11 +165,16 @@ defmodule Esr.Commands.RegisterAdapterTest do
                  spawn_fn: fn _ -> :ok end
                )
 
-      {:ok, parsed} = YamlElixir.read_from_file(adapters_path)
-      assert parsed["instances"]["first"]["config"]["app_id"] == "a1"
-      assert parsed["instances"]["first"]["config"]["app_secret"] == "s1"
-      assert parsed["instances"]["second"]["config"]["app_id"] == "a2"
-      assert parsed["instances"]["second"]["config"]["app_secret"] == "s2"
+      first_path = Path.join([tmp, "default", "adapters", "first", "config.yaml"])
+      second_path = Path.join([tmp, "default", "adapters", "second", "config.yaml"])
+
+      {:ok, first} = YamlElixir.read_from_file(first_path)
+      {:ok, second} = YamlElixir.read_from_file(second_path)
+
+      assert first["config"]["app_id"] == "a1"
+      assert first["config"]["app_secret"] == "s1"
+      assert second["config"]["app_id"] == "a2"
+      assert second["config"]["app_secret"] == "s2"
     end
   end
 
@@ -296,7 +304,7 @@ defmodule Esr.Commands.RegisterAdapterTest do
                      1_000
     end
 
-    test "adapters.yaml gets app_secret persisted in config block", %{tmp: tmp} do
+    test "per-instance config.yaml carries app_secret in config block", %{tmp: tmp} do
       cmd = %{
         "args" => %{
           "type" => "feishu",
@@ -308,9 +316,10 @@ defmodule Esr.Commands.RegisterAdapterTest do
 
       assert {:ok, _} = RegisterAdapter.execute(cmd, spawn_fn: fn _ -> :ok end)
 
-      {:ok, doc} = YamlElixir.read_from_file(Path.join([tmp, "default", "adapters.yaml"]))
-      assert get_in(doc, ["instances", "esr_persist_test", "config", "app_secret"]) == "secret_pX"
-      assert get_in(doc, ["instances", "esr_persist_test", "config", "app_id"]) == "cli_pX"
+      path = Path.join([tmp, "default", "adapters", "esr_persist_test", "config.yaml"])
+      {:ok, doc} = YamlElixir.read_from_file(path)
+      assert get_in(doc, ["config", "app_secret"]) == "secret_pX"
+      assert get_in(doc, ["config", "app_id"]) == "cli_pX"
     end
   end
 end

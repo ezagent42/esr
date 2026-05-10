@@ -1,5 +1,21 @@
 # Manual checks
 
+> **Status (2026-05-09):** the 12-step bootstrap journey hits 12/12 ✅
+> as of the unified-command-grammar migration + PTY hardening series.
+> The audits in this directory are now a **historical record** of how
+> the gaps closed.
+>
+> **For ongoing verification, use the standing checklist:**
+> [`docs/guides/operator-bootstrap-checklist.md`](../guides/operator-bootstrap-checklist.md)
+> ([zh_cn](../guides/operator-bootstrap-checklist.zh_cn.md)).
+> The guide distills the audit methodology into a runnable
+> 12-row checklist; future grammar / bootstrap changes update the
+> guide first, and re-audit (creating a new dated file here) only
+> when the surface drifts far enough that step-by-step rescoring is
+> warranted again.
+
+---
+
 This directory holds operator-driven flow audits — checklists comparing
 a *proposed* user journey against the *current* implementation, scored
 on three dimensions:
@@ -39,6 +55,9 @@ the narrative differs.
 - [`tests/e2e/scenarios/`](../../tests/e2e/scenarios/) — automated
   regression scenarios derived from these manual checks once the gap
   is closed.
+- [`docs/guides/operator-bootstrap-checklist.md`](../guides/operator-bootstrap-checklist.md)
+  — the runnable distillation of these audits. Use this for ongoing
+  verification; the dated audits below are the historical record.
 - [`docs/futures/todo.md`](../futures/todo.md) — durable TODO list;
   gaps surfaced here typically land here as "spec needed" items.
 

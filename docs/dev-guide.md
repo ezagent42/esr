@@ -43,8 +43,9 @@ through the admin queue.
    `runtime/esr exec user_switch --name=<other>`.
 4. `runtime/esr exec register_adapter --type=feishu --name=esr_helper \
        --app_id=<app_id> --app_secret=<app_secret>`. Persists
-   `(app_id, app_secret)` to `adapters.yaml` and spawns the Python
-   sidecar.
+   `(app_id, app_secret)` to `adapters/<name>/config.yaml` (yaml-
+   layout-v2 — see `docs/superpowers/specs/2026-05-09-yaml-layout-v2-
+   per-thing-directories.md`) and spawns the Python sidecar.
 5. `runtime/esr exec feishu_bind --name=<you> --feishu_user_id=<ou_xxx>`
    to bind your Feishu identity.
 6. In Feishu, DM the bot: `/session:new`, `/agent:add type=cc
@@ -52,6 +53,64 @@ through the admin queue.
 7. A tmux window appears hosting the CC session with `esr-channel`
    MCP loaded. Subsequent messages to the bot get routed into that
    session's prompt.
+
+## esrd home layout
+
+`$ESRD_HOME/<inst>/` (default: `~/.esrd/default/`) is the per-instance
+runtime root. Per yaml-layout-v2 (spec
+`docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md`),
+the layout follows a **directory-per-thing** convention — one directory
+per adapter / plugin / user / workspace / session, never a monolithic
+yaml that mixes them.
+
+```
+~/.esrd/default/
+├── plugins.yaml                  # ONLY: enabled: [name1, name2, …]
+├── plugins/
+│   └── <plugin_name>/
+│       └── config.yaml           # plugin-wide config (global layer)
+├── adapters/
+│   ├── <instance_name>/
+│   │   └── config.yaml           # type + per-instance config (app_id, app_secret, …)
+│   └── _disabled/
+│       └── <instance_name>/
+│           └── config.yaml       # paused — Esr.Adapters.list/0 ignores
+├── users/
+│   └── <uuid>/
+│       ├── user.json
+│       └── .esr/
+│           ├── workspace.json
+│           └── plugins/
+│               └── <plugin_name>/
+│                   └── config.yaml   # per-user override layer
+├── workspaces/
+│   └── <name>/
+│       └── workspace.json
+├── sessions/
+│   └── <uuid>/
+│       └── session.json
+├── capabilities.yaml             # (still monolithic — out of scope for v2)
+├── users.yaml                    # canonical user index
+├── workspaces.yaml               # workspace index (Phoenix-bound chats)
+├── slash-routes.yaml             # generated; refreshed at boot
+└── operator.json                 # active operator state (PR #281)
+```
+
+Workspace-layer per-plugin config lives at
+`<workspace_root>/.esr/plugins/<plugin_name>/config.yaml`.
+
+Adapter operations:
+
+- `register_adapter` writes `adapters/<name>/config.yaml`
+- `/adapter:list` enumerates `adapters/*` + `adapters/_disabled/*`
+- `/adapter:disable name=<n>` moves `adapters/<n>/` → `adapters/_disabled/<n>/`
+- `/adapter:enable name=<n>` reverses the move + refresh
+- `/adapter:remove name=<n>` `rm -rf adapters/<n>/`
+
+Reserved-name rule: any directory under `adapters/` whose basename
+starts with `_` is hidden from `Esr.Adapters.list/0`. The
+`register_adapter` arg validator also rejects user-supplied names
+starting with `_`.
 
 ## Writing a new handler
 

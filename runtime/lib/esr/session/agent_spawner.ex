@@ -135,7 +135,7 @@ defmodule Esr.Session.AgentSpawner do
   def do_create(params) do
     with {:ok, agent_name} <- fetch_agent_name(params),
          {:ok, agent_def} <- fetch_agent(agent_name),
-         session_id <- gen_id(),
+         session_id <- Esr.Resource.Session.Id.new(),
          params <- enrich_params(params, session_id),
          {:ok, _sup} <- start_session_sup(session_id, agent_name, params, agent_def),
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
@@ -230,12 +230,6 @@ defmodule Esr.Session.AgentSpawner do
       {:error, :not_found} -> {:error, :unknown_agent}
     end
   end
-
-  # Phase 5 D2: session ids must be UUID v4 (cap routing validates the
-  # format). Pre-2026-05-08 this emitted ULID-ish base32, breaking
-  # scenarios 14/15/17/22 once cap-aware paths kicked in. Surfaced
-  # during Phase F (resource-typed grammar) e2e renames.
-  defp gen_id, do: UUID.uuid4()
 
   defp start_session_sup(sid, agent_name, params, agent_def) do
     chat_id = get_param(params, :chat_id) || ""

@@ -13,18 +13,9 @@ internal_kinds:
   adapter_refresh:
     command_module: Esr.Commands.Adapter.Refresh
     permission: adapter.manage
-  adapter_remove:
-    command_module: Esr.Commands.Adapter.Remove
-    permission: adapter.manage
-  adapter_rename:
-    command_module: Esr.Commands.Adapter.Rename
-    permission: adapter.manage
   adapter_start:
     command_module: Esr.Commands.Adapter.Start
     permission: adapter.manage
-  adapters_list:
-    command_module: Esr.Commands.Adapters.List
-    permission:
   cap_list:
     command_module: Esr.Commands.Cap.List
     permission: cap.read
@@ -88,6 +79,61 @@ slashes:
     description: 列所有 live Entity peer (<actor_id>  pid=<0.x.y>)
     kind: actor_list
     permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:disable:
+    args:
+      - name: name
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Disable
+    description: 暂停 adapter 实例（移到 adapters/_disabled/）— 不会删配置；可用 /adapter:enable 恢复
+    kind: adapter_disable
+    permission: adapter.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:enable:
+    args:
+      - name: name
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Enable
+    description: 恢复 adapter 实例（从 adapters/_disabled/ 移回 adapters/）+ refresh
+    kind: adapter_enable
+    permission: adapter.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:list:
+    args: []
+    category: Adapters
+    command_module: Esr.Commands.Adapter.List
+    description: 列 adapters/ 下的 adapter 实例（type / app_id）+ adapters/_disabled/ 下的暂停实例
+    kind: adapter_list
+    permission:
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:remove:
+    args:
+      - name: instance_id
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Remove
+    description: 终止 adapter 实例（sidecar + FAA peer）并从 adapters/<name>/ 移除
+    kind: adapter_remove
+    permission: adapter.manage
+    requires_user_binding: false
+    requires_workspace_binding: false
+  /adapter:rename:
+    args:
+      - name: old_instance_id
+        required: true
+      - name: new_instance_id
+        required: true
+    category: Adapters
+    command_module: Esr.Commands.Adapter.Rename
+    description: 重命名 adapter 实例（terminate old + 移动 adapters/<name>/ + refresh）
+    kind: adapter_rename
+    permission: adapter.manage
     requires_user_binding: false
     requires_workspace_binding: false
   /agent:add:

@@ -1,4 +1,4 @@
-defmodule Esr.Entity.FeishuChatProxy do
+defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   @moduledoc """
   Per-Session Peer.Stateful: entry point for inbound Feishu messages
   into the Session. Detects slash commands (leading `/` in the first
@@ -80,10 +80,20 @@ defmodule Esr.Entity.FeishuChatProxy do
       app_id: Map.get(args, :app_id) || Map.get(ctx, :app_id) || "",
       principal_id:
         Map.get(args, :principal_id) || Map.get(ctx, :principal_id) || "",
-      proxy_ctx: ctx
+      proxy_ctx: ctx,
       # PR-21λ 2026-05-01: `pending_reacts` removed — FAA owns the
       # universal react/un_react lifecycle now (PR-9 T5's per-FCP
       # bookkeeping was redundant once FAA went one-react-per-inbound).
+      #
+      # 2026-05-09: `pending_media` tracks in-flight `download_file`
+      # directives keyed by directive id. Replaces the pre-2026-05-09
+      # blocking `receive` in `build_directive_fn/1` that stalled this
+      # GenServer's mailbox for up to 30 s on every non-text inbound.
+      # Each entry is the `directive_ctx` from `Esr.Resource.Media.Inbound.handle/2`
+      # extended with the originating `:envelope` so the
+      # `handle_info({:directive_ack, ...})` clause can resume
+      # `forward_media_to_cc/3` with the correct meta.
+      pending_media: %{}
     }
 
     # D1 new pattern — explicitly lift a ctx field into state under a
@@ -229,8 +239,12 @@ defmodule Esr.Entity.FeishuChatProxy do
         forward_text_and_react(text, message_id, meta, state)
 
       kind when kind in ["image", "file", "audio"] ->
-        do_handle_non_text_inbound(envelope, args, kind, meta, state)
-        {:drop, :non_text_handled, state}
+        # 2026-05-09: do_handle_non_text_inbound is now async — it may
+        # mutate state (registering an entry under :pending_media) but
+        # never blocks. Thread its returned state onward so the next
+        # inbound sees the updated pending_media map.
+        {:ok, new_state} = do_handle_non_text_inbound(envelope, args, kind, meta, state)
+        {:drop, :non_text_handled, new_state}
 
       other ->
         Logger.info(
@@ -293,6 +307,74 @@ defmodule Esr.Entity.FeishuChatProxy do
   def handle_info({:tool_invoke, req_id, tool, args, channel_pid, _principal_id}, state) do
     state = dispatch_tool_invoke(tool, args, req_id, channel_pid, state)
     {:noreply, state}
+  end
+
+  # 2026-05-09: async resumption of `do_handle_non_text_inbound/5`.
+  # `directive_ack` is broadcast on `directive_ack:<id>` after the
+  # Feishu adapter completes the `download_file` directive. The match
+  # on a known id in `state.pending_media` distinguishes "ours" from
+  # acks belonging to other directives the adapter may emit; unknown
+  # ids drop quietly (could be a late ack after timeout, or a directive
+  # initiated by another peer subscribed to the same topic).
+  def handle_info({:directive_ack, %{"id" => id, "payload" => payload}}, state) do
+    case Map.pop(state.pending_media, id) do
+      {nil, _} ->
+        # Not ours (or already timed out). Drop quietly.
+        {:noreply, state}
+
+      {%{msg_type: msg_type, meta: meta_ctx, envelope: _envelope}, remaining} ->
+        if Process.whereis(EsrWeb.PubSub) do
+          Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+        end
+
+        new_state = %{state | pending_media: remaining}
+
+        case payload do
+          %{"ok" => true, "result" => %{"uri" => uri}} ->
+            envelope_out = %{msg_type: msg_type, content: uri, meta: meta_ctx}
+            forward_media_to_cc(envelope_out, meta_ctx, new_state)
+
+          %{"ok" => false, "error" => err} ->
+            Logger.warning(
+              "feishu_chat_proxy: download_file failed " <>
+                "session_id=#{new_state.session_id} error=#{inspect(err)}"
+            )
+
+          other ->
+            Logger.warning(
+              "feishu_chat_proxy: directive_ack unexpected shape " <>
+                "session_id=#{new_state.session_id} got=#{inspect(other)}"
+            )
+        end
+
+        {:noreply, new_state}
+    end
+  end
+
+  # 2026-05-09: cleanup for download directives the adapter never acked.
+  # Pre-2026-05-09 the blocking `receive` in `build_directive_fn/1`
+  # surfaced timeouts as `{:error, {:directive_timeout, id}}`; in the
+  # async model we just log + drop the entry so memory doesn't grow
+  # unboundedly. (The originating user already saw the inbound message
+  # in Feishu; without an ack we have no URI to forward to claude.)
+  def handle_info({:pending_media_timeout, id}, state) do
+    case Map.pop(state.pending_media, id) do
+      {nil, _} ->
+        # Already acked.
+        {:noreply, state}
+
+      {_dropped, remaining} ->
+        if Process.whereis(EsrWeb.PubSub) do
+          Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+        end
+
+        Logger.warning(
+          "feishu_chat_proxy: pending_media timeout id=#{id} " <>
+            "session_id=#{state.session_id}"
+        )
+
+        {:noreply, %{state | pending_media: remaining}}
+    end
   end
 
   # PR-24 step 2 — PTY ↔ Feishu boot bridge handlers.
@@ -853,18 +935,20 @@ defmodule Esr.Entity.FeishuChatProxy do
   end
 
   # Task 2.4: handle non-text inbound (image/file/audio) by dispatching
-  # to Esr.Resource.Media.Inbound. The directive_fn dispatches a
-  # download_file directive to the FAA and waits synchronously for the
-  # directive_ack via PubSub. On capability-miss, emits a throttled
-  # "media unsupported" DM via CapGuard.
+  # to Esr.Resource.Media.Inbound. The capability check is synchronous
+  # (in-process registry lookup), but the actual `download_file`
+  # directive is now fire-and-forget — its directive_ack arrives later
+  # via `handle_info({:directive_ack, ...})`, which resumes the flow by
+  # popping the matching `:pending_media` entry and dispatching
+  # `forward_media_to_cc/3`.
   #
-  # The directive_fn approach mirrors Entity.Server's dispatch_action/2
-  # pattern but uses a blocking receive (acceptable: download latency is
-  # bounded by @directive_download_timeout_ms; no other FCP messages are
-  # missed since the GenServer mailbox is serialized).
-  @directive_download_timeout_ms 30_000
+  # Pre-2026-05-09 this path used `build_directive_fn/1` and a blocking
+  # `receive ... after timeout`, stalling the GenServer mailbox for up
+  # to 30 s on every non-text inbound. Concurrent text replies + tool
+  # invokes for the same session were delayed that long.
+  @pending_media_timeout_ms 30_000
 
-  defp do_handle_non_text_inbound(envelope, args, kind, meta, state) do
+  defp do_handle_non_text_inbound(envelope, args, kind, _meta, state) do
     chat_id = args["chat_id"] || state.chat_id
 
     inbound = %{
@@ -884,11 +968,51 @@ defmodule Esr.Entity.FeishuChatProxy do
       }
     }
 
-    directive_fn = build_directive_fn(state)
+    case Esr.Resource.Media.Inbound.handle(inbound) do
+      {:directive, action, args_map, ctx} ->
+        id =
+          "d-" <>
+            (:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false))
 
-    case Esr.Resource.Media.Inbound.handle(inbound, directive_fn: directive_fn) do
-      {:ok, envelope_out} ->
-        forward_media_to_cc(envelope_out, meta, state)
+        directive = %{
+          "kind" => "directive",
+          "id" => id,
+          "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "type" => "directive",
+          "payload" => %{
+            "adapter" => "feishu",
+            "action" => action,
+            "args" => args_map
+          }
+        }
+
+        # Subscribe BEFORE the emit so a fast adapter ack lands in our
+        # mailbox even if it's processed before send/2 returns.
+        if Process.whereis(EsrWeb.PubSub) do
+          Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+        end
+
+        case emit_to_feishu_app_proxy(directive, state) do
+          :ok ->
+            Process.send_after(self(), {:pending_media_timeout, id}, @pending_media_timeout_ms)
+
+            new_pending =
+              Map.put(state.pending_media, id, Map.put(ctx, :envelope, envelope))
+
+            {:ok, %{state | pending_media: new_pending}}
+
+          {:drop, reason} ->
+            if Process.whereis(EsrWeb.PubSub) do
+              Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
+            end
+
+            Logger.warning(
+              "feishu_chat_proxy: emit directive failed " <>
+                "reason=#{inspect(reason)} session_id=#{state.session_id}"
+            )
+
+            {:ok, state}
+        end
 
       {:error, :unsupported_kind} ->
         Esr.Entity.CapGuard.media_unsupported_dm(envelope, kind)
@@ -898,75 +1022,7 @@ defmodule Esr.Entity.FeishuChatProxy do
           session_id: state.session_id
         )
 
-      {:error, reason} ->
-        Logger.warning(
-          "feishu_chat_proxy: non-text inbound failed " <>
-            "kind=#{inspect(kind)} reason=#{inspect(reason)} " <>
-            "session_id=#{state.session_id}"
-        )
-    end
-
-    :ok
-  end
-
-  # Build a synchronous directive_fn that:
-  # 1. Generates a unique directive id
-  # 2. Subscribes to directive_ack:<id> on PubSub
-  # 3. Sends {:outbound, directive} to the feishu_app_proxy neighbor
-  #    (FAA's handle_downstream wraps it as kind=directive and broadcasts
-  #    on adapter:feishu/<instance_id>; Python adapter handles and acks)
-  # 4. Blocks with a receive/timeout to correlate the ack
-  #
-  # Called from handle_non_text_inbound within the GenServer's
-  # handle_info callback — safe to block for @directive_download_timeout_ms.
-  defp build_directive_fn(state) do
-    fn action, args ->
-      id =
-        "d-" <>
-          (:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false))
-
-      directive = %{
-        "kind" => "directive",
-        "id" => id,
-        "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-        "type" => "directive",
-        "payload" => %{
-          "adapter" => "feishu",
-          "action" => action,
-          "args" => args
-        }
-      }
-
-      # Subscribe before sending so a fast ack lands in mailbox.
-      if Process.whereis(EsrWeb.PubSub) do
-        Phoenix.PubSub.subscribe(EsrWeb.PubSub, "directive_ack:" <> id)
-      end
-
-      case emit_to_feishu_app_proxy(%{"kind" => "directive"} |> Map.merge(directive), state) do
-        :ok ->
-          receive do
-            {:directive_ack, %{"id" => ^id, "payload" => payload}} ->
-              if Process.whereis(EsrWeb.PubSub) do
-                Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
-              end
-
-              {:ok, payload}
-          after
-            @directive_download_timeout_ms ->
-              if Process.whereis(EsrWeb.PubSub) do
-                Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
-              end
-
-              {:error, {:directive_timeout, id}}
-          end
-
-        {:drop, reason} ->
-          if Process.whereis(EsrWeb.PubSub) do
-            Phoenix.PubSub.unsubscribe(EsrWeb.PubSub, "directive_ack:" <> id)
-          end
-
-          {:error, {:no_app_proxy, reason}}
-      end
+        {:ok, state}
     end
   end
 

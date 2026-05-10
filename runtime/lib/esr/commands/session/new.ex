@@ -576,11 +576,7 @@ defmodule Esr.Commands.Session.New do
          _create_session_fn,
          start_session_fn
        ) do
-    # Phase 5 D2: session ids are UUID v4. Pre-2026-05-08 admin-CLI submit
-    # path emitted base32 strings, breaking cap routing (which validates
-    # session UUIDs) and e2e scenarios 15/17/18. Surfaced during Phase F
-    # (resource-typed grammar) e2e renames.
-    sid = UUID.uuid4()
+    sid = Esr.Resource.Session.Id.new()
     # PR-A T1 / PR-21λ: legacy admin-CLI submit path has no chat context
     # — the placeholders persist and `app_id` mirrors `chat_id` so the
     # routing key is well-formed if/when this path later registers.
