@@ -27,7 +27,7 @@
 ### 目标
 
 - **`Esr.Channel` behaviour** —— per-session BEAM peer 抽象。Plugin 提供 Channel 实现（`Esr.Plugins.Feishu.Channels.ChatProxy`、`Esr.Plugins.ClaudeCode.Channels.McpHttp`）。behaviour 标准化 start_link / send / subscribe + lifecycle。
-- **`Esr.SessionTemplate`** —— 声明式 yaml 描述一个 session：用哪些 Channel kind、起哪些 Entity、message 怎么流。内置 template 在 `runtime/priv/session_templates/`；操作员自定义放 `~/.esrd-<inst>/<inst>/session_templates/`。
+- **`Esr.SessionTemplate`** —— 声明式 yaml 描述一个 session：用哪些 Channel kind、起哪些 Entity、message 怎么流。**Template 由 plugin shipped**（template 写在 plugin manifest 里，由"拥有"该用例的 plugin 持有）；操作员可以在 `~/.esrd-<inst>/<inst>/session_templates/` 放 yaml 文件覆盖或新增。**ESR core 自己 ship 0 个 template** —— 全部来自 plugin 或操作员。
 - **Plugin manifest 加 `channels:` + `agent_kinds:` 块** —— 取代今天的 `agents.yaml`（其内容本来就属 plugin 拥有）。
 - **Drift prevention** —— 跟 unified-command-grammar 同一 pattern：布线进声明式 yaml、加载时校验、CI gate 防 template 引用消失的 channel kind。
 - **Multi-session-per-instance** —— SessionTemplate 的自然产物：instance 独立持久化，session 注册兴趣，channel routing 携带 session_id 上下文。
@@ -63,7 +63,7 @@ Realm 是"哪几个 Channel + Entity + flow 组合 = 一种 session 类型"的�
 | 命名 | `Esr.Channel`（primitive）+ `Esr.SessionTemplate`（composer）；**不要** Realm 作 code 前缀；Realm 在 `concepts.md` 作词汇伞 |
 | A1 Channel behaviour | GenServer-shaped peer；`start_link/1`、`send/2`、`subscribe/3`、`config_schema/0`（可选 callback）。监管在 per-session `Esr.Session.AgentSupervisor`（M-2.6 `:one_for_all` 策略） |
 | A2 Channel kind 发现 | Plugin 在 manifest `channels:` block 声明；`Esr.Plugin.Loader` 写入 `Esr.Channel.Registry` ETS。Template 用 `<plugin>.<channel_name>` 引用 |
-| B1 Template 文件位置 | 内置：`runtime/priv/session_templates/*.yaml`。操作员：`~/.esrd-<inst>/<inst>/session_templates/*.yaml`。同名 override：操作员胜（mirrors plugins.yaml 三层模式） |
+| B1 Template 文件位置 | **Plugin shipped**：每个 plugin 的 manifest 可声明 `session_templates:` block 列出自己的 template（feishu plugin ship `feishu-cc`，未来 codex plugin ship `codex-cli` 等）。**操作员 override**：`~/.esrd-<inst>/<inst>/session_templates/*.yaml` 可加新 template 或覆盖 plugin shipped 的（同名 → 操作员胜）。**ESR core 自己 ship 0 个** |
 | B2 Template yaml shape | `name + description + channels[] + agents[] + flow{inbound, outbound}`。`<runtime>` 占位符 = session 创建时注入的参数 |
 | B3 默认 template | priv 里 `default.yaml` 镜像今天的 feishu-cc 拓扑。`/session:new` 不传 `template=` → 用 default。操作员通过 `/plugin:set plugin=session key=default_template` 改默认 |
 | C1 agents.yaml 命运 | 消失。Agent **type** 定义 → plugin manifest `agent_kinds:` block。**Pipeline**（inbound/outbound chain）→ SessionTemplate。**Instance** 不动（per-session JSON、`agent_instance.v1.json` schema） |
@@ -136,54 +136,75 @@ Template 引用 `<plugin>.<name>`；引用不存在的 kind → loader 拒绝。
 
 ### 5.3 SessionTemplate yaml shape
 
-`runtime/priv/session_templates/default.yaml`：
+Template 作为 plugin manifest 的条目声明（操作员 override 例外，作为独立 yaml 文件放 `~/.esrd-<inst>/<inst>/session_templates/`）。
+
+在 plugin manifest（`runtime/lib/esr/plugins/feishu/manifest.yaml`）：
+
+```yaml
+name: feishu
+version: 0.1.0
+agent_kinds: [...]
+channels: [...]
+session_templates:
+  - name: feishu-cc
+    description: Feishu chat → Claude Code agent（默认 workspace-bound）
+    dependencies: [feishu, claude_code]      # 两个 plugin 都得 enabled
+    channels:
+      - alias: in
+        kind: feishu.chat_proxy
+        config:
+          app_id: <runtime>                  # session 创建时注入
+          chat_id: <runtime>
+      - alias: cc_mcp
+        kind: claude_code.mcp_http
+        config:
+          port: ephemeral
+    agents:
+      - kind: claude_code.cc
+        name: <runtime>
+        consumes: [cc_mcp]
+    flow:
+      inbound:
+        - source: in.text
+          pipeline:
+            - Esr.Entity.Agent.MentionParser
+            - <route_to_agent>
+      outbound:
+        - source: <agent>.reply
+          sink: in.send
+```
+
+操作员 override（`~/.esrd-default/default/session_templates/my-custom.yaml`）：
 
 ```yaml
 schema_version: 1
-name: default
-description: Feishu chat → Claude Code agent（默认 workspace-bound）
-
-channels:
-  - alias: in                   # template 内本地别名
-    kind: feishu.chat_proxy     # <plugin>.<channel_name>
-    config:
-      app_id: <runtime>         # session 创建时注入
-      chat_id: <runtime>
-  - alias: cc_mcp
-    kind: claude_code.mcp_http
-    config:
-      port: ephemeral
-
-agents:
-  - kind: claude_code.cc        # <plugin>.<agent_kind>
-    name: <runtime>             # 操作员提供
-    consumes: [cc_mcp]          # 此 agent 读/写哪些 channel 别名
-
-flow:
-  inbound:
-    - source: in.text
-      pipeline:
-        - Esr.Entity.Agent.MentionParser
-        - <route_to_agent>      # 内置 router；从 mention 或 primary_agent
-                                # 解析目标 agent 名
-  outbound:
-    - source: <agent>.reply
-      sink: in.send
+name: my-custom
+description: 操作员自定义变体
+dependencies: [feishu, claude_code]
+channels: [...]
+agents: [...]
+flow: [...]
 ```
 
-Template 加载时校验：
+两种形式结构相同；操作员 override 文件就是把 manifest 里的条目提到顶层 yaml。
+
+Template 注册时校验：
+- 每个 `dependencies:` plugin 必须 enabled。缺 → template 不注册 + Logger.warning 命名缺哪个 plugin（依赖 enabled 后 template 自动可用）
 - 每个 `channel.kind` 必须能在 `Esr.Channel.Registry` 解析
 - 每个 `agent.kind` 必须能在 `Esr.Plugin.Registry.agent_kinds` 解析
 - 每个 `consumes` 引用必须匹配 `channels[].alias`
 - 每个 `flow` source/sink 引用必须匹配 alias 或已知 router 内置
-- 拒绝重复 alias
+- 同 template 内拒绝重复 alias
+- 跨所有源拒绝重复 template `name`（操作员 override 同名**有意覆盖** plugin shipped 的，不报错）
 
 ### 5.4 默认 template + 选择
 
-- 初次安装：priv `default.yaml` 在 esrd 首次 boot 时 copy 到 `~/.esrd-<inst>/<inst>/session_templates/`（若不存在）
-- `/session:new name=foo`（不带 `template=`）→ 用 default
-- `/session:new name=foo template=feishu-cc` → 加载 `feishu-cc.yaml`
-- 操作员改默认：`/plugin:set plugin=session key=default_template value=feishu-cc`
+ESR core 自己 ship **0 个** template。每个 template 来自 plugin 或操作员 override。"当前默认 template" 是操作员可配的：
+
+- `/session:new name=foo template=feishu-cc` → 加载叫 `feishu-cc` 的 template（不管来源是 plugin manifest 还是操作员 yaml）
+- `/session:new name=foo`（不带 `template=`）→ 加载操作员配置的 default。通过 `/plugin:set plugin=session key=default_template value=feishu-cc` 设
+- 没配 default、也没传 `template=` → `/session:new` 返结构化错误，列出可用 template（带 per-plugin 归属），让操作员选 + 持久化
+- 首次 boot UX：只有一个 template 注册时（典型 fresh install：feishu plugin ship `feishu-cc`），esrd 自动在 `plugins.yaml` 里把它升为 default，`/session:new name=foo` 无配置就能跑
 
 ### 5.5 存储（互引）
 
@@ -320,6 +341,18 @@ Phase 4 形式化：
 - [ ] **Multi-session-per-instance**（验收 case 1）：一个 Instance 注册到两个 Session；reply routing 用 incoming session 的 chat context。新 e2e scenario 24 验证
 - [ ] **agents.yaml 已删**；agent kind 元数据在 plugin manifest 里；pipeline 在 template 里。`git grep -l agents.yaml runtime/lib/` 零 hit（moduledoc 里的迁移说明除外）。Phase 6 §6.1 的 per-consumer sub-task 全部关闭
 - [ ] CI gate：template 引用缺失 channel kind → CI 失败
+
+### 10.1 e2e 场景（PR-blocking）
+
+迁移不算"完成"除非这些脚本化 e2e 场景在 `tests/e2e/scenarios/` 全绿。每个场景跑真实 esrd、真实 Feishu mock adapter、真实 claude binary；断言 bash + curl + log grep（同 `tests/e2e/scenarios/22_*.sh` 的现有形式）。
+
+| # | 场景 | 证什么 | Phase 阻塞 |
+|---|------|--------|-----------|
+| 24 | **Template 实例化的 session 端到端** | `/session:new template=feishu-cc name=foo` 通过 SessionTemplate boot 出 FCP-equivalent + CCProcess + PTY；inbound text 路由到 CC；CC reply 落到 chat。形状跟 scenario 22 一样，但走 template loader 不走硬编码 wiring | Phase 5 切换 |
+| 25 | **Multi-session-per-instance** | 两个 session 共享一个 CC instance。boss session 发"hello"，reply 落 boss chat。junior session 发"what about Y?"，reply 落 junior chat。同 instance UUID、两个 `chat_id` 路由。CC tool calls 携带 `current_session_id` 让 CC 区分用户 | Phase 7 验收 |
+| 26 | **操作员 ship template override** | `~/.esrd-<inst>/<inst>/session_templates/custom.yaml` 在 boot 时注册；`/session:new template=custom` 跑通；reload（`/plugin:reload session_templates`）拾取编辑、不需要 esrd restart | Phase 5 + Phase 8 |
+| 27 | **缺依赖 template 大声失败** | drop 一个引用未 enabled plugin 的 template；esrd boot 时 Logger.warning 命名缺哪个 plugin；`/session:new template=that-name` 返结构化 `template_dependency_unmet` 错误；启用缺失 plugin → template 自动注册、不需要 esrd restart | Phase 4 验收 |
+| 28 | **两个 agent kind 组合** | 加一个 stub 第二 agent kind（`codex` 或 `gemini`）+ 自己的 Channel 实现 + 用它的 template。验证 SessionTemplate loader、instance spawn、message routing 都跑、不需要改 feishu plugin 或 CC plugin。这是**抽象验证**场景 —— 证 Channel + SessionTemplate 不是 CC 专用 | Phase 8（或更早，如果第二个 agent plugin 并行落地） |
 
 ---
 

@@ -54,8 +54,11 @@ together implement).
   start_link / send / subscribe + lifecycle.
 - **`Esr.SessionTemplate`** — declarative yaml description of a session:
   which Channel kinds it composes, which Entities it spawns, how messages
-  flow between them. Built-in templates ship in `runtime/priv/session_templates/`;
-  operators can drop custom templates in `~/.esrd-<inst>/<inst>/session_templates/`.
+  flow between them. **Templates are plugin-shipped** (a template lives
+  inside the plugin manifest of whatever plugin "owns" the use case);
+  operators can drop custom templates in `~/.esrd-<inst>/<inst>/session_templates/`
+  to override or add. ESR core ships **no** templates — everything is
+  plugin-shipped or operator-shipped.
 - **Plugin manifest gains `channels:` + `agent_kinds:` blocks** — replaces
   today's `agents.yaml` (whose contents are conceptually plugin-owned anyway).
 - **Drift prevention** — same pattern as the unified-command-grammar
@@ -108,7 +111,7 @@ declarative form of one Realm. Two Realms = two SessionTemplates.
 | Naming | `Esr.Channel` (primitive) + `Esr.SessionTemplate` (composer); **drop** `Realm` as a code prefix; keep Realm in `concepts.md` as vocabulary umbrella. |
 | A1 Channel behaviour | GenServer-shaped peer; `start_link/1`, `send/2`, `subscribe/3`, `config_schema/0` (optional callback for SessionTemplate validation). Supervised under per-session `Esr.Session.AgentSupervisor` (M-2.6 strategy: `:one_for_all`). |
 | A2 Channel kind discovery | Plugins declare in manifest's `channels:` block; `Esr.Plugin.Loader` registers in `Esr.Channel.Registry` ETS. Channel referenced by `<plugin>.<channel_name>` in templates. |
-| B1 Template file location | Built-in: `runtime/priv/session_templates/*.yaml`. Operator: `~/.esrd-<inst>/<inst>/session_templates/*.yaml`. Same-name override: operator wins (mirrors plugins.yaml 3-layer). |
+| B1 Template file location | **Plugin-shipped**: each plugin's manifest may declare a `session_templates:` block listing its templates (the feishu plugin ships `feishu-cc`, the codex plugin will ship `codex-cli` etc). **Operator override**: `~/.esrd-<inst>/<inst>/session_templates/*.yaml` adds new templates or overrides plugin-shipped ones (same-name → operator wins). **No core priv templates** — ESR core ships zero templates. |
 | B2 Template yaml shape | `name + description + channels[] + agents[] + flow{inbound, outbound}`. `<runtime>` placeholder for parameters injected at session creation. |
 | B3 Default template | A `default.yaml` in priv mirrors today's feishu-cc topology. `/session:new` without `template=` uses default. Operator can override default via `/plugin:set plugin=session key=default_template`. |
 | C1 agents.yaml fate | Dissolves. Agent **type** definitions move into plugin manifest's `agent_kinds:` block. **Pipeline** (inbound/outbound chain) moves into SessionTemplate. **Instances** stay (per-session JSON, `agent_instance.v1.json` schema). |
@@ -184,55 +187,88 @@ reference missing kinds.
 
 ### 5.3 SessionTemplate yaml shape
 
-`runtime/priv/session_templates/default.yaml`:
+Templates are declared as entries inside a plugin's manifest (or, for
+operator overrides, as standalone yaml files at `~/.esrd-<inst>/<inst>/session_templates/`).
+
+In a plugin manifest (`runtime/lib/esr/plugins/feishu/manifest.yaml`):
+
+```yaml
+name: feishu
+version: 0.1.0
+agent_kinds: [...]
+channels: [...]
+session_templates:
+  - name: feishu-cc
+    description: Feishu chat → Claude Code agent (workspace-bound by default)
+    dependencies: [feishu, claude_code]      # both plugins must be enabled
+    channels:
+      - alias: in
+        kind: feishu.chat_proxy
+        config:
+          app_id: <runtime>                  # injected at session creation
+          chat_id: <runtime>
+      - alias: cc_mcp
+        kind: claude_code.mcp_http
+        config:
+          port: ephemeral
+    agents:
+      - kind: claude_code.cc
+        name: <runtime>
+        consumes: [cc_mcp]
+    flow:
+      inbound:
+        - source: in.text
+          pipeline:
+            - Esr.Entity.Agent.MentionParser
+            - <route_to_agent>
+      outbound:
+        - source: <agent>.reply
+          sink: in.send
+```
+
+As a standalone operator override (`~/.esrd-default/default/session_templates/my-custom.yaml`):
 
 ```yaml
 schema_version: 1
-name: default
-description: Feishu chat → Claude Code agent (workspace-bound by default)
-
-channels:
-  - alias: in                   # template-local alias
-    kind: feishu.chat_proxy     # <plugin>.<channel_name>
-    config:
-      app_id: <runtime>         # injected at session creation
-      chat_id: <runtime>
-  - alias: cc_mcp
-    kind: claude_code.mcp_http
-    config:
-      port: ephemeral
-
-agents:
-  - kind: claude_code.cc        # <plugin>.<agent_kind>
-    name: <runtime>             # operator-supplied
-    consumes: [cc_mcp]          # which channel aliases this agent reads/writes
-
-flow:
-  inbound:
-    - source: in.text
-      pipeline:
-        - Esr.Entity.Agent.MentionParser
-        - <route_to_agent>      # built-in router; resolves agent name from
-                                # mention or primary_agent
-  outbound:
-    - source: <agent>.reply
-      sink: in.send
+name: my-custom
+description: Operator-defined variant
+dependencies: [feishu, claude_code]
+channels: [...]
+agents: [...]
+flow: [...]
 ```
 
-Validation rules at template load:
+Both forms have identical structure; the operator-override file is just
+the entry hoisted to a top-level yaml.
+
+Validation rules at template registration:
+- Every `dependencies:` plugin must be enabled. Missing → template not
+  registered + Logger.warning naming the missing plugin (template is
+  available again as soon as its dependencies enable).
 - Every `channel.kind` must resolve via `Esr.Channel.Registry`.
 - Every `agent.kind` must resolve via `Esr.Plugin.Registry.agent_kinds`.
 - Every `consumes` ref must match a `channels[].alias`.
 - Every `flow` source/sink ref must match an alias or known router built-in.
-- Reject duplicate aliases.
+- Reject duplicate aliases inside a template.
+- Reject duplicate template `name` across all sources (operator-override
+  intentionally **replaces** plugin-shipped same-name template, no error).
 
 ### 5.4 Default template + selection
 
-- Initial install: priv `default.yaml` is copied to `~/.esrd-<inst>/<inst>/session_templates/`
-  on first esrd boot if absent (mirrors plugin manifest seeding).
-- `/session:new name=foo` (no `template=`) → uses default.
-- `/session:new name=foo template=feishu-cc` → loads `feishu-cc.yaml`.
-- Operator can change the default via `/plugin:set plugin=session key=default_template value=feishu-cc`.
+ESR core ships **no** templates. Every template comes from a plugin or
+an operator override. The "active default template" is operator-configurable:
+
+- `/session:new name=foo template=feishu-cc` → loads template `feishu-cc`
+  from whichever source registered it (plugin manifest or operator yaml).
+- `/session:new name=foo` (no `template=`) → loads the operator's
+  configured default. Set via `/plugin:set plugin=session key=default_template value=feishu-cc`.
+- If no default is configured AND no `template=` passed → `/session:new`
+  returns a structured error listing available templates (per-plugin
+  attribution) and asking the operator to pick + persist.
+- First-boot UX: when only one template is registered (typical fresh
+  install: feishu plugin ships `feishu-cc`), esrd auto-promotes it to
+  default in `plugins.yaml` so `/session:new name=foo` works without
+  any config step.
 
 ### 5.5 Storage (cross-cited)
 
@@ -456,6 +492,22 @@ The migration is "done" when:
       returns zero hits (modulo migration cleanup notes in moduledocs).
       Phase 6's per-consumer sub-tasks (§6.1) all close.
 - [ ] CI gate: a template referencing a missing channel kind fails CI.
+
+### 10.1 e2e scenarios (PR-blocking)
+
+The migration is not "done" until these scripted e2e scenarios pass
+green in `tests/e2e/scenarios/`. Each scenario exercises a real
+running esrd, real Feishu mock adapter, real claude binary; assertions
+are bash + curl + log greps (matching the existing scenario style at
+`tests/e2e/scenarios/22_*.sh`).
+
+| # | Scenario | What it proves | Phase blocker |
+|---|----------|----------------|---------------|
+| 24 | **Template-instantiated session, end-to-end** | `/session:new template=feishu-cc name=foo` boots an FCP-equivalent + CCProcess + PTY via SessionTemplate; an inbound text message routes to CC; CC's reply lands in chat. Same shape as scenario 22 but driven through the template loader rather than hard-coded wiring. | Phase 5 cutover |
+| 25 | **Multi-session-per-instance** | Two sessions share one CC instance. Boss session sends "hello"; reply lands in boss chat. Junior session sends "what about Y?"; reply lands in junior chat. Same instance UUID, two different `chat_id` routings. CC tool calls carry `current_session_id` so CC can disambiguate. | Phase 7 acceptance |
+| 26 | **Operator-shipped template override** | `~/.esrd-<inst>/<inst>/session_templates/custom.yaml` registered at boot; `/session:new template=custom` works; reload (`/plugin:reload session_templates`) picks up edits without esrd restart. | Phase 5 + Phase 8 |
+| 27 | **Missing dependency template fails loud** | Drop a template requiring a disabled plugin; esrd boot logs `Logger.warning` naming the missing dependency; `/session:new template=that-name` returns structured `template_dependency_unmet` error; enabling the missing plugin makes the template register without esrd restart. | Phase 4 acceptance |
+| 28 | **Two-agent-kind composition** | Add a stub second agent kind (`codex` or `gemini`) with its own Channel impl + a template that uses it. Verify SessionTemplate loader, instance spawn, message routing all work without changes to feishu plugin or CC plugin. This is the **abstraction-validation** scenario — proves Channel + SessionTemplate aren't CC-specific. | Phase 8 (or earlier if a second agent plugin lands in parallel) |
 
 ---
 
