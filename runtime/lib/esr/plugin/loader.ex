@@ -184,7 +184,8 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_entities(manifest),
          :ok <- register_slash_routes(name, manifest),
          :ok <- register_startup(name, manifest),
-         :ok <- register_media_types(name, manifest) do
+         :ok <- register_media_types(name, manifest),
+         :ok <- register_channels(name, manifest) do
       # HR-1: take a config snapshot at plugin load time so the first
       # /plugin:reload always has a baseline to diff against.
       # ConfigSnapshot.create_table/0 is guaranteed to have been called
@@ -400,5 +401,21 @@ defmodule Esr.Plugin.Loader do
   defp register_media_types(plugin_name, %Manifest{declares: declares}) do
     media_types = Map.get(declares, :media_types, %{inbound: [], outbound: []})
     :ok = Esr.Resource.Media.PluginRegistry.register(plugin_name, media_types)
+  end
+
+  # 2026-05-10 SessionTemplate + Channel migration, Phase 1: each
+  # `channels:` entry on the manifest is registered into
+  # `Esr.Channel.Registry` under the key `<plugin>.<channel_name>`.
+  # Module existence is already enforced by the manifest parser
+  # (`parse_channel_entry/1` calls `Code.ensure_loaded?/1`), so we
+  # don't re-validate here. An absent `channels:` block is a no-op
+  # (default `[]`).
+  defp register_channels(plugin_name, %Manifest{channels: channels})
+       when is_list(channels) do
+    Enum.each(channels, fn %{name: channel_name, module: module} ->
+      :ok = Esr.Channel.Registry.register(plugin_name, channel_name, module)
+    end)
+
+    :ok
   end
 end
