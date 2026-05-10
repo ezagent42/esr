@@ -60,9 +60,11 @@ defmodule Esr.Resource.Capability do
   trivially `:ok`.
 
   Used by `Esr.Commands.Session.New` (D18) to batch-verify the
-  `capabilities_required` list from `agents.yaml` in one call, so the
-  error payload can enumerate every missing cap at once (not just the
-  first one).
+  `capabilities_required` list materialized by
+  `Esr.SessionTemplate.AgentDefBuilder` (which sources caps from each
+  plugin's manifest `agent_kinds[].capabilities_required` block —
+  Phase 6, 2026-05-10) in one call, so the error payload can enumerate
+  every missing cap at once (not just the first one).
   """
   @spec has_all?(String.t(), [String.t()]) :: :ok | {:missing, [String.t()]}
   def has_all?(principal_id, perms) when is_binary(principal_id) and is_list(perms) do

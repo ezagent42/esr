@@ -19,11 +19,10 @@ defmodule Esr.Commands.Agent.SetPrimaryTest do
       _ -> :ok
     end
 
-    fixture =
-      Path.join([__DIR__, "..", "..", "fixtures", "agents", "simple.yaml"])
-      |> Path.expand()
-
-    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
+    # Phase 6 (2026-05-10): the legacy `Esr.Entity.Agent.Registry`
+    # agents.yaml fixture-load was dead weight here — SetPrimary
+    # operates on `Esr.Entity.Agent.InstanceRegistry` and does no
+    # agent_kind lookup at all.
     :ok
   end
 

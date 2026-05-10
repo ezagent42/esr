@@ -1,10 +1,18 @@
 defmodule Esr.Commands.Plugin.AgentTypes do
   @moduledoc """
   `/plugin:agent-types` — list every agent type declared by enabled
-  plugins (compiled via `Esr.Entity.Agent.Registry.list_agents/0`).
+  plugins (sourced from `Esr.Plugin.AgentKindRegistry.list_keys/0`,
+  populated at boot from each plugin manifest's `agent_kinds:` block).
 
   Replaces the old `/agent:list` semantics; `/agent:list` now lists
   agent INSTANCES inside chat-current session (Phase C Task C.7).
+
+  Phase 6 (2026-05-10): pre-Phase-6 this command read from
+  `Esr.Entity.Agent.Registry.list_agents/0` (agents.yaml cache);
+  post-Phase-6 the source is the plugin manifest registry. Output
+  shape changed from bare names (`"cc"`) to qualified
+  `<plugin>.<kind>` (`"claude_code.cc"`) — there is no longer a
+  single-namespace yaml so qualifying is unambiguous.
 
   Spec rev-3 §4.2 (row "/plugin:agent-types"), D6.
   """
@@ -27,12 +35,12 @@ defmodule Esr.Commands.Plugin.AgentTypes do
   @spec execute(map()) :: result()
   def execute(_cmd) do
     text =
-      case Esr.Entity.Agent.Registry.list_agents() do
+      case Esr.Plugin.AgentKindRegistry.list_keys() do
         [] ->
-          "no agents loaded (agents.yaml empty or not found)"
+          "no agent types declared (no enabled plugin ships an agent_kinds: block)"
 
-        names ->
-          lines = Enum.map_join(names, "\n", fn n -> "  - #{n}" end)
+        keys ->
+          lines = Enum.map_join(keys, "\n", fn key -> "  - #{key}" end)
           "available agent types:\n#{lines}"
       end
 

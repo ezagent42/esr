@@ -9,7 +9,12 @@ defmodule Esr.Interface.SnapshotRegistry do
     - `Esr.Resource.Workspace.Registry` (load_from_file → load_snapshot)
     - `Esr.Resource.Capability.Grants` (load_snapshot from capabilities.yaml)
     - `Esr.Resource.SlashRoute.Registry` (load_snapshot from slash-routes.yaml)
-    - Future R5: `Esr.Entity.Agent.Registry` (load_snapshot from agents.yaml)
+
+  Phase 6 (2026-05-10) note: the agents.yaml-cached
+  `Esr.Entity.Agent.Registry` (planned Future R5) was dropped — agent
+  kinds now flow through plugin manifest `agent_kinds:` blocks into
+  `Esr.Plugin.AgentKindRegistry` (a different shape, no SnapshotRegistry
+  participation).
 
   Pairs with `Esr.Interface.FileLoader` (the loader sub-module that parses
   the yaml and calls `load_snapshot/1`).

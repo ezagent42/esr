@@ -31,7 +31,9 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
 
   setup do
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
-    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
+    # Phase 6 (2026-05-10): the legacy agents.yaml fixture-load is dead
+    # weight here — this test exercises FAA's :new_chat_thread broadcast
+    # path; it never builds an agent_def for Router.create_session.
 
     if Process.whereis(Esr.Session.Router) == nil do
       start_supervised!(Esr.Session.Router)

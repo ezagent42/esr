@@ -41,13 +41,11 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
     # App-level singletons (booted by Esr.Application).
     :ok = Esr.TestSupport.AppSingletons.assert_app_singletons(%{})
 
-    # Agents must be loaded so Session subtree init can resolve the
-    # agent_def if any downstream code consults it. Mirrors the setup
-    # in `runtime/test/esr/integration/n2_sessions_test.exs`.
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
-        Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
-      )
+    # Phase 6 (2026-05-10): the legacy agents.yaml fixture-load is
+    # dead weight here — this perf test only measures FCP relay
+    # latency via direct `Esr.Session.Supervisor.start_session/1`;
+    # no path through Router.create_session or AgentSpawner consults
+    # any agent_kind/agent_def lookup.
 
     session_id = "perf-p5-10-#{System.unique_integer([:positive])}"
     app_id = "perf_#{System.unique_integer([:positive])}"

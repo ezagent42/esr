@@ -31,18 +31,16 @@ defmodule Esr.Commands.Session.EndTest do
     assert is_pid(Process.whereis(Esr.Session.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
+    # Phase 5/6 cut-over: build the agent_def once via the fixture
+    # helper so tests that call Router.create_session directly can
+    # thread it through params (AgentSpawner no longer fetches from
+    # any registry). The fixture file is retained as test data after
+    # Phase 6 dissolved the agents.yaml cache module; production
+    # callers materialize agent_defs via the SessionTemplate path.
+    {:ok, cc_def} =
+      Esr.TestSupport.AgentDefFixture.cc_agent_def(
         Path.expand("../../fixtures/agents/simple.yaml", __DIR__)
       )
-
-    # Phase 5 cut-over: build the agent_def once via the materializer so
-    # tests that call Router.create_session directly can thread it
-    # through params (Router/AgentSpawner no longer fetch from
-    # agents.yaml). The fixture-loaded agents.yaml is still used to
-    # provide the ground-truth agent_def for these direct-invocation
-    # tests; production callers use the SessionTemplate path.
-    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
 
     # Ensure Scope.Router is running. Started as a supervised child in
     # app boot, but some test runs skip it — start-if-missing keeps the

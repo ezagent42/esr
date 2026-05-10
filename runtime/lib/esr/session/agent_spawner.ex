@@ -6,21 +6,24 @@ defmodule Esr.Session.AgentSpawner do
   recording stateless Proxy modules symbolically, and back-wiring
   bidirectional neighbors.
 
-  ## Phase 5 cut-over (2026-05-10)
+  ## Phase 5/6 cut-over (2026-05-10)
 
   Pre-Phase-5 this module fetched the agent_def from
   `Esr.Entity.Agent.Registry.agent_def/1` (the agents.yaml cache).
-  Phase 5 (spec §5.4) hardcuts that source: callers now thread the
+  Phase 5 (spec §5.4) hardcut that source: callers now thread the
   agent_def through `params[:agent_def]`, materialized from a
   SessionTemplate via `Esr.SessionTemplate.Registry.materialize/2`.
-  The agent_def map shape is unchanged (the walker still consumes
+  Phase 6 (same spec, §6) dissolved the agents.yaml file outright —
+  the per-kind contributions (pipeline peers, capabilities) now flow
+  from each plugin's manifest `agent_kinds:` block (registered into
+  `Esr.Plugin.AgentKindRegistry`) through AgentDefBuilder. The
+  agent_def map shape is unchanged (the walker still consumes
   `pipeline.inbound`, `proxies`, etc verbatim) — only the SOURCE
   swapped.
 
-  Implements `Esr.Interface.Spawner` for the agents.yaml-declared
-  Session shape. Extracted from `Esr.Session.Router` in R6 of the
-  structural refactor (`docs/notes/structural-refactor-plan-r4-r11.md`
-  §四-R6).
+  Implements `Esr.Interface.Spawner`. Extracted from
+  `Esr.Session.Router` in R6 of the structural refactor
+  (`docs/notes/structural-refactor-plan-r4-r11.md` §四-R6).
 
   ## Why a separate module
 
@@ -34,9 +37,12 @@ defmodule Esr.Session.AgentSpawner do
 
     * `spawn/3`         — `Esr.Interface.Spawner` callback. Reads the
                           agent declaration from the supplied `decl`
-                          map (the agents.yaml entry) and spawns the
-                          Session subtree under `Esr.Session.Supervisor`.
-                          Returns `{:ok, session_sup_pid}` on success.
+                          map (the materialized agent_def — pre-Phase-6
+                          sourced from agents.yaml, post-Phase-6 from
+                          a SessionTemplate + plugin manifest agent_kinds)
+                          and spawns the Session subtree under
+                          `Esr.Session.Supervisor`. Returns
+                          `{:ok, session_sup_pid}` on success.
     * `terminate/2`     — `Esr.Interface.Spawner` callback. Tears down
                           a Session subtree by its scope_id.
     * `do_create/1`     — caller-friendly entry point used by
@@ -82,10 +88,11 @@ defmodule Esr.Session.AgentSpawner do
 
   @impl Esr.Interface.Spawner
   @doc """
-  `Esr.Interface.Spawner` entry. `decl` is the agents.yaml entry (as
-  returned by `Esr.Entity.Agent.Registry.agent_def/1`); `params`
-  carries per-instance data; `ctx` is currently unused (kept for
-  Interface conformance).
+  `Esr.Interface.Spawner` entry. `decl` is the materialized agent_def
+  map (pre-Phase-6 sourced from `Esr.Entity.Agent.Registry.agent_def/1`,
+  post-Phase-6 from `Esr.SessionTemplate.Registry.materialize/2`);
+  `params` carries per-instance data; `ctx` is currently unused
+  (kept for Interface conformance).
 
   Returns the spawned Session supervisor pid on success.
   """
@@ -93,12 +100,12 @@ defmodule Esr.Session.AgentSpawner do
   def spawn(decl, params, _ctx) when is_map(decl) and is_map(params) do
     # decl is the agent_def. We synthesize an agent_name when the
     # caller supplied one in params, otherwise fall back to the
-    # decl's own name (the Registry stores it as the lookup key).
+    # decl's own name.
     agent_name = get_param(params, :agent) || Map.get(decl, :name) || Map.get(decl, "name")
 
     # Phase 5 cut-over: thread the agent_def from `decl` into
     # `params[:agent_def]` so `do_create/1` finds it. Pre-Phase-5
-    # `do_create` looked it up via `Esr.Entity.Agent.Registry.agent_def/1`;
+    # `do_create` looked it up via the legacy agents.yaml cache;
     # post-cut callers must always supply it.
     enriched_params =
       params
@@ -150,15 +157,17 @@ defmodule Esr.Session.AgentSpawner do
   register its peer-DOWN monitors. Callers outside Router should
   prefer `spawn/3`.
 
-  ## Phase 5 hardcut on the agent_def source
+  ## Phase 5/6 hardcut on the agent_def source
 
   Pre-Phase-5 this function fetched `agent_def` from
   `Esr.Entity.Agent.Registry.agent_def/1` (the agents.yaml cache).
   Phase 5 inverts the responsibility: callers MUST pass an
   `:agent_def` map in `params`. The map shape is unchanged (same
   fields the walker reads) but its source is now
-  `Esr.SessionTemplate.Registry.materialize/2` (template-driven).
-  Spec §5.4. Plan Phase 5 Task 5.2.
+  `Esr.SessionTemplate.Registry.materialize/2` (template-driven). In
+  Phase 6 the template materializer's per-kind contributions in turn
+  flow from each plugin's manifest `agent_kinds:` block. Spec §5.4 +
+  §6 (`docs/superpowers/specs/2026-05-10-session-template-and-channel.md`).
 
   Missing `:agent_def` is a bug in the caller, not a recoverable
   runtime condition — return `{:error, :agent_def_required}` so the
@@ -258,14 +267,15 @@ defmodule Esr.Session.AgentSpawner do
     end
   end
 
-  # Phase 5 cut-over: read the agent_def from params, do not look up
-  # `Esr.Entity.Agent.Registry.agent_def/1` (the agents.yaml cache).
-  # The caller (`Esr.Commands.Session.New`, `Esr.Session.Router`) is
-  # responsible for materializing the agent_def from a SessionTemplate
-  # via `Esr.SessionTemplate.Registry.materialize/2` and threading it
-  # through `params[:agent_def]` (or `params["agent_def"]`).
+  # Phase 5/6 cut-over: read the agent_def from params; the legacy
+  # `Esr.Entity.Agent.Registry` agents.yaml cache is gone. The caller
+  # (`Esr.Commands.Session.New`, `Esr.Session.Router`) is responsible
+  # for materializing the agent_def from a SessionTemplate via
+  # `Esr.SessionTemplate.Registry.materialize/2` (which composes
+  # channel + plugin-manifest agent_kind contributions) and threading
+  # it through `params[:agent_def]` (or `params["agent_def"]`).
   #
-  # Spec §5.4. Plan Phase 5 Task 5.2.
+  # Spec §5.4 + §6.
   defp fetch_agent_def(params) do
     case params[:agent_def] || params["agent_def"] do
       %{} = agent_def -> {:ok, agent_def}
