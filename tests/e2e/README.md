@@ -28,6 +28,8 @@ Each recipe has a `timeout 300` wrapper so a hung esrd cannot hold CI.
 | `scenarios/07_pty_bidir.sh` | PTY actor bidirectional — keystroke → process → frame round-trip. |
 | `scenarios/16_plugin_config_layers.sh` | Plugin config 3-layer merge (global < user < workspace). |
 | `scenarios/17_plugin_config_hot_reload.sh` | HR-4: hot-reload env propagation via mock-claude binary. Proves `plugin_set` + `plugin_reload` + agent restart delivers updated `HTTP_PROXY` to new subprocess. No real Anthropic API needed. |
+| `scenarios/25_session_template_instantiation.sh` | SessionTemplate Phase 5: in-tree feishu-cc bundle auto-elects to default; `/session:new` (no `template=`) materializes via the default; explicit `template=feishu-cc` works; `template=ghost` returns `unknown_template`. |
+| `scenarios/26_operator_template_override.sh` | SessionTemplate Phase 5: operator drops a yaml at `${ESRD_HOME}/<inst>/session_templates/foo.yaml`; boot's `Bundle.Loader.load_all/0` registers it as `source: :operator`; `/session:new template=foo` spawns via the operator template. |
 | `fixtures/probe_file.txt` | 1 KB probe for `send_file`. |
 | `fixtures/mock-claude.sh` | Synthetic claude binary for scenario 17. Echoes env state to a side-channel dump file on startup. |
 | `scenarios/_common_selftest.sh` | Self-test for `common.sh`; run in CI before the real scenarios. |
