@@ -342,11 +342,12 @@ defmodule Esr.Application do
     end
 
     if Application.get_env(:esr, :restore_on_start, true) do
-      # esrd_home argument retained for backward-compat with existing
-      # tests; Esr.Paths.* helpers (used internally) read ESRD_HOME /
-      # ESR_INSTANCE directly, so the passed value is effectively
-      # advisory — set ESRD_HOME to override.
-      _ = load_agents_from_disk()
+      # Phase 6 (2026-05-10): the load_agents_from_disk/0 call is gone.
+      # Pre-Phase-6 it loaded `<runtime_home>/agents.yaml` into
+      # `Esr.Entity.Agent.Registry`; Phase 6 dissolved both that file
+      # and the registry. Agent kinds now flow into
+      # `Esr.Plugin.AgentKindRegistry` via `load_enabled_plugins/0`
+      # above, which already ran when the supervisor started.
 
       # PR-21β 2026-04-30: cleanup_orphans is gone. erlexec owns
       # subprocess lifecycle — when the previous BEAM exited, all
@@ -418,34 +419,6 @@ defmodule Esr.Application do
         )
 
         :ok
-    end
-  end
-
-  @doc """
-  Load `<runtime_home>/agents.yaml` into `Esr.Entity.Agent.Registry` at
-  boot. Mirrors `load_workspaces_from_disk/1` — missing file is not an
-  error, parse failures are logged. Exists so e2e scenarios (which drop
-  an agents.yaml at the instance root before `scripts/esrd.sh start`)
-  don't have to reach into ExUnit test support to load agents manually.
-  """
-  @spec load_agents_from_disk() :: :ok
-  def load_agents_from_disk do
-    require Logger
-    path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
-
-    if File.exists?(path) do
-      case Esr.Entity.Agent.Registry.load_agents(path) do
-        :ok ->
-          Logger.info("agents.yaml: loaded from #{path}")
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("agents.yaml: load failed (#{inspect(reason)}); continuing")
-          :ok
-      end
-    else
-      Logger.info("agents.yaml: absent at #{path}; skipping")
-      :ok
     end
   end
 
@@ -522,9 +495,10 @@ defmodule Esr.Application do
   end
 
   @doc """
-  Read `<runtime_home>/agents.yaml` and ensure a Python handler_worker
+  Read every enabled plugin's manifest `agent_kinds:` block (via
+  `Esr.Plugin.AgentKindRegistry`) and ensure a Python handler_worker
   subprocess is running for every handler module referenced by any
-  agent's `capabilities_required` list.
+  agent kind's `capabilities_required` list.
 
   Capability strings follow `handler:<module>/<action>` (spec §5.3);
   this function extracts the `<module>` segment, deduplicates, and
@@ -532,14 +506,18 @@ defmodule Esr.Application do
   for each. `worker_id="default"` matches the single-worker-per-module
   v0.1 convention already assumed by `Esr.HandlerRouter.call/3`.
 
-  Missing agents.yaml → `:ok` (nothing to bootstrap). Spawn failures
-  are logged but non-fatal so the rest of the runtime stays up with a
-  degraded handler plane — mirrors the policy of
+  Empty registry (no plugins declaring agent_kinds with handler caps)
+  → `:ok` (nothing to bootstrap). Spawn failures are logged but
+  non-fatal so the rest of the runtime stays up with a degraded
+  handler plane — mirrors the policy of
   `bootstrap_feishu_app_adapters/0` and `bootstrap_slash_handler/0`.
 
-  PR-9 T11a. Addresses the "nobody spawns handler worker"
-  anti-pattern structurally: every handler declared as a capability
-  requirement gets a boot-time spawn.
+  PR-9 T11a / Phase 6 (2026-05-10): pre-Phase-6 this read
+  `<runtime_home>/agents.yaml`; post-Phase-6 it sources from the
+  plugin registry, so the per-deploy on-disk seed is gone. Closes the
+  "nobody spawns handler worker" anti-pattern structurally: every
+  handler declared as a capability requirement on any plugin's
+  agent_kind gets a boot-time spawn.
   """
   @spec restore_handlers_from_disk(keyword()) :: :ok
   def restore_handlers_from_disk(opts \\ []) do
@@ -554,14 +532,7 @@ defmodule Esr.Application do
         end
       end)
 
-    path = Path.join(Esr.Paths.runtime_home(), "agents.yaml")
-
-    modules =
-      if File.exists?(path) do
-        extract_handler_modules(path)
-      else
-        []
-      end
+    modules = extract_handler_modules()
 
     for mod <- modules do
       case spawn_fn.(mod) do
@@ -579,26 +550,31 @@ defmodule Esr.Application do
     :ok
   end
 
-  # Parse agents.yaml and return the sorted-unique list of handler
-  # module names referenced by any `capabilities_required` entry shaped
-  # `"handler:<module>/<action>"`. Malformed capabilities (unknown
-  # prefix, missing slash) are silently skipped — the
-  # `Esr.Resource.Capability.Grants` validator catches schema errors at grant
-  # time; this pass only cares about the well-formed handler refs.
-  @spec extract_handler_modules(Path.t()) :: [String.t()]
-  def extract_handler_modules(agents_yaml_path) do
-    with {:ok, content} <- File.read(agents_yaml_path),
-         {:ok, parsed} <- YamlElixir.read_from_string(content) do
-      agents = parsed["agents"] || %{}
+  @doc """
+  Walk every registered agent_kind in `Esr.Plugin.AgentKindRegistry`
+  and return the sorted-unique list of handler module names
+  referenced by any `capabilities_required` entry shaped
+  `"handler:<module>/<action>"`. Malformed capabilities (unknown
+  prefix, missing slash) are silently skipped — the
+  `Esr.Resource.Capability.Grants` validator catches schema errors at
+  grant time; this pass only cares about the well-formed handler refs.
 
-      agents
-      |> Map.values()
-      |> Enum.flat_map(&(&1["capabilities_required"] || []))
+  Phase 6 source migration (2026-05-10): pre-Phase-6 this function
+  parsed an agents.yaml file path; post-Phase-6 it reads from the
+  plugin manifest's `agent_kinds:` blocks via the registry. Tests use
+  `Esr.Plugin.AgentKindRegistry.register/3` to seed deterministic
+  agent_kinds.
+  """
+  @spec extract_handler_modules() :: [String.t()]
+  def extract_handler_modules do
+    if Process.whereis(Esr.Plugin.AgentKindRegistry) do
+      Esr.Plugin.AgentKindRegistry.list_kinds()
+      |> Enum.flat_map(fn {_key, %{capabilities_required: caps}} -> caps end)
       |> Enum.flat_map(&handler_module_from_capability/1)
       |> Enum.uniq()
       |> Enum.sort()
     else
-      _ -> []
+      []
     end
   end
 
