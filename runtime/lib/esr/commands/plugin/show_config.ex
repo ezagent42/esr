@@ -50,8 +50,10 @@ defmodule Esr.Commands.Plugin.ShowConfig do
   end
 
   defp build_path_opts(args) do
+    plugin_name = args["plugin"]
+
     [
-      global_path: args["_global_path_override"] || Esr.Paths.global_plugins_yaml(),
+      global_path: args["_global_path_override"] || Esr.Paths.plugin_global_dir(plugin_name),
       user_path: args["_user_path_override"],
       workspace_path: args["_workspace_path_override"]
     ]

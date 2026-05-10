@@ -24,9 +24,9 @@ plumbing on the dev workstation.
    esrd at it.
 2. You have your Feishu test account + admin access to the bot you
    want to test against.
-3. The dev workstation has both apps configured in
-   `${ESRD_HOME}/<instance>/adapters.yaml` with their real
-   `cli_<app_id>` / `app_secret` (not mock).
+3. The dev workstation has both apps configured under
+   `${ESRD_HOME}/<instance>/adapters/<name>/config.yaml` (yaml-layout-v2)
+   with their real `cli_<app_id>` / `app_secret` (not mock).
 4. `${ESRD_HOME}/<instance>/workspaces.yaml` maps the chats you'll
    test against to workspace names.
 5. `${ESRD_HOME}/<instance>/capabilities.yaml` grants
@@ -119,7 +119,8 @@ gate. Requires two configured apps (e.g. `feishu_app_dev` +
 
 ### Setup
 
-1. Configure two apps in `adapters.yaml` and verify both join via
+1. Configure two apps as `adapters/<name>/config.yaml` per-instance
+   directories (one each) and verify both join via
    `JOINED adapter:feishu/<each>` lines in stdout.log.
 2. Configure `workspaces.yaml` with chats under both apps. Example:
    ```yaml

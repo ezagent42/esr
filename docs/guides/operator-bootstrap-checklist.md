@@ -57,7 +57,7 @@ esr-dev exec register_adapter --type=feishu --name=esr_helper \
 ```
 
 - [ ] Output shows `ok: true`
-- [ ] `cat ~/.esrd/default/adapters.yaml` has the row with `app_secret` populated
+- [ ] `cat ~/.esrd/default/adapters/esr_helper/config.yaml` has `app_secret` populated (yaml-layout-v2 spec § 4.3)
 - [ ] `tail -20 ~/.esrd/default/logs/launchd-stderr.log | grep feishu` shows sidecar booted
 
 ### 4. Bind your Feishu identity

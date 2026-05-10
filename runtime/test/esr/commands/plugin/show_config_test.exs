@@ -4,19 +4,23 @@ defmodule Esr.Commands.Plugin.ShowConfigTest do
   alias Esr.Commands.Plugin.ShowConfig
 
   setup do
+    # yaml-layout-v2: per-plugin config dir holds config.yaml.
     dir = System.tmp_dir!() |> Path.join("show_config_test_#{:rand.uniform(999_999)}")
-    File.mkdir_p!(dir)
-    global_yaml = Path.join(dir, "plugins.yaml")
+    plugin_dir = Path.join(dir, "my-plugin")
+    File.mkdir_p!(plugin_dir)
     on_exit(fn -> File.rm_rf!(dir) end)
-    %{global_yaml: global_yaml}
+    %{plugin_dir: plugin_dir}
   end
+
+  defp write_config(plugin_dir, content),
+    do: File.write!(Path.join(plugin_dir, "config.yaml"), content)
 
   test "returns (empty) text when no config is set", ctx do
     cmd = %{
       "kind" => "plugin_show_config",
       "args" => %{
         "plugin" => "my-plugin",
-        "_global_path_override" => ctx.global_yaml
+        "_global_path_override" => ctx.plugin_dir
       }
     }
 
@@ -25,17 +29,15 @@ defmodule Esr.Commands.Plugin.ShowConfigTest do
   end
 
   test "returns config keys when values are set", ctx do
-    File.write!(ctx.global_yaml, """
-    config:
-      my-plugin:
-        log_level: "debug"
+    write_config(ctx.plugin_dir, """
+    log_level: "debug"
     """)
 
     cmd = %{
       "kind" => "plugin_show_config",
       "args" => %{
         "plugin" => "my-plugin",
-        "_global_path_override" => ctx.global_yaml
+        "_global_path_override" => ctx.plugin_dir
       }
     }
 
@@ -45,10 +47,8 @@ defmodule Esr.Commands.Plugin.ShowConfigTest do
   end
 
   test "layer=global filters to global layer only", ctx do
-    File.write!(ctx.global_yaml, """
-    config:
-      my-plugin:
-        log_level: "info"
+    write_config(ctx.plugin_dir, """
+    log_level: "info"
     """)
 
     cmd = %{
@@ -56,7 +56,7 @@ defmodule Esr.Commands.Plugin.ShowConfigTest do
       "args" => %{
         "plugin" => "my-plugin",
         "layer" => "global",
-        "_global_path_override" => ctx.global_yaml
+        "_global_path_override" => ctx.plugin_dir
       }
     }
 

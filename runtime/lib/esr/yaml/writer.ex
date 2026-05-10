@@ -28,6 +28,32 @@ defmodule Esr.Yaml.Writer do
     end
   end
 
+  @doc """
+  Atomic write — emits to `<path>.tmp.<rand>` then `File.rename!/2` to
+  the final path. POSIX `rename(2)` on the same filesystem is atomic, so
+  a crash mid-write leaves either the old file or the new file on disk,
+  never a half-written file.
+
+  Used by `Esr.Adapters.add/4` per yaml-layout-v2 spec § 4.3.
+
+  ## Differences vs. `write/2`
+
+  `write/2` is `File.write` (overwrite-in-place) — fast, simple, but
+  exposes a window where readers can see a half-written file. Prefer
+  `write_atomic/2` whenever the target is an operator-edited or
+  registry-shaped file.
+  """
+  @spec write_atomic(Path.t(), term()) :: :ok | {:error, term()}
+  def write_atomic(path, data) do
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, text} <- encode(data),
+         tmp = path <> ".tmp.#{:rand.uniform(999_999_999)}",
+         :ok <- File.write(tmp, text),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    end
+  end
+
   defp encode(data) do
     # Minimal YAML emitter for maps/lists/atoms/strings/numbers/booleans.
     try do

@@ -162,7 +162,7 @@ To rotate a Feishu app's secret (say, after a suspected leak), simply re-run the
       --name "ESR 开发助手" --target-env dev
     # Paste the new app_id (same as before if only the secret rotated) + new app_secret.
 
-The admin dispatcher's `RegisterAdapter` command is **idempotent on `name`** — it overwrites the `instances.<name>` entry in `adapters.yaml` and rewrites `.env.local`'s `FEISHU_APP_SECRET_<UPPERCASE_NAME>=...` line in place. The live adapter subprocess is restarted under the new credentials without a full esrd reload.
+The admin dispatcher's `RegisterAdapter` command writes the per-instance directory `adapters/<name>/config.yaml` (yaml-layout-v2; see `docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md`). Re-running `register_adapter` with the same `name` returns `:already_exists`; rotate via `/adapter:remove name=<n>` followed by `register_adapter`, or update `adapters/<name>/config.yaml` in place. The live adapter subprocess is restarted under the new credentials without a full esrd reload.
 
 All submissions go through the admin queue, so you get a completed-with-timestamp record of every rotation under `admin_queue/completed/`. Secrets on the terminal-state queue files are redacted to `[redacted_post_exec]` automatically (dispatcher-side, before the YAML is serialised to disk).
 
@@ -272,7 +272,10 @@ The hook uses `HEAD@{1}` (reflog), not `last_reload.yaml`, so this fix only help
         esrd.port                      # bound port, written on boot
         esrd.pid                       # pid of the mix phx.server process
         capabilities.yaml              # who holds which permission
-        adapters.yaml                  # registered adapter instances
+        plugins.yaml                   # enabled-plugin registry (yaml-layout-v2 § 4.2)
+        plugins/<name>/config.yaml     # per-plugin global config
+        adapters/<name>/config.yaml    # per-adapter-instance config (yaml-layout-v2 § 4.3)
+        adapters/_disabled/<name>/…    # paused adapter instances
         .env.local                     # FEISHU_APP_SECRET_* envs (0600)
         workspaces/                    # per-workspace config (workspace.json per entry)
         routing.yaml                   # per-principal active branch + target

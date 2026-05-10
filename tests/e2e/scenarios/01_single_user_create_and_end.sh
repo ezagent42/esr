@@ -14,7 +14,7 @@ BASELINE=$(e2e_tmp_baseline_snapshot)
 load_agent_yaml
 seed_capabilities
 seed_workspaces
-seed_adapters   # seed adapters.yaml with base_url → boot restore spawns the sidecar
+seed_adapters   # seed adapters/<name>/config.yaml with base_url → boot restore spawns the sidecar
 start_mock_feishu
 start_esrd
 # register_feishu_adapter  # replaced by seed_adapters + Application.restore_adapters_from_disk/1

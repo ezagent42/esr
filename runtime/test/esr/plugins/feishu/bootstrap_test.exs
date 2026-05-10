@@ -1,14 +1,16 @@
 defmodule Esr.Plugins.Feishu.BootstrapTest do
   @moduledoc """
-  PR-9 T10: `Esr.Plugins.Feishu.Bootstrap.bootstrap/1` reads
-  `adapters.yaml` and spawns a `FeishuAppAdapter` peer per `type: feishu`
-  instance, registered under `:feishu_app_adapter_<instance_id>` in
-  Scope.Admin.Process so `EsrWeb.AdapterChannel.forward_to_new_chain/2`
-  can route inbound frames.
+  PR-9 T10 / yaml-layout-v2 (2026-05-09):
+  `Esr.Plugins.Feishu.Bootstrap.bootstrap/1` reads the per-thing
+  adapter directory layout via `Esr.Adapters.list/1` and spawns a
+  `FeishuAppAdapter` peer per `type: feishu` instance, registered under
+  `:feishu_app_adapter_<instance_id>` in Scope.Admin.Process so
+  `EsrWeb.AdapterChannel.forward_to_new_chain/2` can route inbound
+  frames.
 
-  Before T10 the peer was never spawned at boot — `restore_adapters_from_disk`
-  only launched the Python sidecar; the Elixir counterpart was absent
-  and every inbound frame logged "no FeishuAppAdapter for app_id=...".
+  Pre-v2 layout used a monolithic `adapters.yaml`; this test exercises
+  the new `adapters/<name>/config.yaml` shape and uses the `:home` opt
+  so we never touch the user's `~/.esrd`.
   """
   use ExUnit.Case, async: false
 
@@ -16,10 +18,14 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
     assert is_pid(Process.whereis(Esr.Session.Admin.Process))
     assert is_pid(Process.whereis(Esr.Session.Admin.ChildrenSupervisor))
 
-    tmp = Path.join(System.tmp_dir!(), "adapters-#{System.unique_integer([:positive])}.yaml")
+    home =
+      System.tmp_dir!()
+      |> Path.join("feishu_bootstrap_test_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(home)
 
     on_exit(fn ->
-      File.rm(tmp)
+      File.rm_rf!(home)
 
       for name <- [
             :feishu_app_adapter_main_bot,
@@ -39,29 +45,17 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
       end
     end)
 
-    {:ok, tmp: tmp}
+    {:ok, home: home}
   end
 
-  test "registers one FeishuAppAdapter per feishu-type instance in adapters.yaml",
-       %{tmp: tmp} do
-    File.write!(tmp, """
-    instances:
-      main_bot:
-        type: feishu
-        config:
-          app_id: cli_a9563cc03d399cc9
-          app_secret: sec1
-      secondary:
-        type: feishu
-        config:
-          app_id: cli_secondary_bot
-          app_secret: sec2
-      cc_mcp_one:
-        type: cc_mcp
-        config: {}
-    """)
+  test "registers one FeishuAppAdapter per feishu-type instance under adapters/",
+       %{home: home} do
+    opts = [home: home]
+    :ok = Esr.Adapters.add("main_bot", "feishu", %{"app_id" => "cli_a9563cc03d399cc9", "app_secret" => "sec1"}, opts)
+    :ok = Esr.Adapters.add("secondary", "feishu", %{"app_id" => "cli_secondary_bot", "app_secret" => "sec2"}, opts)
+    :ok = Esr.Adapters.add("cc_mcp_one", "cc_mcp", %{}, opts)
 
-    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(opts)
 
     {:ok, main_pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_main_bot)
     {:ok, secondary_pid} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_secondary)
@@ -77,29 +71,24 @@ defmodule Esr.Plugins.Feishu.BootstrapTest do
     assert :error = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_cc_mcp_one)
   end
 
-  test "is idempotent — re-running with the same adapters.yaml is :ok",
-       %{tmp: tmp} do
-    File.write!(tmp, """
-    instances:
-      only:
-        type: feishu
-        config:
-          app_id: cli_idempotent
-    """)
+  test "is idempotent — re-running with the same adapters/ tree is :ok",
+       %{home: home} do
+    opts = [home: home]
+    :ok = Esr.Adapters.add("only", "feishu", %{"app_id" => "cli_idempotent"}, opts)
 
-    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(opts)
     {:ok, pid1} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
-    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(opts)
     {:ok, pid2} = Esr.Session.Admin.Process.admin_peer(:feishu_app_adapter_only)
 
     assert pid1 == pid2, "second call must not spawn a duplicate peer"
   end
 
-  test "missing adapters.yaml → :ok (graceful no-op, matches bootstrap_slash_handler policy)",
-       %{tmp: tmp} do
-    # File intentionally not created.
-    refute File.exists?(tmp)
-    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(tmp)
+  test "empty adapters tree → :ok (graceful no-op, matches bootstrap_slash_handler policy)",
+       %{home: home} do
+    # No adapters/ created — Esr.Adapters.list/1 returns [] cleanly.
+    refute File.exists?(Path.join(home, "adapters"))
+    assert :ok = Esr.Plugins.Feishu.Bootstrap.bootstrap(home: home)
   end
 end

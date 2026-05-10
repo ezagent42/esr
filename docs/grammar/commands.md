@@ -12,6 +12,64 @@ directly.
 
 ## Adapters
 
+### `adapter_disable`
+
+**slash:** `/adapter:disable`
+
+**module:** `Esr.Commands.Adapter.Disable`
+
+**permission:** `adapter.manage`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 暂停 adapter 实例（移到 adapters/_disabled/）— 不会删配置；可用 /adapter:enable 恢复
+
+**args:**
+  - `name` (required) — adapter instance name
+
+**errors:**
+  - `invalid_args` — adapter:disable requires args.name
+  - `not_found` — no adapter %{name}
+  - `already_disabled` — adapter %{name} is already disabled
+  - `disable_failed` — %{detail}
+
+### `adapter_enable`
+
+**slash:** `/adapter:enable`
+
+**module:** `Esr.Commands.Adapter.Enable`
+
+**permission:** `adapter.manage`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 恢复 adapter 实例（从 adapters/_disabled/ 移回 adapters/）+ refresh
+
+**args:**
+  - `name` (required) — adapter instance name
+
+**errors:**
+  - `invalid_args` — adapter:enable requires args.name
+  - `not_disabled` — adapter %{name} is not in adapters/_disabled/
+  - `already_enabled` — adapter %{name} is already enabled
+  - `enable_failed` — %{detail}
+
+### `adapter_list`
+
+**slash:** `/adapter:list`
+
+**module:** `Esr.Commands.Adapter.List`
+
+**permission:** `null`
+
+**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
+
+**description:** 列 adapters/ 下的 adapter 实例（type / app_id）+ adapters/_disabled/ 下的暂停实例
+
+**args:** _none_
+
+**errors:** _none declared_
+
 ### `adapter_refresh`
 
 _internal kind only — not slash-callable_
@@ -30,7 +88,7 @@ _internal kind only — not slash-callable_
 
 ### `adapter_remove`
 
-_internal kind only — not slash-callable_
+**slash:** `/adapter:remove`
 
 **module:** `Esr.Commands.Adapter.Remove`
 
@@ -38,7 +96,7 @@ _internal kind only — not slash-callable_
 
 **bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
 
-**description:** 终止 adapter 实例（sidecar + FAA peer）并从 adapters.yaml 移除
+**description:** 终止 adapter 实例（sidecar + FAA peer）并从 adapters/<name>/ 移除
 
 **args:**
   - `instance_id` (required) — adapter 实例 id
@@ -46,11 +104,10 @@ _internal kind only — not slash-callable_
 **errors:**
   - `invalid_args` — adapter_remove requires args.instance_id
   - `unknown_instance` — no adapter %{instance_id}
-  - `yaml_read_failed` — %{detail}
 
 ### `adapter_rename`
 
-_internal kind only — not slash-callable_
+**slash:** `/adapter:rename`
 
 **module:** `Esr.Commands.Adapter.Rename`
 
@@ -58,7 +115,7 @@ _internal kind only — not slash-callable_
 
 **bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
 
-**description:** 重命名 adapter 实例（terminate old + 改 adapters.yaml + refresh）
+**description:** 重命名 adapter 实例（terminate old + 移动 adapters/<name>/ + refresh）
 
 **args:**
   - `old_instance_id` (required) — 原 instance id
@@ -66,11 +123,11 @@ _internal kind only — not slash-callable_
 
 **errors:**
   - `invalid_args` — adapter_rename requires args.old_instance_id and args.new_instance_id
-  - `invalid_new_name` — name %{new} fails %{pattern}
+  - `invalid_new_name` — name %{new} fails the adapter-name pattern (no leading `_`, ^[A-Za-z][A-Za-z0-9_-]{0,62}$)
   - `old_and_new_match` — old and new must differ
   - `new_name_already_exists` — instance %{new} already exists
   - `unknown_instance` — no adapter %{old}
-  - `yaml_read_failed` — %{detail}
+  - `rename_failed` — %{detail}
 
 ### `adapter_start`
 
@@ -92,22 +149,6 @@ _internal kind only — not slash-callable_
   - `invalid_args` — adapter_start requires args.type and args.instance_id
   - `spawn_failed` — ensure_adapter failed: %{detail}
 
-### `adapters_list`
-
-_internal kind only — not slash-callable_
-
-**module:** `Esr.Commands.Adapters.List`
-
-**permission:** `null`
-
-**bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
-
-**description:** 列 adapters.yaml 配置的 adapter 实例（type / app_id / base_url）
-
-**args:** _none_
-
-**errors:** _none declared_
-
 ### `register_adapter`
 
 _internal kind only — not slash-callable_
@@ -118,7 +159,7 @@ _internal kind only — not slash-callable_
 
 **bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
 
-**description:** 持久注册 adapter 实例（写 adapters.yaml + 启动 sidecar）
+**description:** 持久注册 adapter 实例（写 adapters/<name>/config.yaml + 启动 sidecar）
 
 **args:**
   - `type` (required) — adapter 类型（目前只支持 feishu）

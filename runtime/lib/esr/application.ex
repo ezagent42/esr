@@ -414,8 +414,15 @@ defmodule Esr.Application do
   end
 
   @doc """
-  Read `<home>/default/adapters.yaml` and spawn each instance via
-  `Esr.WorkerSupervisor.ensure_adapter/4`. Missing file → `:ok`.
+  Iterate `Esr.Adapters.list/1` and spawn each instance via
+  `Esr.WorkerSupervisor.ensure_adapter/4`. Empty list → `:ok`.
+
+  Per yaml-layout-v2 (spec § 4.5, § 4.7): the per-thing-directory layout
+  removed both the monolithic `adapters.yaml` and the `plugins.yaml`
+  `app_secret` fallback. A `type: feishu` row missing `app_secret` now
+  fails loud (Logger.error) and is **not** spawned — the sidecar would
+  crash-loop on `app_secret missing from AdapterConfig` so silently
+  spawning helps no one. Operator hint: re-run `register_adapter`.
 
   `opts[:spawn_fn]` is an injection point for tests; prod uses
   `ensure_adapter` via `default_adapter_ws_url/0`.
@@ -433,76 +440,36 @@ defmodule Esr.Application do
         end
       end)
 
-    path = Esr.Paths.adapters_yaml()
+    list_opts = Keyword.take(opts, [:home])
 
-    if File.exists?(path) do
-      with {:ok, parsed} <- YamlElixir.read_from_file(path),
-           instances when is_map(instances) <- parsed["instances"] || %{} do
-        for {name, row} <- instances do
-          type = row["type"] || ""
-          config = ensure_app_secret(type, row["config"] || %{})
+    for %{name: name, type: type, config: config} <- Esr.Adapters.list(list_opts) do
+      cond do
+        type == "feishu" and feishu_secret_missing?(config) ->
+          require Logger
+
+          Logger.error(
+            "application: feishu adapter '#{name}' missing app_secret in " <>
+              "adapters/#{name}/config.yaml — skipping spawn. Re-run " <>
+              "`esr exec register_adapter --type=feishu --name=#{name} " <>
+              "--app_id=… --app_secret=…` to fix."
+          )
+
+          :skipped
+
+        true ->
           _ = spawn_fn.(name, type, config)
-          # Topology auto-restore of feishu-app-session peers was deleted
-          # in P3-13 (Topology module removal). In the peer/session
-          # refactor, FeishuAppAdapter peers are started via
-          # adapters.yaml + WorkerSupervisor above; no separate Elixir
-          # peer needs to be auto-spawned per app_id.
-        end
       end
     end
 
     :ok
   end
 
-  # Back-compat: stale adapters.yaml entries written before the
-  # 2026-05-09 register_adapter fix had only `app_id` in the config
-  # block. The Python sidecar fails AdapterConfig validation
-  # (`app_secret missing from AdapterConfig`) and crash-loops if we
-  # forward such config straight through. Fall back to the secret
-  # stored in plugins.yaml's feishu config (the operator-side
-  # configuration path). Permissive on miss — log an error and let
-  # the spawn proceed; the operator can re-run register_adapter or
-  # set feishu.app_secret in plugins.yaml to recover. We do NOT
-  # crash boot just because one adapter row is incomplete.
-  #
-  # Multi-tenant caveat: plugins.yaml carries a single
-  # `feishu.app_secret`. Deployments running multiple feishu adapters
-  # with DIFFERENT Feishu apps cannot rely on this fallback for both —
-  # only adapters whose secret matches the plugins.yaml value will
-  # authenticate. Operators with multiple feishu apps should re-run
-  # `register_adapter` for each so each adapters.yaml row carries its
-  # own secret.
-  defp ensure_app_secret("feishu", config) do
+  defp feishu_secret_missing?(config) do
     case Map.get(config, "app_secret") do
-      secret when is_binary(secret) and secret != "" ->
-        config
-
-      _ ->
-        require Logger
-
-        case Esr.Plugin.Config.get("feishu", "app_secret",
-               global_path: Esr.Paths.global_plugins_yaml()
-             ) do
-          s when is_binary(s) and s != "" ->
-            Logger.info(
-              "application: app_secret missing from adapters.yaml; injected from plugins.yaml feishu config"
-            )
-
-            Map.put(config, "app_secret", s)
-
-          _ ->
-            Logger.error(
-              "application: app_secret missing for feishu adapter; sidecar will fail to authenticate. " <>
-                "Re-run `esr exec register_adapter --type=feishu --name=<n> --app_id=<id> --app_secret=<s>` " <>
-                "OR set feishu.app_secret in plugins.yaml."
-            )
-
-            config
-        end
+      s when is_binary(s) and s != "" -> false
+      _ -> true
     end
   end
-
-  defp ensure_app_secret(_type, config), do: config
 
   defp default_adapter_ws_url, do: ws_url_for("/adapter_hub/socket")
 
