@@ -10,6 +10,22 @@
 name: claude_code
 version: 0.1.0
 hot_reloadable: true
+
+# Top-level `channels:` block — populated by Esr.Plugin.Loader at boot
+# into Esr.Channel.Registry under `claude_code.mcp_http`. The module
+# wraps the existing EsrWeb.McpController + `cli:channel/<sid>` PubSub
+# plumbing under the Esr.Channel behaviour; SessionTemplate loaders
+# (Phase 4) instantiate one per session. Spec
+# 2026-05-10-session-template-and-channel.md, Phase 2.
+channels:
+  - name: mcp_http
+    module: Esr.Plugins.ClaudeCode.Channels.McpHttp
+    config_schema:
+      type: object
+      properties:
+        port:
+          type: integer
+
 description: |
   Claude Code (CC) integration. CCProcess drives session lifecycle;
   CCProxy streams reply directives. Spawns a claude binary inside a
