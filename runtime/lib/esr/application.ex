@@ -160,6 +160,16 @@ defmodule Esr.Application do
       # finds a live table.
       Esr.Channel.Registry,
 
+      # 4e.2c Channel.Instances — Elixir.Registry (`:unique`) hosting the
+      # per-session live Channel GenServer pids. Each Channel impl
+      # registers via `{:via, Registry, {Esr.Channel.Instances,
+      # "<plugin>.<channel_name>:<session_id>"}}`. SessionTemplate loaders
+      # (Phase 4) resolve a Channel pid by `Registry.lookup/2` against
+      # this name. Mirrors `Esr.Session.Registry` (line 101) which serves
+      # the analogous role for session_sup processes. Spec
+      # 2026-05-10-session-template-and-channel.md, Phase 2.
+      {Registry, keys: :unique, name: Esr.Channel.Instances},
+
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
