@@ -7,21 +7,17 @@ defmodule Esr.Resource.Session.Struct do
     * `name` — operator-provided display alias; unique within (owner_user, name). May change.
     * `owner_user` — user UUID of the user who created this session.
     * `workspace_id` — UUID of the workspace this session is bound to.
-    * `agents` — ordered list of agent instance maps (%{type, name, config}).
-      First entry is the default primary if primary_agent is not set.
-    * `primary_agent` — name of the agent receiving un-addressed plain text (Q8=A).
+    * `agent_ids` — ordered list of instance UUIDs attached to this
+      session (Phase 7 hardcut, was `agents:[]` array). The actual
+      `%Esr.Entity.Agent.Instance{}` records live in
+      `sessions/<sid>/agents/<instance_uuid>.json` files.
+    * `primary_agent` — name of the agent receiving un-addressed plain text.
     * `attached_chats` — list of chats with this session in their attached-set.
       Each entry: %{chat_id, app_id, attached_by, attached_at}.
     * `created_at` — ISO 8601 string; set at session creation.
     * `transient` — if true, workspace at sessions/<uuid>/ is pruned when session
       ends and the workspace is clean.
   """
-
-  @type agent_entry :: %{
-          required(:type) => String.t(),
-          required(:name) => String.t(),
-          required(:config) => map()
-        }
 
   @type chat_entry :: %{
           required(:chat_id) => String.t(),
@@ -35,7 +31,7 @@ defmodule Esr.Resource.Session.Struct do
           name: String.t() | nil,
           owner_user: String.t() | nil,
           workspace_id: String.t() | nil,
-          agents: [agent_entry()],
+          agent_ids: [String.t()],
           primary_agent: String.t() | nil,
           attached_chats: [chat_entry()],
           created_at: String.t() | nil,
@@ -49,7 +45,7 @@ defmodule Esr.Resource.Session.Struct do
     :workspace_id,
     :primary_agent,
     :created_at,
-    agents: [],
+    agent_ids: [],
     attached_chats: [],
     transient: false
   ]

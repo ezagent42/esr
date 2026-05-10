@@ -4,6 +4,9 @@ defmodule Esr.Resource.Session.JsonWriter do
 
   Uses `*.tmp` → rename to avoid torn state on crash. Creates parent
   directories as needed.
+
+  Phase 7 (2026-05-10) hardcut: emits schema_version = 2 with
+  `agent_ids:` (UUID array) instead of the embedded `agents:[]` array.
   """
 
   alias Esr.Resource.Session.Struct
@@ -21,12 +24,12 @@ defmodule Esr.Resource.Session.JsonWriter do
 
   defp encode(s) do
     map = %{
-      "schema_version" => 1,
+      "schema_version" => 2,
       "id" => s.id,
       "name" => s.name,
       "owner_user" => s.owner_user,
       "workspace_id" => s.workspace_id,
-      "agents" => Enum.map(s.agents, &serialise_agent/1),
+      "agent_ids" => s.agent_ids || [],
       "primary_agent" => s.primary_agent,
       "attached_chats" => Enum.map(s.attached_chats, &serialise_chat/1),
       "created_at" => s.created_at,
@@ -35,9 +38,6 @@ defmodule Esr.Resource.Session.JsonWriter do
 
     Jason.encode(map, pretty: true)
   end
-
-  defp serialise_agent(%{type: t, name: n, config: c}),
-    do: %{"type" => t, "name" => n, "config" => c}
 
   defp serialise_chat(%{chat_id: cid, app_id: aid, attached_by: by, attached_at: at}),
     do: %{"chat_id" => cid, "app_id" => aid, "attached_by" => by, "attached_at" => at}

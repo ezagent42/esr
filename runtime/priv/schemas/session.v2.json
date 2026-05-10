@@ -1,13 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://esr.local/schema/session.v1.json",
-  "title": "ESR session.json (v1)",
+  "$id": "https://esr.local/schema/session.v2.json",
+  "title": "ESR session.json (v2)",
+  "description": "Phase 7 of the SessionTemplate + Channel migration: the embedded `agents:[]` array (v1) is split into per-instance files at `sessions/<sid>/agents/<instance_uuid>.json` (validated by agent_instance.v2.json). This file now carries only `agent_ids: [<instance_uuid>...]` — the array of UUIDs of instances attached to this session. Migration script: `mix esr.migrate_agent_instances_v1_to_v2`.",
   "type": "object",
-  "required": ["schema_version", "id", "name", "owner_user", "workspace_id", "agents", "primary_agent", "attached_chats", "created_at", "transient"],
+  "required": ["schema_version", "id", "name", "owner_user", "workspace_id", "agent_ids", "primary_agent", "attached_chats", "created_at", "transient"],
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "id": {
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -21,20 +22,14 @@
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
-    "agents": {
+    "agent_ids": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": ["type", "name", "config"],
-        "additionalProperties": false,
-        "properties": {
-          "type": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "config": { "type": "object" }
-        }
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
       }
     },
-    "primary_agent": { "type": "string" },
+    "primary_agent": { "type": ["string", "null"] },
     "attached_chats": {
       "type": "array",
       "items": {

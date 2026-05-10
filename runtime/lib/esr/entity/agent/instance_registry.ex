@@ -2,32 +2,33 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   @moduledoc """
   Per-process ETS-backed registry of agent instances within sessions.
 
-  ## ETS layout
+  ## Phase 7: multi-session-per-instance
 
-  Single table: `{session_uuid, agent_name} => %Instance{}` for O(1)
-  name-uniqueness checks and O(1) per-agent lookup.
+  An instance now belongs to a list of sessions (`session_ids`). The
+  same `%Instance{}` record can be looked up via any of its attached
+  sessions. Lookup keys live in two ETS tables:
 
-  A separate `{:primary, session_uuid} => agent_name` entry tracks the
-  primary agent for each session.
+    * `<server_name>` (the metadata table) — `{instance_id, %Instance{}}`
+      stores the canonical instance record. This is the source of truth.
+    * `<server_name>__nameix` — `{{session_id, name}, instance_id}` is a
+      reverse index for O(1) `(session_id, name)` lookup. Each instance
+      has one entry here per session it's attached to. Names are unique
+      WITHIN each session — an attach to a new session that already
+      hosts a different instance under the same name fails loudly.
 
-  ## Name uniqueness
+  Plus auxiliary entries on the metadata table (kept here for cohesion):
 
-  Names are unique within a session across all agent types (spec Q7=B).
-  `add_instance/2` rejects a second instance with the same name in the
-  same session regardless of type.
+    * `{:primary, session_uuid}` → `name` of the session's primary agent.
+    * `{:instance_sup, session_uuid, name}` → instance subtree supervisor
+      pid (only for instances spawned via `add_instance_and_spawn/2`).
 
   ## Primary agent
 
-  The first agent added to a session automatically becomes the primary
-  (spec §4.B `/session:new` → "Primary = first agent added").
-  `set_primary/3` changes it at any time. `remove_instance/3` is
-  guarded: the primary agent cannot be removed until another is made
-  primary first.
+  The first agent added to a session automatically becomes the primary.
+  `set_primary/3` changes it. `remove_instance/3` is guarded — the
+  primary cannot be removed until another instance becomes primary.
 
   ## Usage
-
-  Start as a named GenServer (tests pass an atom as `name:`; production
-  code starts a single global instance named `__MODULE__`):
 
       {:ok, _} = InstanceRegistry.start_link(name: Esr.Entity.Agent.InstanceRegistry)
   """
@@ -46,50 +47,60 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @doc """
-  Add an agent instance to `session_id`. The `attrs` map must contain at
-  minimum: `session_id`, `type`, `name`, `config`.
+  Add an agent instance to a session. The `attrs` map must contain at
+  minimum: `session_id` (or `session_ids`), `type`, `name`, `config`.
 
-  Returns `:ok` on success, `{:error, {:duplicate_agent_name, name}}` if the
-  name already exists in the session.
+  When `:session_id` is given (singular), it's wrapped to `[session_id]`
+  for the new shape.
+
+  Returns `:ok` on success, `{:error, {:duplicate_agent_name, name}}` if
+  the name already exists in any of the target sessions.
   """
   @spec add_instance(GenServer.server(), map()) ::
           :ok | {:error, {:duplicate_agent_name, String.t()}}
   def add_instance(server \\ __MODULE__, attrs) when is_map(attrs) do
-    GenServer.call(server, {:add_instance, attrs})
+    GenServer.call(server, {:add_instance, normalize_attrs(attrs)})
   end
 
   @doc """
   Add an agent instance AND spawn its (CC, PTY) subtree atomically.
 
-  Serialized via the GenServer mailbox — no two concurrent calls for
-  the same `{session_id, name}` can both pass the uniqueness check.
-
-  Steps:
-    1. Look up `{session_id, name}` in the metadata table; reject
-       if already present (`:duplicate_agent_name`).
-    2. Resolve the per-session `Esr.Session.AgentSupervisor` via
-       `{:via, Registry, {Esr.Session.Registry, {:agent_sup, sid}}}`
-       and call `add_agent_subtree/2`.
-    3. On success: write the `%Instance{}` ETS record, plus
-       `{:instance_sup, sid, name, instance_sup_pid}` so
-       remove_instance can cascade-terminate the subtree.
-    4. On spawn failure: clean the Index 2 name placeholder
-       (`:esr_actor_name_index`) so a retry isn't blocked.
-
-  Returns:
-    - `{:ok, %{cc_pid, pty_pid, actor_ids: %{cc, pty}}}` on success.
-    - `{:error, {:duplicate_agent_name, name}}` if name is taken.
-    - `{:error, {:spawn_failed, reason}}` if the AgentSupervisor refuses.
+  Returns `{:ok, %{cc_pid, pty_pid, actor_ids: %{cc, pty}}}` on success.
   """
   @spec add_instance_and_spawn(GenServer.server(), map()) ::
           {:ok, %{cc_pid: pid(), pty_pid: pid(), actor_ids: map()}}
           | {:error, {:duplicate_agent_name, String.t()} | {:spawn_failed, term()}}
   def add_instance_and_spawn(server \\ __MODULE__, attrs) when is_map(attrs) do
-    GenServer.call(server, {:add_instance_and_spawn, attrs}, 30_000)
+    GenServer.call(server, {:add_instance_and_spawn, normalize_attrs(attrs)}, 30_000)
   end
 
   @doc """
-  Remove the agent named `name` from `session_id`.
+  Attach an existing instance (resolved via its `(source_session_id, name)`
+  primary-key tuple) to an additional session. The instance's
+  `session_ids` list grows by one. Idempotent: re-attaching to a session
+  already in the list is a no-op.
+
+  Returns:
+    * `:ok`
+    * `{:error, :not_found}` — instance not found in `source_session_id`
+    * `{:error, {:name_taken_in_target, target_session_id}}` — another
+      instance with this name already lives in `target_session_id`
+
+  Phase 7 (2026-05-10).
+  """
+  @spec attach_to_session(GenServer.server(), String.t(), String.t(), String.t()) ::
+          :ok
+          | {:error, :not_found | {:name_taken_in_target, String.t()}}
+  def attach_to_session(server \\ __MODULE__, name, source_session_id, target_session_id)
+      when is_binary(name) and is_binary(source_session_id) and is_binary(target_session_id) do
+    GenServer.call(server, {:attach_to_session, name, source_session_id, target_session_id})
+  end
+
+  @doc """
+  Remove the agent named `name` from `session_id`. If the instance has
+  more than one session in `session_ids`, the session is detached but
+  the instance stays alive (still attached to the remaining sessions).
+  If `session_id` is the LAST session, the instance is fully removed.
 
   Returns `:ok`, `{:error, :cannot_remove_primary}`, or `{:error, :not_found}`.
   """
@@ -100,14 +111,20 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     GenServer.call(server, {:remove_instance, session_id, name})
   end
 
-  @doc "Return all instances for `session_id` as a list of `%Instance{}`."
+  @doc "Return all instances attached to `session_id` as a list of `%Instance{}`."
   @spec list(GenServer.server(), String.t()) :: [Instance.t()]
   def list(server \\ __MODULE__, session_id) when is_binary(session_id) do
-    tab = GenServer.call(server, :table_name)
+    %{table: tab, name_index: ix} = GenServer.call(server, :tables)
 
-    :ets.match_object(tab, {{session_id, :_}, :_})
-    |> Enum.filter(fn {{_s, k}, _} -> k != :__primary__ end)
-    |> Enum.map(fn {_key, inst} -> inst end)
+    ix
+    |> :ets.match_object({{session_id, :_}, :_})
+    |> Enum.map(fn {{_s, _n}, instance_id} ->
+      case :ets.lookup(tab, instance_id) do
+        [{_, inst}] -> inst
+        _ -> nil
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
   end
 
   @doc "Fetch a single instance by session + name. Returns `{:ok, inst}` or `:not_found`."
@@ -115,17 +132,22 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
           {:ok, Instance.t()} | :not_found
   def get(server \\ __MODULE__, session_id, name)
       when is_binary(session_id) and is_binary(name) do
-    tab = GenServer.call(server, :table_name)
-    case :ets.lookup(tab, {session_id, name}) do
-      [{_, inst}] -> {:ok, inst}
-      [] -> :not_found
+    %{table: tab, name_index: ix} = GenServer.call(server, :tables)
+
+    case :ets.lookup(ix, {session_id, name}) do
+      [{_, instance_id}] ->
+        case :ets.lookup(tab, instance_id) do
+          [{_, inst}] -> {:ok, inst}
+          _ -> :not_found
+        end
+
+      [] ->
+        :not_found
     end
   end
 
   @doc """
   Set `name` as the primary agent for `session_id`.
-
-  Returns `:ok` or `{:error, :not_found}` if the name doesn't exist.
   """
   @spec set_primary(GenServer.server(), String.t(), String.t()) ::
           :ok | {:error, :not_found}
@@ -135,11 +157,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   end
 
   @doc """
-  Rename `name` → `new_name` in `session_id`. Atomic via the GenServer
-  call so the (session_id, name) ETS key swap is collision-checked.
-
-  Returns `:ok`, `{:error, :not_found}`, or
-  `{:error, :duplicate_agent_name}`.
+  Rename `name` → `new_name` in `session_id`.
   """
   @spec rename_instance(GenServer.server(), String.t(), String.t(), String.t()) ::
           :ok | {:error, :not_found | :duplicate_agent_name}
@@ -148,21 +166,18 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     GenServer.call(server, {:rename_instance, session_id, name, new_name})
   end
 
-  @doc """
-  Return the primary agent name for `session_id`.
-
-  Returns `{:ok, name}` or `:not_found`.
-  """
+  @doc "Return the primary agent name for `session_id`."
   @spec primary(GenServer.server(), String.t()) :: {:ok, String.t()} | :not_found
   def primary(server \\ __MODULE__, session_id) when is_binary(session_id) do
-    tab = GenServer.call(server, :table_name)
-    case :ets.lookup(tab, {session_id, :__primary__}) do
+    %{table: tab} = GenServer.call(server, :tables)
+
+    case :ets.lookup(tab, {:primary, session_id}) do
       [{_, name}] when is_binary(name) -> {:ok, name}
       _ -> :not_found
     end
   end
 
-  @doc "Return agent names for session (used by name-uniqueness check in AddAgent)."
+  @doc "Return agent names for session."
   @spec names_for_session(GenServer.server(), String.t()) :: [String.t()]
   def names_for_session(server \\ __MODULE__, session_id) when is_binary(session_id) do
     list(server, session_id) |> Enum.map(& &1.name)
@@ -170,23 +185,14 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
   @doc """
   Look up the PTY actor id for `(session_id, name)`.
-
-  Returns `{:ok, pty_actor_id}` or `:not_found`. Used by `/claude_code:tui` and
-  `/pty:list` to resolve agent name → PTY id without going through the
-  side-channel `add_instance_and_spawn/2` return.
   """
   @spec pty_actor_id_for(GenServer.server(), String.t(), String.t()) ::
           {:ok, String.t()} | :not_found
   def pty_actor_id_for(server \\ __MODULE__, session_id, name)
       when is_binary(session_id) and is_binary(name) do
-    tab = GenServer.call(server, :table_name)
-
-    case :ets.lookup(tab, {session_id, name}) do
-      [{_, %Instance{actor_ids: %{pty: pty_id}}}] when is_binary(pty_id) ->
-        {:ok, pty_id}
-
-      _ ->
-        :not_found
+    case get(server, session_id, name) do
+      {:ok, %Instance{actor_ids: %{pty: pty_id}}} when is_binary(pty_id) -> {:ok, pty_id}
+      _ -> :not_found
     end
   end
 
@@ -196,40 +202,46 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
   @impl true
   def init(opts) do
-    # Each named process owns its own ETS table (named by the server name so
-    # tests using unique atom names don't collide).
     server_name = Keyword.get(opts, :name, __MODULE__)
     table = :ets.new(server_name, [:set, :public, :named_table])
-    {:ok, %{table: table}}
+    name_index = :ets.new(:"#{server_name}__nameix", [:set, :public, :named_table])
+    {:ok, %{table: table, name_index: name_index}}
   end
 
   @impl true
-  def handle_call(:table_name, _from, state), do: {:reply, state.table, state}
+  def handle_call(:tables, _from, state),
+    do: {:reply, %{table: state.table, name_index: state.name_index}, state}
 
   @impl true
   def handle_call({:add_instance, attrs}, _from, state) do
-    session_id = Map.fetch!(attrs, :session_id)
+    [primary_sid | _] = session_ids = Map.fetch!(attrs, :session_ids)
     name = Map.fetch!(attrs, :name)
 
-    case :ets.lookup(state.table, {session_id, name}) do
-      [_] ->
+    case Enum.find(session_ids, fn sid -> :ets.lookup(state.name_index, {sid, name}) != [] end) do
+      sid when is_binary(sid) ->
         {:reply, {:error, {:duplicate_agent_name, name}}, state}
 
-      [] ->
+      nil ->
+        instance_id = uuid_v4()
+
         inst = %Instance{
-          id: uuid_v4(),
-          session_id: session_id,
+          id: instance_id,
+          session_ids: session_ids,
           type: Map.fetch!(attrs, :type),
           name: name,
           config: Map.get(attrs, :config, %{}),
           created_at: iso_now()
         }
 
-        :ets.insert(state.table, {{session_id, name}, inst})
+        :ets.insert(state.table, {instance_id, inst})
 
-        # Auto-promote to primary if this is the first agent in the session.
-        if :ets.lookup(state.table, {session_id, :__primary__}) == [] do
-          :ets.insert(state.table, {{session_id, :__primary__}, name})
+        for sid <- session_ids do
+          :ets.insert(state.name_index, {{sid, name}, instance_id})
+        end
+
+        # Auto-promote to primary in the originating session if first agent.
+        if :ets.lookup(state.table, {:primary, primary_sid}) == [] do
+          :ets.insert(state.table, {{:primary, primary_sid}, name})
         end
 
         {:reply, :ok, state}
@@ -238,34 +250,30 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
   @impl true
   def handle_call({:remove_instance, session_id, name}, _from, state) do
-    case :ets.lookup(state.table, {session_id, name}) do
+    case :ets.lookup(state.name_index, {session_id, name}) do
       [] ->
         {:reply, {:error, :not_found}, state}
 
-      [_] ->
-        primary_name =
-          case :ets.lookup(state.table, {session_id, :__primary__}) do
-            [{_, n}] -> n
-            _ -> nil
-          end
+      [{_, instance_id}] ->
+        case primary_for(state, session_id) do
+          ^name ->
+            {:reply, {:error, :cannot_remove_primary}, state}
 
-        if primary_name == name do
-          {:reply, {:error, :cannot_remove_primary}, state}
-        else
-          :ets.delete(state.table, {session_id, name})
-          {:reply, :ok, state}
+          _ ->
+            do_detach(state, instance_id, session_id, name)
+            {:reply, :ok, state}
         end
     end
   end
 
   @impl true
   def handle_call({:set_primary, session_id, name}, _from, state) do
-    case :ets.lookup(state.table, {session_id, name}) do
+    case :ets.lookup(state.name_index, {session_id, name}) do
       [] ->
         {:reply, {:error, :not_found}, state}
 
       [_] ->
-        :ets.insert(state.table, {{session_id, :__primary__}, name})
+        :ets.insert(state.table, {{:primary, session_id}, name})
         {:reply, :ok, state}
     end
   end
@@ -276,36 +284,84 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
       name == new_name ->
         {:reply, :ok, state}
 
-      :ets.lookup(state.table, {sid, new_name}) != [] ->
+      :ets.lookup(state.name_index, {sid, new_name}) != [] ->
         {:reply, {:error, :duplicate_agent_name}, state}
 
       true ->
-        case :ets.lookup(state.table, {sid, name}) do
+        case :ets.lookup(state.name_index, {sid, name}) do
+          [{_, instance_id}] ->
+            case :ets.lookup(state.table, instance_id) do
+              [{_, %Instance{} = inst}] ->
+                new_inst = %{inst | name: new_name}
+                :ets.insert(state.table, {instance_id, new_inst})
+
+                # Move every session-keyed name index entry that belongs
+                # to this instance (rename is global since names must
+                # match across the instance's session_ids).
+                for s <- inst.session_ids do
+                  :ets.delete(state.name_index, {s, name})
+                  :ets.insert(state.name_index, {{s, new_name}, instance_id})
+                end
+
+                # Mirror primary pointer for any session where this was
+                # the primary.
+                for s <- inst.session_ids do
+                  case :ets.lookup(state.table, {:primary, s}) do
+                    [{_, ^name}] ->
+                      :ets.insert(state.table, {{:primary, s}, new_name})
+
+                    _ ->
+                      :ok
+                  end
+                end
+
+                # Mirror agent_sup_via key if it exists.
+                for s <- inst.session_ids do
+                  case :ets.lookup(state.table, {:instance_sup, s, name}) do
+                    [{_, sup_pid}] ->
+                      :ets.delete(state.table, {:instance_sup, s, name})
+                      :ets.insert(state.table, {{:instance_sup, s, new_name}, sup_pid})
+
+                    _ ->
+                      :ok
+                  end
+                end
+
+                {:reply, :ok, state}
+
+              [] ->
+                {:reply, {:error, :not_found}, state}
+            end
+
+          [] ->
+            {:reply, {:error, :not_found}, state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:attach_to_session, name, source_sid, target_sid}, _from, state) do
+    case :ets.lookup(state.name_index, {source_sid, name}) do
+      [] ->
+        {:reply, {:error, :not_found}, state}
+
+      [{_, instance_id}] ->
+        case :ets.lookup(state.table, instance_id) do
           [{_, %Instance{} = inst}] ->
-            new_inst = %{inst | name: new_name}
-            :ets.delete(state.table, {sid, name})
-            :ets.insert(state.table, {{sid, new_name}, new_inst})
+            cond do
+              target_sid in inst.session_ids ->
+                # Idempotent: already attached.
+                {:reply, :ok, state}
 
-            # Also update primary pointer if this was the primary.
-            case :ets.lookup(state.table, {sid, :__primary__}) do
-              [{_, ^name}] ->
-                :ets.insert(state.table, {{sid, :__primary__}, new_name})
+              :ets.lookup(state.name_index, {target_sid, name}) != [] ->
+                {:reply, {:error, {:name_taken_in_target, target_sid}}, state}
 
-              _ ->
-                :ok
+              true ->
+                new_inst = %{inst | session_ids: inst.session_ids ++ [target_sid]}
+                :ets.insert(state.table, {instance_id, new_inst})
+                :ets.insert(state.name_index, {{target_sid, name}, instance_id})
+                {:reply, :ok, state}
             end
-
-            # Mirror agent_sup_via key if it exists (per Esr.Session.AgentSupervisor convention)
-            case :ets.lookup(state.table, {:instance_sup, sid, name}) do
-              [{_, sup_pid}] ->
-                :ets.delete(state.table, {:instance_sup, sid, name})
-                :ets.insert(state.table, {{:instance_sup, sid, new_name}, sup_pid})
-
-              _ ->
-                :ok
-            end
-
-            {:reply, :ok, state}
 
           [] ->
             {:reply, {:error, :not_found}, state}
@@ -315,29 +371,29 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
   @impl true
   def handle_call({:add_instance_and_spawn, attrs}, _from, state) do
-    session_id = Map.fetch!(attrs, :session_id)
+    [primary_sid | _] = session_ids = Map.fetch!(attrs, :session_ids)
     name = Map.fetch!(attrs, :name)
     type = Map.fetch!(attrs, :type)
     config = Map.get(attrs, :config, %{})
 
-    case :ets.lookup(state.table, {session_id, name}) do
-      [_] ->
+    case Enum.find(session_ids, fn sid -> :ets.lookup(state.name_index, {sid, name}) != [] end) do
+      sid when is_binary(sid) ->
         {:reply, {:error, {:duplicate_agent_name, name}}, state}
 
-      [] ->
+      nil ->
         cc_actor_id = uuid_v4()
         pty_actor_id = uuid_v4()
 
-        cc_args = build_cc_args(session_id, name, cc_actor_id, pty_actor_id, type, config)
-        pty_args = build_pty_args(session_id, name, pty_actor_id, config)
+        cc_args = build_cc_args(primary_sid, name, cc_actor_id, pty_actor_id, type, config)
+        pty_args = build_pty_args(primary_sid, name, pty_actor_id, config)
 
         agent_sup_via =
-          {:via, Registry, {Esr.Session.Registry, {:agent_sup, session_id}}}
+          {:via, Registry, {Esr.Session.Registry, {:agent_sup, primary_sid}}}
 
         spawn_result =
           try do
             Esr.Session.AgentSupervisor.add_agent_subtree(agent_sup_via, %{
-              session_id: session_id,
+              session_id: primary_sid,
               name: name,
               cc_args: cc_args,
               pty_args: pty_args
@@ -353,7 +409,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
 
             inst = %Instance{
               id: cc_actor_id,
-              session_id: session_id,
+              session_ids: session_ids,
               type: type,
               name: name,
               config: config,
@@ -361,11 +417,17 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
               actor_ids: %{cc: cc_actor_id, pty: pty_actor_id}
             }
 
-            :ets.insert(state.table, {{session_id, name}, inst})
-            :ets.insert(state.table, {{:instance_sup, session_id, name}, instance_sup_pid})
+            :ets.insert(state.table, {cc_actor_id, inst})
 
-            if :ets.lookup(state.table, {session_id, :__primary__}) == [] do
-              :ets.insert(state.table, {{session_id, :__primary__}, name})
+            for sid <- session_ids do
+              :ets.insert(state.name_index, {{sid, name}, cc_actor_id})
+            end
+
+            # instance_sup is keyed off the spawn-time session (primary).
+            :ets.insert(state.table, {{:instance_sup, primary_sid, name}, instance_sup_pid})
+
+            if :ets.lookup(state.table, {:primary, primary_sid}) == [] do
+              :ets.insert(state.table, {{:primary, primary_sid}, name})
             end
 
             {:reply,
@@ -377,7 +439,7 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
               }}, state}
 
           {:error, reason} ->
-            cleanup_index_placeholder(session_id, name)
+            cleanup_index_placeholder(primary_sid, name)
             {:reply, {:error, {:spawn_failed, reason}}, state}
         end
     end
@@ -386,6 +448,51 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  defp normalize_attrs(attrs) do
+    cond do
+      Map.has_key?(attrs, :session_ids) ->
+        attrs
+
+      Map.has_key?(attrs, :session_id) ->
+        sid = Map.fetch!(attrs, :session_id)
+        attrs |> Map.put(:session_ids, [sid]) |> Map.delete(:session_id)
+
+      true ->
+        attrs
+    end
+  end
+
+  defp primary_for(state, session_id) do
+    case :ets.lookup(state.table, {:primary, session_id}) do
+      [{_, n}] -> n
+      _ -> nil
+    end
+  end
+
+  # Detach `session_id` from the instance. If the instance has more
+  # sessions in its list, leave the metadata row alive (stripped of
+  # this session). If this was the last session, delete the instance
+  # row outright.
+  defp do_detach(state, instance_id, session_id, name) do
+    :ets.delete(state.name_index, {session_id, name})
+
+    case :ets.lookup(state.table, instance_id) do
+      [{_, %Instance{} = inst}] ->
+        new_session_ids = inst.session_ids -- [session_id]
+
+        if new_session_ids == [] do
+          :ets.delete(state.table, instance_id)
+        else
+          :ets.insert(state.table, {instance_id, %{inst | session_ids: new_session_ids}})
+        end
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  end
 
   defp uuid_v4, do: UUID.uuid4()
 
@@ -428,8 +535,6 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     end)
   end
 
-  # Default to "cc_adapter_runner" handler — same fallback Esr.Entity.CCProcess's
-  # spawn_args/1 uses. Future: per-type lookup from agent type registry.
   defp resolve_handler_module(_type, _config), do: "cc_adapter_runner"
 
   defp resolve_workspace_dir(session_id, config) do
@@ -439,10 +544,6 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
     end
   end
 
-  # Best-effort cleanup if a peer registered itself in Index 2/3 before
-  # spawn failed elsewhere in the subtree. The IndexWatcher monitors
-  # processes too, so DOWN events also clean — this is just to close
-  # the race window when start_child returns an error.
   defp cleanup_index_placeholder(session_id, name) do
     try do
       :ets.delete(:esr_actor_name_index, {session_id, name})

@@ -4,7 +4,8 @@ defmodule Esr.Resource.Session.JsonWriterTest do
 
   @uuid "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
   @owner_uuid "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6"
-  @ws_uuid "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7"
+  @ws_uuid "c3d4e5f6-a7b8-4c9d-9e1f-a2b3c4d5e6f7"
+  @inst_uuid "d4e5f6a7-b8c9-4d0e-9f1a-b2c3d4e5f6a7"
 
   setup do
     tmp = Path.join(System.tmp_dir!(), "session_jw_#{:rand.uniform(1_000_000)}")
@@ -19,7 +20,7 @@ defmodule Esr.Resource.Session.JsonWriterTest do
       name: "esr-dev",
       owner_user: @owner_uuid,
       workspace_id: @ws_uuid,
-      agents: [%{type: "cc", name: "esr-dev", config: %{}}],
+      agent_ids: [@inst_uuid],
       primary_agent: "esr-dev",
       attached_chats: [],
       created_at: "2026-05-07T12:00:00Z",

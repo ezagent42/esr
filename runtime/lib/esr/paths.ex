@@ -128,8 +128,19 @@ defmodule Esr.Paths do
   def session_workspace_dir(uuid) when is_binary(uuid),
     do: Path.join(session_dir(uuid), ".esr")
 
-  @doc "Path to session.v1.json schema shipped in priv."
-  def session_schema_v1, do: Application.app_dir(:esr, "priv/schemas/session.v1.json")
+  @doc "Path to session.v2.json schema shipped in priv (Phase 7 hardcut)."
+  def session_schema_v2, do: Application.app_dir(:esr, "priv/schemas/session.v2.json")
+
+  @doc "Path to agent_instance.v2.json schema shipped in priv (Phase 7 hardcut)."
+  def agent_instance_schema_v2, do: Application.app_dir(:esr, "priv/schemas/agent_instance.v2.json")
+
+  @doc "Per-session agents directory: `<sessions_dir>/<sid>/agents/`."
+  def session_agents_dir(sid) when is_binary(sid),
+    do: Path.join(session_dir(sid), "agents")
+
+  @doc "Path to a per-instance agent file at `sessions/<sid>/agents/<uuid>.json`."
+  def agent_instance_json(sid, instance_uuid) when is_binary(sid) and is_binary(instance_uuid),
+    do: Path.join(session_agents_dir(sid), instance_uuid <> ".json")
 
   # ------------------------------------------------------------------
   # SessionTemplate + Bundle (spec 2026-05-10, Phase 4)
