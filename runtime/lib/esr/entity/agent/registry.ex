@@ -3,6 +3,19 @@ defmodule Esr.Entity.Agent.Registry do
   Agent topology registry — agents.yaml cache + hot-reload (R5 split from
   the legacy `Esr.SessionRegistry`).
 
+  ## Phase 5 status (2026-05-10)
+
+  Phase 5 of the SessionTemplate migration (spec
+  `docs/superpowers/specs/2026-05-10-session-template-and-channel.md`)
+  hardcut `Esr.Session.AgentSpawner` to receive its `agent_def` from
+  `Esr.SessionTemplate.Registry.materialize/2` instead of looking up
+  `agent_def/1` here. The session-creation hot path no longer reads
+  this registry. Phase 6 (per the same spec, §6.1) deletes this
+  module entirely once the remaining 11 consumers (`/plugin:agent-types`,
+  `application.ex` boot wiring, etc.) migrate to the plugin-manifest
+  `agent_kinds:` block. Tests still hit `agent_def/1` for fixture-based
+  scenarios; that's the only residual caller.
+
   Single source of truth for agents.yaml-compiled agent definitions. The
   `Esr.Session.Router` and admin command modules read from here when
   resolving an agent name to its declared pipeline / capabilities /

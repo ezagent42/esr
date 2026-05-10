@@ -40,6 +40,10 @@ defmodule Esr.SessionRouterTest do
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_alice" => ["*"]})
     :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
+    # Phase 5 cut-over: AgentSpawner reads agent_def from params; load
+    # the fixture and surface it for tests calling create_session.
+    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
+
     if Process.whereis(Esr.Session.Router) == nil do
       start_supervised!(Esr.Session.Router)
     end
@@ -60,10 +64,10 @@ defmodule Esr.SessionRouterTest do
       end
     end)
 
-    :ok
+    {:ok, cc_def: cc_def}
   end
 
-  test "create_session_sync spawns Session supervisor + inbound Stateful peers" do
+  test "create_session_sync spawns Session supervisor + inbound Stateful peers", %{cc_def: cc_def} do
     assert {:ok, session_id} =
              Session.Router.create_session(%{
                agent: "cc",
@@ -72,6 +76,7 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_xx",
                thread_id: "om_yy",
                app_id: "cli_test",
+               agent_def: cc_def
              })
 
     assert is_binary(session_id)
@@ -97,7 +102,7 @@ defmodule Esr.SessionRouterTest do
     assert Process.alive?(refs.pty_process)
   end
 
-  test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)" do
+  test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)", %{cc_def: cc_def} do
     # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
     # resolves to it; peers' init callbacks receive the enriched params.
     :ok =
@@ -119,6 +124,7 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_T11b2",
                thread_id: "om_T11b2",
                app_id: "cli_test",
+               agent_def: cc_def
              })
 
     # FeishuChatProxy's state already carries session_id; workspace_name
@@ -130,7 +136,7 @@ defmodule Esr.SessionRouterTest do
     assert fcp_state.session_id == session_id
   end
 
-  test "create_session defaults workspace_name to 'default' when no chat binding exists" do
+  test "create_session defaults workspace_name to 'default' when no chat binding exists", %{cc_def: cc_def} do
     # No workspace seeded for (oc_unbound, cli_test) — fallback kicks in.
     assert {:ok, _session_id} =
              Session.Router.create_session(%{
@@ -140,11 +146,15 @@ defmodule Esr.SessionRouterTest do
                chat_id: "oc_unbound_#{System.unique_integer([:positive])}",
                thread_id: "om_unbound",
                app_id: "cli_test",
+               agent_def: cc_def
              })
   end
 
-  test "create_session returns {:error, :unknown_agent} for missing agent_def" do
-    assert {:error, :unknown_agent} =
+  test "create_session returns {:error, :agent_def_required} when caller omits agent_def" do
+    # Phase 5 cut-over: AgentSpawner no longer fetches from agents.yaml.
+    # Pre-cut this returned :unknown_agent for an unknown name; post-cut
+    # the failure mode is "caller didn't supply an agent_def".
+    assert {:error, :agent_def_required} =
              Session.Router.create_session(%{
                agent: "nonexistent",
                dir: "/tmp",
@@ -152,7 +162,7 @@ defmodule Esr.SessionRouterTest do
              })
   end
 
-  test "end_session terminates Session supervisor + unregisters" do
+  test "end_session terminates Session supervisor + unregisters", %{cc_def: cc_def} do
     {:ok, sid} =
       Session.Router.create_session(%{
         agent: "cc",
@@ -161,6 +171,7 @@ defmodule Esr.SessionRouterTest do
         chat_id: "oc_aa",
         thread_id: "om_bb",
         app_id: "cli_test",
+        agent_def: cc_def
       })
 
     # Precondition: lookup succeeds.
@@ -227,7 +238,7 @@ defmodule Esr.SessionRouterTest do
       assert Process.alive?(router)
     end
 
-    test "telemetry fires on peer_crashed DOWN without crashing the router" do
+    test "telemetry fires on peer_crashed DOWN without crashing the router", %{cc_def: cc_def} do
       ref =
         :telemetry_test.attach_event_handlers(self(), [
           [:esr, :session_router, :peer_crashed]
@@ -250,6 +261,7 @@ defmodule Esr.SessionRouterTest do
           chat_id: "oc_crash",
           thread_id: "om_crash",
           app_id: "cli_test",
+          agent_def: cc_def
         })
 
       # Find one spawned peer and kill it; the router's monitor will
@@ -280,7 +292,7 @@ defmodule Esr.SessionRouterTest do
   # the pipeline sees the full adjacency — both directions of the
   # inbound chain AND the proxy-target admin pid (when the proxy's
   # `target: "admin::..."` resolves).
-  test "pipeline-spawned peers have bidirectional neighbors (PR-9 T6)" do
+  test "pipeline-spawned peers have bidirectional neighbors (PR-9 T6)", %{cc_def: cc_def} do
     # Spin up a FeishuAppAdapter for the app_id so the
     # `admin::feishu_app_adapter_${app_id}` target in simple.yaml
     # resolves to a real pid (not a proxy_module fallback marker).
@@ -308,6 +320,7 @@ defmodule Esr.SessionRouterTest do
         chat_id: "oc_T6",
         thread_id: "om_T6",
         app_id: app_id,
+        agent_def: cc_def
       })
 
     {:ok, _sid2, refs} = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T6", app_id)

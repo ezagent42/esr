@@ -162,6 +162,11 @@ defmodule Esr.Integration.CCE2ETest do
     # 3. Create a session via Scope.Router — spawns the full inbound
     # peer chain (FCP → CCProxy[marker] → CCProcess → PtyProcess) and
     # registers (chat_id, thread_id) in SessionRegistry.
+    #
+    # Phase 5 cut-over: thread the agent_def in params (Router/AgentSpawner
+    # no longer fetch from agents.yaml).
+    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
+
     {:ok, sid} =
       Esr.Session.Router.create_session(%{
         agent: "cc",
@@ -170,6 +175,7 @@ defmodule Esr.Integration.CCE2ETest do
         chat_id: chat_id,
         thread_id: thread_id,
         app_id: app_id,
+        agent_def: cc_def
       })
 
     # 4. Resolve the spawned peer pids from SessionRegistry.

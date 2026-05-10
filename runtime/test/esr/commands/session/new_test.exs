@@ -5,10 +5,18 @@ defmodule Esr.Commands.Session.NewTest do
   collapse. Formerly `Session.AgentNew`; the branch-worktree command
   moved to `Session.BranchNew`.
 
+  Phase 5 cut-over (2026-05-10): `Session.New` no longer reads from
+  `Esr.Entity.Agent.Registry.agent_def/1`. It resolves a SessionTemplate
+  (explicit `template=` arg → operator-configured default →
+  no_default_template error) and materializes the template via
+  `Esr.SessionTemplate.Registry.materialize/2`. These tests register a
+  feishu-cc-shaped template in setup so the spawn path produces the
+  same canonical CC chain as the pre-cut agents.yaml fixture.
+
   These tests cover:
 
     * arg validation (D11: agent required; D13: dir required)
-    * agent resolution via `Esr.Entity.Agent.Registry.agent_def/1`
+    * template resolution + materialization (Phase 5)
     * `capabilities_required` verification (D18) via the new
       `Esr.Resource.Capability.has_all?/2` helper — full coverage, total miss,
       partial miss
@@ -25,6 +33,32 @@ defmodule Esr.Commands.Session.NewTest do
 
   alias Esr.Commands.Session.New, as: SessionNew
   alias Esr.Resource.Capability.Grants
+  alias Esr.SessionTemplate.Registry, as: TemplateRegistry
+
+  defp feishu_cc_template do
+    %Esr.SessionTemplate{
+      schema_version: 1,
+      name: "feishu-cc",
+      description: "Feishu chat → Claude Code agent",
+      dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
+      channels: [
+        %{alias: "in", kind: "feishu.chat_proxy", config: %{}},
+        %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{}}
+      ],
+      agents: [
+        %{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}
+      ],
+      flow: %{inbound: [], outbound: []}
+    }
+  end
+
+  defp tmp_session_plugin_dir do
+    path =
+      Path.join(System.tmp_dir!(), "esr_session_new_test_session_plugin_#{:rand.uniform(99_999_999)}")
+
+    File.mkdir_p!(path)
+    path
+  end
 
   setup do
     # App-level singletons (booted by Esr.Application).
@@ -32,10 +66,31 @@ defmodule Esr.Commands.Session.NewTest do
     assert is_pid(Process.whereis(Esr.Session.Supervisor))
     assert is_pid(Process.whereis(Grants))
 
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
-        Path.expand("../../fixtures/agents/simple.yaml", __DIR__)
-      )
+    # Phase 5 cut-over: register a feishu-cc-shaped template instead of
+    # seeding agents.yaml. Boot wires `Esr.SessionTemplate.Registry`
+    # under the application supervisor so we just `clear` + `register`.
+    case start_supervised(TemplateRegistry) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> TemplateRegistry.clear()
+    end
+
+    TemplateRegistry.register("feishu-cc", feishu_cc_template(),
+      source: {:bundle, "feishu-cc"}
+    )
+
+    # Configure feishu-cc as the default template via a per-test plugin
+    # config dir so we don't write into the operator's actual home.
+    session_dir = tmp_session_plugin_dir()
+    :ok = Esr.Session.DefaultTemplate.set("feishu-cc", global_path: session_dir)
+
+    # Override the production default-template path for the duration of
+    # the test by stubbing `Esr.Paths.plugin_global_dir("session")`.
+    # The simplest seam: drop a config.yaml at the production path
+    # (test env points at its own tmp ESRD_HOME) so `current/0` finds
+    # it. The agent-CLI tests run with stable env per test setup.
+    prod_dir = Esr.Paths.plugin_global_dir("session")
+    File.mkdir_p!(prod_dir)
+    File.write!(Path.join(prod_dir, "config.yaml"), ~s(default_template: "feishu-cc"\n))
 
     # PR-8 T4: Scope.Router is not (yet) a permanent application child,
     # so tests that exercise the create_session path start it under the
@@ -55,6 +110,9 @@ defmodule Esr.Commands.Session.NewTest do
 
     on_exit(fn ->
       Grants.load_snapshot(prior)
+      TemplateRegistry.clear()
+      File.rm_rf!(session_dir)
+      File.rm_rf!(prod_dir)
 
       # Clean up any sessions we spawned.
       case Process.whereis(Esr.Session.Supervisor) do
@@ -98,19 +156,44 @@ defmodule Esr.Commands.Session.NewTest do
     end
   end
 
-  describe "execute/1 agent resolution" do
-    test "unknown agent → unknown_agent error" do
+  describe "execute/1 template resolution (Phase 5)" do
+    test "explicit unknown template → unknown_template error listing available" do
       Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
       cmd = %{
         "submitted_by" => "ou_alice",
-        "args" => %{"agent" => "does-not-exist", "dir" => "/tmp/x"}
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/x",
+          "template" => "does-not-exist"
+        }
       }
 
-      assert {:error, %{"type" => "unknown_agent", "message" => msg}} =
+      assert {:error, %{"type" => "unknown_template", "message" => msg}} =
                SessionNew.execute(cmd)
 
       assert msg =~ "does-not-exist"
+      # Available list should mention the registered fixture.
+      assert msg =~ "feishu-cc"
+    end
+
+    test "no default + no explicit template → no_default_template error" do
+      # Wipe both the registered template AND the operator-configured
+      # default so resolve_template_name has nothing to fall back to.
+      TemplateRegistry.clear()
+      File.rm_rf!(Esr.Paths.plugin_global_dir("session"))
+
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{"agent" => "cc", "dir" => "/tmp/x"}
+      }
+
+      assert {:error, %{"type" => "no_default_template", "message" => msg}} =
+               SessionNew.execute(cmd)
+
+      assert msg =~ "/plugin:set"
     end
   end
 
@@ -464,6 +547,13 @@ defmodule Esr.Commands.Session.NewTest do
       System.put_env("ESRD_HOME", tmp)
       System.put_env("ESR_INSTANCE", "default")
 
+      # Phase 5 cut-over: replicate the outer setup's default-template
+      # write into the new ESRD_HOME so `Esr.Session.DefaultTemplate.current/0`
+      # finds `feishu-cc` once env is overridden.
+      session_dir = Esr.Paths.plugin_global_dir("session")
+      File.mkdir_p!(session_dir)
+      File.write!(Path.join(session_dir, "config.yaml"), ~s(default_template: "feishu-cc"\n))
+
       # The Session.Registry caches `data_dir` only at call time
       # (`Esr.Paths.runtime_home/0`), so no reload is required — the
       # next `create_session/2` call picks up the new env. Just clear
@@ -560,6 +650,12 @@ defmodule Esr.Commands.Session.NewTest do
       prev_inst = System.get_env("ESR_INSTANCE")
       System.put_env("ESRD_HOME", tmp)
       System.put_env("ESR_INSTANCE", "default")
+
+      # Phase 5 cut-over: replicate the outer setup's default-template
+      # write into the new ESRD_HOME (see persist describe above).
+      session_dir = Esr.Paths.plugin_global_dir("session")
+      File.mkdir_p!(session_dir)
+      File.write!(Path.join(session_dir, "config.yaml"), ~s(default_template: "feishu-cc"\n))
 
       try do
         :ets.delete_all_objects(:esr_resource_session_name_index)

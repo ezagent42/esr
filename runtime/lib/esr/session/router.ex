@@ -141,14 +141,50 @@ defmodule Esr.Session.Router do
     # emit telemetry but keep the router alive (Risk E).
     principal_id = extract_principal(envelope)
 
-    params = %{
-      agent: "cc",
-      dir: default_session_dir(),
-      principal_id: principal_id,
-      chat_id: chat_id,
-      thread_id: thread_id,
-      app_id: app_id
-    }
+    # Phase 5 cut-over: auto-spawn now materializes an agent_def from
+    # the operator's default SessionTemplate. If no default is set or
+    # materialization fails, log + telemetry + drop (same shape as
+    # the existing failure path) so the router stays alive.
+    agent_def_result =
+      case Esr.Session.DefaultTemplate.current() do
+        {:ok, template_name} ->
+          Esr.SessionTemplate.Registry.materialize(template_name, %{
+            chat_id: chat_id,
+            app_id: app_id,
+            principal_id: principal_id,
+            name: "cc"
+          })
+
+        :not_set ->
+          {:error, :no_default_template}
+      end
+
+    params =
+      case agent_def_result do
+        {:ok, agent_def} ->
+          %{
+            agent: "cc",
+            dir: default_session_dir(),
+            principal_id: principal_id,
+            chat_id: chat_id,
+            thread_id: thread_id,
+            app_id: app_id,
+            agent_def: agent_def
+          }
+
+        {:error, _} ->
+          # Surface the missing-agent_def error from do_create rather
+          # than crashing here; the existing telemetry/log path below
+          # captures it.
+          %{
+            agent: "cc",
+            dir: default_session_dir(),
+            principal_id: principal_id,
+            chat_id: chat_id,
+            thread_id: thread_id,
+            app_id: app_id
+          }
+      end
 
     case AgentSpawner.do_create(params) do
       {:ok, sid, monitor_refs} ->
