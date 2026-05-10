@@ -78,6 +78,62 @@ defmodule Esr.Commands.Session.NewTest do
       source: {:bundle, "feishu-cc"}
     )
 
+    # Phase 6 (2026-05-10): the AgentDefBuilder now sources channel +
+    # agent kind contributions from the plugin registries. In the test
+    # env `enabled_plugins = []`, so nothing populates them at boot —
+    # register the kinds the feishu-cc template references explicitly.
+    case Process.whereis(Esr.Channel.Registry) do
+      nil -> start_supervised!(Esr.Channel.Registry)
+      _ -> :ok
+    end
+
+    case Process.whereis(Esr.Plugin.AgentKindRegistry) do
+      nil -> start_supervised!(Esr.Plugin.AgentKindRegistry)
+      _ -> :ok
+    end
+
+    Esr.Channel.Registry.register("feishu", "chat_proxy", Esr.Plugins.Feishu.Channels.ChatProxy, %{
+      pipeline_contributions: [
+        %{"name" => "feishu_chat_proxy", "impl" => "Esr.Plugins.Feishu.FeishuChatProxy"}
+      ],
+      proxies: [
+        %{
+          "name" => "feishu_app_proxy",
+          "impl" => "Esr.Entity.FeishuAppProxy",
+          "target" => "admin::feishu_app_adapter_${app_id}"
+        }
+      ]
+    })
+
+    Esr.Channel.Registry.register(
+      "claude_code",
+      "mcp_http",
+      Esr.Plugins.ClaudeCode.Channels.McpHttp,
+      %{pipeline_contributions: [], proxies: []}
+    )
+
+    Esr.Plugin.AgentKindRegistry.register("claude_code", "cc", %{
+      plugin: "claude_code",
+      name: "cc",
+      description: "Claude Code",
+      handler_module: "cc_adapter_runner",
+      pipeline: %{
+        inbound: [
+          %{"name" => "cc_proxy", "impl" => "Esr.Entity.CCProxy"},
+          %{"name" => "cc_process", "impl" => "Esr.Entity.CCProcess"},
+          %{"name" => "pty_process", "impl" => "Esr.Entity.PtyProcess"}
+        ],
+        outbound: ["pty_process", "cc_process", "cc_proxy"]
+      },
+      proxies: [],
+      capabilities_required: [
+        "session:default/create",
+        "pty:default/spawn",
+        "handler:cc_adapter_runner/invoke"
+      ],
+      params: []
+    })
+
     # Configure feishu-cc as the default template via a per-test plugin
     # config dir so we don't write into the operator's actual home.
     session_dir = tmp_session_plugin_dir()

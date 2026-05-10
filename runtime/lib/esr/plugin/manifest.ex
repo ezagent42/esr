@@ -54,7 +54,9 @@ defmodule Esr.Plugin.Manifest do
   @type channel_entry :: %{
           name: String.t(),
           module: module(),
-          config_schema: map() | nil
+          config_schema: map() | nil,
+          pipeline_contributions: [%{String.t() => term()}],
+          proxies: [%{String.t() => term()}]
         }
 
   @type agent_kind_entry :: %{
@@ -365,6 +367,17 @@ defmodule Esr.Plugin.Manifest do
     module_str = entry["module"] || entry[:module]
     config_schema = entry["config_schema"] || entry[:config_schema]
 
+    # Phase 6 (2026-05-10): channels may declare optional
+    # `pipeline_contributions:` (list of inbound peer maps with
+    # name+impl) + `proxies:` (list of stateless-proxy maps with
+    # name+impl+target). AgentDefBuilder reads these to compose the
+    # final agent_def at template-materialization time so channel
+    # contributions don't need a hardcoded mapping in the builder.
+    pipeline_contributions =
+      entry["pipeline_contributions"] || entry[:pipeline_contributions] || []
+
+    proxies = entry["proxies"] || entry[:proxies] || []
+
     cond do
       not is_binary(name) or name == "" ->
         {:error, {:missing_field, "name"}}
@@ -372,11 +385,24 @@ defmodule Esr.Plugin.Manifest do
       not is_binary(module_str) or module_str == "" ->
         {:error, {:missing_field, "module"}}
 
+      not is_list(pipeline_contributions) ->
+        {:error, {:invalid_pipeline_contributions, name}}
+
+      not is_list(proxies) ->
+        {:error, {:invalid_proxies, name}}
+
       true ->
         module = Module.concat([module_str])
 
         if Code.ensure_loaded?(module) do
-          {:ok, %{name: name, module: module, config_schema: config_schema}}
+          {:ok,
+           %{
+             name: name,
+             module: module,
+             config_schema: config_schema,
+             pipeline_contributions: normalize_pipeline_entries(pipeline_contributions),
+             proxies: normalize_pipeline_entries(proxies)
+           }}
         else
           {:error, {:unknown_module, name, module_str}}
         end

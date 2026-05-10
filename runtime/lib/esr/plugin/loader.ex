@@ -413,8 +413,14 @@ defmodule Esr.Plugin.Loader do
   # (default `[]`).
   defp register_channels(plugin_name, %Manifest{channels: channels})
        when is_list(channels) do
-    Enum.each(channels, fn %{name: channel_name, module: module} ->
-      :ok = Esr.Channel.Registry.register(plugin_name, channel_name, module)
+    Enum.each(channels, fn entry ->
+      extras = %{
+        config_schema: Map.get(entry, :config_schema),
+        pipeline_contributions: Map.get(entry, :pipeline_contributions, []),
+        proxies: Map.get(entry, :proxies, [])
+      }
+
+      :ok = Esr.Channel.Registry.register(plugin_name, entry.name, entry.module, extras)
     end)
 
     :ok
