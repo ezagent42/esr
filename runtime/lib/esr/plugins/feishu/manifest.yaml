@@ -44,7 +44,7 @@ declares:
   entities:
     - module: Esr.Entity.FeishuAppAdapter
       kind: stateful
-    - module: Esr.Entity.FeishuChatProxy
+    - module: Esr.Plugins.Feishu.FeishuChatProxy
       kind: stateful
     - module: Esr.Entity.FeishuAppProxy
       kind: proxy

@@ -27,7 +27,7 @@ agents:
       - handler:cc_adapter_runner/invoke
     pipeline:
       inbound:
-        - { name: feishu_chat_proxy, impl: Esr.Entity.FeishuChatProxy }
+        - { name: feishu_chat_proxy, impl: Esr.Plugins.Feishu.FeishuChatProxy }
         - { name: cc_proxy,          impl: Esr.Entity.CCProxy }
         - { name: cc_process,        impl: Esr.Entity.CCProcess }
         - { name: pty_process,       impl: Esr.Entity.PtyProcess }

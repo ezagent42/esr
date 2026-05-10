@@ -181,7 +181,7 @@ defmodule Esr.Entity.Server do
     })
 
     # REMOVED (P2-15): feishu_thread_proxy-specific log moved to
-    # Esr.Entity.FeishuChatProxy's terminate/2 in PR-3 when the actor_type
+    # Esr.Plugins.Feishu.FeishuChatProxy's terminate/2 in PR-3 when the actor_type
     # lane retires.
 
     :ok
