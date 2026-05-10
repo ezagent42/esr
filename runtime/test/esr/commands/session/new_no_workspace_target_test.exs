@@ -26,10 +26,9 @@ defmodule Esr.Commands.Session.NewNoWorkspaceTargetTest do
     assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
     assert is_pid(Process.whereis(Grants))
 
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
-        Path.expand("../../fixtures/agents/simple.yaml", __DIR__)
-      )
+    # Phase 6 (2026-05-10): the legacy agents.yaml fixture-load is
+    # dead weight here — this test only covers the `no_workspace_target`
+    # error path, which fires before template materialization.
 
     # Snapshot + restore grants so this test doesn't bleed into siblings.
     prior =

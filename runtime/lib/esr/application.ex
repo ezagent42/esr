@@ -73,15 +73,12 @@ defmodule Esr.Application do
       # AgentSpawner should spawn per-session vs treat as stateless
       # proxy markers. Core registers PtyProcess at boot; plugins
       # register their stateful peers via manifest `entities:` blocks
-      # with `kind: stateful`. Started before Esr.Entity.Agent.Registry
-      # which AgentSpawner already depends on.
+      # with `kind: stateful`.
       {Esr.Entity.Agent.StatefulRegistry, []},
 
-      # 4d.1 Agent topology registry (R5 split from legacy SessionRegistry).
-      # agents.yaml-compiled definitions cache + hot-reload. Started before
-      # Scope.Admin since admin commands (e.g. session_new) validate the
-      # requested agent name against this registry.
-      {Esr.Entity.Agent.Registry, []},
+      # 4d.1 Phase 6 (2026-05-10) deleted the legacy
+      # `Esr.Entity.Agent.Registry` (the agents.yaml cache —
+      # `Esr.Plugin.AgentKindRegistry` below replaces it).
 
       # 4d.2 Agent InstanceRegistry (Phase 3): per-session ETS backing the
       # multi-agent model. Single global instance — session UUID+name key

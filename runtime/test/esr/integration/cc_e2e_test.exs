@@ -72,7 +72,10 @@ defmodule Esr.Integration.CCE2ETest do
     # Esr.TestSupport.Grants on exit.
     :ok = Esr.TestSupport.Grants.with_principal_wildcard("ou_alice")
 
-    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
+    # Phase 6 (2026-05-10): the legacy `Esr.Entity.Agent.Registry`
+    # cache is gone; the fixture file is retained as test data and
+    # parsed via `Esr.TestSupport.AgentDefFixture` below to provide a
+    # cc agent_def for direct Router.create_session calls.
 
     # Scope.Router is not booted by the Application in PR-3 (drift
     # note in session_router.ex moduledoc). Start it under the test
@@ -164,8 +167,10 @@ defmodule Esr.Integration.CCE2ETest do
     # registers (chat_id, thread_id) in SessionRegistry.
     #
     # Phase 5 cut-over: thread the agent_def in params (Router/AgentSpawner
-    # no longer fetch from agents.yaml).
-    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
+    # no longer fetch from the retired agents.yaml cache). Phase 6
+    # builds the cc agent_def directly from the fixture via the
+    # AgentDefFixture helper.
+    {:ok, cc_def} = Esr.TestSupport.AgentDefFixture.cc_agent_def(@fixture_path)
 
     {:ok, sid} =
       Esr.Session.Router.create_session(%{

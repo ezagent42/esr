@@ -38,10 +38,10 @@ defmodule Esr.Integration.N2SessionsTest do
   setup :wipe_sessions_on_exit
 
   setup do
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
-        Path.expand("../fixtures/agents/multi_app.yaml", __DIR__)
-      )
+    # Phase 6 (2026-05-10): the legacy multi_app.yaml fixture-load is
+    # dead weight here — this test calls
+    # `Esr.Session.Supervisor.start_session/1` directly, never goes
+    # through Router.create_session, and so doesn't need an agent_def.
 
     {:ok, sup_a} = DynamicSupervisor.start_link(strategy: :one_for_one)
     {:ok, sup_b} = DynamicSupervisor.start_link(strategy: :one_for_one)
