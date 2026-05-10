@@ -32,7 +32,7 @@ defmodule Esr.Integration.FeishuReactLifecycleTest do
   use ExUnit.Case, async: false
 
   alias Esr.Entity.FeishuAppAdapter
-  alias Esr.Entity.FeishuChatProxy
+  alias Esr.Plugins.Feishu.FeishuChatProxy
 
   @moduletag :integration
 

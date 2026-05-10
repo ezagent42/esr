@@ -1,4 +1,4 @@
-defmodule Esr.Entity.FeishuChatProxy do
+defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   @moduledoc """
   Per-Session Peer.Stateful: entry point for inbound Feishu messages
   into the Session. Detects slash commands (leading `/` in the first

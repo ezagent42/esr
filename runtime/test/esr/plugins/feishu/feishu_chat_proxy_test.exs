@@ -1,7 +1,7 @@
-defmodule Esr.Entity.FeishuChatProxyTest do
+defmodule Esr.Plugins.Feishu.FeishuChatProxyTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Entity.FeishuChatProxy
+  alias Esr.Plugins.Feishu.FeishuChatProxy
 
   setup do
     # Drift from expansion doc: both `Esr.SessionRegistry` (via 4d) and
@@ -556,7 +556,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(app_proxy, sid, :feishu_app_proxy)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_img",
           thread_id: "",
@@ -622,7 +622,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(cc_process, sid, :cc_process)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_unsup",
           thread_id: "",
@@ -675,7 +675,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(cc_process, sid, :cc_process)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_inter",
           thread_id: "",
@@ -747,7 +747,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(app_proxy, sid, :feishu_app_proxy)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_async",
           thread_id: "",
@@ -823,7 +823,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(app_proxy, sid, :feishu_app_proxy)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_ack",
           thread_id: "",
@@ -901,7 +901,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
       _ = register_role(app_proxy, sid, :feishu_app_proxy)
 
       {:ok, _peer} =
-        GenServer.start_link(Esr.Entity.FeishuChatProxy, %{
+        GenServer.start_link(Esr.Plugins.Feishu.FeishuChatProxy, %{
           session_id: sid,
           chat_id: "oc_to",
           thread_id: "",
@@ -961,7 +961,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
         proxy_ctx: %{channel_adapter: "feishu_app"}
       }
 
-      {:ok, state} = Esr.Entity.FeishuChatProxy.init(args)
+      {:ok, state} = Esr.Plugins.Feishu.FeishuChatProxy.init(args)
       assert Map.get(state, "channel_adapter") == "feishu_app"
     end
 
@@ -974,7 +974,7 @@ defmodule Esr.Entity.FeishuChatProxyTest do
         proxy_ctx: %{}
       }
 
-      {:ok, state} = Esr.Entity.FeishuChatProxy.init(args)
+      {:ok, state} = Esr.Plugins.Feishu.FeishuChatProxy.init(args)
       assert Map.get(state, "channel_adapter") == "feishu"
     end
   end

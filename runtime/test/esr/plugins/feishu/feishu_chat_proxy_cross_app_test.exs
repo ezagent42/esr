@@ -1,4 +1,4 @@
-defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
+defmodule Esr.Plugins.Feishu.FeishuChatProxyCrossAppTest do
   @moduledoc """
   PR-A T4: cross-app reply dispatch + authorization tests.
 
@@ -17,7 +17,7 @@ defmodule Esr.Entity.FeishuChatProxyCrossAppTest do
   """
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
-  alias Esr.Entity.FeishuChatProxy
+  alias Esr.Plugins.Feishu.FeishuChatProxy
 
   setup do
     # Snapshot prior global state so each test cleans up after itself.
