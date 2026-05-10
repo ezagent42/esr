@@ -54,13 +54,22 @@ together implement).
   start_link / send / subscribe + lifecycle.
 - **`Esr.SessionTemplate`** — declarative yaml description of a session:
   which Channel kinds it composes, which Entities it spawns, how messages
-  flow between them. **Templates are plugin-shipped** (a template lives
-  inside the plugin manifest of whatever plugin "owns" the use case);
-  operators can drop custom templates in `~/.esrd-<inst>/<inst>/session_templates/`
-  to override or add. ESR core ships **no** templates — everything is
-  plugin-shipped or operator-shipped.
+  flow between them. **Templates live in bundles** — a `bundle/` is a
+  first-class artifact (separate from `plugins/`) whose only job is to
+  ship one template. Bundles declare dependencies on plugins (and on
+  other bundles) and validate them at install time. Operators can also
+  drop ad-hoc templates in `~/.esrd-<inst>/<inst>/session_templates/`
+  for one-off overrides without making a bundle. ESR core ships **no**
+  templates — everything is bundle-shipped or operator-shipped.
 - **Plugin manifest gains `channels:` + `agent_kinds:` blocks** — replaces
   today's `agents.yaml` (whose contents are conceptually plugin-owned anyway).
+- **`Esr.Bundle`** — first-class artifact at `runtime/lib/esr/bundles/<name>/`
+  with fixed structure: `manifest.yaml` (metadata + dependencies) +
+  `template.yaml` (exactly one template). One bundle = one template.
+  Multiple templates → multiple bundles. Bundles install via the existing
+  `/plugin:install <local_path>` slash (validated separately as
+  acceptance scenario 29). Operators can ship custom bundles outside
+  the in-tree path.
 - **Drift prevention** — same pattern as the unified-command-grammar
   migration: the wiring lives in declarative yaml, validated at load time,
   CI gate prevents stale templates referencing missing channel kinds.
@@ -93,9 +102,10 @@ Pipeline / OTP markers. SessionTemplate + Channel slot in like this:
 
 | Layer | Concept | Today's analog | Lifecycle |
 |-------|---------|----------------|-----------|
-| **Agent type** | `cc` is which binary, what caps, what config_schema | `agents.yaml` | Plugin-declared, loaded at boot via plugin manifest |
-| **SessionTemplate** | Which Channels + Entities + flow this session uses | Hard-coded across FeishuChatProxy / SlashHandler / agents.yaml's `pipeline:` | yaml-declared, validated at template load |
-| **Channel** | Per-session transport peer (HTTP MCP, Feishu chat, etc) | Plugin-internal — each plugin reinvents | Plugin-shipped impl, supervised under per-session AgentSupervisor |
+| **Agent type** | `cc` is which binary, what caps, what config_schema | `agents.yaml` | Plugin-declared in `manifest.yaml > agent_kinds:`, loaded at boot |
+| **Channel** | Per-session transport peer (HTTP MCP, Feishu chat, etc) | Plugin-internal — each plugin reinvents | Plugin-declared in `manifest.yaml > channels:`, supervised under per-session AgentSupervisor |
+| **Bundle** | Single-template artifact composing primitives into a story | (none — new) | Bundle dir at `runtime/lib/esr/bundles/<name>/` (built-in) or any path (`/plugin:install`); fixed `manifest.yaml + template.yaml` shape |
+| **SessionTemplate** | Which Channels + Entities + flow this session uses | Hard-coded across FeishuChatProxy / SlashHandler / agents.yaml's `pipeline:` | yaml-declared (the bundle's `template.yaml`), validated at bundle load |
 | **Agent instance** | `alice`, runtime UUID, actor_ids, session_ids | `Esr.Entity.Agent.InstanceRegistry` + (today) inline in `session.json` | Persisted in `sessions/<sid>/agents/<aid>.json` per yaml-v2 spec |
 
 Realm is the vocabulary umbrella for "which combination of Channels +
@@ -185,73 +195,99 @@ Loader walks every enabled plugin's manifest, populates two ETS tables:
 Templates reference `<plugin>.<name>`; loader rejects template loads that
 reference missing kinds.
 
-### 5.3 SessionTemplate yaml shape
+### 5.3 Bundle directory layout
 
-Templates are declared as entries inside a plugin's manifest (or, for
-operator overrides, as standalone yaml files at `~/.esrd-<inst>/<inst>/session_templates/`).
+Bundles are first-class artifacts at `runtime/lib/esr/bundles/<bundle_name>/`
+(in-tree built-ins) or any absolute path (operator-installed via
+`/plugin:install`). Each bundle directory contains exactly two files:
 
-In a plugin manifest (`runtime/lib/esr/plugins/feishu/manifest.yaml`):
-
-```yaml
-name: feishu
-version: 0.1.0
-agent_kinds: [...]
-channels: [...]
-session_templates:
-  - name: feishu-cc
-    description: Feishu chat → Claude Code agent (workspace-bound by default)
-    dependencies: [feishu, claude_code]      # both plugins must be enabled
-    channels:
-      - alias: in
-        kind: feishu.chat_proxy
-        config:
-          app_id: <runtime>                  # injected at session creation
-          chat_id: <runtime>
-      - alias: cc_mcp
-        kind: claude_code.mcp_http
-        config:
-          port: ephemeral
-    agents:
-      - kind: claude_code.cc
-        name: <runtime>
-        consumes: [cc_mcp]
-    flow:
-      inbound:
-        - source: in.text
-          pipeline:
-            - Esr.Entity.Agent.MentionParser
-            - <route_to_agent>
-      outbound:
-        - source: <agent>.reply
-          sink: in.send
+```
+runtime/lib/esr/bundles/feishu-cc/
+  manifest.yaml      # bundle metadata + dependencies
+  template.yaml      # the session template (exactly one per bundle)
 ```
 
-As a standalone operator override (`~/.esrd-default/default/session_templates/my-custom.yaml`):
+**`manifest.yaml`** — bundle-level metadata, NOT plugin-level:
+
+```yaml
+schema_version: 1
+name: feishu-cc
+version: 0.1.0
+description: Feishu chat → Claude Code agent (workspace-bound by default)
+dependencies:
+  plugins: [feishu, claude_code]    # plugins this bundle's template needs
+  bundles: []                       # other bundles (future; v1 empty)
+```
+
+**`template.yaml`** — the session template content:
+
+```yaml
+schema_version: 1
+channels:
+  - alias: in                       # template-local alias
+    kind: feishu.chat_proxy         # <plugin>.<channel_name>
+    config:
+      app_id: <runtime>             # injected at session creation
+      chat_id: <runtime>
+  - alias: cc_mcp
+    kind: claude_code.mcp_http
+    config:
+      port: ephemeral
+
+agents:
+  - kind: claude_code.cc            # <plugin>.<agent_kind>
+    name: <runtime>                 # operator-supplied
+    consumes: [cc_mcp]              # which channel aliases this agent reads/writes
+
+flow:
+  inbound:
+    - source: in.text
+      pipeline:
+        - Esr.Entity.Agent.MentionParser
+        - <route_to_agent>          # built-in router; resolves agent name
+                                    # from mention or primary_agent
+  outbound:
+    - source: <agent>.reply
+      sink: in.send
+```
+
+The split `manifest.yaml` + `template.yaml` is deliberate: dependency
+resolution and template rendering are different concerns; the loader
+reads `manifest.yaml` first to decide whether to even attempt parsing
+`template.yaml`.
+
+**Operator ad-hoc templates** (no bundle dir, no manifest required):
+
+`~/.esrd-<inst>/<inst>/session_templates/my-custom.yaml`:
 
 ```yaml
 schema_version: 1
 name: my-custom
 description: Operator-defined variant
-dependencies: [feishu, claude_code]
+dependencies:
+  plugins: [feishu, claude_code]
+  bundles: []
 channels: [...]
 agents: [...]
 flow: [...]
 ```
 
-Both forms have identical structure; the operator-override file is just
-the entry hoisted to a top-level yaml.
+When an operator wants a one-off template they don't need to make a
+full bundle; the standalone yaml conflates manifest + template into one
+file. If the same name later needs a bundle (e.g. for sharing), the
+operator promotes the file by extracting it into a bundle dir.
 
-Validation rules at template registration:
-- Every `dependencies:` plugin must be enabled. Missing → template not
-  registered + Logger.warning naming the missing plugin (template is
-  available again as soon as its dependencies enable).
+Validation rules at bundle/template load:
+- Every `dependencies.plugins:` plugin must be enabled. Missing → bundle's
+  template not registered + `Logger.warning` naming the missing plugin
+  (bundle re-validates on next plugin enable cycle).
 - Every `channel.kind` must resolve via `Esr.Channel.Registry`.
 - Every `agent.kind` must resolve via `Esr.Plugin.Registry.agent_kinds`.
 - Every `consumes` ref must match a `channels[].alias`.
 - Every `flow` source/sink ref must match an alias or known router built-in.
 - Reject duplicate aliases inside a template.
-- Reject duplicate template `name` across all sources (operator-override
-  intentionally **replaces** plugin-shipped same-name template, no error).
+- Reject duplicate template `name` across all sources (operator-ad-hoc
+  intentionally **replaces** bundle-shipped same-name template, no error).
 
 ### 5.4 Default template + selection
 
@@ -270,9 +306,42 @@ an operator override. The "active default template" is operator-configurable:
   default in `plugins.yaml` so `/session:new name=foo` works without
   any config step.
 
-### 5.5 Storage (cross-cited)
+### 5.5 Install + registration lifecycle
 
-Per the locked decision, agent instances split into `sessions/<sid>/agents/<aid>.json`
+The bundle install path reuses the existing `/plugin:install` slash
+(`Esr.Commands.Plugin.Install`, shipped Phase 1 of plugin work). The
+slash already accepts arbitrary local paths; we extend its loader to
+recognize bundles via `manifest.yaml`'s schema (no kind discriminator
+needed — bundle vs plugin is determined by which fields are populated).
+
+```
+Install path:
+  1. Operator: /plugin:install <local_path>      (or built-in already in priv)
+  2. /plugin:enable <name>
+  3. Esr.Bundle.Loader OR Esr.Plugin.Loader parses manifest.yaml:
+     - If `agent_kinds:` or `channels:` populated → plugin path
+     - If `template.yaml` is present in the directory → bundle path
+     - Both → reject (a bundle should not also be a plugin in v1)
+  4. Plugin path → register channels + agent_kinds + slash routes etc
+  5. Bundle path:
+     a. Resolve dependencies.plugins[]; if any not enabled →
+        Logger.warning + skip template registration (re-attempted
+        whenever any plugin enables)
+     b. Parse template.yaml; validate channel.kind / agent.kind /
+        consumes / flow refs against Channel.Registry +
+        Plugin.Registry.agent_kinds
+     c. Register in Esr.SessionTemplate.Registry under the bundle's name
+  6. Operator can verify: /plugin:list shows the bundle; future slash
+     /session:templates lists registered templates with attribution
+```
+
+**Bundle disable** removes its template from the registry; existing
+sessions that were instantiated from the template are unaffected (frozen
+copy at session creation). Bundle re-enable re-registers.
+
+### 5.6 Storage (cross-cited)
+
+Per the locked decision (originally §5.5), agent instances split into `sessions/<sid>/agents/<aid>.json`
 (one file per instance, validated by `agent_instance.v1.json`). Implementation
 of the storage migration lives in `2026-05-09-yaml-layout-v2-per-thing-directories.md`'s
 PR (the user's parallel work). This spec assumes the new layout is in
@@ -293,7 +362,7 @@ The migration is multi-PR and ordered. Detailed task breakdown lives in
 | **1** | `Esr.Channel` behaviour + `Esr.Channel.Registry` ETS + tests | new modules; no existing module touched |
 | **2** | First Channel impl: `Esr.Plugins.ClaudeCode.Channels.McpHttp` wraps the existing Elixir-side MCP HTTP transport (`EsrWeb.McpController` + `cc_mcp_ready` plumbing — already extracted from Python by PR-3.5) under the `Esr.Channel` behaviour. No new transport code; just the behaviour adapter. | claude_code plugin only |
 | **3** | Second Channel impl: `Esr.Plugins.Feishu.Channels.ChatProxy` extracts the channel-shaped half (inbound dispatch + outbound reply emit) from the current `Esr.Entity.FeishuChatProxy`. Note: the file is at `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex` but the **module namespace is still `Esr.Entity.FeishuChatProxy`** — Phase 3 either renames the module to align with the plugin path OR keeps the legacy namespace and only adds the Channel adapter alongside. Decide in plan. | feishu plugin only |
-| **4** | `Esr.SessionTemplate` yaml schema + loader + Registry + validation + tests | new modules |
+| **4** | `Esr.Bundle` + `Esr.SessionTemplate` schemas + loader + Registry + validation + ship `runtime/lib/esr/bundles/feishu-cc/{manifest,template}.yaml` + tests | new modules + first bundle |
 | **5** | `/session:new` consumes template; new sessions instantiate via SessionTemplate; `default.yaml` ships with feishu-cc topology | session creation path |
 | **6** | Migration: existing sessions implicitly assigned `default` template; `agents.yaml` deleted; agent kind metadata moves to plugin manifest's `agent_kinds:`. **Non-trivial:** 13 current consumers in `runtime/lib/`, see §6.1 below for the per-consumer migration table. | cross-cutting cleanup |
 | **7** | Multi-session-per-instance acceptance: same `Instance` registers in two sessions; reply routing uses incoming session context | `InstanceRegistry`, `CCProcess` |
@@ -508,6 +577,7 @@ are bash + curl + log greps (matching the existing scenario style at
 | 26 | **Operator-shipped template override** | `~/.esrd-<inst>/<inst>/session_templates/custom.yaml` registered at boot; `/session:new template=custom` works; reload (`/plugin:reload session_templates`) picks up edits without esrd restart. | Phase 5 + Phase 8 |
 | 27 | **Missing dependency template fails loud** | Drop a template requiring a disabled plugin; esrd boot logs `Logger.warning` naming the missing dependency; `/session:new template=that-name` returns structured `template_dependency_unmet` error; enabling the missing plugin makes the template register without esrd restart. | Phase 4 acceptance |
 | 28 | **Two-agent-kind composition** | Add a stub second agent kind (`codex` or `gemini`) with its own Channel impl + a template that uses it. Verify SessionTemplate loader, instance spawn, message routing all work without changes to feishu plugin or CC plugin. This is the **abstraction-validation** scenario — proves Channel + SessionTemplate aren't CC-specific. | Phase 8 (or earlier if a second agent plugin lands in parallel) |
+| 29 | **External-path bundle install** | Copy a bundle dir to `/tmp/external_bundle/` (outside the in-tree path), run `esr-dev exec /plugin:install --path=/tmp/external_bundle`, then `/plugin:enable external_bundle`. Verify the bundle's template registers in `SessionTemplate.Registry`; `/session:new template=<bundle_template_name>` boots a session. Disable the bundle → template auto-deregisters. This validates the install path generalizes beyond in-tree bundles without new install code. | Phase 4 acceptance |
 
 ---
 
