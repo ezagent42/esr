@@ -35,12 +35,7 @@ defmodule Mix.Tasks.Esr.MigrateAgentInstancesV1ToV2 do
     {opts, _, _} = OptionParser.parse(args, strict: [home: :string])
     home = Keyword.get(opts, :home, Esr.Paths.runtime_home())
 
-    case Esr.Migrations.AgentInstancesV1ToV2.run(home) do
-      {:ok, %{migrated: m, skipped: s}} ->
-        Mix.shell().info("agent_instances v1→v2: migrated=#{m} skipped=#{s} (home=#{home})")
-
-      {:error, reason} ->
-        Mix.raise("agent_instances v1→v2 failed: #{inspect(reason)}")
-    end
+    {:ok, %{migrated: m, skipped: s}} = Esr.Migrations.AgentInstancesV1ToV2.run(home)
+    Mix.shell().info("agent_instances v1→v2: migrated=#{m} skipped=#{s} (home=#{home})")
   end
 end

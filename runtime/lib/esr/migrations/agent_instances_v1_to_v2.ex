@@ -20,9 +20,11 @@ defmodule Esr.Migrations.AgentInstancesV1ToV2 do
 
   @doc """
   Run the migration against the given runtime-home path. Returns
-  `{:ok, %{migrated: N, skipped: M}}` or `{:error, reason}`.
+  `{:ok, %{migrated: N, skipped: M}}`. Per-file errors are logged
+  and counted in `:skipped` — the public contract is total-fail-
+  through so a single bad on-disk state can't block esrd boot.
   """
-  @spec run(String.t()) :: {:ok, %{migrated: non_neg_integer(), skipped: non_neg_integer()}} | {:error, term()}
+  @spec run(String.t()) :: {:ok, %{migrated: non_neg_integer(), skipped: non_neg_integer()}}
   def run(home) when is_binary(home) do
     sessions_dir = Path.join(home, "sessions")
 
@@ -66,13 +68,8 @@ defmodule Esr.Migrations.AgentInstancesV1ToV2 do
     if File.exists?(sessions_dir) and v1_present?(sessions_dir) do
       Logger.info("agent_instances_v1_to_v2: v1 session(s) detected; running migration on #{home}")
 
-      case run(home) do
-        {:ok, %{migrated: m, skipped: s}} ->
-          Logger.info("agent_instances_v1_to_v2: migrated=#{m} skipped=#{s}")
-
-        {:error, reason} ->
-          Logger.warning("agent_instances_v1_to_v2: failed reason=#{inspect(reason)}")
-      end
+      {:ok, %{migrated: m, skipped: s}} = run(home)
+      Logger.info("agent_instances_v1_to_v2: migrated=#{m} skipped=#{s}")
     end
 
     :ok
