@@ -87,4 +87,41 @@ defmodule Esr.SessionTemplate.Registry do
 
     :ok
   end
+
+  @doc """
+  Resolve `template_name` and produce an `agent_def`-shaped map suitable
+  for `Esr.Session.AgentSpawner.do_create/1`.
+
+  This is the Phase 5 cut-over hook: instead of `Session.New` reading
+  from `Esr.Entity.Agent.Registry.agent_def/1` (the agents.yaml cache),
+  it builds the same-shaped map from the template's declared channels +
+  agents + flow blocks.
+
+  Phase 5 supports the single feishu-cc topology
+  (`feishu.chat_proxy` + `claude_code.cc`); Phase 6 will generalize the
+  kind → peer mapping by sourcing it from each plugin's manifest
+  `agent_kinds:` block. The fixed mapping lives in
+  `Esr.SessionTemplate.AgentDefBuilder` so the plumbing stays small
+  while Phase 6 work is tracked separately.
+
+  `runtime_params` carries the `<runtime>` placeholder values:
+    * `chat_id`, `app_id`, `principal_id` — Feishu chat context
+    * `name` — operator-supplied agent instance name
+
+  Returns `{:ok, agent_def}` on success or `{:error, reason}`. Errors:
+    * `:template_not_found` — `template_name` not in registry
+    * `{:unsupported_template_topology, ...}` — template references
+      kinds the Phase-5 builder doesn't recognize yet (Phase 6 lifts).
+  """
+  @spec materialize(String.t(), map()) :: {:ok, map()} | {:error, term()}
+  def materialize(template_name, runtime_params)
+      when is_binary(template_name) and is_map(runtime_params) do
+    case lookup(template_name) do
+      {:ok, %Esr.SessionTemplate{} = template} ->
+        Esr.SessionTemplate.AgentDefBuilder.build(template, runtime_params)
+
+      :not_found ->
+        {:error, :template_not_found}
+    end
+  end
 end
