@@ -55,13 +55,14 @@ defmodule Esr.Commands.Session.New do
   command :session_new do
     slash         "/session:new"
     category      "Sessions"
-    description   "起一个新 session(自动 transient workspace);name=<X> [agent=cc]"
+    description   "起一个新 session(自动 transient workspace);name=<X> [template=feishu-cc] [agent=cc]"
     permission    "session:default/create"
     requires_user_binding      true
     requires_workspace_binding false
 
-    arg :name,  required: true,  doc: "session 名"
-    arg :agent, required: false, default: "cc", doc: "agent 名(默认 cc)"
+    arg :name,     required: true,  doc: "session 名"
+    arg :agent,    required: false, default: "cc", doc: "agent 名(默认 cc)"
+    arg :template, required: false, doc: "session template name (defaults to operator-configured default)"
 
     error :invalid_args,            "session_new %{detail}"
     error :worktree_failed,         "git worktree add failed: %{details}"
@@ -72,6 +73,9 @@ defmodule Esr.Commands.Session.New do
     error :workspace_gone,          "workspace %{name} %{detail}"
     error :no_workspace_target,     "no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name>"
     error :unknown_agent,           "agent %{agent} not registered in agents.yaml"
+    error :no_default_template,     "no default session template configured + no template= arg; available: %{available} — set via `/plugin:set plugin=session key=default_template value=<name>`"
+    error :unknown_template,        "session template '%{template}' not found; available: %{available}"
+    error :template_materialize_failed, "session template '%{template}' could not be materialized: %{details}"
     error :missing_capabilities,    "missing capabilities: %{caps}"
     error :session_start_failed,    "session start failed: %{details}"
   end
@@ -141,7 +145,7 @@ defmodule Esr.Commands.Session.New do
         start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
 
         with :ok <- validate_args(agent, dir),
-             {:ok, agent_def} <- fetch_agent(agent),
+             {:ok, agent_def, _template_name} <- resolve_agent_def(args, submitter),
              :ok <- verify_caps(submitter, agent_def.capabilities_required),
              :ok <- check_name_unique(submitter, args["name"]),
              :ok <- maybe_create_worktree(args),
@@ -490,15 +494,72 @@ defmodule Esr.Commands.Session.New do
 
   defp validate_args(_, _), do: :ok
 
-  defp fetch_agent(name) do
-    case Esr.Entity.Agent.Registry.agent_def(name) do
-      {:ok, d} ->
-        {:ok, d}
+  # Phase 5 cut-over: instead of looking up agents.yaml for the
+  # `agent` arg, resolve a SessionTemplate (explicit `template=` arg →
+  # operator default → no_default_template error) and materialize it
+  # into an agent_def with the runtime params injected. Spec §5.4.
+  defp resolve_agent_def(args, submitter) do
+    runtime_params = %{
+      chat_id: Map.get(args, "chat_id"),
+      app_id: Map.get(args, "app_id"),
+      thread_id: Map.get(args, "thread_id"),
+      principal_id: submitter,
+      name: args["name"] || args["agent"]
+    }
 
-      {:error, :not_found} ->
-        Render.error(__MODULE__.command_meta(), :unknown_agent, %{agent: name})
+    with {:ok, template_name} <- resolve_template_name(args) do
+      case Esr.SessionTemplate.Registry.materialize(template_name, runtime_params) do
+        {:ok, agent_def} ->
+          {:ok, agent_def, template_name}
+
+        {:error, :template_not_found} ->
+          Render.error(__MODULE__.command_meta(), :unknown_template, %{
+            template: template_name,
+            available: list_available_templates()
+          })
+
+        {:error, reason} ->
+          Render.error(__MODULE__.command_meta(), :template_materialize_failed, %{
+            template: template_name,
+            details: inspect(reason)
+          })
+      end
     end
   end
+
+  defp resolve_template_name(args) do
+    case args["template"] do
+      name when is_binary(name) and name != "" ->
+        {:ok, name}
+
+      _ ->
+        case Esr.Session.DefaultTemplate.current() do
+          {:ok, name} ->
+            {:ok, name}
+
+          :not_set ->
+            Render.error(__MODULE__.command_meta(), :no_default_template, %{
+              available: list_available_templates()
+            })
+        end
+    end
+  end
+
+  defp list_available_templates do
+    Esr.SessionTemplate.Registry.list_all()
+    |> Enum.map(fn %{name: n, source: src} ->
+      "#{n} (#{format_source(src)})"
+    end)
+    |> Enum.join(", ")
+    |> case do
+      "" -> "none"
+      str -> str
+    end
+  end
+
+  defp format_source({:bundle, name}), do: "bundle:#{name}"
+  defp format_source(:operator), do: "operator"
+  defp format_source(other), do: inspect(other)
 
   # Batch-verifies every permission in one shot via has_all?/2 so the
   # error payload enumerates the full gap (not just the first miss).
@@ -520,9 +581,14 @@ defmodule Esr.Commands.Session.New do
   defp verify_caps(_submitter, _other), do: :ok
 
   # Chat-bound path (the Feishu slash command path): delegate to
-  # Scope.Router so the full agents.yaml pipeline spawns. Scope.Router
+  # Scope.Router so the full template-driven pipeline spawns. Scope.Router
   # also does its own `register_session/3` internally, so we don't
   # re-register here.
+  #
+  # Phase 5: agent_def is now MANDATORY in params — pre-Phase-5
+  # AgentSpawner re-fetched from agents.yaml, post-cut it reads
+  # `params[:agent_def]` directly. The materialized agent_def comes
+  # from `resolve_agent_def/2` above (template-driven).
   defp spawn_session(
          agent,
          agent_def,
@@ -544,9 +610,9 @@ defmodule Esr.Commands.Session.New do
       # PR-21λ-fix: thread app_id so Scope.Router registers under the
       # adapter instance id that inbound messages will look up with.
       app_id: app_id,
-      # agent_def is redundant — Scope.Router re-resolves — but keeping
-      # the reference here means call-site readers don't need to jump
-      # two files to see what agent this maps to.
+      # Phase 5 cut-over: agent_def is now required by AgentSpawner.do_create/1
+      # (no longer re-fetched from agents.yaml). Source is
+      # `Esr.SessionTemplate.Registry.materialize/2`.
       agent_def: agent_def
     }
 

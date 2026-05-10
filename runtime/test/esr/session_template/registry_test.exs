@@ -79,4 +79,60 @@ defmodule Esr.SessionTemplate.RegistryTest do
     Registry.unregister("foo")
     assert :not_found = Registry.lookup("foo")
   end
+
+  describe "materialize/2 (Phase 5)" do
+    defp feishu_cc_full_template(name) do
+      %Esr.SessionTemplate{
+        schema_version: 1,
+        name: name,
+        description: "Feishu chat → Claude Code agent",
+        dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
+        channels: [
+          %{alias: "in", kind: "feishu.chat_proxy", config: %{"app_id" => "<runtime>", "chat_id" => "<runtime>"}},
+          %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{"port" => "ephemeral"}}
+        ],
+        agents: [
+          %{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}
+        ],
+        flow: %{
+          inbound: [%{source: "in.text", pipeline: []}],
+          outbound: [%{source: "<agent>.reply", sink: "in.send"}]
+        }
+      }
+    end
+
+    test "happy path: registered template + runtime params yields agent_def" do
+      Registry.register("feishu-cc", feishu_cc_full_template("feishu-cc"),
+        source: {:bundle, "feishu-cc"}
+      )
+
+      assert {:ok, agent_def} =
+               Registry.materialize("feishu-cc", %{
+                 chat_id: "oc_X",
+                 app_id: "esr_dev_helper",
+                 principal_id: "ou_alice",
+                 name: "alice"
+               })
+
+      assert is_map(agent_def)
+      assert is_list(agent_def.pipeline.inbound)
+      assert agent_def.capabilities_required != []
+    end
+
+    test "missing template → {:error, :template_not_found}" do
+      assert {:error, :template_not_found} = Registry.materialize("ghost", %{})
+    end
+
+    test "registered template with unsupported channel kind → builder error surfaces" do
+      bad = %{
+        feishu_cc_full_template("bad") |
+        channels: [%{alias: "x", kind: "voice.transport", config: %{}}]
+      }
+
+      Registry.register("bad", bad, source: :operator)
+
+      assert {:error, {:unsupported_channel_kind, "voice.transport"}} =
+               Registry.materialize("bad", %{})
+    end
+  end
 end

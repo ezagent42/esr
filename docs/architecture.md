@@ -139,6 +139,8 @@ from that spec to code on disk. PRs are tracked under
 | yaml-layout-v2 per-thing adapter directories — register / list / disable / enable / remove round-trip | `tests/e2e/scenarios/24_yaml_layout_v2.sh` |
 | SessionTemplate Phase 4 — bundle template skipped when plugin dep missing; loud-fail Logger.warning at boot | `tests/e2e/scenarios/27_template_dependency_unmet.sh` |
 | SessionTemplate Phase 4 — external-path bundle install via `/plugin:install` (bundle name ≠ template name) | `tests/e2e/scenarios/29_external_bundle_install.sh` |
+| SessionTemplate Phase 5 — feishu-cc auto-elect to default; `/session:new` template resolution + materialization | `tests/e2e/scenarios/25_session_template_instantiation.sh` |
+| SessionTemplate Phase 5 — operator-shipped template at `${ESRD_HOME}/<inst>/session_templates/foo.yaml` overrides bundle path | `tests/e2e/scenarios/26_operator_template_override.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |
