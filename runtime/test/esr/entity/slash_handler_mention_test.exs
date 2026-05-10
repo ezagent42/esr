@@ -13,12 +13,10 @@ defmodule Esr.Entity.SlashHandler.MentionTest do
       _ -> :ok
     end
 
-    # Load agent registry fixture so "cc" is a known type.
-    fixture =
-      Path.join([__DIR__, "..", "fixtures", "agents", "simple.yaml"])
-      |> Path.expand()
-
-    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
+    # Phase 6 (2026-05-10): the legacy agents.yaml fixture-load is
+    # dead weight here — slash_handler mention parsing only consults
+    # `Esr.Entity.Agent.InstanceRegistry` (live instances), not any
+    # agent_kind/agent_def lookup.
 
     # Use a unique session per test to avoid cross-test state collisions.
     sess = "mention-test-#{:rand.uniform(999_999_999)}"

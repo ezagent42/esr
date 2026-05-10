@@ -39,6 +39,21 @@ channels:
     config_schema:
       type: object
       properties: {}
+    # Phase 6 (2026-05-10): channel-contributed pipeline peers.
+    # `Esr.SessionTemplate.AgentDefBuilder` reads these when a
+    # SessionTemplate references `feishu.chat_proxy` and stitches them
+    # into the materialized agent_def's `pipeline.inbound`. Pre-Phase-6
+    # these were hardcoded inside AgentDefBuilder.
+    pipeline_contributions:
+      - { name: feishu_chat_proxy, impl: Esr.Plugins.Feishu.FeishuChatProxy }
+    # Stateless proxy peers contributed alongside the chat_proxy
+    # channel. The `${app_id}` literal is left intact for downstream
+    # `Esr.Session.AgentSpawner.build_ctx/2` to substitute at spawn
+    # time (it reads `params[:app_id]`).
+    proxies:
+      - name: feishu_app_proxy
+        impl: Esr.Entity.FeishuAppProxy
+        target: "admin::feishu_app_adapter_${app_id}"
 
 depends_on:
   core: ">= 0.1.0"

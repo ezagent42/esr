@@ -38,11 +38,13 @@ defmodule Esr.SessionRouterTest do
 
     # "*" grants everything — avoids cap-denied drops in the pipeline.
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_alice" => ["*"]})
-    :ok = Esr.Entity.Agent.Registry.load_agents(@fixture_path)
 
-    # Phase 5 cut-over: AgentSpawner reads agent_def from params; load
-    # the fixture and surface it for tests calling create_session.
-    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
+    # Phase 5 cut-over: AgentSpawner reads agent_def from params.
+    # Phase 6 (2026-05-10): the legacy `Esr.Entity.Agent.Registry`
+    # agents.yaml cache is gone; the fixture is retained as test data.
+    # Build the cc agent_def directly from the fixture via the
+    # AgentDefFixture helper.
+    {:ok, cc_def} = Esr.TestSupport.AgentDefFixture.cc_agent_def(@fixture_path)
 
     if Process.whereis(Esr.Session.Router) == nil do
       start_supervised!(Esr.Session.Router)

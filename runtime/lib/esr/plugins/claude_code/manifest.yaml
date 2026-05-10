@@ -26,15 +26,54 @@ channels:
         port:
           type: integer
 
+# Top-level `agent_kinds:` block — populated by Esr.Plugin.Loader at
+# boot into Esr.Plugin.AgentKindRegistry under `claude_code.cc`.
+# Replaces the legacy `${ESRD_HOME}/<inst>/agents.yaml` `cc` entry
+# (deleted in Phase 6, 2026-05-10).
+#
+# The `cc` kind contributes the canonical CC chain to the inbound
+# pipeline: cc_proxy → cc_process → pty_process. Channel
+# contributions (e.g. feishu_chat_proxy from feishu's chat_proxy
+# Channel + feishu_app_proxy from the feishu plugin's proxy block)
+# are added at template-materialization time by
+# `Esr.SessionTemplate.AgentDefBuilder` based on the SessionTemplate's
+# declared `channels:`.
+#
+# `handler_module: cc_adapter_runner` surfaces the legacy Python
+# handler module name (`handler:cc_adapter_runner/...` capability
+# entries) so `Esr.Application.restore_handlers_from_disk/1` can
+# spawn it at boot from the plugin registry rather than parsing
+# agents.yaml.
+agent_kinds:
+  - name: cc
+    description: "Claude Code"
+    handler_module: cc_adapter_runner
+    capabilities_required:
+      - session:default/create
+      - pty:default/spawn
+      - handler:cc_adapter_runner/invoke
+    pipeline:
+      inbound:
+        - { name: cc_proxy,    impl: Esr.Entity.CCProxy }
+        - { name: cc_process,  impl: Esr.Entity.CCProcess }
+        - { name: pty_process, impl: Esr.Entity.PtyProcess }
+      outbound:
+        - pty_process
+        - cc_process
+        - cc_proxy
+    params:
+      - { name: dir,    required: true,  type: path }
+      - { name: app_id, required: false, default: "default", type: string }
+
 description: |
   Claude Code (CC) integration. CCProcess drives session lifecycle;
   CCProxy streams reply directives. Spawns a claude binary inside a
-  core-provided PtyProcess; the cc agent_def in agents.yaml wires the
-  pipeline (PtyProcess + CCProcess + CCProxy). The MCP server claude
-  uses to push notifications and accept tool calls is hosted by
-  `EsrWeb.McpController` (PR-3.5, 2026-05-05) — no separate Python
-  sidecar; .mcp.json points claude at the esrd HTTP endpoint
-  directly.
+  core-provided PtyProcess; the cc agent_kind (above) wires the
+  per-plugin pipeline contribution (cc_proxy → cc_process →
+  pty_process). The MCP server claude uses to push notifications
+  and accept tool calls is hosted by `EsrWeb.McpController`
+  (PR-3.5, 2026-05-05) — no separate Python sidecar; .mcp.json
+  points claude at the esrd HTTP endpoint directly.
 
 depends_on:
   core: ">= 0.1.0"

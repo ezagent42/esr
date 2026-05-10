@@ -18,7 +18,7 @@ defmodule Esr.Commands.Workspace.Remove do
   ### Repo-bound workspaces
   Only `<repo>/.esr/workspace.json` and `<repo>/.esr/topology.yaml` are removed.
   **NEVER `rm -rf <repo>/.esr/`** — the operator may have other files there
-  (agents.yaml, env files, etc.) that must be preserved.
+  (env files, custom hooks, etc.) that must be preserved.
   The repo path is then unregistered from `registered_repos.yaml`.
 
   ### In both cases
@@ -44,7 +44,7 @@ defmodule Esr.Commands.Workspace.Remove do
   command :workspace_remove do
     slash         "/workspace:remove"
     category      "Workspace"
-    description   "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）"
+    description   "删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 env、自定义 hooks）"
     permission    "workspace.create"
     requires_user_binding      true
     requires_workspace_binding false
@@ -129,7 +129,7 @@ defmodule Esr.Commands.Workspace.Remove do
     yaml_path = Paths.registered_repos_yaml()
 
     # Surgical delete — only the two ESR-managed files.
-    # NEVER rm -rf <repo>/.esr/ — other operator files (agents.yaml, env, etc.)
+    # NEVER rm -rf <repo>/.esr/ — other operator files (env, custom hooks, etc.)
     # must be preserved.
     deleted_files =
       [

@@ -18,7 +18,71 @@ defmodule Esr.SessionTemplate.RegistryTest do
       {:error, {:already_started, _}} -> Registry.clear()
     end
 
-    on_exit(fn -> Registry.clear() end)
+    # Phase 6 (2026-05-10): materialize/2 reads channel +
+    # agent_kind contributions from the plugin registries. The
+    # `materialize/2` describe-block below references `feishu.chat_proxy`,
+    # `claude_code.mcp_http`, and `claude_code.cc` — register them here
+    # so the builder finds them. Stub modules `Esr.Entity.Server` /
+    # `Esr.Entity.PtyProcess` are core-shipped + always loaded.
+    case start_supervised(Esr.Channel.Registry) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    case start_supervised(Esr.Plugin.AgentKindRegistry) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    Esr.Channel.Registry.clear()
+    Esr.Plugin.AgentKindRegistry.clear()
+
+    Esr.Channel.Registry.register("feishu", "chat_proxy", Esr.Entity.Server, %{
+      pipeline_contributions: [
+        %{"name" => "feishu_chat_proxy", "impl" => "Esr.Plugins.Feishu.FeishuChatProxy"}
+      ],
+      proxies: [
+        %{
+          "name" => "feishu_app_proxy",
+          "impl" => "Esr.Entity.FeishuAppProxy",
+          "target" => "admin::feishu_app_adapter_${app_id}"
+        }
+      ]
+    })
+
+    Esr.Channel.Registry.register("claude_code", "mcp_http", Esr.Entity.PtyProcess, %{
+      pipeline_contributions: [],
+      proxies: []
+    })
+
+    Esr.Plugin.AgentKindRegistry.register("claude_code", "cc", %{
+      plugin: "claude_code",
+      name: "cc",
+      description: "Claude Code",
+      handler_module: "cc_adapter_runner",
+      pipeline: %{
+        inbound: [
+          %{"name" => "cc_proxy", "impl" => "Esr.Entity.CCProxy"},
+          %{"name" => "cc_process", "impl" => "Esr.Entity.CCProcess"},
+          %{"name" => "pty_process", "impl" => "Esr.Entity.PtyProcess"}
+        ],
+        outbound: ["pty_process", "cc_process", "cc_proxy"]
+      },
+      proxies: [],
+      capabilities_required: [
+        "session:default/create",
+        "pty:default/spawn",
+        "handler:cc_adapter_runner/invoke"
+      ],
+      params: []
+    })
+
+    on_exit(fn ->
+      Registry.clear()
+      Esr.Channel.Registry.clear()
+      Esr.Plugin.AgentKindRegistry.clear()
+    end)
+
     :ok
   end
 

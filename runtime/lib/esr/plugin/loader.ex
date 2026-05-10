@@ -185,7 +185,8 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_slash_routes(name, manifest),
          :ok <- register_startup(name, manifest),
          :ok <- register_media_types(name, manifest),
-         :ok <- register_channels(name, manifest) do
+         :ok <- register_channels(name, manifest),
+         :ok <- register_agent_kinds(name, manifest) do
       # HR-1: take a config snapshot at plugin load time so the first
       # /plugin:reload always has a baseline to diff against.
       # ConfigSnapshot.create_table/0 is guaranteed to have been called
@@ -412,8 +413,33 @@ defmodule Esr.Plugin.Loader do
   # (default `[]`).
   defp register_channels(plugin_name, %Manifest{channels: channels})
        when is_list(channels) do
-    Enum.each(channels, fn %{name: channel_name, module: module} ->
-      :ok = Esr.Channel.Registry.register(plugin_name, channel_name, module)
+    Enum.each(channels, fn entry ->
+      extras = %{
+        config_schema: Map.get(entry, :config_schema),
+        pipeline_contributions: Map.get(entry, :pipeline_contributions, []),
+        proxies: Map.get(entry, :proxies, [])
+      }
+
+      :ok = Esr.Channel.Registry.register(plugin_name, entry.name, entry.module, extras)
+    end)
+
+    :ok
+  end
+
+  # 2026-05-10 SessionTemplate + Channel migration, Phase 6: each
+  # `agent_kinds:` entry on the manifest is registered into
+  # `Esr.Plugin.AgentKindRegistry` under the key `<plugin>.<kind_name>`.
+  # The spec map carries the same agent_def shape that
+  # `Esr.Session.AgentSpawner` and `SessionTemplate.AgentDefBuilder`
+  # expect (`pipeline.inbound`, `pipeline.outbound`,
+  # `capabilities_required`, `proxies`, `params`, plus the optional
+  # `handler_module` Python-sidecar pointer). An absent block is a
+  # no-op (default `[]`).
+  defp register_agent_kinds(plugin_name, %Manifest{agent_kinds: agent_kinds})
+       when is_list(agent_kinds) do
+    Enum.each(agent_kinds, fn entry ->
+      spec = Map.put(entry, :plugin, plugin_name)
+      :ok = Esr.Plugin.AgentKindRegistry.register(plugin_name, entry.name, spec)
     end)
 
     :ok

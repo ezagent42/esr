@@ -1,8 +1,8 @@
 defmodule Esr.Commands.Session.New do
   @moduledoc """
   `Esr.Commands.Session.New` — the consolidated agent-session
-  command (spec D15 collapse). Creates an agent-backed Session from an
-  `agents.yaml` definition.
+  command (spec D15 collapse). Creates an agent-backed Session from a
+  SessionTemplate definition (Phase 5+).
 
   Dispatcher kind: `session_new`. The legacy branch-worktree command
   lives in `Esr.Commands.Session.BranchNew` (kind
@@ -11,7 +11,14 @@ defmodule Esr.Commands.Session.New do
   ## Flow
 
     1. Validate `args.agent` present (D11) and `args.dir` present (D13).
-    2. Resolve the agent definition via `Esr.Entity.Agent.Registry.agent_def/1`.
+    2. Resolve the agent definition by materializing a SessionTemplate
+       via `Esr.SessionTemplate.Registry.materialize/2` (Phase 5+).
+       Pre-Phase-5 this read `Esr.Entity.Agent.Registry.agent_def/1`
+       (the agents.yaml cache); pre-Phase-6 the template's agent_kind
+       contributions came from a hardcoded mapping in AgentDefBuilder;
+       post-Phase-6 the contributions are sourced from each plugin's
+       manifest `agent_kinds:` block (registered in
+       `Esr.Plugin.AgentKindRegistry`).
     3. Batch-verify `capabilities_required` (D18) via
        `Esr.Resource.Capability.has_all?/2` — returns every missing cap at once
        so the operator can see the full gap in a single reply.
@@ -37,7 +44,9 @@ defmodule Esr.Commands.Session.New do
 
   The `Grants.matches?/2` contract requires permissions in the canonical
   `prefix:name/perm` shape (see `docs/notes/capability-name-format-mismatch.md`);
-  agents.yaml fixtures + spec examples were canonicalized in P3-8.4.
+  legacy agents.yaml fixtures + spec examples were canonicalized in P3-8.4
+  (Phase 6 dissolved the agents.yaml file; the same canonical shape
+  applies to plugin manifest `agent_kinds[].capabilities_required`).
 
   ## PR-8 T4 — Scope.Router rewire
 
@@ -72,7 +81,7 @@ defmodule Esr.Commands.Session.New do
     error :session_persist_failed,  "failed to write session.json for %{session_id}: %{details}"
     error :workspace_gone,          "workspace %{name} %{detail}"
     error :no_workspace_target,     "no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name>"
-    error :unknown_agent,           "agent %{agent} not registered in agents.yaml"
+    error :unknown_agent,           "agent %{agent} not declared by any enabled plugin's agent_kinds: block"
     error :no_default_template,     "no default session template configured + no template= arg; available: %{available} — set via `/plugin:set plugin=session key=default_template value=<name>`"
     error :unknown_template,        "session template '%{template}' not found; available: %{available}"
     error :template_materialize_failed, "session template '%{template}' could not be materialized: %{details}"
@@ -120,7 +129,7 @@ defmodule Esr.Commands.Session.New do
         # PR-21g grammar accommodation: `cwd` (PR-21d slash) is accepted as
         # alias for `dir` (legacy / admin-CLI). When `workspace` is provided
         # without an explicit `agent`, default to "cc" — the only agent
-        # currently registered in agents.yaml.
+        # the in-tree claude_code plugin manifest declares today.
         agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
         dir = args["dir"] || args["cwd"]
 
@@ -494,8 +503,9 @@ defmodule Esr.Commands.Session.New do
 
   defp validate_args(_, _), do: :ok
 
-  # Phase 5 cut-over: instead of looking up agents.yaml for the
-  # `agent` arg, resolve a SessionTemplate (explicit `template=` arg →
+  # Phase 5 cut-over: instead of looking up the legacy
+  # `Esr.Entity.Agent.Registry` (the agents.yaml cache, dissolved in
+  # Phase 6), resolve a SessionTemplate (explicit `template=` arg →
   # operator default → no_default_template error) and materialize it
   # into an agent_def with the runtime params injected. Spec §5.4.
   defp resolve_agent_def(args, submitter) do
@@ -586,9 +596,10 @@ defmodule Esr.Commands.Session.New do
   # re-register here.
   #
   # Phase 5: agent_def is now MANDATORY in params — pre-Phase-5
-  # AgentSpawner re-fetched from agents.yaml, post-cut it reads
-  # `params[:agent_def]` directly. The materialized agent_def comes
-  # from `resolve_agent_def/2` above (template-driven).
+  # AgentSpawner re-fetched from the legacy agents.yaml cache, post-cut
+  # it reads `params[:agent_def]` directly. The materialized agent_def
+  # comes from `resolve_agent_def/2` above (template-driven; agent_kind
+  # contributions sourced from plugin manifest in Phase 6).
   defp spawn_session(
          agent,
          agent_def,
@@ -611,8 +622,10 @@ defmodule Esr.Commands.Session.New do
       # adapter instance id that inbound messages will look up with.
       app_id: app_id,
       # Phase 5 cut-over: agent_def is now required by AgentSpawner.do_create/1
-      # (no longer re-fetched from agents.yaml). Source is
-      # `Esr.SessionTemplate.Registry.materialize/2`.
+      # (no longer re-fetched from the retired agents.yaml cache). Source
+      # is `Esr.SessionTemplate.Registry.materialize/2` (Phase 6: the
+      # template's agent_kind contributions come from each plugin's
+      # manifest agent_kinds: block via Esr.Plugin.AgentKindRegistry).
       agent_def: agent_def
     }
 

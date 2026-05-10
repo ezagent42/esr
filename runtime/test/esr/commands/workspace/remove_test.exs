@@ -107,9 +107,14 @@ defmodule Esr.Commands.Workspace.RemoveTest do
 
     File.write!(Path.join(esr_dir, "topology.yaml"), "schema_version: 1\ndescription: x")
 
-    # SENTINEL: agents.yaml is a v2+ feature; an operator may have pre-created it.
-    # /workspace remove must NOT rm -rf the .esr/ directory wholesale.
-    File.write!(Path.join(esr_dir, "agents.yaml"), "DO_NOT_DELETE")
+    # SENTINEL: an operator-owned `.esr/.env` (or any non-ESR-managed
+    # file in `.esr/`) must survive `workspace:remove` on a repo-bound
+    # workspace. Phase 6 (2026-05-10) replaced the original `agents.yaml`
+    # sentinel with `.env` — the agents.yaml file is gone, but the
+    # invariant ("/workspace:remove must NOT `rm -rf` the `.esr/`
+    # directory wholesale") still applies to anything else the operator
+    # drops there.
+    File.write!(Path.join(esr_dir, ".env"), "DO_NOT_DELETE")
 
     # Register repo + workspace
     RepoRegistry.register(Esr.Paths.registered_repos_yaml(), repo)
@@ -138,7 +143,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
     refute File.exists?(Path.join(esr_dir, "topology.yaml"))
 
     # SENTINEL — must survive
-    assert File.read!(Path.join(esr_dir, "agents.yaml")) == "DO_NOT_DELETE"
+    assert File.read!(Path.join(esr_dir, ".env")) == "DO_NOT_DELETE"
 
     # The .esr/ dir + repo dir themselves must still exist
     assert File.dir?(esr_dir)

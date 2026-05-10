@@ -436,10 +436,13 @@ defmodule Esr.Entity.CCProcess do
 
     base = %{
       "kind" => "notification",
-      # PR-3.7: source is the inbound channel's adapter family (set by
-      # AgentSpawner from agents.yaml's pipeline). No hardcoded
-      # "feishu" fallback — empty string communicates "unknown" to
-      # downstream cc_mcp, which can render the <channel> tag accordingly.
+      # PR-3.7 + Phase 6 (2026-05-10): source is the inbound channel's
+      # adapter family (set by AgentSpawner from the agent_def's
+      # proxies block — pre-Phase-6 came from agents.yaml, post-Phase-6
+      # materialized from a SessionTemplate via AgentDefBuilder). No
+      # hardcoded "feishu" fallback — empty string communicates
+      # "unknown" to downstream cc_mcp, which can render the <channel>
+      # tag accordingly.
       "source" => Map.get(ctx, "channel_adapter") || Map.get(ctx, :channel_adapter) || "",
       # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
       # authoritative for this specific inbound. Fall back to proxy_ctx

@@ -1,6 +1,17 @@
 defmodule Esr.Commands.Agent.AddTest do
+  @moduledoc """
+  Phase 6 (2026-05-10): `/agent:add`'s type validation reads from
+  `Esr.Plugin.AgentKindRegistry` (populated by Esr.Plugin.Loader from
+  each enabled plugin's manifest `agent_kinds:` block) instead of the
+  retired `Esr.Entity.Agent.Registry` agents.yaml cache.
+
+  Setup ensures a `claude_code.cc` agent_kind is registered so the
+  bare-name `"cc"` lookup resolves via
+  `AgentKindRegistry.find_unqualified/1`.
+  """
   use ExUnit.Case, async: false
   alias Esr.Commands.Agent.Add
+  alias Esr.Plugin.AgentKindRegistry
 
   @sess "11111111-1111-4111-8111-aaaaaaaaaaaa"
 
@@ -10,11 +21,35 @@ defmodule Esr.Commands.Agent.AddTest do
       _ -> :ok
     end
 
-    fixture =
-      Path.join([__DIR__, "..", "..", "fixtures", "agents", "simple.yaml"])
-      |> Path.expand()
+    case Process.whereis(AgentKindRegistry) do
+      nil -> start_supervised!(AgentKindRegistry)
+      _ -> :ok
+    end
 
-    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
+    # Idempotent: re-registers if app boot already populated it; sets up
+    # a known-good kind otherwise.
+    AgentKindRegistry.register("claude_code", "cc", %{
+      plugin: "claude_code",
+      name: "cc",
+      description: "Claude Code",
+      handler_module: "cc_adapter_runner",
+      pipeline: %{
+        inbound: [
+          %{"name" => "cc_proxy", "impl" => "Esr.Entity.CCProxy"},
+          %{"name" => "cc_process", "impl" => "Esr.Entity.CCProcess"},
+          %{"name" => "pty_process", "impl" => "Esr.Entity.PtyProcess"}
+        ],
+        outbound: ["pty_process", "cc_process", "cc_proxy"]
+      },
+      proxies: [],
+      capabilities_required: [
+        "session:default/create",
+        "pty:default/spawn",
+        "handler:cc_adapter_runner/invoke"
+      ],
+      params: []
+    })
+
     :ok
   end
 

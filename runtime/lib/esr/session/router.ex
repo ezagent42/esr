@@ -14,9 +14,16 @@ defmodule Esr.Session.Router do
                                  `Esr.Session.AgentSpawner.do_create/1`.
     * `:peer_crashed`          — internal, raised by `Process.monitor`
                                  DOWNs on spawned peer pids
-    * `:agents_yaml_reloaded`  — from `Esr.Entity.Agent.Registry` watcher (stub;
-                                 handled by a no-op `handle_info` clause
-                                 in PR-3)
+    * `:agent_kinds_reloaded`  — from a future `Esr.Plugin.Loader` reload
+                                 hook (handled by a no-op `handle_info`
+                                 clause; reserved for Phase 7+
+                                 plugin-reload work that re-registers
+                                 agent_kinds without esrd restart). Pre-
+                                 Phase-6 was named `:agents_yaml_reloaded`
+                                 (the agents.yaml watcher stub); event
+                                 renamed alongside the source migration
+                                 from agents.yaml → plugin manifest
+                                 agent_kinds.
 
   Spec §3.3 (control-plane trinity), §6 Risk E (data-plane boundary).
 
@@ -254,8 +261,10 @@ defmodule Esr.Session.Router do
     end
   end
 
-  # Stub clause for the yaml-reload watcher that will land in a later PR.
-  def handle_info(:agents_yaml_reloaded, state), do: {:noreply, state}
+  # Stub clause for the agent-kinds reload broadcast that Phase 7+
+  # plugin-reload work will plumb in. Pre-Phase-6 the event was named
+  # `:agents_yaml_reloaded` (the agents.yaml watcher hook).
+  def handle_info(:agent_kinds_reloaded, state), do: {:noreply, state}
 
   # Risk E: anything else is dropped with a WARN rather than crashing.
   def handle_info(msg, state) do

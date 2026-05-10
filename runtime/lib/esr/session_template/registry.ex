@@ -93,16 +93,15 @@ defmodule Esr.SessionTemplate.Registry do
   for `Esr.Session.AgentSpawner.do_create/1`.
 
   This is the Phase 5 cut-over hook: instead of `Session.New` reading
-  from `Esr.Entity.Agent.Registry.agent_def/1` (the agents.yaml cache),
-  it builds the same-shaped map from the template's declared channels +
-  agents + flow blocks.
+  from the legacy `Esr.Entity.Agent.Registry.agent_def/1` (the
+  agents.yaml cache, dissolved in Phase 6), it builds the same-shaped
+  map from the template's declared channels + agents + flow blocks.
 
-  Phase 5 supports the single feishu-cc topology
-  (`feishu.chat_proxy` + `claude_code.cc`); Phase 6 will generalize the
-  kind → peer mapping by sourcing it from each plugin's manifest
-  `agent_kinds:` block. The fixed mapping lives in
-  `Esr.SessionTemplate.AgentDefBuilder` so the plumbing stays small
-  while Phase 6 work is tracked separately.
+  Phase 6 (2026-05-10): the kind → peer/capability mapping is now
+  sourced from each plugin's manifest `agent_kinds:` block (registered
+  in `Esr.Plugin.AgentKindRegistry`). New agent kinds declare their
+  pipeline contributions in their plugin's manifest with no code
+  change in `AgentDefBuilder`.
 
   `runtime_params` carries the `<runtime>` placeholder values:
     * `chat_id`, `app_id`, `principal_id` — Feishu chat context
@@ -110,8 +109,10 @@ defmodule Esr.SessionTemplate.Registry do
 
   Returns `{:ok, agent_def}` on success or `{:error, reason}`. Errors:
     * `:template_not_found` — `template_name` not in registry
-    * `{:unsupported_template_topology, ...}` — template references
-      kinds the Phase-5 builder doesn't recognize yet (Phase 6 lifts).
+    * `{:unsupported_channel_kind, ...}` / `{:unsupported_agent_kind, ...}`
+      — template references a kind that no enabled plugin's manifest
+      declares (Phase 6 generalization: kinds are looked up against
+      `Esr.Channel.Registry` + `Esr.Plugin.AgentKindRegistry`).
   """
   @spec materialize(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def materialize(template_name, runtime_params)

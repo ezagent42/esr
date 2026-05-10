@@ -38,13 +38,38 @@ defmodule Esr.Plugin.Manifest do
     # entry: `%{name: String.t(), module: module(), config_schema: map()
     # | nil}`. Loader registers these into `Esr.Channel.Registry` at
     # boot. Spec: 2026-05-10-session-template-and-channel.md, Phase 1.
-    channels: []
+    channels: [],
+    # Top-level `agent_kinds:` block (sibling of `name:`/`version:`).
+    # Each entry mirrors the agent_def shape of the legacy
+    # `Esr.Entity.Agent.Registry`: `name`, `description`,
+    # `handler_module` (optional Python sidecar pointer),
+    # `pipeline.inbound`/`pipeline.outbound`, `proxies`,
+    # `capabilities_required`, `params`. Loader registers each
+    # `<plugin>.<name>` into `Esr.Plugin.AgentKindRegistry` at boot.
+    # Replaces the agents.yaml file. Spec:
+    # 2026-05-10-session-template-and-channel.md, Phase 6.
+    agent_kinds: []
   ]
 
   @type channel_entry :: %{
           name: String.t(),
           module: module(),
-          config_schema: map() | nil
+          config_schema: map() | nil,
+          pipeline_contributions: [%{String.t() => term()}],
+          proxies: [%{String.t() => term()}]
+        }
+
+  @type agent_kind_entry :: %{
+          name: String.t(),
+          description: String.t(),
+          handler_module: String.t() | nil,
+          pipeline: %{
+            inbound: [%{String.t() => term()}],
+            outbound: [String.t()]
+          },
+          proxies: [%{String.t() => term()}],
+          capabilities_required: [String.t()],
+          params: [map()]
         }
 
   @type t :: %__MODULE__{
@@ -55,7 +80,8 @@ defmodule Esr.Plugin.Manifest do
           declares: map(),
           hot_reloadable: boolean(),
           path: Path.t() | nil,
-          channels: [channel_entry()]
+          channels: [channel_entry()],
+          agent_kinds: [agent_kind_entry()]
         }
 
   # Allow lowercase + digits + `-` or `_` separators. Spec B §四
@@ -107,7 +133,8 @@ defmodule Esr.Plugin.Manifest do
          {:ok, version} <- fetch_required(parsed, "version"),
          {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}),
          {:ok, hot_reloadable} <- parse_hot_reloadable(parsed),
-         {:ok, channels} <- parse_channels(parsed["channels"]) do
+         {:ok, channels} <- parse_channels(parsed["channels"]),
+         {:ok, agent_kinds} <- parse_agent_kinds(parsed["agent_kinds"]) do
       raw_declares = parsed["declares"] || %{}
       declares = atomize_declares(raw_declares)
       raw_media_types = raw_declares["media_types"] || raw_declares[:media_types]
@@ -127,7 +154,8 @@ defmodule Esr.Plugin.Manifest do
            declares: declares_full,
            hot_reloadable: hot_reloadable,
            path: nil,
-           channels: channels
+           channels: channels,
+           agent_kinds: agent_kinds
          }}
       end
     end
@@ -339,6 +367,17 @@ defmodule Esr.Plugin.Manifest do
     module_str = entry["module"] || entry[:module]
     config_schema = entry["config_schema"] || entry[:config_schema]
 
+    # Phase 6 (2026-05-10): channels may declare optional
+    # `pipeline_contributions:` (list of inbound peer maps with
+    # name+impl) + `proxies:` (list of stateless-proxy maps with
+    # name+impl+target). AgentDefBuilder reads these to compose the
+    # final agent_def at template-materialization time so channel
+    # contributions don't need a hardcoded mapping in the builder.
+    pipeline_contributions =
+      entry["pipeline_contributions"] || entry[:pipeline_contributions] || []
+
+    proxies = entry["proxies"] || entry[:proxies] || []
+
     cond do
       not is_binary(name) or name == "" ->
         {:error, {:missing_field, "name"}}
@@ -346,11 +385,24 @@ defmodule Esr.Plugin.Manifest do
       not is_binary(module_str) or module_str == "" ->
         {:error, {:missing_field, "module"}}
 
+      not is_list(pipeline_contributions) ->
+        {:error, {:invalid_pipeline_contributions, name}}
+
+      not is_list(proxies) ->
+        {:error, {:invalid_proxies, name}}
+
       true ->
         module = Module.concat([module_str])
 
         if Code.ensure_loaded?(module) do
-          {:ok, %{name: name, module: module, config_schema: config_schema}}
+          {:ok,
+           %{
+             name: name,
+             module: module,
+             config_schema: config_schema,
+             pipeline_contributions: normalize_pipeline_entries(pipeline_contributions),
+             proxies: normalize_pipeline_entries(proxies)
+           }}
         else
           {:error, {:unknown_module, name, module_str}}
         end
@@ -358,6 +410,125 @@ defmodule Esr.Plugin.Manifest do
   end
 
   defp parse_channel_entry(other), do: {:error, {:not_a_map, other}}
+
+  # ---- agent_kinds parser (2026-05-10 SessionTemplate + Channel migration, Phase 6) ----
+  #
+  # Top-level `agent_kinds:` block. Each entry must be a map carrying a
+  # string `name` + a `pipeline.inbound:` list (the canonical-shape
+  # field consumed by `Esr.Session.AgentSpawner`). Optional fields:
+  # `description`, `handler_module`, `pipeline.outbound`, `proxies`,
+  # `capabilities_required`, `params`.
+  #
+  # Mirrors `parse_channels/1`. Per-impl module-existence is NOT enforced
+  # at parse time (peers may live in the same plugin under
+  # `Esr.Plugins.<Name>.<Impl>` and only be loaded once compilation
+  # finishes — too aggressive a check would chicken-and-egg the
+  # plugin-load path). The Loader's manifest validation is the right
+  # place for any future symmetric `Code.ensure_loaded?/1` sweep.
+  defp parse_agent_kinds(nil), do: {:ok, []}
+
+  defp parse_agent_kinds(list) when is_list(list) do
+    Enum.reduce_while(list, {:ok, []}, fn entry, {:ok, acc} ->
+      case parse_agent_kind_entry(entry) do
+        {:ok, parsed} -> {:cont, {:ok, [parsed | acc]}}
+        {:error, reason} -> {:halt, {:error, {:invalid_agent_kind, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      err -> err
+    end
+  end
+
+  defp parse_agent_kinds(other), do: {:error, {:invalid_agent_kind, {:not_a_list, other}}}
+
+  defp parse_agent_kind_entry(%{} = entry) do
+    name = entry["name"] || entry[:name]
+
+    cond do
+      not is_binary(name) or name == "" ->
+        {:error, {:missing_field, "name"}}
+
+      true ->
+        pipeline_raw = entry["pipeline"] || entry[:pipeline] || %{}
+
+        case parse_agent_kind_pipeline(pipeline_raw) do
+          {:ok, pipeline} ->
+            {:ok,
+             %{
+               name: name,
+               description: entry["description"] || entry[:description] || "",
+               handler_module: entry["handler_module"] || entry[:handler_module],
+               pipeline: pipeline,
+               proxies: entry["proxies"] || entry[:proxies] || [],
+               capabilities_required:
+                 entry["capabilities_required"] || entry[:capabilities_required] || [],
+               params: entry["params"] || entry[:params] || []
+             }}
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  defp parse_agent_kind_entry(other), do: {:error, {:not_a_map, other}}
+
+  # `pipeline.inbound` is mandatory and must be a non-empty list of
+  # maps; `pipeline.outbound` is optional and defaults to the reverse
+  # of inbound's `name` projection (mirrors today's agents.yaml `cc`
+  # fixture where outbound names trace inbound back through the chain).
+  defp parse_agent_kind_pipeline(%{} = block) do
+    inbound = block["inbound"] || block[:inbound] || []
+    outbound = block["outbound"] || block[:outbound]
+
+    cond do
+      not is_list(inbound) ->
+        {:error, {:invalid_pipeline, :inbound_not_a_list}}
+
+      inbound == [] ->
+        {:error, {:invalid_pipeline, :empty_inbound}}
+
+      not Enum.all?(inbound, &is_map/1) ->
+        {:error, {:invalid_pipeline, :inbound_entries_not_maps}}
+
+      not Enum.all?(inbound, fn e ->
+        is_binary(e["name"] || e[:name]) and is_binary(e["impl"] || e[:impl])
+      end) ->
+        {:error, {:invalid_pipeline, :inbound_entry_missing_name_or_impl}}
+
+      true ->
+        outbound_resolved =
+          case outbound do
+            nil ->
+              Enum.reverse(Enum.map(inbound, fn e -> e["name"] || e[:name] end))
+
+            list when is_list(list) ->
+              list
+
+            _ ->
+              :invalid
+          end
+
+        if outbound_resolved == :invalid do
+          {:error, {:invalid_pipeline, :outbound_not_a_list}}
+        else
+          {:ok, %{inbound: normalize_pipeline_entries(inbound), outbound: outbound_resolved}}
+        end
+    end
+  end
+
+  defp parse_agent_kind_pipeline(_),
+    do: {:error, {:invalid_pipeline, :pipeline_not_a_map}}
+
+  # AgentSpawner's walker reads `spec["name"]` and `spec["impl"]`
+  # (string-keyed); normalize so atom-keyed yaml still produces
+  # walker-friendly entries.
+  defp normalize_pipeline_entries(entries) do
+    Enum.map(entries, fn entry ->
+      Enum.into(entry, %{}, fn {k, v} -> {to_string(k), v} end)
+    end)
+  end
 
   # ---- validate/1 helpers ----
 

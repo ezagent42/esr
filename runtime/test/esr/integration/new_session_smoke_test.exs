@@ -68,10 +68,94 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     ensure_admin_dispatcher()
     assert is_pid(Process.whereis(Esr.Admin.Dispatcher))
 
-    :ok =
-      Esr.Entity.Agent.Registry.load_agents(
-        Path.expand("../fixtures/agents/simple.yaml", __DIR__)
-      )
+    # Phase 6 (2026-05-10): legacy `Esr.Entity.Agent.Registry` cache
+    # gone; Session.New resolves an agent_def via SessionTemplate +
+    # plugin manifest agent_kinds. Register a feishu-cc template +
+    # the kinds it references so this smoke test's session_new
+    # dispatch finds them.
+    case Process.whereis(Esr.SessionTemplate.Registry) do
+      nil -> start_supervised!(Esr.SessionTemplate.Registry)
+      _ -> :ok
+    end
+
+    case Process.whereis(Esr.Channel.Registry) do
+      nil -> start_supervised!(Esr.Channel.Registry)
+      _ -> :ok
+    end
+
+    case Process.whereis(Esr.Plugin.AgentKindRegistry) do
+      nil -> start_supervised!(Esr.Plugin.AgentKindRegistry)
+      _ -> :ok
+    end
+
+    Esr.Channel.Registry.register("feishu", "chat_proxy", Esr.Plugins.Feishu.Channels.ChatProxy, %{
+      pipeline_contributions: [
+        %{"name" => "feishu_chat_proxy", "impl" => "Esr.Plugins.Feishu.FeishuChatProxy"}
+      ],
+      proxies: [
+        %{
+          "name" => "feishu_app_proxy",
+          "impl" => "Esr.Entity.FeishuAppProxy",
+          "target" => "admin::feishu_app_adapter_${app_id}"
+        }
+      ]
+    })
+
+    Esr.Channel.Registry.register(
+      "claude_code",
+      "mcp_http",
+      Esr.Plugins.ClaudeCode.Channels.McpHttp,
+      %{pipeline_contributions: [], proxies: []}
+    )
+
+    Esr.Plugin.AgentKindRegistry.register("claude_code", "cc", %{
+      plugin: "claude_code",
+      name: "cc",
+      description: "Claude Code",
+      handler_module: "cc_adapter_runner",
+      pipeline: %{
+        inbound: [
+          %{"name" => "cc_proxy", "impl" => "Esr.Entity.CCProxy"},
+          %{"name" => "cc_process", "impl" => "Esr.Entity.CCProcess"},
+          %{"name" => "pty_process", "impl" => "Esr.Entity.PtyProcess"}
+        ],
+        outbound: ["pty_process", "cc_process", "cc_proxy"]
+      },
+      proxies: [],
+      capabilities_required: [
+        "session:default/create",
+        "pty:default/spawn",
+        "handler:cc_adapter_runner/invoke"
+      ],
+      params: []
+    })
+
+    Esr.SessionTemplate.Registry.register(
+      "feishu-cc",
+      %Esr.SessionTemplate{
+        schema_version: 1,
+        name: "feishu-cc",
+        description: "Feishu chat → Claude Code agent",
+        dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
+        channels: [
+          %{alias: "in", kind: "feishu.chat_proxy", config: %{}},
+          %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{}}
+        ],
+        agents: [%{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}],
+        flow: %{inbound: [], outbound: []}
+      },
+      source: {:bundle, "feishu-cc"}
+    )
+
+    # Make feishu-cc the operator default so SessionNew can resolve it
+    # without an explicit `template=` arg.
+    session_dir = Path.join(System.tmp_dir!(), "esr_smoke_session_#{:rand.uniform(99_999)}")
+    File.mkdir_p!(session_dir)
+    :ok = Esr.Session.DefaultTemplate.set("feishu-cc", global_path: session_dir)
+
+    prod_dir = Esr.Paths.plugin_global_dir("session")
+    File.mkdir_p!(prod_dir)
+    File.write!(Path.join(prod_dir, "config.yaml"), ~s(default_template: "feishu-cc"\n))
 
     if Process.whereis(Esr.Session.Router) == nil do
       start_supervised!(Esr.Session.Router)

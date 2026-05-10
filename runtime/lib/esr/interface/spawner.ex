@@ -5,11 +5,19 @@ defmodule Esr.Interface.Spawner do
   and wiring neighbor refs.
 
   Implementers in ESR (post-R6 — only one today):
-    - `Esr.Session.AgentSpawner` (R6: spawns agents.yaml-declared Sessions)
+    - `Esr.Session.AgentSpawner` (R6: spawns Sessions declared by a
+      SessionTemplate; the per-session agent_def is materialized from
+      the template via `Esr.SessionTemplate.Registry.materialize/2`).
 
   Future Phase 4 implementers:
     - `Esr.Session.GroupChatSpawner` (group-chat Scope kind)
     - `Esr.Session.DaemonSpawner` (currently implicit in `Esr.Application`)
+
+  Phase 6 (2026-05-10): the legacy `agents.yaml` source dissolved into
+  per-plugin manifest `agent_kinds:` blocks (registered into
+  `Esr.Plugin.AgentKindRegistry`). The Spawner contract is unchanged —
+  callers still hand `decl` (an agent_def-shaped map) verbatim — only
+  the upstream construction of `decl` moved.
 
   See `docs/notes/structural-refactor-plan-r4-r11.md` §四-R6 for the
   AgentSpawner extraction from Esr.Session.Router.
@@ -17,9 +25,11 @@ defmodule Esr.Interface.Spawner do
 
   @doc """
   Spawn a Scope subtree from a declaration. `decl` is the Session
-  declaration (e.g., the agent entry in agents.yaml). `params` carries
-  per-instance data (session_id, dir, principal). `ctx` carries
-  cross-cutting state (neighbor refs to populate).
+  declaration (an agent_def-shaped map; pre-Phase-6 sourced from
+  agents.yaml, post-Phase-6 materialized from a SessionTemplate +
+  plugin manifest agent_kinds). `params` carries per-instance data
+  (session_id, dir, principal). `ctx` carries cross-cutting state
+  (neighbor refs to populate).
 
   Returns the supervisor pid of the spawned Scope subtree.
   """

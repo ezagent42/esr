@@ -1,8 +1,12 @@
 defmodule Esr.ApplicationRestoreHandlersTest do
   @moduledoc """
-  PR-9 T11a: boot-time spawn of Python handler_workers for every
-  handler module referenced by any agents.yaml `capabilities_required`
-  entry.
+  Phase 6 (2026-05-10): boot-time spawn of Python handler_workers for
+  every handler module referenced by any agent_kind's
+  `capabilities_required` entry.
+
+  Pre-Phase-6 source: `<runtime_home>/agents.yaml`. Post-Phase-6 source:
+  `Esr.Plugin.AgentKindRegistry` (populated by `Esr.Plugin.Loader` from
+  each enabled plugin's manifest `agent_kinds:` block).
 
   Closes the "nobody spawns X worker" anti-pattern — without this,
   `HandlerRouter.call` broadcasts to an empty Phoenix channel and
@@ -10,93 +14,113 @@ defmodule Esr.ApplicationRestoreHandlersTest do
   """
   use ExUnit.Case, async: false
 
-  describe "extract_handler_modules/1" do
+  alias Esr.Plugin.AgentKindRegistry
+
+  defp empty_kind_spec(plugin, name) do
+    %{
+      plugin: plugin,
+      name: name,
+      description: "",
+      handler_module: nil,
+      pipeline: %{inbound: [], outbound: []},
+      proxies: [],
+      capabilities_required: [],
+      params: []
+    }
+  end
+
+  defp register_kind(plugin, name, caps) do
+    spec = empty_kind_spec(plugin, name) |> Map.put(:capabilities_required, caps)
+    :ok = AgentKindRegistry.register(plugin, name, spec)
+  end
+
+  describe "extract_handler_modules/0" do
     setup do
-      unique = System.unique_integer([:positive])
-      path = Path.join(System.tmp_dir!(), "agents-#{unique}.yaml")
-      on_exit(fn -> File.rm(path) end)
-      {:ok, path: path}
+      # Application boots the singleton; if a sibling test poisoned it,
+      # snapshot the current contents and restore on exit so we can
+      # write deterministic fixtures inside this test without leaking
+      # outside.
+      case Process.whereis(AgentKindRegistry) do
+        nil -> start_supervised!(AgentKindRegistry)
+        _ -> :ok
+      end
+
+      snapshot = AgentKindRegistry.list_kinds()
+      AgentKindRegistry.clear()
+
+      on_exit(fn ->
+        AgentKindRegistry.clear()
+        for {key, spec} <- snapshot do
+          [plugin, name] = String.split(key, ".", parts: 2)
+          AgentKindRegistry.register(plugin, name, spec)
+        end
+      end)
+
+      :ok
     end
 
-    test "returns unique sorted handler module names across all agents", %{path: path} do
-      File.write!(path, """
-      agents:
-        cc:
-          capabilities_required:
-            - handler:cc_adapter_runner/invoke
-            - pty:default/spawn
-            - handler:cc_adapter_runner/read
-        voice:
-          capabilities_required:
-            - handler:cc_adapter_runner/invoke
-            - handler:voice_e2e/invoke
-      """)
+    test "returns unique sorted handler module names across all agent_kinds" do
+      register_kind("plugin_a", "cc", [
+        "handler:cc_adapter_runner/invoke",
+        "pty:default/spawn",
+        "handler:cc_adapter_runner/read"
+      ])
 
-      assert Esr.Application.extract_handler_modules(path) ==
+      register_kind("plugin_b", "voice", [
+        "handler:cc_adapter_runner/invoke",
+        "handler:voice_e2e/invoke"
+      ])
+
+      assert Esr.Application.extract_handler_modules() ==
                ["cc_adapter_runner", "voice_e2e"]
     end
 
-    test "skips malformed capabilities (no slash, empty module, wrong prefix)",
-         %{path: path} do
-      File.write!(path, """
-      agents:
-        broken:
-          capabilities_required:
-            - handler:
-            - handler:/action
-            - workspace:foo/msg.send
-            - handler:real_one/ok
-      """)
+    test "skips malformed capabilities (no slash, empty module, wrong prefix)" do
+      register_kind("plugin_a", "broken", [
+        "handler:",
+        "handler:/action",
+        "workspace:foo/msg.send",
+        "handler:real_one/ok"
+      ])
 
-      assert Esr.Application.extract_handler_modules(path) == ["real_one"]
+      assert Esr.Application.extract_handler_modules() == ["real_one"]
     end
 
-    test "missing file → []", %{path: path} do
-      refute File.exists?(path)
-      assert Esr.Application.extract_handler_modules(path) == []
-    end
-
-    test "no agents key → []", %{path: path} do
-      File.write!(path, "schema_version: 1\n")
-      assert Esr.Application.extract_handler_modules(path) == []
+    test "empty registry → []" do
+      assert Esr.Application.extract_handler_modules() == []
     end
   end
 
   describe "restore_handlers_from_disk/1" do
     setup do
-      prev = System.get_env("ESRD_HOME")
-      prev_inst = System.get_env("ESR_INSTANCE")
+      case Process.whereis(AgentKindRegistry) do
+        nil -> start_supervised!(AgentKindRegistry)
+        _ -> :ok
+      end
 
-      unique = System.unique_integer([:positive])
-      home = Path.join(System.tmp_dir!(), "esr-rh-#{unique}")
-      instance = "e2e-#{unique}"
-      File.mkdir_p!(Path.join(home, instance))
-      System.put_env("ESRD_HOME", home)
-      System.put_env("ESR_INSTANCE", instance)
+      snapshot = AgentKindRegistry.list_kinds()
+      AgentKindRegistry.clear()
 
       on_exit(fn ->
-        File.rm_rf!(home)
-        if prev, do: System.put_env("ESRD_HOME", prev), else: System.delete_env("ESRD_HOME")
-
-        if prev_inst,
-          do: System.put_env("ESR_INSTANCE", prev_inst),
-          else: System.delete_env("ESR_INSTANCE")
+        AgentKindRegistry.clear()
+        for {key, spec} <- snapshot do
+          [plugin, name] = String.split(key, ".", parts: 2)
+          AgentKindRegistry.register(plugin, name, spec)
+        end
       end)
 
-      {:ok, home: home, instance: instance}
+      :ok
     end
 
-    test "invokes spawn_fn once per unique handler module", %{home: home, instance: instance} do
-      File.write!(Path.join([home, instance, "agents.yaml"]), """
-      agents:
-        cc:
-          capabilities_required:
-            - handler:cc_adapter_runner/invoke
-            - handler:cc_adapter_runner/read
-        voice:
-          capabilities_required:
-            - handler:voice_e2e/invoke
-      """)
+    test "invokes spawn_fn once per unique handler module" do
+      register_kind("plugin_a", "cc", [
+        "handler:cc_adapter_runner/invoke",
+        "handler:cc_adapter_runner/read"
+      ])
+
+      register_kind("plugin_b", "voice", [
+        "handler:voice_e2e/invoke"
+      ])
 
       parent = self()
 
@@ -113,9 +137,7 @@ defmodule Esr.ApplicationRestoreHandlersTest do
       refute_receive {:handler_spawn, "cc_adapter_runner"}, 50
     end
 
-    test "missing agents.yaml → :ok no-op", %{home: home, instance: instance} do
-      refute File.exists?(Path.join([home, instance, "agents.yaml"]))
-
+    test "empty registry → :ok no-op" do
       parent = self()
 
       :ok =
@@ -126,15 +148,12 @@ defmodule Esr.ApplicationRestoreHandlersTest do
       refute_receive _, 50
     end
 
-    test "spawn_fn failure is logged but non-fatal", %{home: home, instance: instance} do
+    test "spawn_fn failure is logged but non-fatal" do
       import ExUnit.CaptureLog
 
-      File.write!(Path.join([home, instance, "agents.yaml"]), """
-      agents:
-        cc:
-          capabilities_required:
-            - handler:cc_adapter_runner/invoke
-      """)
+      register_kind("plugin_a", "cc", [
+        "handler:cc_adapter_runner/invoke"
+      ])
 
       log =
         capture_log(fn ->
