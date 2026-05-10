@@ -38,6 +38,18 @@ defmodule Esr.Commands.Plugin.Enable do
       true ->
         case Esr.Plugin.PluginsYaml.enable(name) do
           :ok ->
+            # Phase 5 Task 5.4: re-attempt registering bundles whose
+            # template registration was deferred because they declared a
+            # dependency on `name`. Until plugins go hot-enable
+            # (restart-required today), this also nudges the in-memory
+            # enabled-plugins list so a re-check happens in the same
+            # esrd lifecycle. The re-check reads
+            # `Application.get_env(:esr, :enabled_plugins, [])` so we
+            # update it before invoking. Idempotent: bundles already
+            # registered are skipped by Bundle.Loader's revalidate.
+            sync_enabled_plugins_app_env(name)
+            _ = Esr.Bundle.Loader.revalidate_on_plugin_enable(name)
+
             {:ok,
              %{
                "text" =>
@@ -48,6 +60,24 @@ defmodule Esr.Commands.Plugin.Enable do
           {:error, reason} ->
             {:ok, %{"text" => "failed to write plugins.yaml: #{inspect(reason)}"}}
         end
+    end
+  end
+
+  # Ensure the in-process enabled list reflects the just-written
+  # plugins.yaml so `Esr.Bundle.Loader.revalidate_on_plugin_enable/1`
+  # sees `name` as enabled. This is a forward compatibility hook for
+  # the eventual hot-enable migration; today plugins still require
+  # restart for actual loading, but the bundle revalidation is a
+  # config-only operation that can run earlier.
+  defp sync_enabled_plugins_app_env(name) do
+    current =
+      Application.get_env(:esr, :enabled_plugins, [])
+      |> Enum.map(&to_string/1)
+
+    if name in current do
+      :ok
+    else
+      Application.put_env(:esr, :enabled_plugins, current ++ [name])
     end
   end
 
