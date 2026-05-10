@@ -10,9 +10,12 @@ defmodule Esr.Commands.Session.NewNoWorkspaceTargetTest do
     3. No user-default workspace for the submitter.
 
   This is distinct from `invalid_args`, which still fires for
-  shape-malformed input (missing `agent`/`dir`, no args at all). The
-  rename + structured message lets the operator see which gate failed
-  — the fix is to BIND a workspace, not to rephrase the args.
+  shape-malformed input (no args at all — the catch-all `execute/2`
+  clause). After 2026-05-10's Phase 5 fix, `agent` and `dir` are no
+  longer mandatory at the command-input layer; the SessionTemplate
+  is authoritative for the spawn pipeline. The rename + structured
+  message lets the operator see which gate failed — the fix is to
+  BIND a workspace, not to rephrase the args.
   """
 
   use ExUnit.Case, async: false
@@ -72,13 +75,23 @@ defmodule Esr.Commands.Session.NewNoWorkspaceTargetTest do
       assert {:error, %{"type" => "invalid_args"}} = SessionNew.execute(%{})
     end
 
-    test "missing dir but workspace resolvable → invalid_args (dir gate, not resolver)" do
-      # Sanity: when the resolver SUCCEEDS (agent given short-circuits
-      # the chain), the dir gate's `invalid_args` still fires. Proves
-      # the rename didn't cannibalise downstream validation.
+    test "missing dir + agent given → falls through dir gate (Phase 5 fix 2026-05-10)" do
+      # Pre-fix: when the resolver SUCCEEDED (agent given short-circuits
+      # the chain), the legacy `validate_args(agent, dir)` gate fired
+      # `invalid_args "dir required"` here. Phase 5 made the
+      # SessionTemplate authoritative for the spawn pipeline so `dir` is
+      # no longer mandatory — the with-chain proceeds past it and stops
+      # at the capability gate when the principal lacks grants. The
+      # error type therefore moves from `invalid_args` (shape) to
+      # `missing_capabilities` (auth) for this fixture, which is the
+      # correct semantic: the args ARE shaped fine; the principal just
+      # can't spawn a CC session.
       cmd = %{"submitted_by" => "ou_no_target", "args" => %{"agent" => "cc"}}
-      assert {:error, %{"type" => "invalid_args", "message" => msg}} = SessionNew.execute(cmd)
-      assert msg =~ "dir"
+
+      assert {:error, %{"type" => "missing_capabilities", "message" => msg}} =
+               SessionNew.execute(cmd)
+
+      assert msg =~ "session:default/create"
     end
   end
 end
