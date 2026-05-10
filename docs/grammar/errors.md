@@ -138,7 +138,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `session_persist_failed` | `session_new` | failed to write session.json for %{session_id}: %{details} |
 | `session_start_failed` | `session_new` | session start failed: %{details} |
 | `template_materialize_failed` | `session_new` | session template '%{template}' could not be materialized: %{details} |
-| `unknown_agent` | `session_new` | agent %{agent} not registered in agents.yaml |
+| `unknown_agent` | `session_new` | agent %{agent} not declared by any enabled plugin's agent_kinds: block |
 | `unknown_template` | `session_new` | session template '%{template}' not found; available: %{available} |
 | `workspace_gone` | `session_new` | workspace %{name} %{detail} |
 | `worktree_collision` | `session_new` | worktree branch '%{worktree}' already used by another live session in workspace %{workspace} |

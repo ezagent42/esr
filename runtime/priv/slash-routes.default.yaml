@@ -642,7 +642,7 @@ slashes:
         required: false
     category: Workspace
     command_module: Esr.Commands.Workspace.Remove
-    description: 删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 agents.yaml）
+    description: 删整个 workspace（ESR-bound 删目录；repo-bound 仅删 .esr/workspace.json + topology.yaml，保留 .esr/ 其他文件如 env、自定义 hooks）
     kind: workspace_remove
     permission: workspace.create
     requires_user_binding: true

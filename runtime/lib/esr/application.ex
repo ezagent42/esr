@@ -117,7 +117,7 @@ defmodule Esr.Application do
 
       # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
-      # the agents.yaml pipeline. Depends on ChatRouting.Registry,
+      # the SessionTemplate-driven pipeline. Depends on ChatRouting.Registry,
       # NameIndex.Registry, Scope.Supervisor, and Session.Registry (all
       # earlier children). Without this, production `/new-session` calls
       # fail with :noproc even though tests pass via start_supervised.
