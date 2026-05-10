@@ -33,8 +33,19 @@ defmodule Esr.Plugin.Manifest do
     # Whether the plugin supports /plugin:reload without esrd restart.
     # Declared in manifest as `hot_reloadable: true|false`. Default: false.
     # Spec: docs/superpowers/specs/2026-05-07-plugin-config-hot-reload.md §3.
-    hot_reloadable: false
+    hot_reloadable: false,
+    # Top-level `channels:` block (sibling of `name:`/`version:`). Each
+    # entry: `%{name: String.t(), module: module(), config_schema: map()
+    # | nil}`. Loader registers these into `Esr.Channel.Registry` at
+    # boot. Spec: 2026-05-10-session-template-and-channel.md, Phase 1.
+    channels: []
   ]
+
+  @type channel_entry :: %{
+          name: String.t(),
+          module: module(),
+          config_schema: map() | nil
+        }
 
   @type t :: %__MODULE__{
           name: String.t(),
@@ -43,7 +54,8 @@ defmodule Esr.Plugin.Manifest do
           depends_on: %{core: String.t(), plugins: [String.t()]},
           declares: map(),
           hot_reloadable: boolean(),
-          path: Path.t() | nil
+          path: Path.t() | nil,
+          channels: [channel_entry()]
         }
 
   # Allow lowercase + digits + `-` or `_` separators. Spec B §四
@@ -94,7 +106,8 @@ defmodule Esr.Plugin.Manifest do
          :ok <- validate_kebab(name),
          {:ok, version} <- fetch_required(parsed, "version"),
          {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}),
-         {:ok, hot_reloadable} <- parse_hot_reloadable(parsed) do
+         {:ok, hot_reloadable} <- parse_hot_reloadable(parsed),
+         {:ok, channels} <- parse_channels(parsed["channels"]) do
       raw_declares = parsed["declares"] || %{}
       declares = atomize_declares(raw_declares)
       raw_media_types = raw_declares["media_types"] || raw_declares[:media_types]
@@ -113,7 +126,8 @@ defmodule Esr.Plugin.Manifest do
            depends_on: parse_depends_on(parsed["depends_on"] || %{}),
            declares: declares_full,
            hot_reloadable: hot_reloadable,
-           path: nil
+           path: nil,
+           channels: channels
          }}
       end
     end
@@ -290,6 +304,60 @@ defmodule Esr.Plugin.Manifest do
       other -> {:error, {:invalid_hot_reloadable, other}}
     end
   end
+
+  # ---- channels parser (2026-05-10 SessionTemplate + Channel migration, Phase 1) ----
+  #
+  # Top-level `channels:` block. Each entry must be a map carrying
+  # string `name` + string `module`; an optional `config_schema:` map
+  # is preserved as-is. The module string is resolved with
+  # `Code.ensure_loaded?/1`; an unknown module aborts parse with
+  # `{:invalid_channel, {:unknown_module, name, module_str}}`.
+  #
+  # Validation lives here (not in validate/1) for symmetry with
+  # config_schema and media_types — the manifest's at-rest shape is
+  # established at parse time so /plugin info doesn't see a half-validated
+  # struct.
+  defp parse_channels(nil), do: {:ok, []}
+
+  defp parse_channels(list) when is_list(list) do
+    Enum.reduce_while(list, {:ok, []}, fn entry, {:ok, acc} ->
+      case parse_channel_entry(entry) do
+        {:ok, parsed} -> {:cont, {:ok, [parsed | acc]}}
+        {:error, reason} -> {:halt, {:error, {:invalid_channel, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      err -> err
+    end
+  end
+
+  defp parse_channels(other), do: {:error, {:invalid_channel, {:not_a_list, other}}}
+
+  defp parse_channel_entry(%{} = entry) do
+    name = entry["name"] || entry[:name]
+    module_str = entry["module"] || entry[:module]
+    config_schema = entry["config_schema"] || entry[:config_schema]
+
+    cond do
+      not is_binary(name) or name == "" ->
+        {:error, {:missing_field, "name"}}
+
+      not is_binary(module_str) or module_str == "" ->
+        {:error, {:missing_field, "module"}}
+
+      true ->
+        module = Module.concat([module_str])
+
+        if Code.ensure_loaded?(module) do
+          {:ok, %{name: name, module: module, config_schema: config_schema}}
+        else
+          {:error, {:unknown_module, name, module_str}}
+        end
+    end
+  end
+
+  defp parse_channel_entry(other), do: {:error, {:not_a_map, other}}
 
   # ---- validate/1 helpers ----
 
