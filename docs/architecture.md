@@ -138,6 +138,7 @@ from that spec to code on disk. PRs are tracked under
 | Zero-config CLI bootstrap (`system:bootstrap` sentinel + `operator.json`) | `tests/e2e/scenarios/23_zero_config_bootstrap.sh` |
 | yaml-layout-v2 per-thing adapter directories — register / list / disable / enable / remove round-trip | `tests/e2e/scenarios/24_yaml_layout_v2.sh` |
 | SessionTemplate Phase 4 — bundle template skipped when plugin dep missing; loud-fail Logger.warning at boot | `tests/e2e/scenarios/27_template_dependency_unmet.sh` |
+| SessionTemplate Phase 4 — external-path bundle install via `/plugin:install` (bundle name ≠ template name) | `tests/e2e/scenarios/29_external_bundle_install.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |

@@ -124,6 +124,7 @@ discovering live flows.
 | [`23_zero_config_bootstrap.sh`](tests/e2e/scenarios/23_zero_config_bootstrap.sh) | Zero-config CLI journey — `system:bootstrap` sentinel + auto-admin + `operator.json` (no env vars) | [`docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md`](docs/superpowers/specs/2026-05-09-zero-config-bootstrap.md) |
 | [`24_yaml_layout_v2.sh`](tests/e2e/scenarios/24_yaml_layout_v2.sh) | yaml-layout-v2 — per-thing `adapters/<name>/config.yaml` round-trip (register → list → disable → enable → remove) | [`docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md`](docs/superpowers/specs/2026-05-09-yaml-layout-v2-per-thing-directories.md) |
 | [`27_template_dependency_unmet.sh`](tests/e2e/scenarios/27_template_dependency_unmet.sh) | SessionTemplate Phase 4 — bundle template skipped when plugin dep missing; Logger.warning names the missing plugin at boot | [`docs/superpowers/specs/2026-05-10-session-template-and-channel.md`](docs/superpowers/specs/2026-05-10-session-template-and-channel.md) |
+| [`29_external_bundle_install.sh`](tests/e2e/scenarios/29_external_bundle_install.sh) | SessionTemplate Phase 4 — external-path bundle install via `/plugin:install`; bundle name ≠ template name supported | [`docs/superpowers/specs/2026-05-10-session-template-and-channel.md`](docs/superpowers/specs/2026-05-10-session-template-and-channel.md) |
 
 > When you add a scenario: register it in this table **and** in
 > [`docs/notes/manual-e2e-verification.md`](docs/notes/manual-e2e-verification.md).
