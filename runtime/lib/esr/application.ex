@@ -151,6 +151,15 @@ defmodule Esr.Application do
       Esr.Resource.SlashRoute.Registry,
       {Esr.Resource.SlashRoute.Registry.Watcher, path: Esr.Paths.slash_routes_yaml()},
 
+      # 4e.2b Channel.Registry — ETS-backed `<plugin>.<channel_name>` → module
+      # lookup populated by Esr.Plugin.Loader at boot from each manifest's
+      # `channels:` block (SessionTemplate + Channel migration spec
+      # 2026-05-10, Phase 1). Independent of all subsystems above; only
+      # constraint is that it must start BEFORE `load_enabled_plugins/0`
+      # runs (post-Supervisor.start_link/2) so Loader.register_channels/1
+      # finds a live table.
+      Esr.Channel.Registry,
+
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
