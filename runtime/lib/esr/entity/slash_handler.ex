@@ -695,18 +695,27 @@ defmodule Esr.Entity.SlashHandler do
   # modules that consume them — Whoami, Doctor, and any future
   # command needing the calling context. Idempotent: doesn't overwrite
   # values the user explicitly typed (unlikely for these names).
-  defp inject_envelope_args(args, envelope) do
+  @doc false
+  def inject_envelope_args(args, envelope) do
     chat_id = envelope_chat_id(envelope)
     thread_id = envelope_thread_id(envelope)
     app_id = get_in(envelope, ["payload", "args", "app_id"])
-    principal_id = envelope["principal_id"] || envelope["user_id"]
+    caller_principal_id = envelope["principal_id"] || envelope["user_id"]
 
     args
     |> maybe_put("chat_id", chat_id)
     |> maybe_put("thread_id", thread_id)
     |> maybe_put("app_id", app_id)
-    |> maybe_put("principal_id", principal_id)
+    |> force_put("caller_principal_id", caller_principal_id)
   end
+
+  # rev-2 semantic split: identity comes from envelope, not user input.
+  # `force_put` overwrites; `maybe_put` preserves. caller_principal_id
+  # is security-sensitive; chat_id / app_id / thread_id remain user-
+  # overridable for legitimate uses (e.g. /workspace:bind-chat takes
+  # user chat_id=).
+  defp force_put(map, _key, nil), do: map
+  defp force_put(map, key, value), do: Map.put(map, key, value)
 
   # PR-21θ derivation lifted from parse_new_session/1. The legacy
   # parser already did this; the dispatch path needs the same

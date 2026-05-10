@@ -15,7 +15,7 @@ defmodule Esr.Commands.WhoamiTest do
     assert {:ok, %{"text" => text}} =
              Whoami.execute(%{
                "args" => %{
-                 "principal_id" => "ou_does_not_exist_#{System.unique_integer([:positive])}",
+                 "caller_principal_id" => "ou_does_not_exist_#{System.unique_integer([:positive])}",
                  "chat_id" => "oc_test",
                  "app_id" => "test_app"
                }
@@ -32,7 +32,7 @@ defmodule Esr.Commands.WhoamiTest do
     assert {:ok, %{"text" => text}} =
              Whoami.execute(%{
                "args" => %{
-                 "principal_id" => "ou_x",
+                 "caller_principal_id" => "ou_x",
                  "chat_id" => "oc_unbound_#{System.unique_integer([:positive])}",
                  "app_id" => "test_app"
                }

@@ -51,7 +51,7 @@ defmodule Esr.Cli.MainTest do
         Path.join(dir, "operator.json"),
         Jason.encode!(%{
           "schema_version" => 1,
-          "principal_id" => uuid,
+          "caller_principal_id" => uuid,
           "name" => "linyilun",
           "set_at" => "2026-05-09T00:00:00Z",
           "set_by" => "user_add"
@@ -107,7 +107,7 @@ defmodule Esr.Cli.MainTest do
     test "operator.json with empty principal_id → returns sentinel", %{instance_dir: dir} do
       File.write!(
         Path.join(dir, "operator.json"),
-        Jason.encode!(%{"principal_id" => "", "name" => "x"})
+        Jason.encode!(%{"caller_principal_id" => "", "name" => "x"})
       )
 
       out =

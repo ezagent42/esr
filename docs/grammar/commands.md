@@ -308,14 +308,14 @@ _internal kind only — not slash-callable_
 **description:** 授权 cap 给用户；session cap 仅接受 UUID 形式
 
 **args:**
-  - `cap` (required) — permission 字符串（session cap 必须是 UUID 形式）
-  - `user` (required) — principal id
+  - `target_principal_id` (required) — principal being granted to (the operation target)
+  - `permission` (required) — permission 字符串（session cap 必须是 UUID 形式）
 
 **errors:**
   - `reserved_principal_id` — 'system:bootstrap' is a reserved sentinel; cannot be granted caps
   - `session_cap_requires_uuid` — %{detail}
   - `unknown_workspace` — no workspace found in capability scope: %{permission}
-  - `invalid_args` — grant requires args.principal_id and args.permission (non-empty strings)
+  - `invalid_args` — grant requires args.target_principal_id and args.permission (non-empty strings)
   - `write_failed` — %{detail}
 
 ### `cap_list`
@@ -347,14 +347,14 @@ _internal kind only — not slash-callable_
 **description:** 撤销用户的 cap；session cap 仅接受 UUID 形式
 
 **args:**
-  - `cap` (required) — permission 字符串（session cap 必须是 UUID 形式）
-  - `user` (required) — principal id
+  - `target_principal_id` (required) — principal being revoked from (the operation target)
+  - `permission` (required) — permission 字符串（session cap 必须是 UUID 形式）
 
 **errors:**
   - `session_cap_requires_uuid` — %{detail}
   - `unknown_workspace` — no workspace found in capability scope: %{permission}
   - `no_matching_capability` — no matching capability to revoke
-  - `invalid_args` — revoke requires args.principal_id and args.permission (non-empty strings)
+  - `invalid_args` — revoke requires args.target_principal_id and args.permission (non-empty strings)
   - `write_failed` — %{detail}
 
 ### `cap_show`
@@ -370,10 +370,10 @@ _internal kind only — not slash-callable_
 **description:** 显示 principal 在 capabilities.yaml 里的条目
 
 **args:**
-  - `principal_id` (required) — principal id
+  - `target_principal_id` (required) — principal whose caps to display
 
 **errors:**
-  - `invalid_args` — cap_show requires args.principal_id (non-empty string)
+  - `invalid_args` — cap_show requires args.target_principal_id (non-empty string)
 
 ### `cap_who_can`
 
@@ -1394,11 +1394,11 @@ _internal kind only — not slash-callable_
   - `chat_id` (required) — cross-app chat_id
   - `app_id` (required) — cross-app app_id
   - `text` (required) — reply 文本
-  - `principal_id` (required) — principal id（FCP cap 检查依据）
+  - `target_principal_id` (required) — 被注入的 caller principal id（FCP cap 检查依据）
   - `req_id` (optional) — 可选；不传自动生成
 
 **errors:**
-  - `invalid_args` — cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing})
+  - `invalid_args` — cross_app_test requires args.{session_id, chat_id, app_id, text, target_principal_id} (missing %{missing})
   - `no_session_peer` — no thread:%{session_id} peer in Entity.Registry
   - `timeout` — FCP did not reply within %{timeout_ms}ms (req_id=%{req_id})
 

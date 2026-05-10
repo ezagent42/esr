@@ -249,7 +249,7 @@ defmodule Esr.Commands.User.AddTest do
       assert File.exists?(operator_path), "expected operator.json at #{operator_path}"
 
       {:ok, op_doc} = Jason.decode(File.read!(operator_path))
-      assert op_doc["principal_id"] == uuid
+      assert op_doc["caller_principal_id"] == uuid
       assert op_doc["name"] == name
       assert op_doc["set_by"] == "user_add"
       assert op_doc["schema_version"] == 1
@@ -270,7 +270,7 @@ defmodule Esr.Commands.User.AddTest do
         operator_path,
         Jason.encode!(%{
           "schema_version" => 1,
-          "principal_id" => "alice-uuid",
+          "caller_principal_id" => "alice-uuid",
           "name" => "alice",
           "set_at" => "2026-05-09T00:00:00Z",
           "set_by" => "user_add"
@@ -282,7 +282,7 @@ defmodule Esr.Commands.User.AddTest do
 
       # operator.json still points at alice (not the second user).
       {:ok, op_doc} = Jason.decode(File.read!(operator_path))
-      assert op_doc["principal_id"] == "alice-uuid"
+      assert op_doc["caller_principal_id"] == "alice-uuid"
       assert op_doc["name"] == "alice"
     end
 

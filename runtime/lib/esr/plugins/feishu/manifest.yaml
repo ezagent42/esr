@@ -90,7 +90,28 @@ declares:
   # user_unbind_feishu. New: feishu_notify, feishu_bind, feishu_unbind.
   slash_routes:
     schema_version: 1
-    slashes: {}
+    slashes:
+      "/feishu:bind":
+        kind: feishu_self_bind
+        permission: null
+        command_module: "Esr.Plugins.Feishu.Commands.SelfBind"
+        requires_workspace_binding: false
+        requires_user_binding: false
+        category: "Users"
+        description: "把当前 Feishu 账号绑到一个 esr user (admin 须先创建该 user)"
+        args:
+          - { name: name, required: true }
+
+      "/feishu:unbind":
+        kind: feishu_self_unbind
+        permission: null
+        command_module: "Esr.Plugins.Feishu.Commands.SelfUnbind"
+        requires_workspace_binding: false
+        requires_user_binding: false
+        category: "Users"
+        description: "把当前 Feishu 账号从绑定的 esr user 上解绑"
+        args: []
+
     internal_kinds:
       feishu_notify:
         permission: "feishu/notify-send"
@@ -101,6 +122,12 @@ declares:
       feishu_unbind:
         permission: "feishu/user-bind"
         command_module: "Esr.Plugins.Feishu.Commands.UnbindUser"
+      feishu_self_bind:
+        permission: null
+        command_module: "Esr.Plugins.Feishu.Commands.SelfBind"
+      feishu_self_unbind:
+        permission: null
+        command_module: "Esr.Plugins.Feishu.Commands.SelfUnbind"
 
   # Multi-media content protocol participation (per spec
   # 2026-05-08-multimedia-content-protocol-design.md §4.1, D5).

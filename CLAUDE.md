@@ -9,6 +9,23 @@ This file is loaded as context for any Claude Code session that runs
 > two. See [`docs/dev-guide.md`](docs/dev-guide.md) §"CC session prompt
 > prelude".
 
+## ⚠️ Recent migrations
+
+### 2026-05-09 — `principal_id` semantic split
+
+`args["principal_id"]` was overloaded (caller vs target). Split into:
+
+- `caller_principal_id` — envelope-only, force-injected by SlashHandler.
+- `target_principal_id` — user-supplied, never touched by injection.
+
+Hard-cut. Migration impact:
+
+- **operator.json schema** (`~/.esrd/<env>/operator.json`): the field `"principal_id"` is now `"caller_principal_id"`. Existing operator.json files become unreadable. Recovery: `esr user switch <name>` rewrites with the new schema.
+- **Output maps of `cap/grant`, `cap/revoke`, `user/switch`**: result key `"principal_id"` → `"target_principal_id"`. (`user/add` output uses key `"id"`, unchanged.) Programmatic JSON consumers reading these returns need updating.
+- **Slash form of `/cap:grant`, `/cap:revoke`, `/cap:show`**: argument name is now `target_principal_id` (replacing the broken `cap=user=` form that never matched the cmd's pattern).
+
+Spec: [`docs/superpowers/specs/2026-05-09-principal-id-semantic-split.md`](docs/superpowers/specs/2026-05-09-principal-id-semantic-split.md).
+
 ## Quick orientation
 
 - Project intro + bilingual quick start: [`README.md`](README.md)

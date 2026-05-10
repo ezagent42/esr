@@ -47,22 +47,22 @@ Generated from `command_meta/0`; do not edit directly.
 | `not_found` | `agent_rename` | agent '%{name}' not found in session '%{session_id}' |
 | `invalid_args` | `agent_set_primary` | /agent:set-primary requires args.session_id and args.name (non-empty strings) |
 | `not_found` | `agent_set_primary` | no agent named '%{name}' in session '%{session_id}' |
-| `invalid_args` | `cap_grant` | grant requires args.principal_id and args.permission (non-empty strings) |
+| `invalid_args` | `cap_grant` | grant requires args.target_principal_id and args.permission (non-empty strings) |
 | `reserved_principal_id` | `cap_grant` | 'system:bootstrap' is a reserved sentinel; cannot be granted caps |
 | `session_cap_requires_uuid` | `cap_grant` | %{detail} |
 | `unknown_workspace` | `cap_grant` | no workspace found in capability scope: %{permission} |
 | `write_failed` | `cap_grant` | %{detail} |
-| `invalid_args` | `cap_revoke` | revoke requires args.principal_id and args.permission (non-empty strings) |
+| `invalid_args` | `cap_revoke` | revoke requires args.target_principal_id and args.permission (non-empty strings) |
 | `no_matching_capability` | `cap_revoke` | no matching capability to revoke |
 | `session_cap_requires_uuid` | `cap_revoke` | %{detail} |
 | `unknown_workspace` | `cap_revoke` | no workspace found in capability scope: %{permission} |
 | `write_failed` | `cap_revoke` | %{detail} |
-| `invalid_args` | `cap_show` | cap_show requires args.principal_id (non-empty string) |
+| `invalid_args` | `cap_show` | cap_show requires args.target_principal_id (non-empty string) |
 | `invalid_args` | `cap_who_can` | cap_who_can requires args.permission (non-empty string) |
 | `unknown_workspace` | `cap_who_can` | no workspace named in capability: %{permission} |
 | `invalid_args` | `claude_code_tui` | /claude_code:tui requires name=<agent> and chat context |
 | `not_found` | `claude_code_tui` | no agent '%{name}' in chat-current session |
-| `invalid_args` | `cross_app_test` | cross_app_test requires args.{session_id, chat_id, app_id, text, principal_id} (missing %{missing}) |
+| `invalid_args` | `cross_app_test` | cross_app_test requires args.{session_id, chat_id, app_id, text, target_principal_id} (missing %{missing}) |
 | `no_session_peer` | `cross_app_test` | no thread:%{session_id} peer in Entity.Registry |
 | `timeout` | `cross_app_test` | FCP did not reply within %{timeout_ms}ms (req_id=%{req_id}) |
 | `actor_not_found` | `debug_pause` | no actor %{actor_id} |
