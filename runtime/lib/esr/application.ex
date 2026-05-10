@@ -160,6 +160,15 @@ defmodule Esr.Application do
       # finds a live table.
       Esr.Channel.Registry,
 
+      # 4e.2b' Plugin.AgentKindRegistry — ETS-backed
+      # `<plugin>.<agent_kind_name>` → spec lookup. Replaces
+      # `Esr.Entity.Agent.Registry` (the old agents.yaml cache —
+      # removed in Phase 6 of the SessionTemplate + Channel migration).
+      # Populated at boot by Esr.Plugin.Loader from each manifest's
+      # `agent_kinds:` block. Same ordering constraint as
+      # Esr.Channel.Registry: must start BEFORE load_enabled_plugins/0.
+      Esr.Plugin.AgentKindRegistry,
+
       # 4e.2c Channel.Instances — Elixir.Registry (`:unique`) hosting the
       # per-session live Channel GenServer pids. Each Channel impl
       # registers via `{:via, Registry, {Esr.Channel.Instances,
