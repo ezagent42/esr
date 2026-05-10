@@ -1,8 +1,20 @@
 # ESR 概念词汇 — Tetrad Metamodel
 
-**Date:** 2026-05-08 (Realm/Session swap, rev 10; P1-1 brainstorm baseline rev 9 from 2026-05-03)
+**Date:** 2026-05-10 (rev 11 — Bundle promoted to runtime tier; SessionTemplate + Channel land as concrete projections of the Realm vocabulary. rev 10 = 2026-05-08 Realm/Session swap; rev 9 = 2026-05-03 P1-1 brainstorm baseline.)
 **Audience:** 任何在 ESR 仓库读代码、写 spec、讨论架构的人——人类或 AI
 **Status:** prescriptive；本文档定义元模型，不讨论现状偏差
+
+---
+
+## rev 11 改动摘要 (2026-05-10)
+
+SessionTemplate + Channel migration 的概念学落点：
+
+1. **Bundle** 升为 runtime-tier concept，与 Plugin / Agent / Session 平行。Bundle = 一份 `manifest.yaml` + 一份 `template.yaml` 的最小可安装单元；spec `2026-05-10-session-template-and-channel.md` 把 Bundle 定为 first-class artifact，同 Plugin 一样可被 `/plugin:install` 接收，但携带的是 SessionTemplate（声明 wiring）而非新代码。
+2. **Realm 的运行时投影定义**：一个 Bundle implements one Realm。Realm 仍保持 vocabulary-only 概念（无 runtime presence），SessionTemplate（kind + 默认 wiring 的声明）+ Channel（per-session 通信 peer，实现 `Esr.Channel` behaviour）合起来是 Realm 在 runtime 层的具象化。换言之：Realm 是抽象 class；SessionTemplate 是 declarative materialization；Channel 是实例化时按 template 起出来的 per-session lifecycle peer。
+3. **诊断切面**：`<plugin>.<channel_name>` (e.g. `feishu.chat_proxy`) 和 `<plugin>.<agent_kind>` (e.g. `claude_code.cc`) 是 Channel + Agent 的 fully-qualified key，分别由 `Esr.Channel.Registry` 和 `Esr.Plugin.AgentKindRegistry` 持有。SessionTemplate 通过 `<plugin>.<x>` 引用，loader 负责在 template register 时 resolve。
+
+历史脉络：rev 10 swap 后 Realm 仍只是文档名；rev 11 把"Realm 怎么落地"补全——Bundle 是物理边界，SessionTemplate 是声明，Channel 是 runtime peer。Plan: `docs/superpowers/plans/2026-05-10-session-template-and-channel-plan.md` Phase 8。
 
 ---
 
@@ -139,6 +151,55 @@ Realm **跟 4 个 runtime primitive 平行**——是 metamodel 的 declarative 
 - `GroupChatRealm` declares：a Session of kind "group-chat" + 默认有一个 shared channel + 所有 member 自动订阅这个 channel
 - `AdminRealm` declares：a Session of kind "admin" + 默认有 dispatcher entity + admin queue resource
 
+### Realm 在 runtime 层的具象化（rev 11）
+
+Realm 自身没有 runtime presence。它在运行时由两个 concrete primitive 共同实现：
+
+- **SessionTemplate** — declarative kind + wiring 的 yaml-shape 表达，登记在 `Esr.SessionTemplate.Registry`，按 template name 索引。一个 template 等价于"a Realm 的物质化形态：声明 channels + agents + flow"。
+- **Channel** — per-session 通信 peer，实现 `Esr.Channel` behaviour，由 `Esr.Channel.Registry` 管理 kind 注册。SessionTemplate 在 instantiate 时按声明的 `channels:` block 起出 per-session pid。
+
+两者打包成一个 **Bundle**（runtime-tier artifact，下面 §七 a 节）。即：**Bundle implements one Realm**；Bundle 的 `template.yaml` 是 SessionTemplate，引用的 channel kind 在 plugin manifest 的 `channels:` block 注册。
+
+---
+
+## 七a、Bundle — runtime-tier artifact (rev 11)
+
+**定义**：一个最小的 install 单元，实现一个 Realm。物理形式 = `<bundle_name>/{manifest.yaml, template.yaml}` 的目录。
+
+**为什么独立成一层**：
+
+- **Plugin** 携带"新代码"（modules、handlers、channels 模块、agent_kinds 声明）。
+- **Bundle** 携带"新 wiring"（SessionTemplate）——只引用已存在的 plugin 声明出来的 channel kind / agent kind，不引入新代码。
+
+Plugin author 写 `Esr.Plugins.Feishu.Channels.ChatProxy`（实现 `Esr.Channel` behaviour）；Bundle author 写一个 `template.yaml` 说"我用 `feishu.chat_proxy` + `claude_code.cc`，flow 这样接"。两层关注点不同，Bundle 不要求会改代码。
+
+**位置**：
+
+- 仓库内置：`runtime/lib/esr/bundles/<name>/`
+- Operator 安装：通过 `/plugin:install --source=<dir>` 进入 `runtime/lib/esr/bundles/`（外部目录复制到 in-tree path）
+- Operator ad-hoc：单文件 yaml 落 `${ESRD_HOME}/<inst>/session_templates/*.yaml`（conflated manifest+template）
+
+**Boot-time pipeline**（`Esr.Bundle.Loader.load_all/0`）：
+
+1. 扫 `bundles_dir/`，按 dir 解析 `manifest.yaml` (`Esr.Bundle.Manifest.parse/1`)
+2. 检查 `dependencies.plugins[]` 全部 enabled → 否则只 register manifest，跳过 template
+3. 解析 `template.yaml` (`Esr.SessionTemplate.Parser.parse/2`)，验证 channel kind / agent kind 引用
+4. 注册到 `Esr.SessionTemplate.Registry` 下，source = `{:bundle, <name>}`
+5. 扫 `session_templates_dir/`，单文件 yaml 同样路径，source = `:operator`
+
+**Bundle vs Plugin install path 对称**：`/plugin:install` 接收 plugin dir 时走 plugin loader；接收 bundle dir 时走 bundle loader（spec §5.3 last paragraph 决定哪个走哪个，按 manifest shape 区分）。
+
+**Realm 三件套对应表**：
+
+| 概念层 | runtime presence | 注册表 | key 形式 |
+|---|---|---|---|
+| Realm | none (vocabulary only) | — | — |
+| SessionTemplate | template yaml 解析后的 struct | `Esr.SessionTemplate.Registry` | `<template_name>` |
+| Channel | per-session GenServer pid (`Esr.Channel` behaviour) | `Esr.Channel.Registry` (kinds) + `Esr.Channel.Instances` (live pids) | kind: `<plugin>.<channel>` / instance: `<plugin>.<channel>:<session_id>` |
+| Bundle | manifest struct + source dir 路径 | `Esr.Bundle.Registry` | `<bundle_name>` |
+
+History: SessionTemplate + Channel migration spec `docs/superpowers/specs/2026-05-10-session-template-and-channel.md`，Phase 1-7 落地，Phase 8 closeout（本 doc rev 11）。
+
 ---
 
 ## 七、Entity / Resource declarations（不需要 Realm wrapper）
@@ -171,6 +232,14 @@ Resource 同理。这些 declaration 在 `session.md` 里也登记，但不叫"R
        └────── reference / membership ────────┘
 
 Interface 是 trait，被 E 和 R 实现（不出现在 graph node 里）
+
+declarative 层 (boot-time install + register)：
+       Plugin ──────────► declares channel kinds, agent kinds,
+                          entities, commands, capabilities
+       Bundle ──────────► declares one SessionTemplate
+                          (= one Realm 的具象化)
+                          composes channel kinds + agent kinds
+                          from one or more plugins
 ```
 
 **关键不同于 OOP containment**：
@@ -252,4 +321,7 @@ group-chat-session "team-room"  (instance of GroupChatRealm)
 - `docs/notes/actor-role-vocabulary.md` — role trait 的详细定义（在本 metamodel 下，role trait 是 Realm 中 Context 部分选择的 Interface subset 命名约定）
 - `docs/notes/esr-uri-grammar.md` — URI 语法
 - `docs/superpowers/specs/2026-05-08-resource-typed-grammar.md` — rev 10 swap 的代码-侧 cleanup spec（`Esr.Scope.* → Esr.Session.*` 等）
+- `docs/superpowers/specs/2026-05-10-session-template-and-channel.md` — rev 11 Bundle / SessionTemplate / Channel 的 source spec
+- `docs/superpowers/plans/2026-05-10-session-template-and-channel-plan.md` — rev 11 8-phase implementation plan
+- `docs/grammar/templates.md` — 自动生成的 bundle reference (run `mix esr.gen_bundle_docs`)
 - `docs/futures/todo.md` — P2/P3 任务列表

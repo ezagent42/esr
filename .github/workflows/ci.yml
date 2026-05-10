@@ -56,6 +56,15 @@ jobs:
         working-directory: runtime
         run: mix esr.check_command_docs
 
+      - name: Check bundles (SessionTemplate + Channel migration drift gate)
+        # Phase 8 Task 8.4 of spec
+        # docs/superpowers/specs/2026-05-10-session-template-and-channel.md §10
+        # acceptance "CI gate: a template referencing a missing channel kind
+        # fails CI." Walks runtime/lib/esr/bundles/*/ + plugins/*/manifest.yaml
+        # statically; no esrd boot required.
+        working-directory: runtime
+        run: mix esr.check_bundles
+
       # TODO(2026-05-09): mix test on Linux CI fails ~22 of 1436 tests
       # for reasons unrelated to this migration:
       #   - `claude` CLI not on PATH (used by PTY spawn in some tests)

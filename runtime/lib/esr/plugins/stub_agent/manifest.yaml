@@ -1,0 +1,60 @@
+# Stub agent plugin — Phase 8 Task 8.5 of the SessionTemplate + Channel
+# migration. Spec: docs/superpowers/specs/2026-05-10-session-template-and-channel.md
+#
+# Purpose: prove that the Channel + agent_kind abstraction isn't
+# CC-specific. This plugin:
+#   - declares a no-op Channel kind (`stub_agent.noop`)
+#   - declares a stub agent kind (`stub_agent.stub`)
+# A companion bundle at runtime/lib/esr/bundles/stub-only/ composes them
+# without touching the feishu or claude_code plugins. e2e scenario 30
+# exercises the full plugin → bundle → /session:new path with this plugin
+# enabled instead of CC.
+#
+# Disabled by default: the plugin is in-tree (so the dir is always
+# discoverable + checkable by mix esr.check_bundles), but it's NOT in
+# the default enabled list; operators must explicitly enable it via
+# /plugin:enable stub_agent before /plugin:enable stub-only succeeds.
+# That's the "scenario 30 enables it" pattern.
+
+name: stub_agent
+version: 0.1.0
+hot_reloadable: true
+description: |
+  Test-only stub plugin. Validates the Channel + agent_kind abstraction
+  is generic — a non-CC plugin can declare both primitives and a bundle
+  can compose them with the same SessionTemplate machinery the feishu-cc
+  bundle uses. No production behavior; init-only stubs.
+
+# Channel: no-op pass-through. Implements the Esr.Channel behaviour with
+# minimal state so SessionTemplate loaders can spawn one per session.
+channels:
+  - name: noop
+    module: Esr.Plugins.StubAgent.Channels.NoOp
+    config_schema:
+      type: object
+      properties: {}
+
+# Agent kind: stub. Pipeline has one peer (the StubProcess itself);
+# capabilities_required is empty (no real action). AgentDefBuilder reads
+# this to materialize a session when a template references stub_agent.stub.
+agent_kinds:
+  - name: stub
+    description: "Test-only stub agent (validates Channel/agent_kind abstraction)"
+    handler_module: null
+    capabilities_required: []
+    pipeline:
+      inbound:
+        - { name: stub, impl: Esr.Plugins.StubAgent.StubProcess }
+      outbound:
+        - stub
+    params:
+      - { name: name, required: true, type: string }
+
+depends_on:
+  core: ">= 0.1.0"
+  plugins: []
+
+declares:
+  entities:
+    - module: Esr.Plugins.StubAgent.StubProcess
+      kind: stateful
