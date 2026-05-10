@@ -10,19 +10,22 @@ defmodule Esr.Commands.Session.New do
 
   ## Flow
 
-    1. Validate `args.agent` present (D11) and `args.dir` present (D13).
-    2. Resolve the agent definition by materializing a SessionTemplate
-       via `Esr.SessionTemplate.Registry.materialize/2` (Phase 5+).
+    1. Resolve the agent definition by materializing a SessionTemplate
+       via `Esr.SessionTemplate.Registry.materialize/2` (Phase 5+). The
+       template is authoritative for the spawn pipeline; `args.agent` is
+       metadata and may be absent (defaults to `"cc"` via the slash
+       route). `args.dir` is also optional — when omitted, it's derived
+       from the resolved workspace's first folder via `resolve_dir/1`.
        Pre-Phase-5 this read `Esr.Entity.Agent.Registry.agent_def/1`
        (the agents.yaml cache); pre-Phase-6 the template's agent_kind
        contributions came from a hardcoded mapping in AgentDefBuilder;
        post-Phase-6 the contributions are sourced from each plugin's
        manifest `agent_kinds:` block (registered in
        `Esr.Plugin.AgentKindRegistry`).
-    3. Batch-verify `capabilities_required` (D18) via
+    2. Batch-verify `capabilities_required` (D18) via
        `Esr.Resource.Capability.has_all?/2` — returns every missing cap at once
        so the operator can see the full gap in a single reply.
-    4. Spawn the session. Two branches:
+    3. Spawn the session. Two branches:
          * **chat_id + thread_id present** — delegate to
            `Esr.Session.Router.create_session/1`, which runs the full
            `pipeline.inbound` (FeishuChatProxy, CCProxy, CCProcess,
@@ -39,7 +42,7 @@ defmodule Esr.Commands.Session.New do
            Fall through to `Esr.Session.Supervisor.start_session/1` (the
            legacy base subtree) and skip registry binding — no pipeline,
            no FeishuChatProxy, but also no registry pollution.
-    5. Return `{:ok, %{"session_id" => sid, "agent" => agent}}` on
+    4. Return `{:ok, %{"session_id" => sid, "agent" => agent}}` on
        success, or a structured error otherwise.
 
   The `Grants.matches?/2` contract requires permissions in the canonical
@@ -130,8 +133,17 @@ defmodule Esr.Commands.Session.New do
         # alias for `dir` (legacy / admin-CLI). When `workspace` is provided
         # without an explicit `agent`, default to "cc" — the only agent
         # the in-tree claude_code plugin manifest declares today.
+        #
+        # 2026-05-10 fix: the legacy `validate_args(agent, dir)` gate has
+        # been removed from the with-chain (Phase 5 made the template
+        # authoritative for agent_def; the raw `agent` arg is metadata,
+        # not the source of truth). `dir` is also now optional — when
+        # absent, `resolve_dir/1` derives it from the resolved workspace's
+        # first folder so `/session:new name=foo` (no dir, no agent) works
+        # against a chat-bound or user-default workspace via the M-5
+        # fallback chain.
         agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)
-        dir = args["dir"] || args["cwd"]
+        dir = resolve_dir(args)
 
         # PR-8 T2 / PR-21λ: thread the originating Feishu chat through so the
         # session is registered under the chat-current `(chat_id, app_id)`
@@ -153,8 +165,7 @@ defmodule Esr.Commands.Session.New do
         create_session_fn = Keyword.get(opts, :create_session_fn, @default_create_session_fn)
         start_session_fn = Keyword.get(opts, :start_session_fn, @default_start_session_fn)
 
-        with :ok <- validate_args(agent, dir),
-             {:ok, agent_def, _template_name} <- resolve_agent_def(args, submitter),
+        with {:ok, agent_def, _template_name} <- resolve_agent_def(args, submitter),
              :ok <- verify_caps(submitter, agent_def.capabilities_required),
              :ok <- check_name_unique(submitter, args["name"]),
              :ok <- maybe_create_worktree(args),
@@ -481,27 +492,73 @@ defmodule Esr.Commands.Session.New do
           {:user_default, name} -> {:ok, name}
 
           :no_match ->
-            # Distinguish "resolver chain fully exhausted" from "args
-            # actually malformed" — the latter still flows through
-            # `validate_args/2` below as `invalid_args`. This error means
-            # every layer of the workspace fallback ladder (explicit →
-            # chat-default → user-default) returned empty, which is a
-            # different operator action (bind a workspace) than an
-            # arg-shape fix.
+            # The resolver chain is fully exhausted — every layer of the
+            # workspace fallback ladder (explicit → chat-default →
+            # user-default) returned empty. Distinct from a malformed
+            # command (no `submitted_by` / no `args` map at all), which
+            # the catch-all `execute/2` clause renders as `invalid_args`.
+            # Operators see a different error here (bind a workspace)
+            # than for an arg-shape fix.
             Render.error(__MODULE__.command_meta(), :no_workspace_target)
         end
     end
   end
 
-  defp validate_args(nil, _) do
-    Render.error(__MODULE__.command_meta(), :invalid_args, %{detail: "agent required"})
+  # ---------------------------------------------------------------------------
+  # 2026-05-10 — `dir` resolution
+  #
+  # Replaces the legacy `validate_args(agent, dir)` gate that required
+  # `dir` to be set explicitly by the caller. Phase 5 made the template
+  # authoritative for the spawn pipeline (the agent kind, capabilities,
+  # peer modules all come from the materialized agent_def), so:
+  #
+  #   * `agent` is now metadata (stored on Scope.Process + session.json)
+  #     and may be absent — `args["agent"]` defaults to `"cc"` via the
+  #     slash route, and falls through to `nil` for direct executes
+  #     without a workspace.
+  #   * `dir` is preferred from explicit `dir=` / `cwd=`, then derived
+  #     from the resolved workspace's first folder, then `nil`. Downstream
+  #     (`Scope.Process`, `AgentSpawner`) accepts `nil` — it's stored
+  #     verbatim and the spawned peers may or may not need a cwd.
+  #
+  # This is what makes `/session:new name=test-cc` work when the chat
+  # has a bound (or user-default) workspace and the operator typed
+  # nothing else.
+  # ---------------------------------------------------------------------------
+  defp resolve_dir(args) do
+    cond do
+      is_binary(args["dir"]) and args["dir"] != "" ->
+        args["dir"]
+
+      is_binary(args["cwd"]) and args["cwd"] != "" ->
+        args["cwd"]
+
+      is_binary(args["workspace"]) and args["workspace"] != "" ->
+        resolve_dir_from_workspace(args["workspace"])
+
+      true ->
+        nil
+    end
   end
 
-  defp validate_args(_, nil) do
-    Render.error(__MODULE__.command_meta(), :invalid_args, %{detail: "dir required"})
+  defp resolve_dir_from_workspace(name) do
+    with {:ok, ws_id} <-
+           Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name),
+         {:ok, ws} <- Esr.Resource.Workspace.Registry.get_by_id(ws_id),
+         [first_folder | _] <- ws.folders do
+      Map.get(first_folder, :path) || Map.get(first_folder, "path")
+    else
+      _ -> nil
+    end
+  rescue
+    # Workspace.Registry not running (test env without the singleton) or
+    # NameIndex ETS table missing — silent fall-through to `nil`. Same
+    # philosophy as the rest of the registry-touching helpers in this
+    # module (`safe_create_session/2`, `bind_session_to_workspace/2`).
+    ArgumentError -> nil
+  catch
+    :exit, _ -> nil
   end
-
-  defp validate_args(_, _), do: :ok
 
   # Phase 5 cut-over: instead of looking up the legacy
   # `Esr.Entity.Agent.Registry` (the agents.yaml cache, dissolved in

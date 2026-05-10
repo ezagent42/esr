@@ -201,10 +201,17 @@ defmodule Esr.Commands.Session.NewTest do
       assert {:error, %{"type" => "no_workspace_target"}} = SessionNew.execute(cmd)
     end
 
-    test "missing dir → invalid_args" do
+    test "missing dir + agent=cc → succeeds (dir optional after Phase 5)" do
+      # Pre-fix (2026-05-10): the with-chain ran `validate_args(agent, dir)`
+      # FIRST and returned `invalid_args "dir required"` here. Phase 5 made
+      # the SessionTemplate authoritative for the spawn pipeline, so `dir`
+      # is now metadata that may legitimately be `nil` (legacy admin-CLI
+      # path that doesn't supply one). Regression guard for the fix.
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
+
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"agent" => "cc"}}
-      assert {:error, %{"type" => "invalid_args", "message" => msg}} = SessionNew.execute(cmd)
-      assert msg =~ "dir"
+      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} = SessionNew.execute(cmd)
+      assert is_binary(sid)
     end
 
     test "malformed command (no args) → invalid_args" do
@@ -567,6 +574,158 @@ defmodule Esr.Commands.Session.NewTest do
       assert is_pid(refs.pty_process)
 
       on_exit(fn -> Esr.Session.ChatRouting.Registry.unregister_session(sid) end)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # 2026-05-10 — Phase 5 regression: live operator typed
+  # `/session:new name=test-cc` (no agent=, no dir=, no workspace=) in a
+  # Feishu chat with no workspace bound yet, and got `error: invalid_args`
+  # instead of a session. Root cause: the with-chain ran `validate_args`
+  # FIRST, which required both `agent` and `dir`. Phase 5 made the
+  # SessionTemplate authoritative for the spawn pipeline, so neither is
+  # mandatory at the command-input layer anymore — agent defaults via
+  # the slash route's `arg :agent, default: "cc"`, and `dir` falls back
+  # to the resolved workspace's first folder.
+  # ---------------------------------------------------------------------------
+  describe "Phase 5 template-driven defaults (live-bug regression 2026-05-10)" do
+    @describetag :phase5_template_defaults
+
+    test "args carry only name + workspace=ws → dir auto-derived from workspace.folders[0]" do
+      # The original bug: operator types `/session:new name=test-cc` with
+      # a chat-bound workspace whose folders[0].path is the repo checkout.
+      # Pre-fix this errored at validate_args("cc", nil) with "dir
+      # required". Post-fix `resolve_dir/1` reads workspace.folders[0].path
+      # and threads it to the spawn.
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
+
+      ws =
+        Esr.Test.WorkspaceFixture.build(
+          name: "test-cc-ws",
+          owner: "alice",
+          folders: [%{path: "/tmp/test-cc-repo"}]
+        )
+
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+
+      test_pid = self()
+
+      stub = fn params ->
+        send(test_pid, {:create_session_called, params})
+        {:ok, "stub-sid-derived"}
+      end
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{
+          "agent" => "cc",
+          "name" => "test-cc-derived-#{:rand.uniform(99_999)}",
+          "workspace" => "test-cc-ws",
+          "chat_id" => "oc_PH5",
+          "thread_id" => "om_PH5",
+          "app_id" => "cli_test_ph5"
+        }
+      }
+
+      assert {:ok, %{"session_id" => "stub-sid-derived"}} =
+               SessionNew.execute(cmd, create_session_fn: stub)
+
+      assert_receive {:create_session_called, %{dir: "/tmp/test-cc-repo"}}
+
+      on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("test-cc-ws") end)
+    end
+
+    test "args carry only template= (no workspace, no dir) → succeeds; dir = nil" do
+      # `/session:new template=feishu-cc` from an admin-CLI submit (no chat
+      # context, no workspace). Post-fix this should resolve the explicit
+      # template, accept `dir = nil`, and start the session via the
+      # admin-CLI fallback (start_session_fn). Verifies that the
+      # template-driven spawn no longer trips on the legacy validate_args
+      # gate.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "template" => "feishu-cc",
+          "name" => "tpl-only-#{:rand.uniform(99_999)}"
+        }
+      }
+
+      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} = SessionNew.execute(cmd)
+      state = Esr.Session.Process.state(sid)
+      assert state.dir == nil
+      assert state.agent_name == "cc"
+    end
+
+    test "default template auto-elected: `/session:new name=foo` (no agent, no template) succeeds when workspace resolves" do
+      # The exact symptom from the live bug, reproduced under test:
+      # operator types `/session:new name=test-cc` in a chat with a
+      # user-default workspace. Pre-fix this errored. Post-fix resolves
+      # workspace via M-5 chain, derives dir from workspace.folders[0],
+      # and uses the auto-elected default template (feishu-cc, set up in
+      # the outer setup block).
+      Grants.load_snapshot(%{"ou_alice" => ["*"]})
+
+      # ou_alice has no chat-default; rely on the user-default chain.
+      ws =
+        Esr.Test.WorkspaceFixture.build(
+          name: "alice-default-ws",
+          owner: "alice",
+          folders: [%{path: "/tmp/alice-default-repo"}]
+        )
+
+      :ok = Esr.Resource.Workspace.Registry.put(ws)
+
+      # The M-5 user-default lookup keys off `username`, not `submitted_by`.
+      # Provide a User.Registry entry + per-user default workspace link.
+      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+        %{
+          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_alice"]}
+        },
+        %{"alice" => "alice-id"}
+      )
+
+      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+
+      test_pid = self()
+
+      stub = fn params ->
+        send(test_pid, {:create_session_called, params})
+        {:ok, "stub-sid-live-bug"}
+      end
+
+      session_name = "test-cc-#{:rand.uniform(99_999)}"
+
+      cmd = %{
+        "submitted_by" => "ou_alice",
+        "args" => %{
+          # `submitter_username` is what slash_handler resolves from
+          # envelope.user_id via Esr.Entity.User.Registry; the M-5
+          # user-default lookup (Esr.Commands.Workspace.Resolve) keys
+          # off it.
+          "submitter_username" => "alice",
+          "name" => session_name,
+          # The live bug surfaced from a Feishu slash, so chat context
+          # is present even when workspace+dir+agent aren't.
+          "chat_id" => "oc_live_bug",
+          "thread_id" => "om_live_bug",
+          "app_id" => "esr_dev_helper"
+        }
+      }
+
+      assert {:ok, %{"session_id" => "stub-sid-live-bug", "workspace" => "alice-default-ws"}} =
+               SessionNew.execute(cmd, create_session_fn: stub)
+
+      # `dir` derived from workspace.folders[0]; `agent` defaulted to "cc"
+      # because workspace was resolved (line 145 fallback).
+      assert_receive {:create_session_called, %{dir: "/tmp/alice-default-repo", agent: "cc"}}
+
+      on_exit(fn ->
+        Esr.Test.WorkspaceFixture.delete!("alice-default-ws")
+        Esr.Entity.User.Registry.load_snapshot_with_uuids(%{}, %{})
+      end)
     end
   end
 
