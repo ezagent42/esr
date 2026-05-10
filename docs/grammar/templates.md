@@ -37,3 +37,29 @@ Channel concept layering.
     - `in.text` → `Esr.Entity.Agent.MentionParser` → `<route_to_agent>`
   - outbound:
     - `<agent>.reply` → sink `in.send`
+
+## `stub-only`
+
+**version:** `0.1.0`
+
+**description:** Test-only bundle that composes the stub_agent plugin's noop Channel +
+stub agent kind. Phase 8 Task 8.5 of the SessionTemplate + Channel
+migration. Validates the abstraction is non-CC-specific. Disabled
+by default (depends on stub_agent which is also disabled by default).
+
+
+**source:** `bundle (stub-only)`
+
+**dependencies:**
+  - plugins: `stub_agent`
+  - bundles: _(none)_
+
+**channels:**
+  - alias `in` → kind `stub_agent.noop`
+
+**agents:**
+  - kind `stub_agent.stub` name `<runtime>` consumes `in`
+
+**flow:**
+  - inbound: _(none)_
+  - outbound: _(none)_

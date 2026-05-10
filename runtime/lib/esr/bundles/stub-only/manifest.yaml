@@ -1,0 +1,11 @@
+schema_version: 1
+name: stub-only
+version: 0.1.0
+description: |
+  Test-only bundle that composes the stub_agent plugin's noop Channel +
+  stub agent kind. Phase 8 Task 8.5 of the SessionTemplate + Channel
+  migration. Validates the abstraction is non-CC-specific. Disabled
+  by default (depends on stub_agent which is also disabled by default).
+dependencies:
+  plugins: [stub_agent]
+  bundles: []
