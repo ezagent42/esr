@@ -170,6 +170,17 @@ defmodule Esr.Application do
       # 2026-05-10-session-template-and-channel.md, Phase 2.
       {Registry, keys: :unique, name: Esr.Channel.Instances},
 
+      # 4e.2d Bundle.Registry + SessionTemplate.Registry + FlowNodeRegistry
+      # (SessionTemplate spec 2026-05-10, Phase 4). Started BEFORE
+      # `load_enabled_plugins/0` so any plugin-load follow-up (Phase 5+)
+      # can revalidate bundles on plugin enable. The boot-time bundle
+      # walk runs AFTER plugin load (post-Supervisor.start_link/2) since
+      # bundle dependency checks read enabled-plugins state populated by
+      # the plugin loader.
+      Esr.Bundle.Registry,
+      Esr.SessionTemplate.Registry,
+      Esr.SessionTemplate.FlowNodeRegistry,
+
       # 4f. Capabilities subsystem — Permissions Registry + Grants snapshot
       # + fs watcher on ~/.esrd/<instance>/capabilities.yaml
       # (capabilities spec §5.3). Must sit AFTER Workspaces.Registry so
@@ -300,6 +311,15 @@ defmodule Esr.Application do
         # python_sidecars; capabilities/slash routes/agents follow as
         # those registries gain register/3 APIs).
         load_enabled_plugins()
+
+        # SessionTemplate spec 2026-05-10, Phase 4: walk in-tree bundles +
+        # operator session_templates, register every valid bundle in
+        # `Esr.Bundle.Registry` + every valid template in
+        # `Esr.SessionTemplate.Registry`. Bundle dependency checks read
+        # the enabled-plugins list populated by `load_enabled_plugins/0`
+        # above, so this MUST run after. Loud-fail policy mirrors
+        # plugin loader: failures Logger.warning + skip.
+        Esr.Bundle.Loader.load_all()
 
       _ ->
         :ok
