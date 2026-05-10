@@ -155,18 +155,25 @@ defmodule Esr.Paths do
   `Esr.Bundle.Loader.load_all/1`.
   """
   def bundles_dir do
-    # Prefer the application's :code_path-based resolution when esrd is
-    # running from a release; fall back to the source layout for
-    # mix-run development.
+    # `__DIR__` for this file is `runtime/lib/esr/`; the bundles tree
+    # lives at `runtime/lib/esr/bundles/` (sibling of plugins/) per the
+    # moduledoc above. Same shape as Esr.Plugin.Loader's @default_root.
+    #
+    # 2026-05-10 (Phase 8 fix): pre-Phase-8 this was `Path.expand("../bundles", __DIR__)`
+    # which evaluated to `runtime/lib/bundles/` — a non-existent dir.
+    # The bug masked the in-tree feishu-cc bundle from production boot
+    # (Bundle.Registry.list_all/0 returned []). Tests passed because
+    # they pass an explicit `bundles_dir:` keyword. mix esr.gen_bundle_docs
+    # exposed it because it walks the same path with no override.
     case :code.lib_dir(:esr) do
       {:error, _} ->
-        Path.expand("../bundles", __DIR__)
+        Path.expand("bundles", __DIR__)
 
       lib_path when is_list(lib_path) ->
         # Compiled OTP app puts source at `<lib>/src` only if explicitly
         # bundled; the in-tree dev path is the moduledoc default. Use
-        # the same dev path: walk up from this module's __DIR__.
-        Path.expand("../bundles", __DIR__)
+        # the same dev path: walk down from this module's __DIR__.
+        Path.expand("bundles", __DIR__)
     end
   end
 

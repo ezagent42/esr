@@ -1,0 +1,19 @@
+schema_version: 1
+name: stub-only
+description: |
+  Stub-only template. One Channel of kind stub_agent.noop, one agent of
+  kind stub_agent.stub. No CC, no feishu — proves the SessionTemplate +
+  Channel abstraction is generic.
+channels:
+  - alias: in
+    kind: stub_agent.noop
+    config: {}
+
+agents:
+  - kind: stub_agent.stub
+    name: <runtime>
+    consumes: [in]
+
+flow:
+  inbound: []
+  outbound: []

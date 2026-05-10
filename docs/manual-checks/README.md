@@ -63,6 +63,15 @@ the narrative differs.
 
 ## Index
 
+- [`2026-05-10-session-template-and-channel-closeout.md`](2026-05-10-session-template-and-channel-closeout.md)
+  / [`.zh_cn.md`](2026-05-10-session-template-and-channel-closeout.zh_cn.md)
+  — operator-flow re-score after the SessionTemplate + Channel migration
+  (PRs #324–#330 + Phase 8 closeout). **Findings:** 12/12 still ✅ ✅ ✅
+  post-migration; the migration is a wiring-level refactor (Channel
+  behaviour, Bundle artifacts, SessionTemplate loader, agents.yaml
+  dissolved) that adds capabilities (operator-shipped templates, external
+  bundle install, multi-session-per-instance, two-agent-kind composition)
+  without touching the operator-typed slash surface.
 - [`2026-05-08-post-multi-instance-audit.md`](2026-05-08-post-multi-instance-audit.md)
   / [`.zh_cn.md`](2026-05-08-post-multi-instance-audit.zh_cn.md)
   — same 12 operator steps re-scored against `origin/dev` `a69fd6a`
