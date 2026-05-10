@@ -35,11 +35,28 @@ defmodule Esr.Commands.Agent.AddChatCurrentFallbackTest do
       _ -> :ok
     end
 
-    fixture =
-      Path.join([__DIR__, "..", "..", "fixtures", "agents", "simple.yaml"])
-      |> Path.expand()
+    case Process.whereis(Esr.Plugin.AgentKindRegistry) do
+      nil -> start_supervised!(Esr.Plugin.AgentKindRegistry)
+      _ -> :ok
+    end
 
-    :ok = Esr.Entity.Agent.Registry.load_agents(fixture)
+    # Phase 6 (2026-05-10): type validation reads the plugin registry.
+    # Re-register `claude_code.cc` so the "type=cc" lookup resolves
+    # via `find_unqualified/1`. Idempotent if app boot populated it.
+    Esr.Plugin.AgentKindRegistry.register("claude_code", "cc", %{
+      plugin: "claude_code",
+      name: "cc",
+      description: "Claude Code",
+      handler_module: "cc_adapter_runner",
+      pipeline: %{
+        inbound: [%{"name" => "pty_process", "impl" => "Esr.Entity.PtyProcess"}],
+        outbound: ["pty_process"]
+      },
+      proxies: [],
+      capabilities_required: [],
+      params: []
+    })
+
     :ok
   end
 

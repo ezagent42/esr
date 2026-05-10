@@ -7,8 +7,13 @@ defmodule Esr.Commands.Agent.Add do
   spec rename (§4.2 row `/agent:add`, D1 hard-cutover) renames the
   module + slash; the old session/add_agent.ex is deleted in Task C.9.
 
-  Validates type against `Esr.Entity.Agent.Registry.list_agents/0` and
-  rejects unknown types with `{:error, %{"type" => "unknown_agent_type"}}`.
+  Phase 6 (2026-05-10): type validation sourced from
+  `Esr.Plugin.AgentKindRegistry` (the plugin manifest agent_kinds
+  registry that replaced the agents.yaml cache). Both qualified
+  `<plugin>.<kind>` and bare-name forms are accepted — bare names are
+  resolved via `AgentKindRegistry.find_unqualified/1`, which returns
+  `{:error, :ambiguous}` if two plugins both declare the name (let-it-
+  crash: surface the ambiguity to the operator).
   """
 
   use Esr.Commands.Meta
@@ -131,14 +136,28 @@ defmodule Esr.Commands.Agent.Add do
     Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
+  # Phase 6 (2026-05-10): type validation sourced from
+  # `Esr.Plugin.AgentKindRegistry`. Accepts both qualified
+  # `<plugin>.<kind>` and bare-name forms; bare names are resolved
+  # via `find_unqualified/1` which surfaces ambiguity loudly.
   defp validate_agent_type(type) do
-    if type in known_agent_types(), do: :ok, else: {:error, :unknown_agent_type}
+    cond do
+      String.contains?(type, ".") ->
+        case Esr.Plugin.AgentKindRegistry.lookup(type) do
+          {:ok, _spec} -> :ok
+          :not_found -> {:error, :unknown_agent_type}
+        end
+
+      true ->
+        case Esr.Plugin.AgentKindRegistry.find_unqualified(type) do
+          {:ok, _key, _spec} -> :ok
+          :not_found -> {:error, :unknown_agent_type}
+          {:error, {:ambiguous, _keys}} -> {:error, :unknown_agent_type}
+        end
+    end
   end
 
   defp known_agent_types do
-    case Esr.Entity.Agent.Registry.list_agents() do
-      names when is_list(names) -> names
-      _ -> []
-    end
+    Esr.Plugin.AgentKindRegistry.list_keys()
   end
 end
