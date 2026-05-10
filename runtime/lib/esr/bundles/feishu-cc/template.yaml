@@ -1,0 +1,28 @@
+schema_version: 1
+name: feishu-cc
+description: Feishu chat → Claude Code agent (workspace-bound by default)
+channels:
+  - alias: in
+    kind: feishu.chat_proxy
+    config:
+      app_id: <runtime>
+      chat_id: <runtime>
+  - alias: cc_mcp
+    kind: claude_code.mcp_http
+    config:
+      port: ephemeral
+
+agents:
+  - kind: claude_code.cc
+    name: <runtime>
+    consumes: [cc_mcp]
+
+flow:
+  inbound:
+    - source: in.text
+      pipeline:
+        - Esr.Entity.Agent.MentionParser
+        - "<route_to_agent>"
+  outbound:
+    - source: <agent>.reply
+      sink: in.send

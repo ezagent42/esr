@@ -1,0 +1,7 @@
+schema_version: 1
+name: feishu-cc
+version: 0.1.0
+description: Feishu chat → Claude Code agent (workspace-bound by default)
+dependencies:
+  plugins: [feishu, claude_code]
+  bundles: []

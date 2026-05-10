@@ -130,4 +130,39 @@ defmodule Esr.Paths do
 
   @doc "Path to session.v1.json schema shipped in priv."
   def session_schema_v1, do: Application.app_dir(:esr, "priv/schemas/session.v1.json")
+
+  # ------------------------------------------------------------------
+  # SessionTemplate + Bundle (spec 2026-05-10, Phase 4)
+  # ------------------------------------------------------------------
+
+  @doc """
+  In-tree bundles directory. Resolves to `runtime/lib/esr/bundles/`
+  when esrd runs from compiled source. Each subdirectory is one
+  bundle (`<name>/manifest.yaml` + `<name>/template.yaml`).
+
+  Tests can override by passing an explicit path to
+  `Esr.Bundle.Loader.load_all/1`.
+  """
+  def bundles_dir do
+    # Prefer the application's :code_path-based resolution when esrd is
+    # running from a release; fall back to the source layout for
+    # mix-run development.
+    case :code.lib_dir(:esr) do
+      {:error, _} ->
+        Path.expand("../bundles", __DIR__)
+
+      lib_path when is_list(lib_path) ->
+        # Compiled OTP app puts source at `<lib>/src` only if explicitly
+        # bundled; the in-tree dev path is the moduledoc default. Use
+        # the same dev path: walk up from this module's __DIR__.
+        Path.expand("../bundles", __DIR__)
+    end
+  end
+
+  @doc """
+  Operator-shipped session templates directory:
+  `$ESRD_HOME/<inst>/session_templates/`. Standalone yaml files here
+  are conflated manifest+template form per spec §5.3.
+  """
+  def session_templates_dir, do: Path.join(runtime_home(), "session_templates")
 end

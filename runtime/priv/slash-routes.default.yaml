@@ -297,7 +297,7 @@ slashes:
         required: true
     category: Plugins
     command_module: Esr.Commands.Plugin.Install
-    description: 从本地路径安装 plugin（Phase 1 only local-path）
+    description: 从本地路径安装 plugin 或 bundle（Phase 1 only local-path）
     kind: plugin_install
     permission: plugin/manage
     requires_user_binding: false

@@ -634,10 +634,10 @@ _internal kind only — not slash-callable_
 
 **bindings:** requires_user_binding=`false` requires_workspace_binding=`false`
 
-**description:** 从本地路径安装 plugin（Phase 1 only local-path）
+**description:** 从本地路径安装 plugin 或 bundle（Phase 1 only local-path）
 
 **args:**
-  - `source` (required) — local plugin source directory
+  - `source` (required) — local plugin or bundle source directory
 
 **errors:** _none declared_
 
