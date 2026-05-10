@@ -186,5 +186,48 @@ defmodule Esr.Plugins.Feishu.Channels.ChatProxyTest do
     end
   end
 
+  describe "Esr.Channel.Registry smoke (manifest → loader → registry)" do
+    test "feishu's manifest declares chat_proxy and loader registers it" do
+      # Smoke proof that manifest → loader → registry is wired correctly.
+      # We don't rely on app-boot side-effects surviving (other tests, e.g.
+      # `Esr.Channel.RegistryTest`, call `Registry.clear/0` in on_exit and
+      # would race here). Instead we re-parse the live manifest + replay
+      # the loader's `register_channels/1` step inline; if the manifest
+      # is missing the channels: block, the parse returns [] and the
+      # lookup is :not_found.
+      manifest_path = Path.join([
+        Application.app_dir(:esr),
+        "priv/plugins/feishu/manifest.yaml"
+      ])
+
+      # In dev/test, plugins ship under runtime/lib/.../plugins/<name>/manifest.yaml,
+      # not priv. Resolve via the same path the loader uses.
+      manifest_path =
+        if File.exists?(manifest_path) do
+          manifest_path
+        else
+          Path.expand(
+            "../../../../../lib/esr/plugins/feishu/manifest.yaml",
+            __DIR__
+          )
+        end
+
+      {:ok, manifest} = Esr.Plugin.Manifest.parse(manifest_path)
+
+      assert Enum.any?(manifest.channels, fn ch ->
+               ch.name == "chat_proxy" and ch.module == ChatProxy
+             end),
+             "manifest.yaml must declare channels: with chat_proxy → #{inspect(ChatProxy)}"
+
+      # Replay loader's registration step (idempotent — Registry.register/3
+      # is upsert-style per registry_test.exs).
+      Enum.each(manifest.channels, fn %{name: name, module: module} ->
+        :ok = Esr.Channel.Registry.register("feishu", name, module)
+      end)
+
+      assert {:ok, ChatProxy} = Esr.Channel.Registry.lookup("feishu.chat_proxy")
+    end
+  end
+
   defp unique_sid, do: "test-fcp-channel-#{System.unique_integer([:positive])}"
 end

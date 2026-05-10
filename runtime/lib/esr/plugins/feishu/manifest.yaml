@@ -26,6 +26,20 @@ description: |
   (FeishuAppAdapter), per-chat proxy (FeishuChatProxy), per-app proxy
   (FeishuAppProxy), and the feishu_adapter_runner Python sidecar.
 
+# Top-level `channels:` block — populated by Esr.Plugin.Loader at boot
+# into Esr.Channel.Registry under `feishu.chat_proxy`. The module is the
+# addressable Channel lifecycle peer (per `Esr.Channel` behaviour); FCP
+# itself keeps its agent-router half + current message handling
+# unchanged. SessionTemplate loaders (Phase 4) instantiate one ChatProxy
+# Channel per session. Spec
+# 2026-05-10-session-template-and-channel.md, Phase 3.
+channels:
+  - name: chat_proxy
+    module: Esr.Plugins.Feishu.Channels.ChatProxy
+    config_schema:
+      type: object
+      properties: {}
+
 depends_on:
   core: ">= 0.1.0"
   plugins: []
