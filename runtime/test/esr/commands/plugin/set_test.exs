@@ -2,6 +2,7 @@ defmodule Esr.Commands.Plugin.SetTest do
   use ExUnit.Case, async: true
 
   alias Esr.Commands.Plugin.Set
+  alias Esr.Session.DefaultTemplate
 
   @tmp_dir System.tmp_dir!()
 
@@ -85,6 +86,60 @@ defmodule Esr.Commands.Plugin.SetTest do
         assert match?({:error, %{"type" => "unknown_config_key"}}, result) or
                  match?({:error, %{"type" => "no_config_schema"}}, result),
                "Expected config key rejection, got: #{inspect(result)}"
+    end
+  end
+
+  describe "virtual session namespace (Phase 5 Task 5.3)" do
+    @describetag :virtual_session
+
+    test "/plugin:set plugin=session key=default_template value=feishu-cc round-trips via DefaultTemplate.current/0" do
+      tmp_global =
+        System.tmp_dir!() |> Path.join("plugin_set_session_default_#{:rand.uniform(99_999)}")
+
+      File.mkdir_p!(tmp_global)
+      on_exit(fn -> File.rm_rf!(tmp_global) end)
+
+      cmd = %{
+        "kind" => "plugin_set",
+        "args" => %{
+          "plugin" => "session",
+          "key" => "default_template",
+          "value" => "feishu-cc",
+          "layer" => "global",
+          "_global_path_override" => tmp_global
+        }
+      }
+
+      assert {:ok, %{"text" => text}} = Set.execute(cmd)
+      assert text =~ "session.default_template"
+      assert text =~ "feishu-cc"
+      # Virtual namespace must NOT carry the "restart esrd" hint.
+      refute text =~ "restart esrd"
+
+      # Round-trip: DefaultTemplate.current/1 reads from the same path.
+      assert {:ok, "feishu-cc"} = DefaultTemplate.current(global_path: tmp_global)
+    end
+
+    test "rejects unknown key under session namespace" do
+      tmp_global =
+        System.tmp_dir!() |> Path.join("plugin_set_session_unknown_#{:rand.uniform(99_999)}")
+
+      File.mkdir_p!(tmp_global)
+      on_exit(fn -> File.rm_rf!(tmp_global) end)
+
+      cmd = %{
+        "kind" => "plugin_set",
+        "args" => %{
+          "plugin" => "session",
+          "key" => "made_up_key",
+          "value" => "nope",
+          "layer" => "global",
+          "_global_path_override" => tmp_global
+        }
+      }
+
+      assert {:error, %{"type" => "unknown_config_key", "message" => msg}} = Set.execute(cmd)
+      assert msg =~ "default_template"
     end
   end
 end

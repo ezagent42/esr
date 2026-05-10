@@ -37,22 +37,42 @@ defmodule Esr.Commands.Plugin.Unset do
 
   @valid_layers ~w(global user workspace)
 
+  # Phase 5 Task 5.3: virtual plugin namespaces (no on-disk manifest)
+  # also need a `/plugin:unset` path symmetric to `/plugin:set`. The
+  # `session` namespace is the first; future ones extend the list.
+  @virtual_namespaces ~w(session)
+
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     key = args["key"]
     layer_str = args["layer"] || "global"
 
-    with {:ok, _manifest} <- resolve_manifest(plugin_name),
-         {:ok, layer} <- parse_layer(layer_str),
-         {:ok, path_opts} <- resolve_path_opts(layer, args) do
-      delete_opts = [{:layer, layer} | path_opts]
-      :ok = Config.delete_layer(plugin_name, key, delete_opts)
+    cond do
+      plugin_name in @virtual_namespaces ->
+        with {:ok, layer} <- parse_layer(layer_str),
+             {:ok, path_opts} <- resolve_path_opts(layer, args) do
+          delete_opts = [{:layer, layer} | path_opts]
+          :ok = Config.delete_layer(plugin_name, key, delete_opts)
 
-      {:ok,
-       %{
-         "text" =>
-           "config key #{key} removed from #{plugin_name} [#{layer_str}]; restart esrd to apply"
-       }}
+          {:ok,
+           %{
+             "text" => "config key #{key} removed from #{plugin_name} [#{layer_str}]"
+           }}
+        end
+
+      true ->
+        with {:ok, _manifest} <- resolve_manifest(plugin_name),
+             {:ok, layer} <- parse_layer(layer_str),
+             {:ok, path_opts} <- resolve_path_opts(layer, args) do
+          delete_opts = [{:layer, layer} | path_opts]
+          :ok = Config.delete_layer(plugin_name, key, delete_opts)
+
+          {:ok,
+           %{
+             "text" =>
+               "config key #{key} removed from #{plugin_name} [#{layer_str}]; restart esrd to apply"
+           }}
+        end
     end
   end
 

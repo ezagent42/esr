@@ -43,24 +43,71 @@ defmodule Esr.Commands.Plugin.Set do
 
   @valid_layers ~w(global user workspace)
 
+  # Phase 5 Task 5.3: virtual plugin namespaces have no on-disk manifest
+  # but operators still need a `/plugin:set plugin=<ns> key=...` path to
+  # configure them. The `session` namespace owns `default_template` for
+  # SessionTemplate selection (spec §5.4). Each virtual entry maps to the
+  # set of declared keys; missing key → unknown_config_key, same as a
+  # real plugin's manifest config_schema gate.
+  @virtual_namespaces %{
+    "session" => MapSet.new(["default_template"])
+  }
+
   def execute(%{"args" => args} = _cmd) do
     plugin_name = args["plugin"]
     key = args["key"]
     value = args["value"]
     layer_str = args["layer"] || "global"
 
-    with {:ok, manifest} <- resolve_manifest(plugin_name),
-         :ok <- validate_config_key(manifest, key),
+    cond do
+      Map.has_key?(@virtual_namespaces, plugin_name) ->
+        write_virtual_namespace(plugin_name, key, value, layer_str, args)
+
+      true ->
+        with {:ok, manifest} <- resolve_manifest(plugin_name),
+             :ok <- validate_config_key(manifest, key),
+             {:ok, layer} <- parse_layer(layer_str),
+             {:ok, path_opts} <- resolve_path_opts(layer, args) do
+          store_opts = [{:layer, layer} | path_opts]
+          :ok = Config.store_layer(plugin_name, key, value, store_opts)
+
+          {:ok,
+           %{
+             "text" =>
+               "config written: #{plugin_name}.#{key} = #{inspect(value)} [#{layer_str}]; restart esrd to apply"
+           }}
+        end
+    end
+  end
+
+  defp write_virtual_namespace(plugin_name, key, value, layer_str, args) do
+    allowed = Map.fetch!(@virtual_namespaces, plugin_name)
+
+    with :ok <- validate_virtual_key(plugin_name, key, allowed),
          {:ok, layer} <- parse_layer(layer_str),
          {:ok, path_opts} <- resolve_path_opts(layer, args) do
       store_opts = [{:layer, layer} | path_opts]
       :ok = Config.store_layer(plugin_name, key, value, store_opts)
 
+      # Virtual namespaces don't require a restart — they don't drive any
+      # supervised plugin process. The "session" namespace's
+      # default_template is read on every /session:new without restart.
       {:ok,
        %{
-         "text" =>
-           "config written: #{plugin_name}.#{key} = #{inspect(value)} [#{layer_str}]; restart esrd to apply"
+         "text" => "config written: #{plugin_name}.#{key} = #{inspect(value)} [#{layer_str}]"
        }}
+    end
+  end
+
+  defp validate_virtual_key(plugin_name, key, allowed) do
+    if MapSet.member?(allowed, key) do
+      :ok
+    else
+      Render.error(__MODULE__.command_meta(), :unknown_config_key, %{
+        key: key,
+        valid_keys: inspect(MapSet.to_list(allowed))
+      })
+      |> tap(fn _ -> _ = plugin_name end)
     end
   end
 

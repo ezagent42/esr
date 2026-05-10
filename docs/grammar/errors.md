@@ -132,11 +132,14 @@ Generated from `command_meta/0`; do not edit directly.
 | `invalid_args` | `session_new` | session_new %{detail} |
 | `missing_capabilities` | `session_new` | missing capabilities: %{caps} |
 | `name_collision` | `session_new` | session name '%{name}' already used by another live session in workspace %{workspace} |
+| `no_default_template` | `session_new` | no default session template configured + no template= arg; available: %{available} — set via `/plugin:set plugin=session key=default_template value=<name>` |
 | `no_workspace_target` | `session_new` | no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name> |
 | `session_name_taken` | `session_new` | a session named '%{name}' already exists for owner '%{owner_user}' |
 | `session_persist_failed` | `session_new` | failed to write session.json for %{session_id}: %{details} |
 | `session_start_failed` | `session_new` | session start failed: %{details} |
+| `template_materialize_failed` | `session_new` | session template '%{template}' could not be materialized: %{details} |
 | `unknown_agent` | `session_new` | agent %{agent} not registered in agents.yaml |
+| `unknown_template` | `session_new` | session template '%{template}' not found; available: %{available} |
 | `workspace_gone` | `session_new` | workspace %{name} %{detail} |
 | `worktree_collision` | `session_new` | worktree branch '%{worktree}' already used by another live session in workspace %{workspace} |
 | `worktree_failed` | `session_new` | git worktree add failed: %{details} |

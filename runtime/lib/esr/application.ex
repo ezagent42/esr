@@ -321,6 +321,13 @@ defmodule Esr.Application do
         # plugin loader: failures Logger.warning + skip.
         Esr.Bundle.Loader.load_all()
 
+        # Phase 5 Task 5.1: auto-elect a single registered template as the
+        # operator's default if no default is configured yet. First-boot
+        # convenience — fresh esrd installs ship the feishu-cc bundle
+        # which auto-promotes here so `/session:new name=foo` works
+        # without any config step. Idempotent; never overwrites.
+        Esr.Session.DefaultTemplate.auto_elect_if_single()
+
       _ ->
         :ok
     end

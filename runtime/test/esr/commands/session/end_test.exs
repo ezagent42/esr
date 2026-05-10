@@ -36,6 +36,14 @@ defmodule Esr.Commands.Session.EndTest do
         Path.expand("../../fixtures/agents/simple.yaml", __DIR__)
       )
 
+    # Phase 5 cut-over: build the agent_def once via the materializer so
+    # tests that call Router.create_session directly can thread it
+    # through params (Router/AgentSpawner no longer fetch from
+    # agents.yaml). The fixture-loaded agents.yaml is still used to
+    # provide the ground-truth agent_def for these direct-invocation
+    # tests; production callers use the SessionTemplate path.
+    {:ok, cc_def} = Esr.Entity.Agent.Registry.agent_def("cc")
+
     # Ensure Scope.Router is running. Started as a supervised child in
     # app boot, but some test runs skip it — start-if-missing keeps the
     # suite self-contained.
@@ -65,11 +73,11 @@ defmodule Esr.Commands.Session.EndTest do
       end
     end)
 
-    :ok
+    {:ok, cc_def: cc_def}
   end
 
   describe "execute/1 happy path" do
-    test "ends an existing agent-session via Scope.Router" do
+    test "ends an existing agent-session via Scope.Router", %{cc_def: cc_def} do
       Grants.load_snapshot(%{"ou_alice" => ["*"]})
 
       {:ok, sid} =
@@ -79,6 +87,7 @@ defmodule Esr.Commands.Session.EndTest do
           principal_id: "ou_alice",
           chat_id: "oc_end_happy_#{System.unique_integer([:positive])}",
           thread_id: "om_end_happy_#{System.unique_integer([:positive])}",
+          agent_def: cc_def
         })
 
       # Supervisor exists pre-teardown.
@@ -124,7 +133,7 @@ defmodule Esr.Commands.Session.EndTest do
   end
 
   describe "execute/1 PR-21g name= resolution" do
-    test "args.name resolves via SessionRegistry.lookup_by_name + ends" do
+    test "args.name resolves via SessionRegistry.lookup_by_name + ends", %{cc_def: cc_def} do
       Grants.load_snapshot(%{"ou_pr21g_a" => ["*"]})
 
       env = "test-env-#{System.unique_integer([:positive])}"
@@ -137,6 +146,7 @@ defmodule Esr.Commands.Session.EndTest do
           principal_id: "ou_pr21g_a",
           chat_id: "oc_pr21g_#{sid_suffix}",
           thread_id: "om_pr21g_#{sid_suffix}",
+          agent_def: cc_def
         })
 
       # Stage URI claim so lookup_by_name resolves to sid.
