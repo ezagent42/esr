@@ -28,12 +28,12 @@ defmodule Esr.Resource.Session.RegistryTest do
     dir = Path.join([tmp, "default", "sessions", uuid])
     File.mkdir_p!(dir)
     data = %{
-      "schema_version" => 1,
+      "schema_version" => 2,
       "id" => uuid,
       "name" => name,
       "owner_user" => owner_uuid,
       "workspace_id" => @ws_uuid,
-      "agents" => [],
+      "agent_ids" => [],
       "primary_agent" => nil,
       "attached_chats" => [],
       "created_at" => "2026-05-07T12:00:00Z",
@@ -114,15 +114,25 @@ defmodule Esr.Resource.Session.RegistryTest do
 
       :ok = Registry.add_agent_to_session(data_dir, session_id, "cc", "dev", %{})
 
-      # Verify persisted JSON contains the agent.
+      # Verify session.json now carries `agent_ids` (Phase 7 hardcut).
       session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
       persisted = File.read!(session_json_path) |> Jason.decode!()
-      assert [%{"type" => "cc", "name" => "dev"}] = persisted["agents"]
+      assert [agent_id] = persisted["agent_ids"]
       assert persisted["primary_agent"] == "dev"
+      refute Map.has_key?(persisted, "agents")
+
+      # Verify per-instance JSON file was written.
+      agent_json_path = Path.join([data_dir, "sessions", session_id, "agents", agent_id <> ".json"])
+      assert File.exists?(agent_json_path)
+      agent_doc = File.read!(agent_json_path) |> Jason.decode!()
+      assert agent_doc["schema_version"] == 2
+      assert agent_doc["name"] == "dev"
+      assert agent_doc["type"] == "cc"
+      assert agent_doc["session_ids"] == [session_id]
 
       # Verify ETS is also updated.
       {:ok, sess} = Registry.get_session(session_id)
-      assert [%{type: "cc", name: "dev"}] = sess.agents
+      assert sess.agent_ids == [agent_id]
       assert sess.primary_agent == "dev"
     end
 

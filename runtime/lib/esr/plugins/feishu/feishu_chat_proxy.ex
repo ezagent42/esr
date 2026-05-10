@@ -1031,10 +1031,14 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   # We thread it as {:text, uri, enriched_meta} so cc_process sees the
   # URI as text content and the meta carries msg_type for handler routing.
   defp forward_media_to_cc(envelope_out, upstream_meta, state) do
+    # Phase 7 (2026-05-10): thread `current_session_id` (see
+    # forward_text_and_react/4 comment) so multi-session-per-instance
+    # CCProcess routes the media reply back to this session.
     enriched_meta =
       Map.merge(upstream_meta, %{
         msg_type: envelope_out.msg_type,
-        media_uri: envelope_out.content
+        media_uri: envelope_out.content,
+        current_session_id: state.session_id
       })
 
     case Esr.ActorQuery.list_by_role(state.session_id, :cc_process) do
@@ -1062,9 +1066,18 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
     # via FAA's `handle_downstream` watching for `reply_to_message_id`.
     # M-2.1: ActorQuery replaces state.neighbors. Multi-instance same
     # role (Q5.2) — pick the first; future fan-out hooks here.
+    #
+    # Phase 7 (2026-05-10): thread `current_session_id` into the meta
+    # so CCProcess (which may be shared across multiple attached
+    # sessions) routes its reply / send_input back to THIS session's
+    # cli:channel/<sid> topic and *_chat_proxy. Without this key,
+    # CCProcess falls back to its originating `state.session_id` and
+    # every reply lands in the wrong chat for the secondary sessions.
+    meta_with_sid = Map.put(meta, :current_session_id, state.session_id)
+
     case Esr.ActorQuery.list_by_role(state.session_id, :cc_process) do
       [pid | _] ->
-        send(pid, {:text, text, meta})
+        send(pid, {:text, text, meta_with_sid})
         {:forward, [], state}
 
       [] ->

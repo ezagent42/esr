@@ -197,6 +197,28 @@ _internal kind only — not slash-callable_
   - `unknown_agent_type` — agent type '%{type}' is not declared in any enabled plugin; known types: %{known}
   - `invalid_args` — /agent:add requires args.type and args.name (non-empty strings); session_id= is optional when chat-current is set
 
+### `agent_add_session`
+
+**slash:** `/agent:add-session`
+
+**module:** `Esr.Commands.Agent.AddSession`
+
+**permission:** `session:default/spawn`
+
+**bindings:** requires_user_binding=`true` requires_workspace_binding=`false`
+
+**description:** 把已有 agent 实例绑定到另一个 session（Phase 7 多会话同实例）
+
+**args:**
+  - `session` (required) — target session UUID to attach the instance to
+  - `name` (required) — existing instance name
+
+**errors:**
+  - `no_source_session` — no chat-current session and source_session_id= not provided; can't locate instance '%{name}'
+  - `instance_not_found` — no agent named '%{name}' in source session '%{source}'
+  - `name_taken_in_target` — target session '%{target}' already has a different agent named '%{name}'
+  - `invalid_args` — /agent:add-session requires args.session (UUID) and args.name (non-empty string)
+
 ### `agent_list`
 
 **slash:** `/agent:list`

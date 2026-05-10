@@ -15,6 +15,15 @@ defmodule Esr.Application do
 
   @impl Application
   def start(_type, _args) do
+    # Phase 7 (2026-05-10): one-shot agent_instance v1→v2 migration.
+    # Detects any v1-shaped session.json under the active runtime home
+    # and rewrites it in place + writes per-instance files at
+    # sessions/<sid>/agents/<uuid>.json. Idempotent — second boot is a
+    # no-op once everything is v2. Best-effort: failures Logger.warning
+    # (never raise) so a bad on-disk state doesn't keep esrd from
+    # booting. See `Esr.Migrations.AgentInstancesV1ToV2`.
+    :ok = Esr.Migrations.AgentInstancesV1ToV2.run_if_needed()
+
     # PR-21β 2026-04-30: per-boot random token injected into every
     # worker subprocess via Esr.Workers.{AdapterProcess,HandlerProcess}.
     # Python-side guards refuse to start when the env var is missing,

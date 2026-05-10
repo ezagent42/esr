@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esr.local/schema/agent_instance.v2.json",
+  "title": "ESR agent instance (v2)",
+  "description": "Per-instance JSON file at sessions/<sid>/agents/<instance_uuid>.json. Phase 7 of the SessionTemplate + Channel migration: an instance is no longer pinned to a single owning session — `session_ids` is the array of every session the instance is attached to (originating session at index 0).",
+  "type": "object",
+  "required": ["schema_version", "id", "session_ids", "type", "name", "config", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 2 },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "session_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+      }
+    },
+    "type": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "config": { "type": "object" },
+    "created_at": { "type": "string" },
+    "actor_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cc": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "pty": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      }
+    }
+  }
+}

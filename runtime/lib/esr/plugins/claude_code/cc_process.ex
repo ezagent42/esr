@@ -308,8 +308,15 @@ defmodule Esr.Entity.CCProcess do
   # params/meta shape CC's channels listener expects.
   defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
     if state.cc_mcp_ready do
+      # Phase 7 (2026-05-10): the broadcast topic key is the
+      # current_session_id from the inbound's meta — for multi-session-
+      # per-instance, the CCProcess pid is shared across N sessions and
+      # `state.session_id` only names the originating (primary) session.
+      # When the inbound came from another attached session, its
+      # cli:channel/<sid> topic is the one cc_mcp listens on for that
+      # session's chat, so the reply must broadcast there.
       envelope = build_channel_notification(state, text)
-      broadcast_notification(state.session_id, envelope)
+      broadcast_notification(current_session_id_or_primary(state), envelope)
       state
     else
       # PR-24 step 2: route Feishu inbound directly to claude's PTY
@@ -347,19 +354,21 @@ defmodule Esr.Entity.CCProcess do
           {:reply, text}
       end
 
-    # M-2.2: ActorQuery replaces state.neighbors. Prefer any
-    # `*_chat_proxy` role (the production upstream-reply target — the
-    # role atom is registered by each plugin's chat-proxy peer in init).
-    # Fall back to `:cc_proxy` for unit tests that inject a raw test pid
-    # via the `:cc_proxy` role index.
-    case find_reply_target(state.session_id) do
+    # Phase 7 (2026-05-10): :reply lookup uses the inbound's
+    # current_session_id (from stashed meta) so a CCProcess shared
+    # across sessions sends each reply to the right session's
+    # *_chat_proxy. Fallback to state.session_id (the primary /
+    # originating session) for unit-test paths that don't thread meta.
+    target_sid = current_session_id_or_primary(state)
+
+    case find_reply_target(target_sid) do
       {:ok, pid} ->
         send(pid, msg)
 
       :not_found ->
         Logger.warning(
           "cc_process: :reply with no *_chat_proxy or cc_proxy via ActorQuery " <>
-            "session_id=#{state.session_id}"
+            "session_id=#{target_sid}"
         )
     end
 
@@ -434,6 +443,16 @@ defmodule Esr.Entity.CCProcess do
 
     sender_id = Map.get(last, :sender_id) || ""
 
+    # Phase 7 (2026-05-10): include current_session_id in the
+    # notification envelope so cc_mcp (and downstream <channel> tag
+    # rendering) can pass it back as a tool argument. Falls back to
+    # the originating session_id when meta has none.
+    current_sid =
+      case Map.get(last, :current_session_id) do
+        sid when is_binary(sid) and sid != "" -> sid
+        _ -> state.session_id || ""
+      end
+
     base = %{
       "kind" => "notification",
       # PR-3.7 + Phase 6 (2026-05-10): source is the inbound channel's
@@ -444,6 +463,7 @@ defmodule Esr.Entity.CCProcess do
       # "unknown" to downstream cc_mcp, which can render the <channel>
       # tag accordingly.
       "source" => Map.get(ctx, "channel_adapter") || Map.get(ctx, :channel_adapter) || "",
+      "current_session_id" => current_sid,
       # T12-comms-3d: prefer the per-event chat_id from FCP's meta — it's
       # authoritative for this specific inbound. Fall back to proxy_ctx
       # only for legacy callers that hadn't threaded it through yet.
@@ -503,11 +523,27 @@ defmodule Esr.Entity.CCProcess do
   # 3-tuple `{:text, text, meta}` and stash in state so dispatch_action
   # builds the notification envelope with real attribution instead of
   # empty strings.
+  #
+  # Phase 7 (2026-05-10) addition: if `meta.current_session_id` is set,
+  # `dispatch_action(send_input | reply)` uses it as the routing key
+  # so a CCProcess attached to multiple sessions sends each reply to
+  # the right session's *_chat_proxy. Falls back to state.session_id
+  # for unit-test paths and legacy callers that haven't threaded it.
   defp stash_upstream_meta(state, {:text, _bytes, meta}) when is_map(meta) do
     Map.put(state, :last_meta, meta)
   end
 
   defp stash_upstream_meta(state, _other), do: state
+
+  # Phase 7: pick the inbound's current_session_id when present;
+  # otherwise fall back to the originating session_id stored at init.
+  # This is the linchpin of multi-session-per-instance reply routing.
+  defp current_session_id_or_primary(state) do
+    case state |> Map.get(:last_meta, %{}) |> Map.get(:current_session_id) do
+      sid when is_binary(sid) and sid != "" -> sid
+      _ -> state.session_id
+    end
+  end
 
   # Handler-side contract (py/src/esr/ipc/handler_worker.py process_handler_call):
   # the event dict must carry `event_type` + `args`. Earlier versions of this
