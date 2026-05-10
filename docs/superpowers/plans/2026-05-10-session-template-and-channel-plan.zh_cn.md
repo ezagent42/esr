@@ -103,10 +103,12 @@
 
 **PR：** `feat/sessiontemplate-phase-5-session-new-cutover` → `dev`。估计 ~500 LOC + ~200 LOC 测试 + 2 e2e。
 
+**reviewer 修正（Open Q A）：** 现有 pipeline 不是"硬编码 Elixir" —— 是通用 walker，已经 yaml-driven 了（`agent_spawner.ex:262-290`）。Phase 5 切的是 *输入源*：从 agents.yaml-derived `agent_def` 切到 template-derived `agent_def`。spawn 逻辑不变。
+
 **任务：**
 1. `Esr.Session.DefaultTemplate` 模块：从 `plugins.yaml > config.session.default_template` 读；如果没设、且只有一个 template 注册则 boot 时自动选为 default
-2. 重写 `Esr.Commands.Session.New`：接受 `template=` arg，解析 template，per-session AgentSupervisor 下起 Channel + spawn agent + wire flow
-3. **Hardcut**：删现有 `Esr.Plugins.Feishu.FeishuChatProxy` spawn 那段（router 部分留着）
+2. 重写 `Esr.Commands.Session.New`：接受 `template=` arg，从 template 构 `agent_def` map（取代 `agent_spawner.ex:137` 的 `Esr.Entity.Agent.Registry.agent_def/1` 查找），per-session AgentSupervisor 下起 Channel；`AgentSpawner.do_create/1` 和 walker（`agent_spawner.ex:262-290`）**不变**
+3. **Hardcut on source switch**：删 `agent_spawner.ex:137` 的 `Esr.Entity.Agent.Registry.agent_def/1` 查找；spawn walker 留着
 4. 操作员 default-template UX：`/plugin:set plugin=session key=default_template value=feishu-cc` 不需要 esrd restart
 5. e2e scenario 24 —— template 实例化的 session 端到端（同 scenario 22 形状但走 template loader）
 6. e2e scenario 26 —— 操作员 drop `~/.esrd-<inst>/<inst>/session_templates/foo.yaml`、`/plugin:reload session_templates`、`/session:new template=foo` 跑通
@@ -120,13 +122,16 @@
 
 **PR：** `feat/sessiontemplate-phase-6-agents-yaml-dissolve` → `dev`。估计 ~800 LOC + ~300 LOC 测试。
 
+**注意（reviewer Open Q B）：** 13 个消费者是最坏情况。Phase 5 已经把 `commands/session/new.ex` 和 `session/agent_spawner.ex` 迁了，到 Phase 6 实际触及 **≤11** 个文件。
+
 **任务：**
+0. **先定位 agents.yaml 在哪** —— `find runtime -name 'agents*.yaml'` + grep。reviewer 指出 priv 里其实没有种子文件（runtime_home-相对、operator 环境特定）。Task 6.6 删的目标可能是 `tools/wipe-esrd-home.sh` 和 first-run seed 代码、不是 priv 文件
 1. plugin manifest 加 `agent_kinds:` block 解析（mirror Phase 1 的 `channels:` 块）
 2. `extract_handler_modules/1`（application.ex）从 plugin registry 读
-3. `Esr.Yaml.FragmentMerger` 多层 merge 逻辑迁到 `agent_kinds[]`
-4. spawner / snapshot_registry / workspace.remove / agent_types / capability / session.new / session.router / session.agent_spawner —— 每文件去 agents.yaml 读、改读 plugin registry agent_kinds
+3. **删 `Esr.Entity.Agent.Registry` 的 FragmentMerger 调用** —— reviewer 指出 FragmentMerger **是通用的**（其它 FileLoader 也用），不动；只删 Agent Registry 的调用
+4. **8 个 sub-task per consumer**（不是一个 mega task）：spawner / snapshot_registry / workspace.remove / agent_types / capability / session.router / cc_process moduledoc / claude_code manifest moduledoc。每个 sub-task 独立 commit
 5. cap-source 迁移验收测试：snapshot 前后 cap 解析结果字节相同
-6. **删 agents.yaml 文件 + priv 种子**
+6. **删 agents.yaml 文件**（Task 6.0 实测后定位的所有目标）
 7. `git grep -l agents.yaml runtime/lib/` 必须为空（moduledoc 历史注释除外）
 8. push + PR
 

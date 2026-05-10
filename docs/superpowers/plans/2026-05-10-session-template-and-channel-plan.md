@@ -187,6 +187,15 @@ Expected: fails with `Esr.Channel undefined`.
 
 - [ ] **Step 3: Implement behaviour**
 
+> **Adapter pattern note** (per reviewer Open Q D): `EsrWeb.McpController`
+> today uses Phoenix.PubSub broadcasts (`cli:channel/<sid>` topic), not
+> pid-targeted dispatch. Phase 2's MCP-as-Channel wrap means the Channel
+> pid encapsulates the controller's PubSub: `dispatch/2` on a Channel pid
+> does `Phoenix.PubSub.broadcast(EsrWeb.PubSub, topic, msg)`, and
+> `subscribe/3` registers a listener pid for forwarding from broadcast →
+> direct send. The `pid` arg in the callback signature represents the
+> Channel's lifecycle peer, not the wire-level transport.
+
 ```elixir
 defmodule Esr.Channel do
   @moduledoc """
@@ -198,6 +207,12 @@ defmodule Esr.Channel do
   Channels are supervised under per-session AgentSupervisor with
   `:one_for_all` strategy (M-2.6). Crash → siblings restart in
   lockstep → re-register their pids in the per-session Registry.
+
+  Note on dispatch/2: the `pid` arg is the Channel's GenServer
+  lifecycle peer, NOT the wire-level transport. Concrete impls may
+  internally route via Phoenix.PubSub broadcast, HTTP POST, etc.
+  The Channel pid is the addressable lifecycle handle; the wire
+  shape is the impl's choice.
   """
 
   @callback start_link(opts :: keyword) :: {:ok, pid} | {:error, term}
@@ -640,7 +655,9 @@ Bash script:
 
 ## Phase 5 — `/session:new` cutover (scenarios 24, 26)
 
-**Goal:** `/session:new` reads template + instantiates session via SessionTemplate. **Hardcut delete the existing hard-coded session pipeline.** ESR is pre-production; no compat shim.
+**Goal:** `/session:new` reads template + instantiates session via SessionTemplate. The pipeline driver switches from agents.yaml-derived `agent_def` to template-derived `agent_def` (the spawn logic in `Esr.Session.AgentSpawner` is already YAML-driven via the agent_def map; what changes is the SOURCE of that map). **Hardcut on the source switch** — once Phase 5 lands, no path reads agents.yaml for session-creation wiring; ESR is pre-production, no compat shim.
+
+(Reviewer correction: the existing pipeline isn't "hard-coded Elixir" — it's already a generic walker. Phase 5 swaps inputs, doesn't rewrite the walker.)
 
 **PR:** `feat/sessiontemplate-phase-5-session-new-cutover` → `dev`. Estimate ~500 LOC + ~200 LOC tests + 2 e2e scenarios.
 
@@ -653,11 +670,13 @@ Add `Esr.Session.DefaultTemplate` module reading `default_template` from `plugin
 Modify `Esr.Commands.Session.New`:
 - Accept `template=<name>` arg
 - Resolve template (explicit, or default)
-- Instantiate Channels under per-session AgentSupervisor
-- Spawn agents per template's `agents:` block
-- Wire `flow:` per declarations
+- Build `agent_def` map from template's `channels:` + `agents:` + `flow:` blocks (replaces the agents.yaml-derived agent_def lookup at `runtime/lib/esr/session/agent_spawner.ex:137`)
+- Channels instantiated under per-session AgentSupervisor as new children alongside CC + PTY
+- `Esr.Session.AgentSpawner.do_create/1` and pipeline walker (`agent_spawner.ex:262-290`) **stay unchanged** — only the agent_def *source* swaps from `Esr.Entity.Agent.Registry.agent_def/1` to `Esr.SessionTemplate.Registry.materialize/2`.
 
-**Hardcut:** delete the existing `Esr.Plugins.Feishu.FeishuChatProxy` spawn from session-creation path. The Channel impl ships its own peer; the chat-proxy router half stays for the inbound→agent_router translation.
+**Hardcut on the source switch:** delete the `Esr.Entity.Agent.Registry.agent_def/1` lookup from `agent_spawner.ex:137`. The spawn walker stays.
+
+**Note on `Esr.Plugins.Feishu.FeishuChatProxy`:** the FCP module's *channel half* is already extracted in Phase 3; Phase 5 just wires the new Channel impl as a per-session child. The FCP module's *router half* (mention parser dispatch, primary-agent routing) stays under the same module name — it's invoked by the template's `flow.inbound[].pipeline:` declarations, not removed.
 
 ### Task 5.3: Operator default-template UX
 
@@ -679,7 +698,23 @@ Drop a custom template at `~/.esrd-<inst>/<inst>/session_templates/foo.yaml`; `/
 
 **Goal:** Delete `agents.yaml`. Move agent type definitions into plugin manifest `agent_kinds:` block. Hardcut.
 
+**Note (per reviewer Open Q B):** the plan's "13 consumers" count is the worst case. By the time this Phase starts, Phase 5 already migrated `commands/session/new.ex` and `session/agent_spawner.ex` (their agents.yaml reads moved to template-driven), so this Phase effectively touches **≤11** files.
+
 **PR:** `feat/sessiontemplate-phase-6-agents-yaml-dissolve` → `dev`. Estimate ~800 LOC + ~300 LOC tests.
+
+### Task 6.0: Locate the agents.yaml on-disk seed
+
+Reviewer Open Q C: plan says "rm `runtime/priv/agents.yaml*` (or wherever the seed lives)" — the seed location wasn't confirmed. Before the dissolution work begins:
+
+```bash
+find runtime -name 'agents*.yaml' -o -name 'agents.yaml*' 2>&1 | sort
+find runtime -path '*priv*' -name '*agent*' 2>&1
+grep -rn '"agents.yaml"\|/agents\.yaml\|@agents_yaml' runtime/lib/ | head -20
+```
+
+Document every match. The `application.ex:379` comment said "load from `<runtime_home>/agents.yaml`" — runtime_home is `~/.esrd-<inst>/<inst>/`, so the seed is **operator-environment-specific**, not in `runtime/priv/`. The `priv/agents.yaml*` rm in Task 6.6 likely doesn't apply (no priv copy exists) — instead `tools/wipe-esrd-home.sh` and any first-run seed code are the targets.
+
+Output of Task 6.0: a definitive list of every file/code-path that creates, reads, or copies `agents.yaml`. Used by Task 6.6's deletion plan.
 
 ### Task 6.1: Add `agent_kinds:` block parsing to plugin manifest
 
@@ -689,13 +724,40 @@ Drop a custom template at `~/.esrd-<inst>/<inst>/session_templates/foo.yaml`; `/
 
 Read agent_kinds from plugin registry; aggregate `handler_module` field across all enabled plugins.
 
-### Task 6.3: Migrate FragmentMerger semantics
+### Task 6.3: Drop one FragmentMerger caller
 
-`Esr.Yaml.FragmentMerger` logic for "core + plugin fragments + user override" was agents.yaml-centric. Move it to merge `agent_kinds[]` across plugin manifests + an optional `~/.esrd-<inst>/<inst>/agent_kinds/<name>.yaml` operator override path (mirrors session_templates).
+Reviewer correction: `Esr.Yaml.FragmentMerger` is **generic** (per its moduledoc:
+"agents.yaml / slash-routes.yaml / capabilities.yaml shape"). It's used by
+`SlashRoute.FileLoader` + `Capability.FileLoader` too — those uses stay.
+Phase 6's job here is just to **delete `Esr.Entity.Agent.Registry`'s
+`merge_keyed/2` call site** (since the Registry itself goes away).
+Merger module retained.
 
-### Task 6.4: Migrate spawner + snapshot_registry + workspace.remove + agent_types + capability + session.new + session.router + session.agent_spawner
+If a `~/.esrd-<inst>/<inst>/agent_kinds/<name>.yaml` operator override
+is wanted post-dissolution, that's its own Task (separate phase or skip
+v1; YAGNI for now since plugin manifest already supports per-deployment
+overrides).
 
-Each is a per-file modification; small. Each delete the agents.yaml read, replace with plugin-registry agent_kinds read.
+### Task 6.4: Per-consumer migration (8 sub-tasks)
+
+Reviewer correction: bundling 8 file migrations into one task makes the PR
+500+ LOC mega-change with hard review. Each consumer gets its own sub-task
++ its own commit. **Note:** Phase 5 already touched `commands/session/new.ex`
+and `session/agent_spawner.ex` — by the time Phase 6 starts, the agents.yaml
+references in those two files should already be removed, so this list
+effectively shrinks to 11 (or fewer).
+
+- [ ] **6.4.1**: `runtime/lib/esr/interface/spawner.ex` — read agent_kinds from plugin registry
+- [ ] **6.4.2**: `runtime/lib/esr/interface/snapshot_registry.ex` — same source change
+- [ ] **6.4.3**: `runtime/lib/esr/commands/workspace/remove.ex` — workspace deletion checks read plugin agent_kinds + active instances
+- [ ] **6.4.4**: `runtime/lib/esr/commands/plugin/agent_types.ex` — drop agents.yaml fallback (already partially uses plugin registry post-PR-263)
+- [ ] **6.4.5**: `runtime/lib/esr/resource/capability.ex` — `capabilities_required` source moves to plugin manifest agent_kinds[].capabilities_required (cap-resolution semantics preserved per Task 6.5 acceptance test)
+- [ ] **6.4.6**: `runtime/lib/esr/session/router.ex` — rename `:agents_yaml_reloaded` event → `:agent_kinds_reloaded`; re-source from plugin manifest reload
+- [ ] **6.4.7**: `runtime/lib/esr/plugins/claude_code/cc_process.ex` — moduledoc reference deleted (no logic change)
+- [ ] **6.4.8**: `runtime/lib/esr/plugins/claude_code/manifest.yaml` — moduledoc reference deleted (no logic change)
+
+Each sub-task: edit → run targeted tests → commit. The PR ends up with 8
+small commits + the cap-resolution snapshot test (Task 6.5) as a 9th.
 
 ### Task 6.5: Cap-source migration acceptance test
 
