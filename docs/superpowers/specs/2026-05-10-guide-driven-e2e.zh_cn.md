@@ -135,7 +135,71 @@ agent: cc
 admin-CLI-only 流的 drift bug 出现再加。recurring bug class 是
 chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 
-### 3.3 Claude Code hook
+### 3.3 `docs/guides/full-user-journey.md` —— 金标准索引
+
+新文件 `docs/guides/full-user-journey.md` 是 ESR 支持的**所有操作员
+journey 的官方索引**。人类可读：操作员落到这里看到完整 journey 地图，
+点入任何 sub-flow。机器可读：每行链到一个 per-flow 指南（带 fence），
+CI 的 replay 循环走每个被链接的 guide。
+
+形态（草图）：
+
+```markdown
+# ESR 全部用户 journey
+
+完整的操作员 journey，按 sub-flow 切。每个 sub-flow 自己的 fenced
+指南同时充当 e2e scenario。
+
+| Sub-flow | 覆盖什么 | Guide | E2E scenario |
+|---|---|---|---|
+| Bootstrap | Fresh esrd / 第一个 user / 注册 adapter / 绑 feishu | [flow-bootstrap.md](flow-bootstrap.md) | tests/e2e/scenarios/01_*.sh |
+| Workspace + session | workspace 创建 / session 起 + agent 起 / 纯文本 → CC reply | [flow-workspace-session.md](flow-workspace-session.md) | tests/e2e/scenarios/19_*.sh |
+| Multi-session | 一个 CC 实例两 chat via /agent:add-session | [flow-multi-session.md](flow-multi-session.md) | tests/e2e/scenarios/28_*.sh |
+| PTY attach | /claude_code:tui → xterm.js | [flow-pty-attach.md](flow-pty-attach.md) | tests/e2e/scenarios/22_*.sh |
+| Plugin lifecycle | install / enable / disable / hot-reload | [flow-plugin-lifecycle.md](flow-plugin-lifecycle.md) | tests/e2e/scenarios/16_*.sh |
+| Bundle install | 外部路径 bundle 安装 + 依赖检查 | [flow-bundle.md](flow-bundle.md) | tests/e2e/scenarios/29_*.sh |
+| ... | ... | ... | ... |
+```
+
+为什么单立索引文件（而不是把 fence 直接放 `full-user-journey.md`）：
+- journey 太长一次 fence-replay 跑不完；想要 sub-flow 级隔离 fixture
+  （有些要 fresh esrd，有些在前序状态上 build）。per-flow 文件 =
+  per-flow fixture。
+- 操作员看索引要先看地图，再 drill-down。fence 把地图弄乱。
+- CI 并行：`for flow in flow-*.md; do replay-guide.sh & done`。
+
+防腐烂规则：发布新的操作员可见 flow 时，PR 加一行到
+`full-user-journey.md` + 一个对应的 `flow-<name>.md`。reviewer 拒
+触及 `runtime/lib/esr/commands/` 但没加 guide 行的 PR。
+
+### 3.4 `tests/e2e/scenarios/*.sh` 头部标注
+
+每个 scenario 脚本必须在头部声明它来自哪个指南：
+
+```bash
+#!/usr/bin/env bash
+# scenario 19 — session-first default workspace resolution.
+#
+# Replays: docs/guides/flow-workspace-session.md
+#
+# 本脚本是薄壳。改 guide，别改本文件。
+set -Eeuo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+exec bash "${SCRIPT_DIR}/../../../scripts/replay-guide.sh" "${SCRIPT_DIR}/../../../docs/guides/flow-workspace-session.md"
+```
+
+linter（`scripts/check-scenario-headers.sh`，~30 LOC bash）：
+- 走 `tests/e2e/scenarios/*.sh`
+- 断言每个文件前 20 行有 `# Replays: docs/guides/<file>.md`
+- 断言被引用的 guide 存在
+- 断言 scenario 文件短（≤ 30 LOC）—— 长自定义逻辑要么放 guide
+  要么放一次性 `*-custom.sh` 豁免列表
+
+跟 `replay-guide.sh` 一起当 CI 一步跑。没加标注的 scenario 偷溜进
+来时挂掉。
+
+### 3.5 Claude Code hook
 
 `.claude/hooks/replay-guide-reminder.json`：
 
@@ -154,7 +218,7 @@ chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 `hookify:` skill）。目标：改 command 文件时 agent / 开发者收到
 一行提醒。
 
-### 3.4 CLAUDE.md 新增
+### 3.6 CLAUDE.md 新增
 
 3 短行，详细见 spec：
 
@@ -169,7 +233,7 @@ chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 按用户 CLAUDE.md 纪律（2026-05-10 设）：CLAUDE.md 保持紧凑，
 长内容外链。
 
-### 3.5 CI workflow step
+### 3.7 CI workflow step
 
 `.github/workflows/ci.yml` 的 `build-and-test` job 追加：
 
@@ -191,22 +255,49 @@ chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 
 ## 4. 迁移计划
 
-3 阶段，~300 LOC 总。
+4 阶段，~400 LOC 总。
+
+### Phase 0：审计 + 清理 `docs/guides/`（~50 LOC，1 个 PR）
+
+`docs/guides/` 现状（2026-05-10 审计）：
+
+| 文件 | 状态 | 动作 |
+|---|---|---|
+| `2026-05-10-sessiontemplate-feishu-test.md` | 当前（刚发）| 改名 → `flow-sessiontemplate-feishu-test.md`；加 fence |
+| `feishu-adapter-setup.md` | 当前 | 留；加 fence |
+| `operator-bootstrap-journey.md` | 当前 | 改名 → `flow-bootstrap.md`（或拆 `flow-bootstrap.md` + `flow-workspace-session.md`）；加 fence |
+| `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | 是 checklist 不是 journey | 留；从 `full-user-journey.md` 链作「验证 checklist」|
+| `writing-an-agent-topology.md` | 可能过期（agents.yaml 在 Phase 6 注销）| **审计**：如果引用 `agents.yaml` 当 canonical → 删或重写为 `agent_kinds:` 块 |
+
+动作：
+1. grep 每个 guide 找过期引用：`agents.yaml`、删除的 slash、rev-3
+   之前 grammar 等。删真过期的；重写半过期的
+2. 命名标准化：每个 per-flow guide 是 `flow-<topic>.md`
+3. 建 `docs/guides/full-user-journey.md` 当索引（一开始空行 ——
+   Phase 1+ 随 fence 落地填）
+4. 退役 `2026-05-10-` 日期前缀名（一次性测试 guide；并入
+   `flow-sessiontemplate-feishu-test.md`）
 
 ### Phase 1：基础（~150 LOC，1 个 PR）
 
 - 写 `scripts/replay-guide.sh`（~100 LOC bash）
+- 写 `scripts/check-scenario-headers.sh`（~30 LOC bash）—— 头部
+  标注 linter
 - 加 `.claude/hooks/replay-guide-reminder.json`（按 hook DSL 等价）
 - CLAUDE.md 加一节（3 行 + 链接）
-- `.github/workflows/ci.yml` 加一步
+- `.github/workflows/ci.yml` 加一步（replay + header-check）
 - 烟测：合成最小指南 `docs/guides/_replay_smoke.md`，1 对 input/output；
   CI 跑绿
 
 ### Phase 2：Canary（~50 LOC + 指南升级）
 
-- 升级 `docs/guides/operator-bootstrap-journey.md`（连同 `.zh_cn.md`
-  镜像、fence 共享），给 5 个主步骤加 fence（workspace、session、
-  agent、纯文本 → CC reply、TUI URL）
+- 升级 `docs/guides/flow-bootstrap.md`（从 `operator-bootstrap-journey.md`
+  改名，连同 `.zh_cn.md` 镜像），给 5 个主步骤加 fence（workspace、
+  session、agent、纯文本 → CC reply、TUI URL）
+- `tests/e2e/scenarios/19_session_first_default.sh` 加
+  `# Replays: docs/guides/flow-bootstrap.md` 头（或按 §3.4 替成
+  thin-wrapper 形态）
+- `docs/guides/full-user-journey.md` 加 bootstrap 一行
 - 本地 replay → CI 绿
 - 验证 2026-05-10 `/session:new name=test-cc` regression：对
   `dev@8777357`（pre-#334）回放 step 8 FAIL；对 post-#334 PASS。
@@ -214,8 +305,11 @@ chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 
 ### Phase 3：随特性扩散
 
-- 新特性发布时它的指南顺手加 fence
+- 新特性发布 → `full-user-journey.md` 加一行 + 一个 per-flow
+  指南带 fence。PR review 拒绝触 `runtime/lib/esr/commands/` 但
+  没加 guide 行的 PR
 - 现有指南被改时如果没 fence 就加上
+- 每个迁移的 scenario 加 `# Replays: <guide>` 头
 - 不强求一次到位；覆盖跟着正常特性工作扩散
 
 如果一年下来还是有 drift 漏过 → 再考虑加
@@ -232,8 +326,11 @@ chat-flow drift；admin CLI 测试通过 `esr_cli admin submit` 已经能用。
 | 2 | 改 `runtime/lib/esr/commands/*.ex` 时 hook 触发 | 手工触发 |
 | 3 | CLAUDE.md 更新；spec 链接到位 | 看文件 |
 | 4 | CI 对有 fence 指南跑 replay | 绿 PR |
-| 5 | `operator-bootstrap-journey.md` 5 主步骤都有 fence | 看指南 |
+| 5 | `docs/guides/flow-bootstrap.md` 5 主步骤都有 fence | 看指南 |
 | 6 | 2026-05-10 regression 可表达成 fence；pre-#334 FAIL，post-#334 PASS | bisect 烟测（手工一次性）|
+| 7 | `docs/guides/full-user-journey.md` 存在做金标准索引，列出每个 fenced sub-flow | 看文件 |
+| 8 | 每个 `tests/e2e/scenarios/*.sh` 在头部声明 `# Replays: docs/guides/<file>.md` | `scripts/check-scenario-headers.sh` exit 0 |
+| 9 | 过期 guide 已删 / 改名（Phase 0 审计后）| `git diff` Phase 0 PR |
 
 ---
 

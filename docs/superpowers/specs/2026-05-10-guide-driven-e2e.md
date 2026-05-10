@@ -145,7 +145,76 @@ agent: cc
 a real admin-CLI-only flow needs them. The recurring bug class is
 chat-flow drift; admin CLI tests via `esr_cli admin submit` already work.
 
-### 3.3 Claude Code hook
+### 3.3 `docs/guides/full-user-journey.md` — the gold-standard index
+
+A new file at `docs/guides/full-user-journey.md` is the **canonical
+index** of every operator journey ESR supports. Human-readable: an
+operator who lands here sees the full journey map and clicks into any
+sub-flow. Machine-readable: each row links to one per-flow guide
+(which carries fences); CI's replay loop walks every linked guide.
+
+Shape (sketch):
+
+```markdown
+# ESR full user journey
+
+The complete operator-facing journey, broken into sub-flows. Each
+sub-flow has its own fenced guide that doubles as the e2e scenario.
+
+| Sub-flow | What it covers | Guide | E2E scenario |
+|---|---|---|---|
+| Bootstrap | Fresh esrd, first user, register adapter, bind feishu | [flow-bootstrap.md](flow-bootstrap.md) | tests/e2e/scenarios/01_*.sh |
+| Workspace + session | Workspace create, session/agent spawn, plain text → CC reply | [flow-workspace-session.md](flow-workspace-session.md) | tests/e2e/scenarios/19_*.sh |
+| Multi-session | One CC instance, two chats via /agent:add-session | [flow-multi-session.md](flow-multi-session.md) | tests/e2e/scenarios/28_*.sh |
+| PTY attach | /claude_code:tui → xterm.js | [flow-pty-attach.md](flow-pty-attach.md) | tests/e2e/scenarios/22_*.sh |
+| Plugin lifecycle | install / enable / disable / hot-reload | [flow-plugin-lifecycle.md](flow-plugin-lifecycle.md) | tests/e2e/scenarios/16_*.sh |
+| Bundle install | External-path bundle install + dependency check | [flow-bundle.md](flow-bundle.md) | tests/e2e/scenarios/29_*.sh |
+| ... | ... | ... | ... |
+```
+
+Why a separate index file (vs putting fences directly in
+`full-user-journey.md`):
+- The journey is too long for one fence-replay run; we want isolated
+  fixtures per sub-flow (some need fresh esrd, some build on prior
+  state). Per-flow files = per-flow fixtures.
+- Operators reading the index want a map first, drill-down second.
+  Fences clutter the map.
+- CI parallelism: `for flow in flow-*.md; do replay-guide.sh & done`.
+
+Anti-rot rule: when a new feature ships an operator-visible flow, the
+PR adds a new row to `full-user-journey.md` AND a corresponding
+`flow-<name>.md`. Reviewers reject feature PRs that touch
+`runtime/lib/esr/commands/` without a guide row.
+
+### 3.4 `tests/e2e/scenarios/*.sh` header annotation
+
+Every scenario script MUST declare its source guide in the header:
+
+```bash
+#!/usr/bin/env bash
+# scenario 19 — session-first default workspace resolution.
+#
+# Replays: docs/guides/flow-workspace-session.md
+#
+# This script is a thin wrapper. Edit the guide, not this file.
+set -Eeuo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+exec bash "${SCRIPT_DIR}/../../../scripts/replay-guide.sh" "${SCRIPT_DIR}/../../../docs/guides/flow-workspace-session.md"
+```
+
+A linter (`scripts/check-scenario-headers.sh`, ~30 LOC bash):
+- Walks `tests/e2e/scenarios/*.sh`
+- Asserts each has a `# Replays: docs/guides/<file>.md` line in the
+  first 20 lines
+- Asserts the referenced guide exists
+- Asserts the scenario file is short (≤ 30 LOC) — long custom logic
+  belongs in the guide or in a one-off `*-custom.sh` exempt-list
+
+Run as a CI step alongside `replay-guide.sh`. Fails if a scenario
+sneaks in without an annotation.
+
+### 3.5 Claude Code hook
 
 `.claude/hooks/replay-guide-reminder.json`:
 
@@ -165,7 +234,7 @@ The exact hook DSL follows the project's existing hook conventions
 schema). Goal: the agent / dev gets a one-line reminder when a command
 file is edited.
 
-### 3.4 CLAUDE.md addition
+### 3.6 CLAUDE.md addition
 
 Three short lines, link out to this spec for detail:
 
@@ -180,7 +249,7 @@ Three short lines, link out to this spec for detail:
 Per the user's CLAUDE.md discipline (set 2026-05-10): keep CLAUDE.md
 tight, link out for detail.
 
-### 3.5 CI workflow step
+### 3.7 CI workflow step
 
 Append to `.github/workflows/ci.yml`'s `build-and-test` job:
 
@@ -202,23 +271,51 @@ drift on the next PR.
 
 ## 4. Migration plan
 
-Three phases, ~300 LOC total.
+Four phases, ~400 LOC total.
+
+### Phase 0: Audit + cleanup `docs/guides/` (~50 LOC, 1 PR)
+
+Current `docs/guides/` contents (audited 2026-05-10):
+
+| File | Status | Action |
+|---|---|---|
+| `2026-05-10-sessiontemplate-feishu-test.md` | Current (just shipped) | Rename → `flow-sessiontemplate-feishu-test.md`; add fences |
+| `feishu-adapter-setup.md` | Current | Keep; add fences |
+| `operator-bootstrap-journey.md` | Current | Rename → `flow-bootstrap.md` (or split into `flow-bootstrap.md` + `flow-workspace-session.md`); add fences |
+| `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | Checklist not journey | Keep as-is; link from `full-user-journey.md` as "verification checklist" |
+| `writing-an-agent-topology.md` | Possibly stale (agents.yaml dissolved Phase 6) | **Audit**: if it references `agents.yaml` as canonical → delete or rewrite for `agent_kinds:` block |
+
+Actions:
+1. Grep each guide for stale references: `agents.yaml`, deleted slashes,
+   pre-rev-3 grammar, etc. Delete the truly stale; rewrite the partly-stale.
+2. Standardize naming: every per-flow guide is `flow-<topic>.md`.
+3. Create `docs/guides/full-user-journey.md` as the index (initially
+   empty rows — Phase 1+ fills them as fences land).
+4. Decommission the `2026-05-10-` date-prefixed name (it was a
+   one-shot test guide; subsume into `flow-sessiontemplate-feishu-test.md`).
 
 ### Phase 1: Foundation (~150 LOC, 1 PR)
 
 - Write `scripts/replay-guide.sh` (~100 LOC bash).
+- Write `scripts/check-scenario-headers.sh` (~30 LOC bash) — header
+  annotation linter.
 - Add `.claude/hooks/replay-guide-reminder.json` (or equivalent
   per the hook DSL).
 - Add CLAUDE.md section (3 lines + link).
-- Add `.github/workflows/ci.yml` step.
+- Add `.github/workflows/ci.yml` step (replay + header-check).
 - Smoke test: a synthetic minimal guide `docs/guides/_replay_smoke.md`
   with one input/output pair; CI runs it green.
 
 ### Phase 2: Canary (~50 LOC + guide upgrades)
 
-- Upgrade `docs/guides/operator-bootstrap-journey.md` (and its
-  `.zh_cn.md` mirror, fences shared) with fences for the 5 main
-  steps (workspace, session, agent, plain text → CC reply, TUI URL).
+- Upgrade `docs/guides/flow-bootstrap.md` (renamed from
+  `operator-bootstrap-journey.md`, plus its `.zh_cn.md` mirror) with
+  fences for the 5 main steps (workspace, session, agent, plain text
+  → CC reply, TUI URL).
+- Add a `# Replays: docs/guides/flow-bootstrap.md` header to
+  `tests/e2e/scenarios/19_session_first_default.sh` (or replace its
+  body with the thin-wrapper form per §3.4).
+- Add the bootstrap row to `docs/guides/full-user-journey.md`.
 - Replay locally → CI green.
 - Verify the 2026-05-10 `/session:new name=test-cc` regression: replay
   against `dev@8777357` (pre-#334) FAILS at step 8; against post-#334
@@ -226,8 +323,11 @@ Three phases, ~300 LOC total.
 
 ### Phase 3: Opportunistic spread
 
-- When a new feature ships → its guide gets fences as part of the PR.
+- When a new feature ships → add a row to `full-user-journey.md` + a
+  per-flow guide with fences. PR review rejects feature PRs that touch
+  `runtime/lib/esr/commands/` without a guide row.
 - When an existing guide is touched → fences added if not already.
+- Each migrated scenario gets the `# Replays: <guide>` header.
 - No big-bang migration; coverage spreads with normal feature work.
 
 If a year passes and significant drift still slips through → revisit
@@ -244,8 +344,11 @@ adding `mix esr.check_guide_coverage` for absolute coverage. Track in
 | 2 | Hook fires when editing `runtime/lib/esr/commands/*.ex` | manual trigger |
 | 3 | CLAUDE.md updated; spec linked | inspect file |
 | 4 | CI runs replay against fenced guides | green PR |
-| 5 | `operator-bootstrap-journey.md` has fences for the 5 main steps | inspect guide |
+| 5 | `docs/guides/flow-bootstrap.md` has fences for the 5 main steps | inspect guide |
 | 6 | The 2026-05-10 regression is replayable as a fence; pre-#334 FAILs there, post-#334 PASSes | bisect smoke (manual one-time) |
+| 7 | `docs/guides/full-user-journey.md` exists as the gold-standard index, lists every fenced sub-flow | inspect file |
+| 8 | Every `tests/e2e/scenarios/*.sh` declares `# Replays: docs/guides/<file>.md` in header | `scripts/check-scenario-headers.sh` exit 0 |
+| 9 | Stale guides removed / renamed (post Phase 0 audit) | `git diff` Phase 0 PR |
 
 ---
 
