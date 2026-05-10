@@ -149,6 +149,19 @@ slashes:
     permission: session:default/spawn
     requires_user_binding: true
     requires_workspace_binding: false
+  /agent:add-session:
+    args:
+      - name: session
+        required: true
+      - name: name
+        required: true
+    category: Agents
+    command_module: Esr.Commands.Agent.AddSession
+    description: 把已有 agent 实例绑定到另一个 session（Phase 7 多会话同实例）
+    kind: agent_add_session
+    permission: session:default/spawn
+    requires_user_binding: true
+    requires_workspace_binding: false
   /agent:list:
     args: []
     category: Agents
