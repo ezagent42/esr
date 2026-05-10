@@ -1,22 +1,23 @@
 defmodule Esr.Plugins.Feishu.Bootstrap do
   @moduledoc """
   Spawns one `Esr.Entity.FeishuAppAdapter` peer per `type: feishu`
-  instance declared in `adapters.yaml`.
+  instance returned by `Esr.Adapters.list/1` (yaml-layout-v2 spec
+  § 4.5 — was `adapters.yaml` walk pre-v2).
 
   Two callers:
 
   - `Esr.Plugin.Loader.run_startup/0` — invoked at boot once
     `restore_adapters_from_disk/1` has loaded the yaml-on-disk state.
   - `Esr.Commands.Adapter.{Refresh,Rename}` slash commands —
-    operator-triggered re-bootstrap after `esr adapter add` /
-    `esr adapter rename` mutates `adapters.yaml`. (Both call
+    operator-triggered re-bootstrap after the operator mutates the
+    `adapters/<name>/` directory. (Both call
     `Esr.Plugin.Loader.run_startup/0` rather than this module
     directly, but this hook is what the loader invokes.)
 
   Each peer registers in `Esr.Session.Admin.Process` under
-  `:feishu_app_adapter_<instance_id>` (the YAML key — matching the
-  Phoenix topic suffix `adapter:feishu/<instance_id>` the Python
-  `adapter_runner` joins) so that
+  `:feishu_app_adapter_<instance_id>` (the directory basename —
+  matching the Phoenix topic suffix `adapter:feishu/<instance_id>`
+  the Python `adapter_runner` joins) so that
   `EsrWeb.AdapterChannel.forward_to_new_chain/2` can route inbound
   frames. Peer state additionally carries the Feishu-platform `app_id`
   from `config.app_id` (used for outbound Lark REST calls and
@@ -33,47 +34,25 @@ defmodule Esr.Plugins.Feishu.Bootstrap do
   require Logger
 
   @doc """
-  Spawn FAA peers for every `type: feishu` row in the default
-  `adapters.yaml` path.
+  Spawn FAA peers for every `type: feishu` row visible in the default
+  esrd home (`Esr.Adapters.list/0`).
   """
   @spec bootstrap() :: :ok
-  def bootstrap, do: bootstrap(Esr.Paths.adapters_yaml())
+  def bootstrap, do: bootstrap([])
 
   @doc """
-  Variant taking an explicit `adapters.yaml` path — used by tests.
-  Missing file is a no-op (matches the pre-PR-3.4 semantics so
-  `Esr.Application.start/2` boot stays clean on a fresh install).
+  Variant taking opts — used by tests. `:home` overrides the esrd home
+  for `Esr.Adapters.list/1`. Empty list (no adapters declared) is a
+  no-op so `Esr.Application.start/2` boot stays clean on fresh
+  installs.
   """
-  @spec bootstrap(Path.t()) :: :ok
-  def bootstrap(adapters_yaml_path) do
+  @spec bootstrap(keyword()) :: :ok
+  def bootstrap(opts) when is_list(opts) do
     sup = Esr.Session.Admin.children_supervisor_name()
 
-    if File.exists?(adapters_yaml_path) do
-      with {:ok, parsed} <- YamlElixir.read_from_file(adapters_yaml_path),
-           instances when is_map(instances) <- parsed["instances"] || %{} do
-        for {instance_id, row} <- instances,
-            row["type"] == "feishu" do
-          config = row["config"] || %{}
-          app_id = config["app_id"] || instance_id
-          spawn_feishu_app_adapter(sup, instance_id, app_id)
-        end
-      else
-        {:error, reason} ->
-          Logger.warning(
-            "feishu plugin: failed to parse #{adapters_yaml_path}: #{inspect(reason)}"
-          )
-
-          :ok
-
-        _ ->
-          :ok
-      end
-    else
-      Logger.info(
-        "feishu plugin: no adapters.yaml at #{adapters_yaml_path}; " <>
-          "skipping FeishuAppAdapter spawn (declare instances via " <>
-          "./esr.sh --env=prod adapter_add or write adapters.yaml directly)"
-      )
+    for %{name: instance_id, type: "feishu", config: config} <- Esr.Adapters.list(opts) do
+      app_id = config["app_id"] || instance_id
+      spawn_feishu_app_adapter(sup, instance_id, app_id)
     end
 
     :ok

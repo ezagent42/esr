@@ -10,11 +10,11 @@ defmodule Esr.Commands.RegisterAdapter do
 
   ## Flow
 
-    1. Append the instance entry to `<runtime_home>/adapters.yaml` via
-       `Esr.Yaml.Writer` under `instances.<name>`. The persisted entry
-       includes both `app_id` and `app_secret` in the `config:` block so
-       the Python sidecar can authenticate on every restore. Missing
-       file is created with a fresh `%{"instances" => %{...}}` skeleton.
+    1. Persist the instance via `Esr.Adapters.add/4`, which writes
+       `<runtime_home>/adapters/<name>/config.yaml` atomically (yaml-
+       layout-v2 spec § 4.3). The persisted entry includes both
+       `app_id` and `app_secret` in the `config:` block so the Python
+       sidecar can authenticate on every restore.
     2. Call `Esr.WorkerSupervisor.ensure_adapter(type, name, config,
        url)` — same 4-arity API used at boot by
        `Esr.Application.restore_adapters_from_disk/1`. The spawn config
@@ -44,7 +44,7 @@ defmodule Esr.Commands.RegisterAdapter do
   command :register_adapter do
     slash         :none
     category      "Adapters"
-    description   "持久注册 adapter 实例（写 adapters.yaml + 启动 sidecar）"
+    description   "持久注册 adapter 实例（写 adapters/<name>/config.yaml + 启动 sidecar）"
     permission    "adapter.register"
     requires_user_binding      false
     requires_workspace_binding false
@@ -73,14 +73,24 @@ defmodule Esr.Commands.RegisterAdapter do
         opts
       )
       when is_binary(name) and is_binary(app_id) and is_binary(secret) do
-    adapters_path = Esr.Paths.adapters_yaml()
+    config = %{"app_id" => app_id, "app_secret" => secret}
 
-    with :ok <- append_instance_to_yaml(adapters_path, name, app_id, secret),
-         :ok <- spawn_adapter(name, app_id, secret, opts) do
-      {:ok, %{"adapter_id" => name, "running" => true}}
-    else
+    case Esr.Adapters.add(name, "feishu", config) do
+      :ok ->
+        case spawn_adapter(name, app_id, secret, opts) do
+          :ok ->
+            {:ok, %{"adapter_id" => name, "running" => true}}
+
+          {:error, reason} ->
+            Render.error(__MODULE__.command_meta(), :register_adapter_failed, %{
+              detail: inspect(reason)
+            })
+        end
+
       {:error, reason} ->
-        Render.error(__MODULE__.command_meta(), :register_adapter_failed, %{detail: inspect(reason)})
+        Render.error(__MODULE__.command_meta(), :register_adapter_failed, %{
+          detail: inspect(reason)
+        })
     end
   end
 
@@ -91,26 +101,6 @@ defmodule Esr.Commands.RegisterAdapter do
   # ------------------------------------------------------------------
   # Internals
   # ------------------------------------------------------------------
-
-  defp append_instance_to_yaml(path, name, app_id, secret) do
-    current =
-      case YamlElixir.read_from_file(path) do
-        {:ok, %{} = m} -> m
-        _ -> %{"instances" => %{}}
-      end
-
-    instances = Map.get(current, "instances") || %{}
-
-    updated =
-      Map.put(current, "instances",
-        Map.put(instances, name, %{
-          "type" => "feishu",
-          "config" => %{"app_id" => app_id, "app_secret" => secret}
-        })
-      )
-
-    Esr.Yaml.Writer.write(path, updated)
-  end
 
   defp spawn_adapter(name, app_id, secret, opts) do
     spawn_fn =

@@ -83,15 +83,17 @@ defmodule Esr.Commands.Plugin.Unset do
   end
 
   defp resolve_path_opts(:global, args) do
-    path = args["_global_path_override"] || Esr.Paths.global_plugins_yaml()
+    plugin_name = args["plugin"]
+    path = args["_global_path_override"] || Esr.Paths.plugin_global_dir(plugin_name)
     {:ok, [global_path: path]}
   end
 
   defp resolve_path_opts(:user, args) do
+    plugin_name = args["plugin"]
     user_uuid = args["user_uuid"]
 
     if is_binary(user_uuid) and user_uuid != "" do
-      path = args["_user_path_override"] || Esr.Paths.user_plugins_yaml(user_uuid)
+      path = args["_user_path_override"] || Esr.Paths.plugin_user_dir(plugin_name, user_uuid)
       {:ok, [user_path: path]}
     else
       Render.error(__MODULE__.command_meta(), :user_uuid_required)
@@ -99,20 +101,24 @@ defmodule Esr.Commands.Plugin.Unset do
   end
 
   defp resolve_path_opts(:workspace, args) do
+    plugin_name = args["plugin"]
     workspace_id = args["workspace_id"]
 
     if is_binary(workspace_id) and workspace_id != "" do
-      path = args["_workspace_path_override"] || workspace_plugins_yaml(workspace_id)
+      path = args["_workspace_path_override"] || workspace_plugin_dir(plugin_name, workspace_id)
       {:ok, [workspace_path: path]}
     else
       Render.error(__MODULE__.command_meta(), :workspace_id_required)
     end
   end
 
-  defp workspace_plugins_yaml(workspace_id) do
+  defp workspace_plugin_dir(plugin_name, workspace_id) do
     case Esr.Resource.Workspace.Registry.lookup(workspace_id) do
-      {:ok, ws} -> Path.join([ws.folders |> List.first(""), ".esr", "plugins.yaml"])
-      _ -> raise "workspace not found: #{workspace_id}"
+      {:ok, ws} ->
+        Esr.Paths.plugin_workspace_dir(plugin_name, ws.folders |> List.first(""))
+
+      _ ->
+        raise "workspace not found: #{workspace_id}"
     end
   end
 end

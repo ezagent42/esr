@@ -31,7 +31,7 @@ from that spec to code on disk. PRs are tracked under
 - `esr/peer_pool.ex` + `esr/pools.ex` — pool manager for voice workers (shares via `pools.yaml` overrides).
 
 ### Multi-app routing (PR-A 2026-04-25)
-- `esr/peers/feishu_app_adapter.ex` + `esr/peers/feishu_chat_proxy.ex` — every inbound now carries `args.app_id` (the originating Feishu instance_id from `adapters.yaml`); the field rides through the chain to the `<channel app_id=…>` attribute.
+- `esr/peers/feishu_app_adapter.ex` + `esr/peers/feishu_chat_proxy.ex` — every inbound now carries `args.app_id` (the originating Feishu instance_id from `adapters/<name>/config.yaml` per yaml-layout-v2); the field rides through the chain to the `<channel app_id=…>` attribute.
 - Cross-app reply: `mcp__esr-channel__reply` requires explicit `app_id`. When `app_id != session.home_app`, FCP runs the cross-app gate: `Workspaces.Registry.workspace_for_chat(chat_id, app_id)` → `Capabilities.has?(principal, "workspace:<ws>/msg.send")` → `Registry.lookup(PeerRegistry, "feishu_app_adapter_<app_id>")`. Three deny shapes: `unknown_chat_in_app`, `forbidden`, `unknown_app` — all logged via `FCP cross-app deny type=…`.
 - `reply_to_message_id` and `edit_message_id` are stripped on cross-app paths (source-app message_id space ≠ target-app's).
 - E2E bypass for forbidden / non-member tests: `esr/admin/commands/cross_app_test.ex` admin command — drives FCP gate without CC (CC refuses `lateral_movement`-shaped instructions).
@@ -136,6 +136,7 @@ from that spec to code on disk. PRs are tracked under
 | cc outbound image → send_file MCP → store + α-wire → mock_feishu file message | `tests/e2e/scenarios/21_cc_outbound_multimedia.sh` |
 | Resource-typed slash grammar (I1-I5 invariants + multi-agent PTY isolation) | `tests/e2e/scenarios/22_resource_typed_grammar.sh` |
 | Zero-config CLI bootstrap (`system:bootstrap` sentinel + `operator.json`) | `tests/e2e/scenarios/23_zero_config_bootstrap.sh` |
+| yaml-layout-v2 per-thing adapter directories — register / list / disable / enable / remove round-trip | `tests/e2e/scenarios/24_yaml_layout_v2.sh` |
 | Topology unit logic | `runtime/test/esr/topology_test.exs` |
 | Topology integration (compose C1-C5) | `runtime/test/esr/topology_integration_test.exs` |
 | `cli:workspaces/describe` (PR-F) | `runtime/test/esr_web/cli_channel_test.exs` |

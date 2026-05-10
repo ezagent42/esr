@@ -147,8 +147,11 @@ defmodule Esr.Commands.Plugin.Reload do
   end
 
   defp path_opts_from_args(args) do
+    plugin_name = args["plugin"]
+
     [
-      global_path: args["_global_path_override"],
+      global_path:
+        args["_global_path_override"] || Esr.Paths.plugin_global_dir(plugin_name),
       user_path: args["_user_path_override"],
       workspace_path: args["_workspace_path_override"]
     ]

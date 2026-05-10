@@ -24,13 +24,12 @@ defmodule Esr.Commands.Plugin.ListConfig do
   alias Esr.Plugin.EnabledList
 
   def execute(_cmd) do
-    global_path = Esr.Paths.global_plugins_yaml()
-    enabled = EnabledList.read(global_path)
+    enabled = EnabledList.read(Esr.Paths.plugins_yaml())
 
     text =
       enabled
       |> Enum.map(fn plugin_name ->
-        config = Config.resolve(plugin_name, global_path: global_path)
+        config = Config.resolve(plugin_name, global_path: Esr.Paths.plugin_global_dir(plugin_name))
 
         if map_size(config) == 0 do
           "#{plugin_name}: (no config)"
