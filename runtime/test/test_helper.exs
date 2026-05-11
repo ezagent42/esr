@@ -1,4 +1,4 @@
-ExUnit.start(exclude: [:integration, :os_cleanup, :perf])
+ExUnit.start(exclude: [:integration, :os_cleanup, :perf, :real_claude])
 
 # PR-21κ Phase 6: load the priv default slash-routes once at boot so
 # Dispatcher tests (which look up kind → permission via SlashRouteRegistry
