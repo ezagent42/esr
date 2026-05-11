@@ -858,10 +858,19 @@ git add CLAUDE.md
 git commit -m "docs(claude-md): add Guide-driven e2e anti-drift section (spec §3.6)"
 ```
 
-### Task 1.8: Add CI workflow step
+### Task 1.8: Add CI workflow step — report-based gate
+
+> **Spec rev-5 change (2026-05-11):** Replay does NOT run on CI directly
+> (ubuntu-latest cannot spawn the FAA Python sidecar, see the
+> `mix test on Linux CI` TODO at the bottom of `.github/workflows/ci.yml`).
+> Instead: developers run `scripts/generate-e2e-report.sh` locally and
+> commit `docs/e2e-reports/<short-sha>.md`; CI verifies the report
+> exists, is current, and shows all guides PASS. See spec §3.7.
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
+- Create: `scripts/verify-e2e-report.sh`
+- Create: `scripts/generate-e2e-report.sh`
 
 - [ ] **Step 1: Read current ci.yml**
 
@@ -871,7 +880,21 @@ cat .github/workflows/ci.yml
 
 Confirm there's a `build-and-test` job (or equivalent) to extend.
 
-- [ ] **Step 2: Append two steps to the job that runs e2e**
+- [ ] **Step 2: Write the two scripts**
+
+`scripts/verify-e2e-report.sh` (~50 LOC): finds the latest commit in
+the PR diff that touches `runtime/lib/esr/commands/` or
+`docs/guides/flow-*.md` (using `git log --reverse "${GITHUB_BASE_REF:-dev}"..HEAD -- <paths>`),
+requires `docs/e2e-reports/<short-sha>.md` exists for that commit,
+matches its full sha, and shows no `| FAIL ` rows.
+
+`scripts/generate-e2e-report.sh` (~80 LOC): iterates fenced guides
+(`_replay_smoke.md` + every `flow-*.md` with `^```chat-input`), runs
+`replay-guide.sh` on each, accumulates PASS/FAIL + step count + wall
+time, writes `docs/e2e-reports/<HEAD-short-sha>.md` per the spec §3.7
+schema.
+
+- [ ] **Step 3: Append two steps to the build-and-test job**
 
 After the existing e2e step (or near the end of the job's `steps:`), add:
 
@@ -879,17 +902,13 @@ After the existing e2e step (or near the end of the job's `steps:`), add:
       - name: Lint scenario headers
         run: bash scripts/check-scenario-headers.sh
 
-      - name: Replay guides with fences
-        run: |
-          for guide in docs/guides/*.md; do
-            base=$(basename "$guide")
-            [[ "$base" == _* ]] && continue
-            if grep -q '^```chat-input' "$guide"; then
-              bash scripts/replay-guide.sh "$guide"
-            fi
-          done
-          # Always run the smoke guide explicitly (it starts with _).
-          bash scripts/replay-guide.sh docs/guides/_replay_smoke.md
+      - name: Verify e2e report
+        # Anti-drift gate per spec §3.7. Report-based instead of
+        # CI-runs-replay because Ubuntu CI cannot spawn the FAA Python
+        # sidecar; ESR's only production target is macOS. Developers
+        # run scripts/generate-e2e-report.sh locally and commit
+        # docs/e2e-reports/<short-sha>.md.
+        run: bash scripts/verify-e2e-report.sh
 ```
 
 - [ ] **Step 3: Validate workflow with `actionlint` if available**

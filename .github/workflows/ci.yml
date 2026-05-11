@@ -65,26 +65,16 @@ jobs:
         working-directory: runtime
         run: mix esr.check_bundles
 
-      - name: Install uv (for replay-guide.sh Python heredoc + mock_feishu)
-        # scripts/replay-guide.sh and tests/e2e/scenarios/common.sh both shell out
-        # to `uv run --project py python3`. ubuntu-latest ships with python3 + jq
-        # but not uv, so register the runner here.
-        uses: astral-sh/setup-uv@v3
-
       - name: Lint scenario headers
         run: bash scripts/check-scenario-headers.sh
 
-      - name: Replay guides with fences
-        run: |
-          for guide in docs/guides/*.md; do
-            base=$(basename "$guide")
-            [[ "$base" == _* ]] && continue
-            if grep -q '^```chat-input' "$guide"; then
-              bash scripts/replay-guide.sh "$guide"
-            fi
-          done
-          # Always run the smoke guide explicitly (it starts with _).
-          bash scripts/replay-guide.sh docs/guides/_replay_smoke.md
+      - name: Verify e2e report
+        # Anti-drift gate per spec §3.7. Report-based instead of CI-runs-replay
+        # because Ubuntu CI cannot spawn the FAA Python sidecar; ESR's only
+        # production target is macOS. Developers run scripts/generate-e2e-report.sh
+        # locally and commit docs/e2e-reports/<short-sha>.md. This step only
+        # enforces presence + freshness — see scripts/verify-e2e-report.sh.
+        run: bash scripts/verify-e2e-report.sh
 
       # TODO(2026-05-09): mix test on Linux CI fails ~22 of 1436 tests
       # for reasons unrelated to this migration:
