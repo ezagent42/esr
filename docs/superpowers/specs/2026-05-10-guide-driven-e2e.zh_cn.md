@@ -200,8 +200,8 @@ CI 的 replay 循环走每个被链接的 guide。
 
 为什么单立索引文件（而不是把 fence 直接放 `full-user-journey.md`）：
 - journey 太长一次 fence-replay 跑不完；想要 sub-flow 级隔离 fixture
-  （有些要 fresh esrd，有些在前序状态上 build）。per-flow 文件 =
-  per-flow fixture。
+  （每个 sub-flow 都从全新 esrd 起，按 §3.8 all-inline 约定）。
+  per-flow 文件 = per-flow fixture。
 - 操作员看索引要先看地图，再 drill-down。fence 把地图弄乱。
 - CI 并行：`for flow in flow-*.md; do replay-guide.sh & done`。
 
@@ -386,7 +386,8 @@ workspace 状态都**必须**作为显式 fence 出现。
 - 写 `scripts/replay-guide.sh`（~100 LOC bash）
 - 写 `scripts/check-scenario-headers.sh`（~30 LOC bash）—— 头部
   标注 linter
-- 加 `.claude/hooks/replay-guide-reminder.json`（按 hook DSL 等价）
+- 写 `scripts/hooks/replay-guide-reminder.sh`（~20 LOC bash），把对应的
+  `PostToolUse` 条目加到 `.claude/settings.json`（具体格式见 §3.5）
 - CLAUDE.md 加一节（3 行 + 链接）
 - `.github/workflows/ci.yml` 加一步（replay + header-check）
 - 烟测：合成最小指南 `docs/guides/_replay_smoke.md`，1 对 input/output；

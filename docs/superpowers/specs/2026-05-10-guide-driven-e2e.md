@@ -216,8 +216,8 @@ sub-flow has its own fenced guide that doubles as the e2e scenario.
 Why a separate index file (vs putting fences directly in
 `full-user-journey.md`):
 - The journey is too long for one fence-replay run; we want isolated
-  fixtures per sub-flow (some need fresh esrd, some build on prior
-  state). Per-flow files = per-flow fixtures.
+  fixtures per sub-flow (each sub-flow gets its own fresh esrd per
+  §3.8 all-inline). Per-flow files = per-flow fixtures.
 - Operators reading the index want a map first, drill-down second.
   Fences clutter the map.
 - CI parallelism: `for flow in flow-*.md; do replay-guide.sh & done`.
@@ -413,8 +413,9 @@ Actions:
 - Write `scripts/replay-guide.sh` (~100 LOC bash).
 - Write `scripts/check-scenario-headers.sh` (~30 LOC bash) — header
   annotation linter.
-- Add `.claude/hooks/replay-guide-reminder.json` (or equivalent
-  per the hook DSL).
+- Write `scripts/hooks/replay-guide-reminder.sh` (~20 LOC bash) and
+  add the matching `PostToolUse` entry to `.claude/settings.json`
+  (see §3.5 for exact format).
 - Add CLAUDE.md section (3 lines + link).
 - Add `.github/workflows/ci.yml` step (replay + header-check).
 - Smoke test: a synthetic minimal guide `docs/guides/_replay_smoke.md`
