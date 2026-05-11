@@ -1,6 +1,14 @@
-# Default agent on session + agent-driven follow-up flow — Implementation Plan
+# Default agent on session + agent-driven follow-up flow — Implementation Plan (rev-2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+rev-2 changes (post-review fixes against verified APIs):
+- Tasks 1.5/1.6/1.7: `Workspace.New.execute/1` (not /2), `%{"args" => %{"name" => ..., "username" => ...}}` wrap; name lookup via `NameIndex.id_for_name/2` + `Registry.get_by_id/1` (no `get_by_name`)
+- Task 2.4: PtyProcess uses `spawn_args/1` + `os_cmd/1` callbacks (NOT `init/1`); rejection point is `spawn_args/1`; `os_cmd/1` returns argv
+- Task 3.3 → 3.3 (migrations) + 3.3b (deletions): migrate `router.ex:303` and `commands/key.ex:84` BEFORE deletion to avoid compile breakage
+- Task 3.4a (NEW): add `detach_session_by_id/1` to ChatRouting.Registry as explicit task
+- Task 3.6a (NEW): add `FeishuAppAdapter.reply_chat_error/4` as explicit task (helper doesn't exist today, called by Task 3.6 + Task 3.7)
+- Task 4.4: `dispatch_tool_invoke/5` real signature is `(tool, args, req_id, channel_pid, state)` (not the 6-arity guess); `principal_id` read from `state.principal_id` (existing field at `feishu_chat_proxy.ex:81`)
 
 **Goal:** Fix the 5-bug silent-drop cascade behind 2026-05-11's `/session:new + hello?` hang and add the `submit_slash` MCP tool so CC can run admin commands via natural language.
 
@@ -255,14 +263,23 @@ git commit -m "feat(workspace): JsonWriter rejects 0-folder writes"
 
 - [ ] **Step 1: Write failing test**
 
+Note real `execute/1` signature: `def execute(%{"args" => %{"name" => name} = args})` (verified at `commands/workspace/new.ex:71`); `owner` resolves from `args["owner"] || args["username"]`. `Workspace.Registry` exposes `get_by_id/1` (`registry.ex:48`), not `get_by_name/1`; name→id goes through `Esr.Resource.Workspace.NameIndex.id_for_name/2` (`name_index.ex:50`).
+
 Append to `runtime/test/esr/commands/workspace/new_test.exs`:
 
 ```elixir
 describe "ESR-bound workspace (no folder= arg) — ≥1 folder invariant" do
   test "creates workspace with folders containing the ESR-managed path" do
     name = "esr-bound-#{:erlang.unique_integer([:positive])}"
-    {:ok, _result} = Esr.Commands.Workspace.New.execute(%{"name" => name}, [])
-    {:ok, struct} = Esr.Resource.Workspace.Registry.get_by_name(name)
+    # Ensure owner user exists in the test fixture; helper from existing test support.
+    ensure_user("alice")
+
+    {:ok, _result} = Esr.Commands.Workspace.New.execute(%{
+      "args" => %{"name" => name, "username" => "alice"}
+    })
+
+    {:ok, wid} = Esr.Resource.Workspace.NameIndex.id_for_name(name)
+    {:ok, struct} = Esr.Resource.Workspace.Registry.get_by_id(wid)
     expected_path = Esr.Paths.workspace_dir(name)
     assert [%{path: ^expected_path}] = struct.folders
     assert File.dir?(expected_path)
@@ -323,14 +340,20 @@ git commit -m "feat(workspace): ESR-bound mode becomes 1-folder workspace (no sp
 
 - [ ] **Step 1: Write failing test**
 
-Append:
+Verify `Esr.Commands.Workspace.RemoveFolder.execute/1` signature in the file before writing the test (real meta-DSL pattern is `%{"args" => %{...}}`-1-arity per `commands/workspace/new.ex:71` precedent). Append:
+
 ```elixir
 describe ":cannot_remove_last_folder guard" do
   test "removing the only folder fails" do
     name = "single-#{:erlang.unique_integer([:positive])}"
-    {:ok, _} = Esr.Commands.Workspace.New.execute(%{"name" => name, "folder" => "/tmp/x"}, [])
-    {:error, %{kind: :cannot_remove_last_folder}} =
-      Esr.Commands.Workspace.RemoveFolder.execute(%{"workspace" => name, "path" => "/tmp/x"}, [])
+    ensure_user("alice")
+    {:ok, _} = Esr.Commands.Workspace.New.execute(%{
+      "args" => %{"name" => name, "username" => "alice", "folder" => "/tmp/x"}
+    })
+    assert {:error, %{kind: :cannot_remove_last_folder}} =
+      Esr.Commands.Workspace.RemoveFolder.execute(%{
+        "args" => %{"workspace" => name, "path" => "/tmp/x", "username" => "alice"}
+      })
   end
 end
 ```
@@ -379,19 +402,27 @@ defmodule Esr.Integration.WorkspaceLifecycleTest do
 
   test "ESR-bound workspace lifecycle: create, describe, attempt-remove-folder, remove" do
     name = "lc-#{:erlang.unique_integer([:positive])}"
-    {:ok, _} = Esr.Commands.Workspace.New.execute(%{"name" => name}, [])
+    ensure_user("alice")
 
-    {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_name(name)
+    {:ok, _} = Esr.Commands.Workspace.New.execute(%{
+      "args" => %{"name" => name, "username" => "alice"}
+    })
+
+    {:ok, wid} = Esr.Resource.Workspace.NameIndex.id_for_name(name)
+    {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_id(wid)
     assert length(ws.folders) == 1
     assert File.dir?(hd(ws.folders).path)
 
     folder_path = hd(ws.folders).path
-    {:error, %{kind: :cannot_remove_last_folder}} =
-      Esr.Commands.Workspace.RemoveFolder.execute(
-        %{"workspace" => name, "path" => folder_path}, [])
+    assert {:error, %{kind: :cannot_remove_last_folder}} =
+      Esr.Commands.Workspace.RemoveFolder.execute(%{
+        "args" => %{"workspace" => name, "path" => folder_path, "username" => "alice"}
+      })
 
-    {:ok, _} = Esr.Commands.Workspace.Remove.execute(%{"name" => name}, [])
-    assert :not_found = Esr.Resource.Workspace.Registry.get_by_name(name)
+    {:ok, _} = Esr.Commands.Workspace.Remove.execute(%{
+      "args" => %{"name" => name, "username" => "alice"}
+    })
+    assert :not_found = Esr.Resource.Workspace.NameIndex.id_for_name(name)
   end
 end
 ```
@@ -566,60 +597,110 @@ git add runtime/lib/esr/plugins/claude_code/launcher.ex runtime/test/esr/plugins
 git commit -m "refactor(claude_code/launcher): prepare_spawn becomes sole entry; spawn_cmd deleted"
 ```
 
-### Task 2.4: Wire `PtyProcess` to `prepare_spawn`; delete `/tmp` fallback
+### Task 2.4: Reject nil `dir` in `spawn_args/1`; wire `prepare_spawn` in `os_cmd/1`
 
 **Files:**
-- Modify: `runtime/lib/esr/entity/pty_process.ex:80, :202-216`
+- Modify: `runtime/lib/esr/entity/pty_process.ex` (the `spawn_args/1` callback at line 75 + `os_cmd/1` callback that currently calls `Launcher.spawn_cmd`)
 
-- [ ] **Step 1: Patch init `dir` resolution**
+Note: `PtyProcess` uses `Esr.OSProcess` base; the production callbacks are
+`spawn_args/1`, `os_cmd/1`, `os_cwd/1`, `os_env/1` — NOT `init/1`. The
+`/tmp` fallback at line 80 lives inside `spawn_args/1`. `os_cmd/1` is
+expected to return the argv list; we cannot return `{:stop, _}` from there
+— the rejection point must be **before** PtyProcess is started.
 
-In `pty_process.ex:80`, replace:
+**Rejection strategy (chosen):** make `spawn_args/1` raise on nil `dir`,
+catching the issue at process-spawn time (`GenServer.start_link` returns
+`{:error, ...}`). AgentSpawner's `spawn_one/5` already catches spawn
+failures and propagates them via `throw({:spawn_failed, spec, reason})`.
+
+- [ ] **Step 1: Patch `spawn_args/1` to reject nil dir**
+
+In `pty_process.ex:75-95` (the `spawn_args/1` callback body), replace:
 ```elixir
-dir: get_param(params, :dir) || "/tmp",
+dir: Esr.Entity.get_param(params, :dir) || "/tmp",
 ```
-with:
+with a guard at the top of the function:
 ```elixir
-dir: get_param(params, :dir),
-```
-
-Add a guard at the end of `init/1` (after state construction):
-
-```elixir
-case state.state.dir do
-  nil -> {:stop, {:error, :missing_dir}}
-  _ -> {:ok, state, {:continue, :launch}}
+def spawn_args(params) do
+  case Esr.Entity.get_param(params, :dir) do
+    nil ->
+      # B2 fix: refuse silent /tmp fallback. AgentSpawner's spawn_one/5
+      # catches the resulting {:error, :missing_dir} via :spawn_failed.
+      {:error, :missing_dir}
+    dir when is_binary(dir) ->
+      name = "esr_pty_#{:erlang.unique_integer([:positive])}"
+      %{
+        session_name: name,
+        dir: dir,
+        # ... rest of existing fields, no `|| "/tmp"` anywhere
+      }
+  end
 end
 ```
 
-- [ ] **Step 2: Patch the spawn call (lines 202-216)**
+(Verify `Esr.OSProcess`'s `start_link` correctly propagates `{:error, _}`
+return from `spawn_args/1` — if it crashes on the tuple instead of
+returning, adjust to `raise ArgumentError, "missing :dir"`. This is the
+single judgment call in PR-2.)
 
-Replace whatever calls `Launcher.spawn_cmd(...)` with:
+- [ ] **Step 2: Patch `os_cmd/1` to call `prepare_spawn/1`**
+
+`os_cmd/1` returns argv. Currently it calls `Launcher.spawn_cmd(args)` and
+returns the result. After PR-2 Task 2.3, `Launcher.spawn_cmd/1` is gone;
+`prepare_spawn/1` returns `{:ok, %{cmd: cmd, env: env}} | {:error, reason}`.
+
+Replace whatever currently calls `Launcher.spawn_cmd(...)` (around lines
+202-216 — verify exact location with `rg -n "Launcher\." runtime/lib/esr/entity/pty_process.ex`) with:
 
 ```elixir
-case Esr.Plugins.ClaudeCode.Launcher.prepare_spawn(%{
-       session_id: state.state.session_id,
-       cwd: state.state.dir,
-       # ... whatever else prepare_spawn needs
-     }) do
-  {:ok, %{cmd: cmd, env: env}} ->
-    # use cmd + env in the existing :exec.run_link call
-    :exec.run_link(cmd, env_opts(env) ++ pty_opts())
+@impl Esr.OSProcess.Behaviour
+def os_cmd(state) do
+  case Esr.Plugins.ClaudeCode.Launcher.prepare_spawn(state) do
+    {:ok, %{cmd: cmd, env: env}} ->
+      # OSProcess base reads env via os_env/1 separately; cache env on state
+      # via Process.put(:pty_prepared_env, env) and return it from os_env/1.
+      # OR — preferred — update Launcher.prepare_spawn/1 to return only cmd
+      # (env goes through os_env/1 already). Verify which surface OSProcess
+      # actually consumes at implementation time.
+      cmd
 
-  {:error, reason} ->
-    {:stop, {:prepare_spawn_failed, reason}}
+    {:error, reason} ->
+      # We can't return an error from os_cmd/1 directly. Raise to terminate
+      # the just-starting GenServer; the supervisor will surface this as a
+      # crash in start_link, which AgentSpawner catches via :spawn_failed.
+      raise "PtyProcess.os_cmd: prepare_spawn failed: #{inspect(reason)}"
+  end
 end
 ```
 
-- [ ] **Step 3: Add test verifying `:missing_dir` short-circuits init**
+**Implementer-required verification at write time:**
+- (a) Does `Esr.OSProcess`'s scaffolding handle `spawn_args/1` returning `{:error, _}`? If not, change Step 1 to `raise` instead of `{:error, _}` return.
+- (b) Does `os_env/1` already build env from `spawn_args/1`'s output? If yes, `prepare_spawn/1`'s env piece is duplicate work — keep Launcher's env-building inside `os_env/1`'s existing path and have `prepare_spawn/1` return only cmd.
+
+These two binary questions resolve the seam between `Launcher.prepare_spawn`'s `%{cmd, env}` shape (Task 2.3) and OSProcess base's callback contract. Spend 5 minutes reading `os_process.ex` before writing this task — it's a small file.
+
+- [ ] **Step 3: Add tests**
 
 ```elixir
-test "PtyProcess.init returns {:stop, ...} when dir is nil" do
-  result = Esr.Entity.PtyProcess.init(%{
-    session_id: "test", actor_id: "test", session_name: "test",
-    # NO :dir
-    chat_id: "c", app_id: "a", subscribers: []
+test "PtyProcess.spawn_args rejects nil :dir" do
+  result = Esr.Entity.PtyProcess.spawn_args(%{
+    session_id: "test", actor_id: "test"
+    # No :dir
   })
-  assert {:stop, {:error, :missing_dir}} = result
+  assert {:error, :missing_dir} = result
+end
+
+test "PtyProcess.os_cmd surfaces prepare_spawn errors" do
+  # If claude binary missing, os_cmd should raise
+  # (with :meck stub or env trick to make System.find_executable return nil)
+  :meck.new(System, [:passthrough])
+  :meck.expect(System, :find_executable, fn "claude" -> nil; other -> :meck.passthrough([other]) end)
+  on_exit(fn -> :meck.unload(System) end)
+
+  state = %{state: %{dir: "/tmp", session_id: "s"}}
+  assert_raise RuntimeError, ~r/prepare_spawn failed.*missing_claude_binary/, fn ->
+    Esr.Entity.PtyProcess.os_cmd(state)
+  end
 end
 ```
 
@@ -628,7 +709,7 @@ end
 ```bash
 cd runtime && mix test test/esr/entity/pty_process_test.exs -v
 git add runtime/lib/esr/entity/pty_process.ex runtime/test/esr/entity/pty_process_test.exs
-git commit -m "fix(pty_process): use prepare_spawn entry; delete /tmp fallback"
+git commit -m "fix(pty_process): reject nil :dir in spawn_args; wire prepare_spawn in os_cmd"
 ```
 
 ### Task 2.5: SessionTemplate pipeline integrity check post-spawn
@@ -845,10 +926,52 @@ git add runtime/lib/esr/actor_query.ex runtime/test/esr/actor_query_test.exs
 git commit -m "feat(actor_query): add fcp_for_session/1"
 ```
 
-### Task 3.3: Delete `register_session/3` + `unregister_session/1` from ChatRouting.Registry
+### Task 3.3: Migrate non-FAA `lookup_by_chat/2` callers BEFORE deleting
 
 **Files:**
-- Modify: `runtime/lib/esr/session/chat_routing/registry.ex` (delete lines 63-64 + 182-194 area; verify exact line numbers at edit time)
+- Modify: `runtime/lib/esr/session/router.ex:303`
+- Modify: `runtime/lib/esr/commands/key.ex:84`
+
+`lookup_by_chat/2` has two callers besides FAA (which Task 3.6 patches).
+Migrate them first; otherwise Task 3.4 deletion breaks compilation.
+
+- [ ] **Step 1: Migrate `router.ex:303`**
+
+Read the call site:
+```bash
+sed -n '295,320p' runtime/lib/esr/session/router.ex
+```
+
+Replace `ChatRouting.Registry.lookup_by_chat(chat_id, app_id)` with
+`ChatRouting.Registry.current_session(chat_id, app_id)` and adapt the
+`case` clauses: the new return is `{:ok, sid} | :not_found` (no refs).
+If the existing code uses `refs.feishu_chat_proxy`, switch to
+`Esr.ActorQuery.fcp_for_session(sid)` (helper from Task 3.2).
+
+- [ ] **Step 2: Migrate `commands/key.ex:84`**
+
+Same pattern: read the site, switch `ChatScopeRegistry.lookup_by_chat/2`
+→ `ChatRouting.Registry.current_session/2`, adapt return-shape handling.
+`ChatScopeRegistry` is an alias for `ChatRouting.Registry` (verify at
+`commands/key.ex:59`).
+
+- [ ] **Step 3: Run all tests touching either module**
+
+```bash
+cd runtime && mix test test/esr/session/router_test.exs test/esr/commands/key_test.exs -v
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add runtime/lib/esr/session/router.ex runtime/lib/esr/commands/key.ex
+git commit -m "refactor(chat_routing): migrate router + key callers off lookup_by_chat"
+```
+
+### Task 3.3b: Delete `register_session/3` + `unregister_session/1` + legacy-shape branches
+
+**Files:**
+- Modify: `runtime/lib/esr/session/chat_routing/registry.ex` (delete lines around 63-64 + 105 + 124 + 175 + 182-194)
 
 - [ ] **Step 1: Delete the public API + handle_call branches**
 
@@ -859,13 +982,63 @@ Remove every match in this file (the def, the @spec, and any handle_call branche
 
 - [ ] **Step 2: Delete legacy-shape branches**
 
-Remove the `current_session/2` legacy branch around line 105, the `list_sessions/2` legacy branch around line 124, and the `lookup_by_chat/2` shim around line 175. (Spec §4.5 step 6.)
+Remove the `current_session/2` legacy branch around line 105, the `list_sessions/2` legacy branch around line 124, and the `lookup_by_chat/2` shim around line 175 (spec §4.5 step 6).
 
-- [ ] **Step 3: Commit**
+Also DELETE `lookup_by_chat/2` itself — after Task 3.3 migrations + Task 3.6 FAA rewrite, no caller remains.
+
+- [ ] **Step 3: Verify compilation**
+
+```bash
+cd runtime && mix compile --warnings-as-errors
+```
+Expected: clean compile. Any remaining caller of deleted functions will fail here.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add runtime/lib/esr/session/chat_routing/registry.ex
-git commit -m "refactor(chat_routing): delete legacy register/unregister API + 3 shape branches"
+git commit -m "refactor(chat_routing): delete legacy API + 3 shape branches + lookup_by_chat"
+```
+
+### Task 3.4a: Add `detach_session_by_id/1` to ChatRouting.Registry
+
+**Files:**
+- Modify: `runtime/lib/esr/session/chat_routing/registry.ex`
+- Test: `runtime/test/esr/session/chat_routing/registry_test.exs`
+
+The legacy `unregister_session(sid)` API was keyed by session id alone.
+After Task 3.3b's deletion, callers need a replacement that walks the ETS
+table by sid value and removes any (chat_id, app_id) entries whose attached set
+contains that sid.
+
+- [ ] **Step 1: Add the function**
+
+```elixir
+@doc """
+Detach a session from every (chat_id, app_id) scope. Called from
+AgentSpawner failure-path and Router.end_session.
+"""
+@spec detach_session_by_id(String.t()) :: :ok
+def detach_session_by_id(sid) when is_binary(sid) do
+  GenServer.call(__MODULE__, {:detach_session_by_id, sid})
+end
+
+# In handle_call:
+def handle_call({:detach_session_by_id, sid}, _from, state) do
+  # walk @ets_table entries; for each {key, %{current, attached}}, remove sid
+  # from attached; if current == sid, set current to nil; delete entries that
+  # end up empty.
+  # ... ~30 LOC of ETS iteration + persist
+  {:reply, :ok, new_state}
+end
+```
+
+- [ ] **Step 2: Test + commit**
+
+```bash
+cd runtime && mix test test/esr/session/chat_routing/registry_test.exs -v
+git add runtime/lib/esr/session/chat_routing/registry.ex runtime/test/esr/session/chat_routing/registry_test.exs
+git commit -m "feat(chat_routing): add detach_session_by_id/1"
 ```
 
 ### Task 3.4: Migrate `agent_spawner.ex` callers
@@ -889,14 +1062,15 @@ git commit -m "refactor(chat_routing): delete legacy register/unregister API + 3
 :ok = Esr.Session.ChatRouting.Registry.unregister_session(scope_id)
 # After:
 :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id(scope_id)
-# (add this helper to chat_routing/registry.ex if not present)
 ```
+
+(`detach_session_by_id/1` defined in Task 3.4a above.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add runtime/lib/esr/session/agent_spawner.ex runtime/lib/esr/session/chat_routing/registry.ex
-git commit -m "refactor(agent_spawner): migrate to attach_session API"
+git add runtime/lib/esr/session/agent_spawner.ex
+git commit -m "refactor(agent_spawner): migrate to attach_session + detach_session_by_id"
 ```
 
 ### Task 3.5: Migrate `router.ex:121` caller
@@ -920,10 +1094,79 @@ git add runtime/lib/esr/session/router.ex
 git commit -m "refactor(router): migrate to detach_session_by_id"
 ```
 
+### Task 3.6a: Add `Esr.Plugins.Feishu.FeishuAppAdapter.reply_chat_error/4`
+
+**Files:**
+- Modify: `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex`
+- Test: `runtime/test/esr/plugins/feishu/feishu_app_adapter_test.exs`
+
+Both Task 3.6 (`cleanup_and_reply/4`) and Task 3.7 (LifecycleObserver)
+need this helper. Verified by grep: it doesn't exist anywhere in
+`runtime/lib/`. Must be added explicitly.
+
+- [ ] **Step 1: Define the helper**
+
+FCP uses `emit_to_feishu_app_proxy/2` (verified at
+`feishu_chat_proxy.ex:1122`) for outbound from inside the per-session
+FCP. FAA is the daemon-level peer that owns the WebSocket to the
+Feishu adapter; it needs an analogous outbound API that does NOT
+require a live FCP.
+
+```elixir
+@doc """
+Send a chat-visible error reply to the given (chat_id, app_id) WITHOUT
+requiring a live FCP — used when the FCP is dead or never existed (e.g.
+session_dead, session_incomplete, supervisor_giveup). Routes through
+the FAA's own outbound WebSocket connection to the adapter runner.
+"""
+@spec reply_chat_error(String.t(), String.t(), atom(), String.t()) :: :ok
+def reply_chat_error(chat_id, app_id, kind, message) when is_binary(chat_id) do
+  envelope = %{
+    "kind" => "reply",
+    "args" => %{
+      "chat_id" => chat_id,
+      "app_id" => app_id,
+      "text" => "[#{kind}] #{message}"
+    }
+  }
+  # Send via the FAA's WS-out channel for the given app_id. FAA already
+  # holds per-app outbound channels (locate the existing
+  # `outbound_dispatch/2` or `send_directive/2` helper in
+  # feishu_app_adapter.ex via grep).
+  case find_ws_out_for_app(app_id) do
+    {:ok, channel_pid} ->
+      GenServer.cast(channel_pid, {:directive, envelope})
+      :ok
+    :not_found ->
+      Logger.warning("FAA: reply_chat_error dropped — no ws-out for app_id=#{app_id}")
+      :ok
+  end
+end
+```
+
+**Implementer-required verification at write time:** grep FAA for the
+existing outbound dispatch path (likely `forward_directive/2`,
+`outbound_dispatch/2`, or `send_to_runner/2`). The exact helper name +
+signature varies; this Step's body sketches the shape but the implementer
+must wire it to whatever exists. ~30 minutes of code reading + writing.
+
+- [ ] **Step 2: Test**
+
+Use `:meck` to stub the outbound channel and assert the directive shape.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex runtime/test/esr/plugins/feishu/feishu_app_adapter_test.exs
+git commit -m "feat(faa): reply_chat_error/4 — FCP-free chat error path"
+```
+
 ### Task 3.6: Rewrite FAA route to use ActorQuery + explicit clauses
 
 **Files:**
 - Modify: `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238-275`
+
+Depends on Task 3.6a (`reply_chat_error/4`).
 
 - [ ] **Step 1: Replace the routing case (no `other -> drop`)**
 
@@ -1437,11 +1680,23 @@ end
 
 - [ ] **Step 2: Add handler branch in FCP**
 
+Real `dispatch_tool_invoke/5` signature (verified at
+`feishu_chat_proxy.ex:602`):
 ```elixir
-# In FCP's dispatch_tool_invoke/5 (or wherever {:tool_invoke, ...} is caught)
-defp dispatch_tool_invoke(req_id, "submit_slash", %{"command" => cmd_str},
-                          channel_pid, principal_id, state) do
+defp dispatch_tool_invoke(tool, args, req_id, channel_pid, state)
+```
+(5-arity; tool is the first arg.) `principal_id` is NOT a parameter —
+it lives on `state.principal_id` (verified at `feishu_chat_proxy.ex:81`,
+threaded in at `spawn_args/1`). Use that.
+
+```elixir
+# Add a NEW 5-arity clause matching the existing pattern; placed BEFORE the
+# fallback at line 765.
+defp dispatch_tool_invoke("submit_slash", %{"command" => cmd_str},
+                          req_id, channel_pid, state) do
   sid = state.session_id
+  principal_id = state.principal_id
+
   Task.start(fn ->
     result = run_submit_slash(sid, cmd_str, principal_id)
     send(channel_pid, {:tool_result, req_id, result})
