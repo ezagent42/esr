@@ -147,8 +147,9 @@ _BOUND_USERS=()
 
 _user_already_bound() {
   local name="$1" u
+  [[ -z "$name" ]] && return 1
   for u in "${_BOUND_USERS[@]:-}"; do
-    [[ "$u" == "$name" ]] && return 0
+    [[ -n "$u" && "$u" == "$name" ]] && return 0
   done
   return 1
 }

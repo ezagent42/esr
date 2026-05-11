@@ -65,6 +65,12 @@ jobs:
         working-directory: runtime
         run: mix esr.check_bundles
 
+      - name: Install uv (for replay-guide.sh Python heredoc + mock_feishu)
+        # scripts/replay-guide.sh and tests/e2e/scenarios/common.sh both shell out
+        # to `uv run --project py python3`. ubuntu-latest ships with python3 + jq
+        # but not uv, so register the runner here.
+        uses: astral-sh/setup-uv@v3
+
       - name: Lint scenario headers
         run: bash scripts/check-scenario-headers.sh
 

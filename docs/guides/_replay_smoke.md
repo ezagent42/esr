@@ -9,6 +9,12 @@ SlashHandler's "unknown command" branch fires BEFORE any capability
 gate, before workspace-binding checks, before user-binding checks —
 the simplest cap-free single-line reply the runtime can produce.
 
+**If this fence breaks** after a refactor of
+`runtime/lib/esr/entity/slash_handler.ex` (specifically the
+`:unknown_resource` branch — search for "未知 resource"), update the
+expected reply below to the new wording. This guide IS the CI smoke
+gate; a wording change there shows up here.
+
 ### Step 1: unknown resource — bot replies with the canonical not-found line
 
 ```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
