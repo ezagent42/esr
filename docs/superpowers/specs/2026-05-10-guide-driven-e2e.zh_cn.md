@@ -17,9 +17,13 @@ gate。**Scenario 25**（Phase 5 显式 invariant 测试）跑绿。生产飞书
 
 三个原因：
 
-1. **路径不一致。** 所有 e2e scenario 都通过 `esr_cli admin submit ...`
-   触发命令，绕开 `Esr.Entity.SlashHandler.merge_chat_context/3`
-   （chat envelope 注入器）。生产走 SlashHandler；测试不走。
+1. **路径不一致。** 所有 e2e scenario 中**触发 slash 命令**那条路径都
+   通过 `esr_cli admin submit ...`，绕开
+   `Esr.Entity.SlashHandler.merge_chat_context/3`（chat envelope
+   注入器）。纯文本入向（如 "what's the cwd?"）和多媒体入向**确实**
+   走的是生产 `mock_feishu push_inbound` 路径（scenario 01/02/04/05/20
+   验证）。绕开是 slash 专属的约定 —— mock_feishu 本身不阻挡推 slash
+   文本入向，只是 harness 从来没这么做过。
 2. **参数覆盖空洞。** 24 个 scenario 全都显式传 `--arg dir=`。操作员
    实际敲的 bare `name=`-only 形态从未被测过。
 3. **指南 drift。** `docs/guides/*.md` 描述操作员 journey。没有机器
@@ -29,6 +33,26 @@ gate。**Scenario 25**（Phase 5 显式 invariant 测试）跑绿。生产飞书
 通过生产代码路径回放指南步骤。
 
 ---
+
+## 1.5 词典
+
+本 spec 通篇用这四个词。ESR 现有词典（`docs/notes/concepts.md` rev-11）
+没定义它们，所以这里锁定并同步到项目级 `CONTEXT.md`。
+
+| 术语 | 定义 |
+|---|---|
+| **journey** | operator 端到端的完整路径（fresh install → 第一次 CC 回复）。每个项目一个。索引在 `docs/guides/full-user-journey.md`。|
+| **flow** | journey 的一个 sub-segment（bootstrap / workspace+session / pty-attach 等）。一个 flow ↔ 一个 guide ↔ 一或多个 scenario。|
+| **guide** | flow 的人类可读文档 `docs/guides/flow-<topic>.md`。同时是 replay 的 fence 源。|
+| **scenario** | flow 的机器执行壳 `tests/e2e/scenarios/<n>.sh`，通过 `# Replays:` 头链回 guide。|
+
+基数：
+
+```
+journey ──含──▶ N 个 flow
+flow    ──由 1 个 guide 描述
+flow    ──由 ≥1 个 scenario 执行（通常 1；高级 flow 可能有排列组合多个）
+```
 
 ## 2. 目标 & 非目标
 
@@ -107,6 +131,17 @@ scripts/replay-guide.sh docs/guides/operator-bootstrap-journey.md
 `chat-input` fence 行的 frontmatter：`app_id`、`chat_id`、可选 `user`。
 缺省遵循 ESR bootstrap 约定（操作员 `linyilun`、adapter
 `esr_helper_dev`、合成测试 chat）。
+
+**`user=` 解析（v1 自动绑定）。** `user=` 取逻辑名（`linyilun`，
+不是 `ou_xxx` open_id），让 guide 保持可读。首次遇到某个名字时，
+`replay-guide.sh` 查内置映射表（如 `linyilun → ou_test_linyilun`），并：
+
+1. 如 ESR 用户记录不存在，自动创建。
+2. 创建 `feishu_bind` 把该用户绑到合成 open_id。
+
+后续步骤复用已建立的绑定。映射表在 `scripts/replay-guide.sh` 中维护，
+guide 里出现新操作员名时扩展。`ou_xxx` 值永远不写进 guide frontmatter，
+只用操作员可读名。
 
 Placeholder（逐行替换）：`<UUID>` 匹配 UUID v4，`<int>` 匹配数字串，
 `<...>` 通配。v1 出这三个；其它按真实需要扩展。

@@ -17,10 +17,15 @@ Production hit `error: invalid_args` first try.
 
 Three causes:
 
-1. **Path mismatch.** Every e2e scenario invokes commands via
-   `esr_cli admin submit ...`, bypassing
+1. **Path mismatch.** Every e2e scenario that exercises a **slash
+   command** invokes it via `esr_cli admin submit ...`, bypassing
    `Esr.Entity.SlashHandler.merge_chat_context/3` (the chat envelope
-   injector). Production goes through SlashHandler; tests don't.
+   injector). Plain-text inbound (e.g. "hello, what's the cwd?") and
+   multimedia inbound DO go through the production
+   `mock_feishu push_inbound` path (verified in scenarios 01/02/04/05/20).
+   The bypass is slash-specific by convention — there's nothing in
+   `mock_feishu` that prevents pushing a slash text inbound; the
+   harness simply never has.
 2. **Argument coverage hole.** All 24 scenarios pass `--arg dir=`
    explicitly. The bare `name=`-only form an operator actually types is
    never tested.
@@ -32,6 +37,27 @@ Three causes:
 script replays guide steps through the production code path.
 
 ---
+
+## 1.5 Vocabulary
+
+These four terms appear throughout this spec. ESR's existing vocabulary
+(`docs/notes/concepts.md` rev-11) doesn't define them, so they're locked
+here and mirrored in the project-level `CONTEXT.md`.
+
+| Term | Definition |
+|---|---|
+| **journey** | The full operator path end-to-end (fresh install → first CC reply). One per project. Indexed by `docs/guides/full-user-journey.md`. |
+| **flow** | A sub-segment of the journey (bootstrap / workspace+session / pty-attach / etc). One flow ↔ one guide ↔ one-or-more scenarios. |
+| **guide** | A flow's human-readable document at `docs/guides/flow-<topic>.md`. Doubles as the fence source for replay. |
+| **scenario** | A flow's machine execution shell at `tests/e2e/scenarios/<n>.sh`, linked back to its guide via the `# Replays:` header. |
+
+Cardinality:
+
+```
+journey ──contains──▶ N flows
+flow    ──documented by──▶ 1 guide
+flow    ──executed by──▶ ≥1 scenarios (typically 1; advanced flows may have permutations)
+```
 
 ## 2. Goals & non-goals
 
@@ -116,6 +142,19 @@ Only two languages:
 Frontmatter on `chat-input` fence line: `app_id`, `chat_id`, optional
 `user`. Defaults follow ESR bootstrap convention (`linyilun` operator,
 `esr_helper_dev` adapter, synthetic test chat).
+
+**`user=` resolution (v1 auto-bind).** `user=` takes a logical name
+(`linyilun`, not an `ou_xxx` open_id) so guides stay readable. On first
+encounter of a name, `replay-guide.sh` consults a built-in mapping table
+(e.g. `linyilun → ou_test_linyilun`) and:
+
+1. Creates the ESR user record if absent.
+2. Creates the `feishu_bind` linking that user to the synthetic open_id.
+
+Subsequent steps reuse the established bind. The mapping table lives in
+`scripts/replay-guide.sh` and is extended when a new operator name
+appears in a guide. `ou_xxx` values are never written into guide
+frontmatter — operator-readable names only.
 
 Placeholders (line-by-line substitution): `<UUID>` matches UUID v4,
 `<int>` matches digits, `<...>` is a wildcard. v1 ships these three;
