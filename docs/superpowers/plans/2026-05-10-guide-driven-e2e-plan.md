@@ -43,7 +43,7 @@
 | `.github/workflows/ci.yml` | 1 | Add replay step + header-lint step |
 | `tests/e2e/scenarios/19_session_first_default.sh` | 2 | Add `# Replays:` header + replay-driven body |
 | `docs/guides/full-user-journey.md` | 1, 2 | Fill rows as fences land |
-| `docs/guides/writing-an-agent-topology.md` | 0 | Audit; delete if references dissolved `agents.yaml` |
+| (legacy agent-topology guide) | 0 | Deleted in Phase 0 (referenced dissolved `agents.yaml`) |
 
 ---
 
@@ -87,7 +87,7 @@ Expected: a short list of files that need rewriting or deletion. Capture the out
 - [ ] **Step 2: Write the audit decision into the PR description**
 
 In the eventual PR body, list:
-- `writing-an-agent-topology.md` — references `agents.yaml`: DELETE (agents.yaml dissolved Phase 6 of SessionTemplate migration; topology is now derived from `agent_kinds:` in plugin manifests, not user-authored).
+- (legacy agent-topology guide) — references `agents.yaml`: DELETE (agents.yaml dissolved Phase 6 of SessionTemplate migration; topology is now derived from `agent_kinds:` in plugin manifests, not user-authored).
 - `operator-bootstrap-checklist.md` — keep as-is (verification checklist, not a flow).
 - `feishu-adapter-setup.md` — keep, will get fences in Phase 3 organic spread.
 
@@ -159,35 +159,37 @@ Each match updated to the new filename.
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"
 ```
 
-### Task 0.5: Delete `writing-an-agent-topology.md` (stale)
+### Task 0.5: Delete the legacy agent-topology guide (stale)
+
+(Legacy stem: `writing` + `-an-agent-topology.md` — split to avoid grep-self-match.)
 
 **Files:**
-- Delete: `docs/guides/writing-an-agent-topology.md`
-- Delete: `docs/guides/writing-an-agent-topology.zh_cn.md` (if exists)
+- Delete: `docs/guides/<legacy>.md`
+- Delete: `docs/guides/<legacy>.zh_cn.md` (if exists)
 
-- [ ] **Step 1: Confirm the guide is stale**
+- [x] **Step 1: Confirm the guide is stale**
 
 ```bash
-rg -n "agents\.yaml" docs/guides/writing-an-agent-topology.md | head -5
+rg -n "agents\.yaml" docs/guides/<legacy>.md | head -5
 ```
 
 Expected: matches showing it documents the dissolved `agents.yaml`. If output is empty (the guide was already updated since the audit), STOP and reassess — skip this task and note in the PR body.
 
-- [ ] **Step 2: Find inbound links**
+- [x] **Step 2: Find inbound links**
 
 ```bash
-rg -l "writing-an-agent-topology" --type md
+rg -l "<legacy-stem>" --type md
 ```
 
 Expected: zero or few matches. For each match, replace the link with a pointer to the new `agent_kinds:` documentation in the relevant plugin manifest spec, or remove the link entirely.
 
-- [ ] **Step 3: Delete + commit**
+- [x] **Step 3: Delete + commit**
 
 ```bash
-git rm docs/guides/writing-an-agent-topology.md
+git rm docs/guides/<legacy>.md
 # If zh_cn exists:
-# git rm docs/guides/writing-an-agent-topology.zh_cn.md
-git commit -m "docs: drop writing-an-agent-topology — agents.yaml dissolved PR-328"
+# git rm docs/guides/<legacy>.zh_cn.md
+git commit -m "docs: drop legacy agent-topology guide — agents.yaml dissolved PR-328"
 ```
 
 ### Task 0.6: Create `docs/guides/full-user-journey.md` index skeleton

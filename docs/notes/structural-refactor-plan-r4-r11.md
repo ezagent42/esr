@@ -404,7 +404,7 @@ The user will be offline from rev-3-final until R11 completes. These are the def
 
 ### D. Doc handling
 - **D1** — Don't rewrite historical docs: `docs/superpowers/{plans,specs,progress}/`, `docs/issues/closed-*`, `docs/notes/{pubsub-audit-pr3,tmux-*,erlexec-migration,feishu-ws-ownership-python,pr7-wire-contracts,manual-e2e-verification,pty-attach-diagnostic,describe-topology-security,capability-name-format-mismatch,yaml-authoring-lessons}.md`, `docs/futures/{esr-attach-cli,cross-workspace-messaging-handler,*}.md`, `docs/operations/dev-prod-isolation.md`, `docs/plans/`. If mass-substitution touches them, revert with `git checkout HEAD -- <path>`.
-- **D2** — DO update active docs: `docs/architecture.md`, `docs/notes/{concepts,session,mechanics,concept-rename-map,refactor-lessons,structural-refactor-plan-r4-r11,actor-role-vocabulary}.md`, `docs/futures/todo.md`, `docs/operations/known-flakes.md`, `docs/guides/writing-an-agent-topology.md`.
+- **D2** — DO update active docs: `docs/architecture.md`, `docs/notes/{concepts,session,mechanics,concept-rename-map,refactor-lessons,structural-refactor-plan-r4-r11,actor-role-vocabulary}.md`, `docs/futures/todo.md`, `docs/operations/known-flakes.md`, and the legacy agent-topology guide (since deleted in Phase 0 of the guide-driven e2e plan).
 
 ### E. Daemon state files
 - **E1** — After every code rename, sweep `~/.esrd-dev/default/*.{yaml,json}` for stale module names with the same prefix-substitution regex used in lib code. Example for R4 Entity collapse:

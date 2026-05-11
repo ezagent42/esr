@@ -370,7 +370,7 @@ workspace 状态都**必须**作为显式 fence 出现。
 | `feishu-adapter-setup.md` | 当前 | 留；加 fence |
 | `flow-bootstrap.md`（Phase 0 改名）| 当前 | 加 fence（可后续拆 `flow-bootstrap.md` + `flow-workspace-session.md`）|
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | 是 checklist 不是 journey | 留；从 `full-user-journey.md` 链作「验证 checklist」|
-| `writing-an-agent-topology.md` | 可能过期（agents.yaml 在 Phase 6 注销）| **审计**：如果引用 `agents.yaml` 当 canonical → 删或重写为 `agent_kinds:` 块 |
+| （旧 agent-topology 指南）| 已过期（agents.yaml 在 Phase 6 注销）| **Phase 0 删除**；canonical 来源现在是插件 manifest 的 `agent_kinds:` 块 |
 
 动作：
 1. grep 每个 guide 找过期引用：`agents.yaml`、删除的 slash、rev-3

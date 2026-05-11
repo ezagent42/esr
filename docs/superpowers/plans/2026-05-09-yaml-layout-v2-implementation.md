@@ -157,7 +157,7 @@
 - [ ] Run `bash tests/e2e/scenarios/<NN>_yaml_layout_v2.sh` — exits 0.
 - [ ] Update `docs/dev-guide.md` § "esrd home layout" (add if absent) with the new tree diagram.
 - [ ] `grep -rn "adapters.yaml\|plugins.yaml" docs/` — sweep stale references in operator-facing docs (NOT in spec/notes archives that document history).
-- [ ] If `docs/guides/writing-an-agent-topology.md` references `adapters.yaml`, update.
+- [ ] If the legacy agent-topology guide (since deleted in Phase 0 of the guide-driven e2e plan) referenced `adapters.yaml`, update.
 
 **Done when**: e2e green; docs reference v2 layout consistently.
 

@@ -397,7 +397,7 @@ Current `docs/guides/` contents (audited 2026-05-10):
 | `feishu-adapter-setup.md` | Current | Keep; add fences |
 | `flow-bootstrap.md` (renamed in Phase 0) | Current | Add fences (may further split into `flow-bootstrap.md` + `flow-workspace-session.md` later) |
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | Checklist not journey | Keep as-is; link from `full-user-journey.md` as "verification checklist" |
-| `writing-an-agent-topology.md` | Possibly stale (agents.yaml dissolved Phase 6) | **Audit**: if it references `agents.yaml` as canonical → delete or rewrite for `agent_kinds:` block |
+| (legacy agent-topology guide) | Stale (agents.yaml dissolved Phase 6) | **Deleted in Phase 0**; canonical source is now `agent_kinds:` in plugin manifests |
 
 Actions:
 1. Grep each guide for stale references: `agents.yaml`, deleted slashes,

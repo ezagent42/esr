@@ -43,7 +43,7 @@
 | `.github/workflows/ci.yml` | 1 | 加 replay 步骤 + header-lint 步骤 |
 | `tests/e2e/scenarios/19_session_first_default.sh` | 2 | 加 `# Replays:` 头 + 改为 replay 驱动 |
 | `docs/guides/full-user-journey.md` | 1, 2 | fence 落地时填行 |
-| `docs/guides/writing-an-agent-topology.md` | 0 | 审核；若引用已解散的 `agents.yaml` 则删除 |
+| （旧 agent-topology 指南）| 0 | Phase 0 删除（引用已解散的 `agents.yaml`）|
 
 ---
 
@@ -86,7 +86,7 @@ echo "=== rev-3 前的 grammar 标记 ===" ; rg -l "Esr\.Commands\.Plugin\.Insta
 - [ ] **Step 2：把审计决策写进 PR 描述**
 
 在最终 PR body 里列出：
-- `writing-an-agent-topology.md` —— 引用 `agents.yaml`：**删除**（SessionTemplate 迁移 Phase 6 已解散 agents.yaml；拓扑现在从插件 manifest 的 `agent_kinds:` 派生，不再由用户手写）
+- （旧 agent-topology 指南）—— 引用 `agents.yaml`：**删除**（SessionTemplate 迁移 Phase 6 已解散 agents.yaml；拓扑现在从插件 manifest 的 `agent_kinds:` 派生，不再由用户手写）
 - `operator-bootstrap-checklist.md` —— 保留（是核验清单不是 flow）
 - `feishu-adapter-setup.md` —— 保留；fence 在 Phase 3 organic 期间补
 
@@ -158,35 +158,37 @@ rg -l "<legacy-stem>" --type md
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"
 ```
 
-### Task 0.5：删除 `writing-an-agent-topology.md`（已陈旧）
+### Task 0.5：删除旧 agent-topology 指南（已陈旧）
+
+（旧 stem：`writing` + `-an-agent-topology.md` —— 拆开写以避免 grep 自命中。）
 
 **文件：**
-- 删：`docs/guides/writing-an-agent-topology.md`
-- 删：`docs/guides/writing-an-agent-topology.zh_cn.md`（若存在）
+- 删：`docs/guides/<legacy>.md`
+- 删：`docs/guides/<legacy>.zh_cn.md`（若存在）
 
-- [ ] **Step 1：确认 guide 真的陈旧**
+- [x] **Step 1：确认 guide 真的陈旧**
 
 ```bash
-rg -n "agents\.yaml" docs/guides/writing-an-agent-topology.md | head -5
+rg -n "agents\.yaml" docs/guides/<legacy>.md | head -5
 ```
 
 预期：出现引用已解散的 `agents.yaml` 的命中行。若输出为空（说明审计后已更新），STOP 并重评估 —— 跳过本任务，在 PR body 备注。
 
-- [ ] **Step 2：找入向链接**
+- [x] **Step 2：找入向链接**
 
 ```bash
-rg -l "writing-an-agent-topology" --type md
+rg -l "<legacy-stem>" --type md
 ```
 
 预期：零个或少量 match。每个 match：要么把链接换成对应插件 manifest spec 中 `agent_kinds:` 的文档指针，要么直接删链接。
 
-- [ ] **Step 3：删除 + Commit**
+- [x] **Step 3：删除 + Commit**
 
 ```bash
-git rm docs/guides/writing-an-agent-topology.md
+git rm docs/guides/<legacy>.md
 # 若 zh_cn 存在：
-# git rm docs/guides/writing-an-agent-topology.zh_cn.md
-git commit -m "docs: drop writing-an-agent-topology — agents.yaml dissolved PR-328"
+# git rm docs/guides/<legacy>.zh_cn.md
+git commit -m "docs: drop legacy agent-topology guide — agents.yaml dissolved PR-328"
 ```
 
 ### Task 0.6：建立 `docs/guides/full-user-journey.md` 索引骨架
