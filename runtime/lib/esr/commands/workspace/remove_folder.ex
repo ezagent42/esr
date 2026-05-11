@@ -58,6 +58,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
 
     with {:ok, ws} <- lookup_struct_by_name(name),
          :ok <- validate_folder_in_workspace(ws, expanded),
+         :ok <- validate_not_last_folder(ws),
          :ok <- validate_not_root_folder(ws, expanded),
          remaining = Enum.reject(ws.folders, fn f -> Path.expand(f.path) == expanded end),
          updated = %{ws | folders: remaining},
@@ -97,6 +98,21 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   end
 
   defp validate_not_root_folder(_ws, _expanded), do: :ok
+
+  # ≥1-folder invariant (spec 2026-05-11 §4.1). Removing the only folder
+  # would strand the workspace at 0 folders, which violates the invariant
+  # JsonWriter would then reject. Refuse early — operator should call
+  # /workspace:remove to delete the whole workspace instead.
+  defp validate_not_last_folder(%Struct{folders: folders, name: name}) when length(folders) == 1 do
+    {:error,
+     %{
+       kind: :cannot_remove_last_folder,
+       message:
+         "workspace #{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace"
+     }}
+  end
+
+  defp validate_not_last_folder(_ws), do: :ok
 
   defp lookup_struct_by_name(name) do
     case NameIndex.id_for_name(:esr_workspace_name_index, name) do
