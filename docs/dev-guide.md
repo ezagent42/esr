@@ -29,7 +29,7 @@ through the admin queue.
 ## Getting started
 
 > **For a step-by-step zero-config journey, see
-> [`guides/operator-bootstrap-journey.md`](guides/operator-bootstrap-journey.md)
+> [`guides/flow-bootstrap.md`](guides/flow-bootstrap.md)
 > and [`guides/feishu-adapter-setup.md`](guides/feishu-adapter-setup.md).**
 > The condensed flow:
 
@@ -231,8 +231,7 @@ hands off to the target FAA peer. Three structured denies
 `edit_message_id` are stripped automatically when source app ≠ target
 app — they belong to the source app's message_id space.
 
-See `docs/guides/writing-an-agent-topology.md` §三.5 for the full
-chain. Cross-app E2E is `tests/e2e/scenarios/04_multi_app_routing.sh`.
+Cross-app E2E is `tests/e2e/scenarios/04_multi_app_routing.sh`.
 
 ## Topology + business-topology awareness (PR-C / PR-F)
 

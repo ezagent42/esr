@@ -1,6 +1,6 @@
 # SessionTemplate + Channel — 飞书侧测试指南
 
-> **配套文件:** [`.zh_cn.md`](2026-05-10-sessiontemplate-feishu-test.zh_cn.md)
+> **配套文件:** [`.zh_cn.md`](flow-sessiontemplate-feishu-test.zh_cn.md)
 > **Spec:** [`docs/superpowers/specs/2026-05-10-session-template-and-channel.md`](../superpowers/specs/2026-05-10-session-template-and-channel.md)
 > **Plan:** [`docs/superpowers/plans/2026-05-10-session-template-and-channel-plan.md`](../superpowers/plans/2026-05-10-session-template-and-channel-plan.md)
 > **PR series:** #324 → #325 → #326 → #327 → #328 → #329 → #330 → #331

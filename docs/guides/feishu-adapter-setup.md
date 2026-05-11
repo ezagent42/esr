@@ -3,7 +3,7 @@
 **Audience:** operator wiring a new Feishu app to a running `esrd`
 instance. You already know how to run `esr exec ...` commands and
 have an admin esr user — see
-[`operator-bootstrap-journey.md`](operator-bootstrap-journey.md) for
+[`flow-bootstrap.md`](flow-bootstrap.md) for
 the zero-to-admin journey.
 
 This doc focuses on Feishu-side specifics: console setup, adapter
@@ -311,7 +311,7 @@ CLI is unavailable.
 
 ## References
 
-- [`operator-bootstrap-journey.md`](operator-bootstrap-journey.md) —
+- [`flow-bootstrap.md`](flow-bootstrap.md) —
   zero-to-admin journey + identity model.
 - `docs/dev-guide.md` § Multi-app + cross-app reply — how routes
   work with multiple registered Feishu apps.

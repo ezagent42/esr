@@ -1,7 +1,7 @@
 # 操作员 bootstrap 核对清单
 
 **对象：** 验证 fresh-install `esrd` 实际能完成 12 步 bootstrap 流程的操作员（或 reviewer）。
-姊妹文档：[`operator-bootstrap-journey.md`](operator-bootstrap-journey.md) 是**怎么做**；
+姊妹文档：[`flow-bootstrap.md`](flow-bootstrap.md) 是**怎么做**；
 本文是**怎么验证**。
 
 每行三维度评分：

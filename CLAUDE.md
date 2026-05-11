@@ -31,7 +31,7 @@ Spec: [`docs/superpowers/specs/2026-05-09-principal-id-semantic-split.md`](docs/
 - Project intro + bilingual quick start: [`README.md`](README.md)
 - Module tree + PR-by-PR architecture map: [`docs/architecture.md`](docs/architecture.md)
 - Authoring (handlers / adapters / patterns): [`docs/dev-guide.md`](docs/dev-guide.md)
-- Authoring (agent topology, business topology, metadata): [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)
+- Authoring (agent kinds, plugin manifest): plugin `manifest.yaml` files under `runtime/lib/esr/plugins/*/` declare `agent_kinds:` (the user-facing `agents.yaml` was dissolved in PR-328)
 - **Git flow (feature → dev → main)**: [`docs/dev-flow.md`](docs/dev-flow.md)
 - Field notes, indexed by topic: [`docs/notes/README.md`](docs/notes/README.md)
 - Specs (every shipped feature): [`docs/superpowers/specs/`](docs/superpowers/specs/)
@@ -118,8 +118,7 @@ Long-form rationale lives in the linked notes.
 3. **`metadata:` is LLM-visible** — `workspaces.yaml`'s `metadata:`
    sub-tree is exposed verbatim via the `describe_topology` MCP tool.
    Never put secrets there; use `env:` (filtered at the response
-   boundary) or `cwd:` (also filtered). See
-   [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) §9.1.
+   boundary) or `cwd:` (also filtered).
 
 ## Conventions
 
@@ -142,9 +141,9 @@ Long-form rationale lives in the linked notes.
 
 ## Things to look up rather than memorise
 
-- "How do I write a new agent / peer?" → [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)
+- "How do I write a new agent / peer?" → declare `agent_kinds:` in a plugin `runtime/lib/esr/plugins/<plugin>/manifest.yaml`
 - "How does cross-app reply work?" → [`docs/dev-guide.md`](docs/dev-guide.md) §"Multi-app + cross-app reply"
-- "How does the LLM know which workspace it's in?" → [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) §九
+- "How does the LLM know which workspace it's in?" → `describe_topology` MCP tool surfaces `workspaces.yaml`'s `metadata:` sub-tree (see [`docs/dev-guide.md`](docs/dev-guide.md))
 - "Why are there two CLAUDE.md files (root + roles/)?" → [`docs/dev-guide.md`](docs/dev-guide.md) §"CC session prompt prelude"
 - "What does each scenario actually exercise?" → [`README.md`](README.md) §"E2E test scenarios" + [`docs/architecture.md`](docs/architecture.md) §"E2E coverage map"
 - "How do I address a thing across processes / boundaries?" → [`docs/notes/esr-uri-grammar.md`](docs/notes/esr-uri-grammar.md) + [`runtime/lib/esr/uri.ex`](runtime/lib/esr/uri.ex). **Don't invent a new identifier shape — extend the existing `esr://` URI grammar.**
