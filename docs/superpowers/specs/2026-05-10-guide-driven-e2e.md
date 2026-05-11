@@ -345,6 +345,42 @@ Guides without fences are skipped (no failure). When Phase 2 lands
 fences in `operator-bootstrap-journey.md`, this step starts catching
 drift on the next PR.
 
+### 3.8 Fixture state convention — all-inline
+
+Every guide is **self-contained**. Each guide's fence sequence starts
+from a completely fresh fixture (no user, no adapter, no chat, no
+workspace) and replays **every setup step inline** before reaching the
+flow under test:
+
+- `flow-bootstrap.md` runs from absolute zero — its fences ARE the
+  bootstrap steps.
+- `flow-workspace-session.md` starts with the same bootstrap fences,
+  then proceeds to workspace + session steps.
+- `flow-pty-attach.md` starts with bootstrap + workspace + session
+  fences, then the PTY attach steps.
+
+Rationale: the spec's framing principle is "1:1 mirror real operator
+path." An operator running through a guide manually performs every
+step — bootstrap included; the replay tool does too. This rules out
+cross-guide chaining (`# Requires: flow-bootstrap.md` headers are
+**not** supported in v1) because chaining replaces user-readable
+fence steps with implicit replay-tool magic.
+
+**Mitigating duplication.** The repeated bootstrap fences are short
+(register adapter, then `user=linyilun` auto-binds via §3.2). A guide
+MAY use markdown prose ("the next 4 fences are identical to
+`flow-bootstrap.md` steps 1-4") to set context for the human reader,
+but the fences themselves MUST be present — the replay tool reads
+fences only, not prose.
+
+**`q3-user-auto-bind` collaboration.** §3.2's `user=` auto-resolution
+covers user creation cheaply. Adapter registration, synthetic chat
+creation, and any workspace state MUST appear as explicit fences.
+
+Cross-reference: §3.3's `full-user-journey.md` index ranks sub-flows
+by depth. Deeper guides have longer setup fence prefixes; this is
+expected, not a smell.
+
 ---
 
 ## 4. Migration plan

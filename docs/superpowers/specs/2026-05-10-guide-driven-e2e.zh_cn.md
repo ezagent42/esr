@@ -323,6 +323,37 @@ esac
 `operator-bootstrap-journey.md` 加上 fence，下个 PR 起 CI 就开始
 抓 drift。
 
+### 3.8 Fixture state 约定 —— all-inline
+
+每个 guide **自包含**。每个 guide 的 fence 序列都从全新 fixture
+（无 user、无 adapter、无 chat、无 workspace）起步，**所有 setup 步
+都内联**作为 fence，然后才到本 guide 真正测试的流程：
+
+- `flow-bootstrap.md` 从绝对零起 —— 它的 fence **就是** bootstrap 步骤。
+- `flow-workspace-session.md` 先跑跟 bootstrap 一样的 fence，再做
+  workspace + session 步。
+- `flow-pty-attach.md` 先跑 bootstrap + workspace + session 的 fence，
+  然后 PTY attach 步。
+
+理由：spec 的核心原则是"1:1 复刻真实操作员路径"。操作员手工跑 guide
+时每一步都做——bootstrap 包括在内；replay 工具也一样。这一约定
+**排除了跨 guide 链接**（`# Requires: flow-bootstrap.md` 头部在 v1
+**不支持**）——因为链接会把操作员可读的 fence 步骤替换成 replay 工具
+的隐式魔法。
+
+**缓解重复。** 重复的 bootstrap fence 不长（注册 adapter，然后
+`user=linyilun` 通过 §3.2 自动绑定）。一个 guide **可以**用 markdown
+散文（"下面 4 个 fence 跟 `flow-bootstrap.md` 步骤 1-4 相同"）给人类
+读者建立上下文，但**fence 本身必须存在**——replay 工具只读 fence，
+不读散文。
+
+**与 §3.2 `user=` auto-bind 协同。** §3.2 的 `user=` auto-resolution
+廉价地覆盖了 user 创建。adapter 注册、synthetic chat 创建、任何
+workspace 状态都**必须**作为显式 fence 出现。
+
+交叉引用：§3.3 的 `full-user-journey.md` 索引按深度排序 sub-flow。
+更深的 guide 有更长的 setup fence 前缀；这是预期、不是 smell。
+
 ---
 
 ## 4. 迁移计划
