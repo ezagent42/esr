@@ -182,6 +182,7 @@ defmodule Esr.Session.AgentSpawner do
          params <- enrich_params(params, session_id),
          {:ok, _sup} <- start_session_sup(session_id, agent_name, params, agent_def),
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
+         :ok <- verify_pipeline_complete(session_id, agent_def),
          :ok <- register(session_id, params, refs_map) do
       {:ok, session_id, mon}
     end
@@ -224,6 +225,15 @@ defmodule Esr.Session.AgentSpawner do
   @doc false
   def stamp_channel_adapter_for_test(agent_def, params),
     do: stamp_channel_adapter(agent_def, params)
+
+  @doc false
+  # Test-only shim: lets PR-2 T5's ExUnit reach the private
+  # `verify_pipeline_complete/2` clauses without building a full session
+  # subtree. The function itself only consumes the agent_def's
+  # `pipeline.inbound` shape + ActorQuery, so we can drive it
+  # directly with a synthetic session_id.
+  def verify_pipeline_complete_for_test(sid, agent_def),
+    do: verify_pipeline_complete(sid, agent_def)
 
   # ------------------------------------------------------------------
   # Private — pipeline spawning (extracted unchanged from Scope.Router)
@@ -461,6 +471,68 @@ defmodule Esr.Session.AgentSpawner do
       Esr.Entity.default_spawn_args(params)
     end
   end
+
+  # PR-2 (2026-05-11 spec rev-3) — post-spawn pipeline integrity check.
+  #
+  # Pre-PR-2, if any inbound stage failed to materialize into a live actor
+  # (e.g. impl module didn't load, role index write raced, custom plugin
+  # contributed a stage that nobody implements) the session would register
+  # as live with an incomplete pipeline — inbound messages then silently
+  # dropped on missing-role lookups downstream.
+  #
+  # Post-spawn we verify every expected role from `agent_def.pipeline.inbound`
+  # is reachable via `Esr.ActorQuery.list_by_role/2`. If any role is missing,
+  # tear down via `Esr.Session.Router.end_session/1` (symmetric with the
+  # session-supervisor route the spawn took) and return
+  # `{:error, :pipeline_incomplete}`. Callers (Commands.Session.New)
+  # surface this to chat as a structured error.
+  defp verify_pipeline_complete(sid, agent_def) do
+    expected_roles =
+      (agent_def.pipeline.inbound || [])
+      |> Enum.map(&role_for_impl(&1["impl"]))
+      |> Enum.reject(&is_nil/1)
+
+    missing =
+      Enum.reject(expected_roles, fn role ->
+        case Esr.ActorQuery.list_by_role(sid, role) do
+          [_pid | _] -> true
+          [] -> false
+        end
+      end)
+
+    case missing do
+      [] ->
+        :ok
+
+      missing_roles ->
+        require Logger
+
+        Logger.warning(
+          "agent_spawner: pipeline_incomplete session_id=#{sid} " <>
+            "missing_roles=#{inspect(missing_roles)} — tearing down"
+        )
+
+        # Best-effort teardown. Router is the canonical lifecycle owner;
+        # if it's not running (narrow unit-test setups), the supervisor
+        # tree was never built either, so there's nothing to tear down.
+        case Process.whereis(Esr.Session.Router) do
+          nil -> :ok
+          _pid -> _ = Esr.Session.Router.end_session(sid)
+        end
+
+        {:error, :pipeline_incomplete}
+    end
+  end
+
+  # Map the inbound stage's impl module string to the @role atom each
+  # peer registers itself under (Index 3 / `Esr.ActorQuery.list_by_role/2`).
+  # Stages whose impl is a Proxy (stateless module — no live actor, no
+  # role to verify) return nil so they're excluded from the expected set.
+  defp role_for_impl("Esr.Plugins.Feishu.FeishuChatProxy"), do: :feishu_chat_proxy
+  defp role_for_impl("Esr.Entity.CCProcess"), do: :cc_process
+  defp role_for_impl("Esr.Plugins.ClaudeCode.CCProcess"), do: :cc_process
+  defp role_for_impl("Esr.Entity.PtyProcess"), do: :pty_process
+  defp role_for_impl(_), do: nil
 
   defp register(session_id, params, refs_map) do
     # PR-21λ: routing key dropped thread_id. The full chat-binding map

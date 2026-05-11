@@ -91,4 +91,61 @@ defmodule Esr.Session.AgentSpawnerTest do
       assert function_exported?(AgentSpawner, :terminate, 2)
     end
   end
+
+  describe "verify_pipeline_complete/2 — PR-2 post-spawn integrity check" do
+    test "returns :ok when no inbound stages declare a verifiable role" do
+      # Stage impl strings that role_for_impl/1 maps to nil are excluded
+      # from the expected set — verification is a no-op.
+      agent_def = %{
+        pipeline: %{
+          inbound: [
+            %{"name" => "noop", "impl" => "UnknownModule", "kind" => "stateful"}
+          ]
+        }
+      }
+
+      sid = "vpc-empty-#{System.unique_integer([:positive])}"
+      assert :ok = AgentSpawner.verify_pipeline_complete_for_test(sid, agent_def)
+    end
+
+    test "returns :ok when pipeline.inbound is empty / nil" do
+      sid = "vpc-empty2-#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               AgentSpawner.verify_pipeline_complete_for_test(
+                 sid,
+                 %{pipeline: %{inbound: []}}
+               )
+
+      assert :ok =
+               AgentSpawner.verify_pipeline_complete_for_test(
+                 sid,
+                 %{pipeline: %{inbound: nil}}
+               )
+    end
+
+    test "returns {:error, :pipeline_incomplete} when an expected role isn't spawned" do
+      # FeishuChatProxy maps to :feishu_chat_proxy in role_for_impl/1.
+      # No actor registered under {sid, :feishu_chat_proxy} → missing.
+      agent_def = %{
+        pipeline: %{
+          inbound: [
+            %{
+              "name" => "feishu_chat_proxy",
+              "impl" => "Esr.Plugins.Feishu.FeishuChatProxy",
+              "kind" => "stateful"
+            }
+          ]
+        }
+      }
+
+      sid = "vpc-missing-#{System.unique_integer([:positive])}"
+
+      # The function calls Esr.Session.Router.end_session/1 on the
+      # tear-down path. For an unknown sid, that's a no-op
+      # ({:noreply, _} from the GenServer.call).
+      assert {:error, :pipeline_incomplete} =
+               AgentSpawner.verify_pipeline_complete_for_test(sid, agent_def)
+    end
+  end
 end
