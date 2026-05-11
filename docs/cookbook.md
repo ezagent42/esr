@@ -24,7 +24,7 @@ esr-dev exec feishu_bind --name=linyilun --feishu_user_id=ou_xxx
 #      /claude_code:tui name=esr-developer    ← click URL for browser TUI
 ```
 
-Full walkthrough: [`docs/guides/operator-bootstrap-journey.md`](guides/operator-bootstrap-journey.md).
+Full walkthrough: [`docs/guides/flow-bootstrap.md`](guides/flow-bootstrap.md).
 Feishu-side specifics (multi-app, hot config, troubleshooting):
 [`docs/guides/feishu-adapter-setup.md`](guides/feishu-adapter-setup.md).
 

@@ -29,7 +29,7 @@ through the admin queue.
 ## Getting started
 
 > **For a step-by-step zero-config journey, see
-> [`guides/operator-bootstrap-journey.md`](guides/operator-bootstrap-journey.md)
+> [`guides/flow-bootstrap.md`](guides/flow-bootstrap.md)
 > and [`guides/feishu-adapter-setup.md`](guides/feishu-adapter-setup.md).**
 > The condensed flow:
 

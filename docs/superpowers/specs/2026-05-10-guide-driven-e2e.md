@@ -105,7 +105,7 @@ where bash is awkward). Public surface:
 
 ```
 scripts/replay-guide.sh <guide-path>
-scripts/replay-guide.sh docs/guides/operator-bootstrap-journey.md
+scripts/replay-guide.sh docs/guides/flow-bootstrap.md
 ```
 
 Exit 0 on full match; non-zero on first mismatch with a diff.
@@ -342,7 +342,7 @@ Append to `.github/workflows/ci.yml`'s `build-and-test` job:
 ```
 
 Guides without fences are skipped (no failure). When Phase 2 lands
-fences in `operator-bootstrap-journey.md`, this step starts catching
+fences in `flow-bootstrap.md`, this step starts catching
 drift on the next PR.
 
 ### 3.8 Fixture state convention — all-inline
@@ -395,7 +395,7 @@ Current `docs/guides/` contents (audited 2026-05-10):
 |---|---|---|
 | `2026-05-10-sessiontemplate-feishu-test.md` | Current (just shipped) | Rename → `flow-sessiontemplate-feishu-test.md`; add fences |
 | `feishu-adapter-setup.md` | Current | Keep; add fences |
-| `operator-bootstrap-journey.md` | Current | Rename → `flow-bootstrap.md` (or split into `flow-bootstrap.md` + `flow-workspace-session.md`); add fences |
+| `flow-bootstrap.md` (renamed in Phase 0) | Current | Add fences (may further split into `flow-bootstrap.md` + `flow-workspace-session.md` later) |
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | Checklist not journey | Keep as-is; link from `full-user-journey.md` as "verification checklist" |
 | `writing-an-agent-topology.md` | Possibly stale (agents.yaml dissolved Phase 6) | **Audit**: if it references `agents.yaml` as canonical → delete or rewrite for `agent_kinds:` block |
 
@@ -423,10 +423,9 @@ Actions:
 
 ### Phase 2: Canary (~50 LOC + guide upgrades)
 
-- Upgrade `docs/guides/flow-bootstrap.md` (renamed from
-  `operator-bootstrap-journey.md`, plus its `.zh_cn.md` mirror) with
-  fences for the 5 main steps (workspace, session, agent, plain text
-  → CC reply, TUI URL).
+- Upgrade `docs/guides/flow-bootstrap.md` (renamed in Phase 0, plus
+  its `.zh_cn.md` mirror) with fences for the 5 main steps
+  (workspace, session, agent, plain text → CC reply, TUI URL).
 - Add a `# Replays: docs/guides/flow-bootstrap.md` header to
   `tests/e2e/scenarios/19_session_first_default.sh` (or replace its
   body with the thin-wrapper form per §3.4).
