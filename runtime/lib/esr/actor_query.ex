@@ -92,4 +92,25 @@ defmodule Esr.ActorQuery do
       :error -> :not_found
     end
   end
+
+  @doc """
+  Convenience wrapper over `list_by_role/2` for the common
+  "session id → FCP pid" lookup. Returns the first FCP registered for
+  the session, or `:not_found`.
+
+  Used by `Esr.Plugins.Feishu.FeishuAppAdapter` to route inbound chat
+  envelopes to a session's FCP without consulting the per-session
+  routing map a second time. (Plan PR-3 Task 3.2.)
+
+  Callers MUST treat the returned pid as transient and either
+  `Process.monitor/1` or `Process.alive?/1` before send — see module
+  docs.
+  """
+  @spec fcp_for_session(session_id :: String.t()) :: {:ok, pid()} | :not_found
+  def fcp_for_session(session_id) when is_binary(session_id) do
+    case list_by_role(session_id, :feishu_chat_proxy) do
+      [pid | _] when is_pid(pid) -> {:ok, pid}
+      [] -> :not_found
+    end
+  end
 end
