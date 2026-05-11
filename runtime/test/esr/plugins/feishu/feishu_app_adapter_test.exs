@@ -33,18 +33,18 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
   test "inbound envelope with chat+thread routes to the matching FeishuChatProxy via SessionRegistry",
        %{sup: sup} do
-    # Arrange: register a fake session with a test-owned "proxy pid"
-    test_pid = self()
+    # Arrange: attach a sid to the chat routing slot AND register the
+    # test process as a fake FCP under that sid (post-PR-3 Task 3.6:
+    # FAA routes via current_session/2 + ActorQuery.fcp_for_session/1
+    # rather than reaching through ETS-stored peer refs).
+    sid = "session-#{System.unique_integer([:positive])}"
+
+    :ok = Esr.Session.ChatRouting.Registry.attach_session("oc_xyz", "inst_test456", sid)
 
     :ok =
-      Esr.Session.ChatRouting.Registry.register_session(
-        "session-abc",
-        # PR-A T1: registry key is (chat_id, app_id, thread_id). Pre-PR-A
-        # envelopes (no args["app_id"]) fall back to state.instance_id —
-        # so the registry app_id MUST equal the adapter's instance_id
-        # for the legacy path to resolve.
-        %{chat_id: "oc_xyz", app_id: "inst_test456", thread_id: "om_123"},
-        %{feishu_chat_proxy: test_pid}
+      Esr.Entity.Registry.register_attrs(
+        "actor-#{System.unique_integer([:positive])}",
+        %{session_id: sid, name: "fcp-#{sid}", role: :feishu_chat_proxy}
       )
 
     {:ok, pid} =
@@ -71,14 +71,18 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
   test "PR-A T1: handle_upstream uses args[app_id] for registry lookup, falls back to state.instance_id",
        %{sup: sup} do
-    test_pid = self()
+    # Arrange: attach the sid to the chat routing slot under app_id
+    # "feishu_DEV" and register the test process as the FCP for that
+    # sid (post-PR-3 Task 3.6 routing via current_session/2 +
+    # ActorQuery.fcp_for_session/1).
+    sid = "S_PRA_FAA_#{System.unique_integer([:positive])}"
 
-    # Arrange: register a session keyed under app_id "feishu_DEV"
+    :ok = Esr.Session.ChatRouting.Registry.attach_session("oc_PRA", "feishu_DEV", sid)
+
     :ok =
-      Esr.Session.ChatRouting.Registry.register_session(
-        "S_PRA_FAA",
-        %{chat_id: "oc_PRA", app_id: "feishu_DEV", thread_id: ""},
-        %{feishu_chat_proxy: test_pid}
+      Esr.Entity.Registry.register_attrs(
+        "actor-pra-#{System.unique_integer([:positive])}",
+        %{session_id: sid, name: "fcp-#{sid}", role: :feishu_chat_proxy}
       )
 
     # Adapter's instance_id is intentionally a *different* string than
@@ -128,7 +132,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     send(pid_fallback, {:inbound_event, env_without_app_id})
     assert_receive {:feishu_inbound, ^env_without_app_id}, 500
 
-    Esr.Session.ChatRouting.Registry.unregister_session("S_PRA_FAA")
+    Esr.Session.ChatRouting.Registry.detach_session_by_id(sid)
   end
 
   test "registration key is instance_id, not Feishu-platform app_id (PR-9 T10)",

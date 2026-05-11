@@ -190,8 +190,8 @@ defmodule Esr.Commands.Session.ListTest do
       assert names == ["alpha", "beta"]
 
       # Cleanup
-      :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid_a)
-      :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid_b)
+      :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id(sid_a)
+      :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id(sid_b)
     end
 
     test "workspace= without username= → invalid_args" do
