@@ -190,19 +190,19 @@ defmodule Esr.Test.ChaosScenarios do
   end
 
   @doc """
-  Best-effort session-with-listener fixture for I1-I4 invariants.
+  Stub session-with-listener fixture for routing-level invariants.
 
   Returns `%{sid: sid, chat_id: chat, app_id: app}`.
 
-  Tries `Esr.Session.Router.create_session/1` first (production path,
-  spawns the real CC pipeline). If that fails (e.g. unit tests that
-  don't boot the full app), falls back to attaching a synthetic sid
-  to the chat-routing slot and registering the test process as the
-  FCP in the role index. The latter is enough to exercise routing
-  invariants — chaos against this stub will detect routing
-  invariants but not pipeline-spawn ones (I3 specifically needs the
-  full pipeline; I3 invariant tests must run in the integration
-  branch).
+  Attaches a synthetic sid to the chat-routing slot and injects the
+  test process as the FCP in the role index (Index 3 direct insert).
+  This is sufficient for routing-level chaos (I1, I2) — the test
+  process IS the FCP, so `{:feishu_inbound, _}` arrives on `self()`.
+
+  Full-pipeline invariants (I3 supervisor-DOWN cleanup, I4 agent
+  death chat-visible reply) require the real `Router.create_session/1`
+  path with a writable workspace + bundled agent_def. Those run in
+  the integration suite (futures/todo.md "integration-level I-tests").
   """
   @spec setup_session_with_listener() :: %{
           sid: String.t(),
@@ -214,34 +214,14 @@ defmodule Esr.Test.ChaosScenarios do
     app = "app_chaos_#{System.unique_integer([:positive])}"
     test_pid = self()
 
-    case try_real_session(chat, app) do
-      {:ok, sid} ->
-        register_chat_listener(sid, test_pid)
-        %{sid: sid, chat_id: chat, app_id: app}
+    sid = "chaos-stub-sid-#{System.unique_integer([:positive])}"
+    :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
 
-      :error ->
-        sid = "chaos-stub-sid-#{System.unique_integer([:positive])}"
-        :ok = Esr.Session.ChatRouting.Registry.attach_session(chat, app, sid)
+    :ets.insert(
+      :esr_actor_role_index,
+      {{sid, :feishu_chat_proxy}, {test_pid, "chaos-actor-#{:rand.uniform(99_999)}"}}
+    )
 
-        # Inject test process as the FCP for the synthetic sid (Index 3
-        # direct insert — same pattern as n2_sessions_test fixture).
-        :ets.insert(
-          :esr_actor_role_index,
-          {{sid, :feishu_chat_proxy}, {test_pid, "chaos-actor-#{:rand.uniform(99_999)}"}}
-        )
-
-        %{sid: sid, chat_id: chat, app_id: app}
-    end
+    %{sid: sid, chat_id: chat, app_id: app}
   end
-
-  defp try_real_session(_chat, _app) do
-    # Stub for now — full real-session fixture requires
-    # AgentDefFixture.cc_agent_def() + a writable workspace, both of
-    # which fail in many unit-test environments. The fallback path is
-    # sufficient for routing-level invariants (I1, I2). I3 and I4
-    # require the real path and live in the integration suite.
-    :error
-  end
-
-  defp register_chat_listener(_sid, _pid), do: :ok
 end

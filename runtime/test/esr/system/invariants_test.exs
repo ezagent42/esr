@@ -112,7 +112,7 @@ defmodule Esr.System.InvariantsTest do
       # spawn-then-die flow without booting the full session pipeline.
       sup_stub = spawn(fn -> Process.sleep(:infinity) end)
 
-      {:ok, _obs} =
+      {:ok, obs} =
         LifecycleObservers.start_observer(%{
           session_id: ctx.sid,
           session_sup_pid: sup_stub,
@@ -120,12 +120,19 @@ defmodule Esr.System.InvariantsTest do
           app_id: ctx.app_id
         })
 
+      # Guard: rule out a pass via "observer never started"; the observer
+      # must be alive and monitoring before we kill the supervisor.
+      assert Process.alive?(obs)
+
       Process.exit(sup_stub, :kill)
 
       eventually(
         fn -> ChatRouting.current_session(ctx.chat_id, ctx.app_id) == :not_found end,
         3_000
       )
+
+      # The observer is :temporary; after handling :DOWN it exits :normal.
+      eventually(fn -> not Process.alive?(obs) end, 1_000)
     end
   end
 
