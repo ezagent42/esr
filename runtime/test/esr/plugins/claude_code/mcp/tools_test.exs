@@ -52,4 +52,32 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.ToolsTest do
       refute "_echo" in names
     end
   end
+
+  describe "list/1 — PR-4 submit_slash admin tool" do
+    test "submit_slash is exposed for non-diagnostic role" do
+      tools = Tools.list("dev")
+      names = Enum.map(tools, & &1["name"])
+      assert "submit_slash" in names
+    end
+
+    test "submit_slash is exposed for diagnostic role" do
+      tools = Tools.list("diagnostic")
+      names = Enum.map(tools, & &1["name"])
+      assert "submit_slash" in names
+    end
+
+    test "submit_slash schema requires `command` string" do
+      submit = Tools.list("dev") |> Enum.find(&(&1["name"] == "submit_slash"))
+      assert is_map(submit)
+
+      schema = submit["inputSchema"]
+      assert schema["type"] == "object"
+
+      props = schema["properties"]
+      assert is_map(props["command"])
+      assert props["command"]["type"] == "string"
+
+      assert schema["required"] == ["command"]
+    end
+  end
 end
