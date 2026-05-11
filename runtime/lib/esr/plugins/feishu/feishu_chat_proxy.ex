@@ -772,45 +772,6 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
     state
   end
 
-  # Infer media_type atom from the file extension. Image extensions map
-  # to :image; any other recognised extension maps to :file; missing or
-  # bare-dot extension returns {:error, :no_extension}.
-  defp infer_media_type(path) do
-    case path |> Path.extname() |> String.downcase() do
-      "" -> {:error, :no_extension}
-      "." -> {:error, :no_extension}
-      ext when ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic"] -> {:ok, :image}
-      _other -> {:ok, :file}
-    end
-  end
-
-  # Check whether the named channel adapter plugin declares outbound
-  # capability for the given media_type via Esr.Resource.Media.PluginRegistry.
-  #
-  # Normalization: `parse_channel_adapter/1` extracts the full adapter
-  # family name from the proxy target (e.g. "feishu_app" from
-  # "admin::feishu_app_adapter_<id>"). Plugin manifests use a shorter
-  # canonical name ("feishu"). Normalize by stripping a trailing "_app"
-  # suffix so "feishu_app" looks up as "feishu". If the normalized name
-  # is also not registered, fall back to the original so the error message
-  # stays meaningful.
-  defp check_outbound_capability(plugin_name, media_type) do
-    normalized =
-      if String.ends_with?(plugin_name, "_app") do
-        String.slice(plugin_name, 0, String.length(plugin_name) - 4)
-      else
-        plugin_name
-      end
-
-    lookup = if normalized != plugin_name, do: normalized, else: plugin_name
-
-    if Esr.Resource.Media.PluginRegistry.supports?(lookup, :outbound, media_type) do
-      :ok
-    else
-      {:error, :unsupported_outbound}
-    end
-  end
-
   # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.2):
   # admin operations dispatched by the agent on behalf of the operator.
   # The agent calls `submit_slash(command="/agent:add type=cc name=helper")`;
@@ -851,6 +812,23 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
       "type" => "invalid_args",
       "message" => "submit_slash requires args.command :: string"
     })
+
+    state
+  end
+
+  defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
+    Logger.warning(
+      "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
+        "session_id=#{state.session_id}"
+    )
+
+    reply_tool_result(
+      channel_pid,
+      req_id,
+      false,
+      nil,
+      %{"type" => "unknown_tool", "message" => "FCP has no handler for #{unknown_tool}"}
+    )
 
     state
   end
@@ -932,21 +910,43 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   defp normalize_kind(%{"type" => t}) when is_binary(t), do: t
   defp normalize_kind(other), do: inspect(other)
 
-  defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
-    Logger.warning(
-      "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
-        "session_id=#{state.session_id}"
-    )
+  # Infer media_type atom from the file extension. Image extensions map
+  # to :image; any other recognised extension maps to :file; missing or
+  # bare-dot extension returns {:error, :no_extension}.
+  defp infer_media_type(path) do
+    case path |> Path.extname() |> String.downcase() do
+      "" -> {:error, :no_extension}
+      "." -> {:error, :no_extension}
+      ext when ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic"] -> {:ok, :image}
+      _other -> {:ok, :file}
+    end
+  end
 
-    reply_tool_result(
-      channel_pid,
-      req_id,
-      false,
-      nil,
-      %{"type" => "unknown_tool", "message" => "FCP has no handler for #{unknown_tool}"}
-    )
+  # Check whether the named channel adapter plugin declares outbound
+  # capability for the given media_type via Esr.Resource.Media.PluginRegistry.
+  #
+  # Normalization: `parse_channel_adapter/1` extracts the full adapter
+  # family name from the proxy target (e.g. "feishu_app" from
+  # "admin::feishu_app_adapter_<id>"). Plugin manifests use a shorter
+  # canonical name ("feishu"). Normalize by stripping a trailing "_app"
+  # suffix so "feishu_app" looks up as "feishu". If the normalized name
+  # is also not registered, fall back to the original so the error message
+  # stays meaningful.
+  defp check_outbound_capability(plugin_name, media_type) do
+    normalized =
+      if String.ends_with?(plugin_name, "_app") do
+        String.slice(plugin_name, 0, String.length(plugin_name) - 4)
+      else
+        plugin_name
+      end
 
-    state
+    lookup = if normalized != plugin_name, do: normalized, else: plugin_name
+
+    if Esr.Resource.Media.PluginRegistry.supports?(lookup, :outbound, media_type) do
+      :ok
+    else
+      {:error, :unsupported_outbound}
+    end
   end
 
   # 30 MiB — the cheapest meaningful cap for the α in-band payload
