@@ -87,6 +87,42 @@ defmodule Esr.Slash.ReplyTargetTest do
       assert rendered =~ "xyz-456"
     end
 
+    # 2026-05-11 user-reported regression: /agent:list returns
+    # %{"chat_id" => _, "session_id" => sid, "agents" => [...]}; the
+    # generic {"session_id"} clause was shadowing it and rendering
+    # "session started: <sid>" — operator saw no agent list.
+    # Same subset-match bug class as /session:switch above.
+    test "format_result for /agent:list with agents renders the list" do
+      result =
+        {:ok,
+         %{
+           "chat_id" => "c1",
+           "session_id" => "sid-1",
+           "agents" => [
+             %{
+               "name" => "helper",
+               "type" => "cc",
+               "actor_ids" => %{"cc" => "cc-1", "pty" => "pty-1"}
+             }
+           ]
+         }}
+
+      rendered = ChatPid.format_result(result)
+      assert rendered =~ "helper"
+      assert rendered =~ "cc"
+      assert rendered =~ "sid-1"
+      refute rendered =~ "session started"
+    end
+
+    test "format_result for /agent:list with no agents renders 'no agents' hint" do
+      result = {:ok, %{"chat_id" => "c", "session_id" => "sid-2", "agents" => []}}
+      rendered = ChatPid.format_result(result)
+      assert rendered =~ "no agents"
+      assert rendered =~ "sid-2"
+      assert rendered =~ "/agent:add"
+      refute rendered =~ "session started"
+    end
+
     test "respond {:ok, %{text: ...}} returns text directly (Help/Whoami/Doctor)" do
       ref = make_ref()
       assert :ok = ChatPid.respond(self(), {:ok, %{"text" => "free-form output"}}, ref)

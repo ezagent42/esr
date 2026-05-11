@@ -102,7 +102,50 @@ defmodule Esr.Slash.ReplyTarget.ChatPid do
   def format_result({:ok, %{"session_id" => sid, "switched" => true}}),
     do: "switched chat-current session → #{sid}"
 
-  def format_result({:ok, %{"session_id" => sid}}),
+  # /agent:list returns %{"chat_id" => _, "session_id" => sid, "agents" => [...]}.
+  # Must precede the generic "session_id" clause — same subset-match shadowing
+  # bug as /session:switch above.
+  def format_result({:ok, %{"session_id" => sid, "agents" => agents}}) when is_list(agents) do
+    case agents do
+      [] ->
+        "session #{sid}: no agents (use /agent:add type=<kind> name=<name>)"
+
+      _ ->
+        rows =
+          Enum.map_join(agents, "\n", fn a ->
+            cc = get_in(a, ["actor_ids", "cc"]) || "-"
+            pty = get_in(a, ["actor_ids", "pty"]) || "-"
+            "  - #{a["name"]} (#{a["type"]}) cc=#{cc} pty=#{pty}"
+          end)
+
+        "session #{sid} agents:\n" <> rows
+    end
+  end
+
+  # /pty:list returns %{"chat_id" => _, "session_id" => sid, "ptys" => [...]}.
+  def format_result({:ok, %{"session_id" => sid, "ptys" => ptys}}) when is_list(ptys) do
+    case ptys do
+      [] ->
+        "session #{sid}: no ptys"
+
+      _ ->
+        rows =
+          Enum.map_join(ptys, "\n", fn p ->
+            "  - #{p["actor_id"] || p["name"] || "-"}"
+          end)
+
+        "session #{sid} ptys:\n" <> rows
+    end
+  end
+
+  # Generic "session_id" clause for /session:new — match ONLY the canonical
+  # 1-key shape `%{"session_id" => sid}`. The `map_size == 1` guard prevents
+  # subset-match shadowing of any richer result map (e.g. /agent:add,
+  # /session:end, /agent:rename — all return session_id + sibling fields).
+  # Without this guard the generic clause silently swallowed those richer
+  # results and the operator saw "session started: <sid>" instead of the
+  # command's real output (2026-05-11 user-reported regression).
+  def format_result({:ok, %{"session_id" => sid} = m}) when map_size(m) == 1,
     do: "session started: #{sid}"
 
   # PR-21λ 2026-05-01: command modules that produce free-form display
