@@ -408,12 +408,18 @@ seed_capabilities() {
     capabilities: ["*"]'
   printf '%s\n' "$caps_yaml" > "${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
 
-  # 2026-05-09 zero-config bootstrap (spec § 3.5): the escript CLI now
-  # reads `submitted_by` from operator.json — `ESR_OPERATOR_PRINCIPAL_ID`
+  # 2026-05-09 zero-config bootstrap (spec § 3.5): the escript CLI reads
+  # `caller_principal_id` from operator.json (renamed from legacy
+  # `principal_id` post-PR #282) and emits it as `submitted_by` on the
+  # envelope via `Esr.Cli.Main.resolve_submitter/0`. `ESR_OPERATOR_PRINCIPAL_ID`
   # env is ignored (D3 hard cutover). Pair the seeded ou_admin cap row
   # with an operator.json so existing scenarios that rely on
   # seed_capabilities + esr_cli (admin submit) continue to submit as
   # ou_admin without each scenario needing its own `user_add` first.
+  # The field name MUST be caller_principal_id; using the legacy
+  # principal_id silently triggers the system:bootstrap sentinel fallback
+  # which is dormant after seed_capabilities seeds ou_admin, leaving every
+  # admin submit unauthorized (Phase 2 2026-05-11 bug fix).
   local operator_json="${ESRD_HOME}/${ESRD_INSTANCE}/operator.json"
   cat > "$operator_json" <<EOF
 {

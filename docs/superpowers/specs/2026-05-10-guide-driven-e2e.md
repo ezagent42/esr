@@ -472,8 +472,13 @@ Actions:
 
 - Upgrade `docs/guides/flow-bootstrap.md` (renamed from
   `operator-bootstrap-journey.md`, plus its `.zh_cn.md` mirror) with
-  fences for the 5 main steps (workspace, session, agent, plain text
-  → CC reply, TUI URL).
+  fences for the 4 chat-side bootstrap steps: `/adapter:list`,
+  `/feishu:bind`, `/workspace:new`, `/session:new`. The 5th planned
+  fence (plain text → CC reply) is **deferred to Phase 3** —
+  `/session:new` does not auto-bind a CC agent to the chat, so a
+  follow-up plain-text fence requires either the `unconsumed-message-
+  errors-not-hangs` fix or an explicit `/agent:add` fence in the guide
+  (see `phase-3-fence-cc-reply` in `docs/futures/todo.md`).
 - Add a `# Replays: docs/guides/flow-bootstrap.md` header to
   `tests/e2e/scenarios/19_session_first_default.sh` (or replace its
   body with the thin-wrapper form per §3.4).
@@ -506,7 +511,7 @@ adding `mix esr.check_guide_coverage` for absolute coverage. Track in
 | 2 | Hook fires when editing `runtime/lib/esr/commands/*.ex` | manual trigger |
 | 3 | CLAUDE.md updated; spec linked | inspect file |
 | 4 | CI runs replay against fenced guides | green PR |
-| 5 | `docs/guides/flow-bootstrap.md` has fences for the 5 main steps | inspect guide |
+| 5 | `docs/guides/flow-bootstrap.md` has fences for the 4 chat-side bootstrap steps (CC reply fence #5 deferred to Phase 3; see `phase-3-fence-cc-reply` in `docs/futures/todo.md`) | inspect guide |
 | 6 | The 2026-05-10 regression is replayable as a fence; pre-#334 FAILs there, post-#334 PASSes | bisect smoke (manual one-time) |
 | 7 | `docs/guides/full-user-journey.md` exists as the gold-standard index, lists every fenced sub-flow | inspect file |
 | 8 | Every `tests/e2e/scenarios/*.sh` declares `# Replays: docs/guides/<file>.md` in header | `scripts/check-scenario-headers.sh` exit 0 |
