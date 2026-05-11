@@ -1,4 +1,4 @@
-defmodule Esr.Integration.WorkspaceLifecycleTest do
+defmodule Esr.Commands.Workspace.LifecycleTest do
   @moduledoc """
   PR-1 acceptance: ESR-bound workspace lifecycle end-to-end exercising
   the ≥1-folder invariant (spec 2026-05-11 §4.1).

@@ -277,11 +277,12 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
           "args" => %{"name" => name, "username" => "alice", "folder" => repo}
         })
 
-      # Repo-bound 1-folder removal currently hits the root-folder guard, which
-      # also satisfies the spec (last folder == root folder); the contract is
-      # "you can't strand a workspace at 0 folders". To keep the test focused on
-      # the NEW guard, exercise an ESR-bound 1-folder workspace (folders[0]
-      # is not protected as a "root folder" — repo-bound semantics only).
+      # validate_not_last_folder runs BEFORE validate_not_root_folder in
+      # execute/1, so repo-bound single-folder also yields
+      # :cannot_remove_last_folder (not :cannot_remove_root_folder).
+      # We assert that below for the repo-bound case; first we set up an
+      # ESR-bound 1-folder workspace to assert the same envelope independently
+      # of the root-folder guard.
       esr_name = "esr-single-#{:erlang.unique_integer([:positive])}"
 
       {:ok, _} =

@@ -6,8 +6,10 @@ defmodule Esr.Resource.Workspace.Struct do
     * `id` — UUID v4, canonical identity (never changes during a workspace's life).
     * `name` — display name (operator-visible). May change via `/workspace rename`.
     * `owner` — esr-username; must be in `users.yaml`.
-    * `folders` — list of `{path, name?}` entries. Repo-bound workspaces always
-      have at least one (the repo itself); ESR-bound may have zero.
+    * `folders` — list of `{path, name?}` entries. Every workspace has ≥1 folder
+      (PR-1 spec 2026-05-11 §4.1); `folders[0]` is the canonical cwd seen by
+      session spawning. Repo-bound: folders[0] is the repo root. ESR-bound:
+      folders[0] is `Esr.Paths.workspace_dir(name)`.
     * `agent` — agent_def name (default `"cc"`).
     * `settings` — flat dot-namespaced map (e.g. `cc.model: "claude-opus-4-7"`).
     * `env` — string→string map merged into spawned sessions' env.
