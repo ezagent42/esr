@@ -118,7 +118,9 @@ defmodule Esr.Session.Router do
 
       pid when is_pid(pid) ->
         :ok = Esr.Session.Supervisor.stop_session(pid)
-        :ok = Esr.Session.ChatRouting.Registry.unregister_session(sid)
+        # PR-3 Task 3.5: migrated off legacy unregister_session/1 to the
+        # sid-keyed detach helper added in Task 3.4a.
+        :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id(sid)
         {:reply, :ok, state}
     end
   end
