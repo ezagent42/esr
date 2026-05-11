@@ -82,9 +82,11 @@ flow    ──executed by──▶ ≥1 scenarios (typically 1; advanced flows m
   machine-readable fences.
 - Not testing the Feishu protocol itself. mock_feishu's contract with
   real Feishu is a separate (deferred) concern.
-- Not building Elixir mix tasks for replay/coverage. A 100-line bash
-  script + hook + CLAUDE.md rule covers the recurring drift class
-  without adding a 4-module Elixir subsystem.
+- Not building Elixir mix tasks for replay/coverage. `scripts/replay-guide.sh`
+  is an out-of-process **black-box driver** that boots esrd as a subprocess
+  and HTTP-talks to it — fundamentally different from internal tools like
+  `mix esr.gen_slash_routes` (which parse ESR's own AST). See
+  [ADR-0001](../../adr/0001-bash-replay-script.md) for the full rationale.
 - Not enforcing absolute coverage (every command kind must appear in a
   guide) in v1. v1 catches drift in commands that DO have guide steps;
   unchecked commands stay unchecked. Coverage gate is a follow-up if

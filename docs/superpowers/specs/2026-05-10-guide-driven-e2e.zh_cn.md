@@ -74,8 +74,10 @@ flow    ──由 ≥1 个 scenario 执行（通常 1；高级 flow 可能有排
 - 不自动生成指南。指南是人写的；只在里面嵌机器可读 fence。
 - 不测 Feishu 协议本身。mock_feishu 跟真 Feishu 的契约是另一个
   （推后）关切。
-- 不写 Elixir mix 任务做回放/覆盖。100 行 bash 脚本 + hook + CLAUDE.md
-  规则覆盖 recurring drift class，不需要新增 4 模块的 Elixir 子系统。
+- 不写 Elixir mix 任务做回放/覆盖。`scripts/replay-guide.sh` 是**进程外
+  黑盒驱动器**——启 esrd 子进程、HTTP 跟它说话——本质上跟 `mix
+  esr.gen_slash_routes` 这种解析 ESR 自身 AST 的**内部工具**不同。
+  完整理由见 [ADR-0001](../../adr/0001-bash-replay-script.md)。
 - v1 不强制绝对覆盖（每个命令 kind 必须在指南里出现）。v1 抓**有
   fence 的命令**的 drift；没 fence 的命令保持没 fence。覆盖 gate 是
   follow-up，等真出现 drift 在没 fence 的命令上时再加。
