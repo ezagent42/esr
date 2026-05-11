@@ -10,12 +10,16 @@ defmodule Esr.Resource.Workspace.JsonWriter do
 
   @spec write(String.t(), Struct.t()) :: :ok | {:error, term()}
   def write(path, %Struct{} = ws) do
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         {:ok, json} <- encode(ws),
-         tmp = path <> ".tmp",
-         :ok <- File.write(tmp, json),
-         :ok <- File.rename(tmp, path) do
-      :ok
+    if Struct.valid?(ws) do
+      with :ok <- File.mkdir_p(Path.dirname(path)),
+           {:ok, json} <- encode(ws),
+           tmp = path <> ".tmp",
+           :ok <- File.write(tmp, json),
+           :ok <- File.rename(tmp, path) do
+        :ok
+      end
+    else
+      {:error, :empty_folders}
     end
   end
 
