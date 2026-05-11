@@ -72,12 +72,33 @@ defmodule Esr.Entity.PtyProcess do
   end
 
   @impl Esr.Entity
+  # PR-2 (2026-05-11 spec rev-3): reject nil/empty `:dir` outright.
+  #
+  # Pre-PR-2 this silently coerced a missing dir to `/tmp`, masking
+  # mis-spawn invariants. PR-1 made workspace `folders[0].path` a
+  # guaranteed non-empty cwd source, so any nil `:dir` reaching here
+  # is now a structural bug in the spawn-pipeline param plumbing —
+  # raise loudly so AgentSpawner's `:spawn_failed` catch surfaces it
+  # via {:peer_spawn_failed, _, _} → Commands.Session.New surfaces
+  # :session_start_failed.
   def spawn_args(params) do
     name = "esr_pty_#{:erlang.unique_integer([:positive])}"
 
+    dir =
+      case Esr.Entity.get_param(params, :dir) do
+        d when is_binary(d) and d != "" ->
+          d
+
+        _ ->
+          raise ArgumentError,
+                "PtyProcess.spawn_args: missing :dir — workspace must supply a " <>
+                  "non-empty folder path (PR-1 invariant). got params=" <>
+                  inspect(params)
+      end
+
     %{
       session_name: name,
-      dir: Esr.Entity.get_param(params, :dir) || "/tmp",
+      dir: dir,
       session_id: Esr.Entity.get_param(params, :session_id),
       workspace_name: Esr.Entity.get_param(params, :workspace_name),
       chat_id: Esr.Entity.get_param(params, :chat_id),
@@ -195,10 +216,15 @@ defmodule Esr.Entity.PtyProcess do
   # ------------------------------------------------------------------
 
   @impl Esr.OSProcess
-  # Phase 8: esr-cc.sh deleted. Use Esr.Plugins.ClaudeCode.Launcher
-  # when no explicit start_cmd override is present in state.
-  # start_cmd override (from workspace config) is accepted as a string
-  # and wrapped with bash for backwards-compatible operator escape hatch.
+  # PR-2 (2026-05-11 spec rev-3): Launcher.prepare_spawn/1 is the SOLE
+  # entry. Pre-PR-2 this called the now-deleted `Launcher.spawn_cmd/1`,
+  # which built argv with a relative `--mcp-config .mcp.json` flag but
+  # NEVER wrote the file — claude refused to start. prepare_spawn/1
+  # writes the per-session mcp.json at the absolute ESRD-rooted path
+  # AND validates dir + claude binary before returning argv.
+  #
+  # start_cmd override (from workspace config) remains as an operator
+  # escape hatch — bash-wrap a string command and skip the launcher.
   def os_cmd(state) do
     case state.start_cmd do
       cmd when is_binary(cmd) and cmd != "" ->
@@ -207,11 +233,20 @@ defmodule Esr.Entity.PtyProcess do
         ["bash", "-c", cmd]
 
       _ ->
-        # Default: Elixir-native Launcher builds the argv.
-        Esr.Plugins.ClaudeCode.Launcher.spawn_cmd(
-          cwd:  Map.get(state, :dir),
-          role: Map.get(state, :workspace_role, "dev")
-        )
+        case Esr.Plugins.ClaudeCode.Launcher.prepare_spawn(state) do
+          {:ok, %{cmd: cmd}} ->
+            cmd
+
+          {:error, reason} ->
+            # OSProcess @callback says os_cmd/1 returns [String.t()] —
+            # no `{:error, _}` channel. Raise so OSProcessWorker.init/1
+            # crashes via the parent.init call site; AgentSpawner's
+            # `{:peer_spawn_failed, _, _}` catch surfaces it to the
+            # caller as {:error, {:peer_spawn_failed, _, _}}.
+            raise RuntimeError,
+                  "PtyProcess.os_cmd: prepare_spawn failed: #{inspect(reason)} " <>
+                    "session_id=#{inspect(Map.get(state, :session_id))}"
+        end
     end
   end
 
