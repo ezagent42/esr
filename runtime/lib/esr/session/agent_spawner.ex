@@ -142,7 +142,9 @@ defmodule Esr.Session.AgentSpawner do
 
       pid when is_pid(pid) ->
         :ok = Esr.Session.Supervisor.stop_session(pid)
-        :ok = Esr.Session.ChatRouting.Registry.unregister_session(scope_id)
+        # PR-3 Task 3.4: migrated off legacy unregister_session/1 to the
+        # sid-keyed detach helper added in Task 3.4a.
+        :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id(scope_id)
         :ok
     end
   end
@@ -530,18 +532,20 @@ defmodule Esr.Session.AgentSpawner do
   defp role_for_impl("Esr.Entity.PtyProcess"), do: :pty_process
   defp role_for_impl(_), do: nil
 
-  defp register(session_id, params, refs_map) do
+  defp register(session_id, params, _refs_map) do
     # PR-21λ: routing key dropped thread_id. The full chat-binding map
     # still lives in `params` for FCP/CC reply rendering — this only
     # narrows what `ChatScope.Registry` indexes on.
-    Esr.Session.ChatRouting.Registry.register_session(
-      session_id,
-      %{
-        chat_id: get_param(params, :chat_id) || "",
-        app_id: get_param(params, :app_id) || "default"
-      },
-      refs_map
-    )
+    #
+    # PR-3 Task 3.4: migrated off legacy register_session/3 (3-tuple ETS
+    # row carrying peer refs) to attach_session/3 (unified 2-tuple
+    # {current, attached MapSet} shape). FAA now routes via
+    # current_session/2 + ActorQuery.fcp_for_session/1 instead of
+    # reaching through the ETS-stored refs, so the refs_map argument is
+    # ignored.
+    chat_id = get_param(params, :chat_id) || ""
+    app_id = get_param(params, :app_id) || "default"
+    Esr.Session.ChatRouting.Registry.attach_session(chat_id, app_id, session_id)
   end
 
   # Params may arrive either atom-keyed (Elixir callers) or
