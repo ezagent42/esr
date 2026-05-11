@@ -1,6 +1,6 @@
 # Session 创建时默认 agent + agent 驱动后续操作
 
-**Status:** Draft rev-2 —— 待 linyilun 批准（2026-05-11）
+**Status:** Draft rev-3 —— 待 linyilun 批准（2026-05-11）
 **Date:** 2026-05-11
 **Author:** Claude（与 linyilun 协作）
 **Companion:** [`.md`](2026-05-11-default-agent-and-agent-driven-flow-design.md)
@@ -8,8 +8,17 @@
 Worktree: `.worktrees/fix-unconsumed-msg`，branch `spec/default-agent-and-agent-driven-flow`。
 
 rev-2 改动：subagent 代码 review 找到 7 个 critical mis-grounded claims
-（commit `5d81734` → 当前 commit）。本 rev 把所有提议都锚定到 `runtime/lib/`
-里可验证的 file:line。
+（commit `5d81734` → commit `00f5117`）。
+
+rev-3 改动：第二轮 subagent review 确认 C1-C7 已修（Phase A 扎实），但 §5.2
+有 3 个新 critical：
+- `Esr.Resource.Session.Registry.get/1` 不存在 → 用 `get_by_id/1`
+- Session struct 没 `chat_id`/`app_id`/`principal_id` 字段 → chat 在 `attached_chats[]`（多 chat），principal 从 `:tool_invoke` 消息拿
+- `{:slash_result, ref, _}` 是我编的形态 → 引入新 `Esr.Slash.ReplyTarget.RawCollector` 捕获 raw 结果（`ChatPid.respond/3` 只发渲染后的文本）
+
+§4.1 也 commit 选 hand-rolled validator（不依赖 ExJsonSchema）。
+§4.5 步骤 5 修正：lookup helper 住 `Esr.ActorQuery`（不是 `InstanceRegistry`）。
+§4.5 步骤 6 新增：明列 registry.ex 里 legacy-shape branch 一起删。
 
 ---
 
@@ -155,7 +164,7 @@ end
 **改动：**
 - `runtime/lib/esr/commands/workspace/new.ex` —— body 统一（~20 LOC）
 - `runtime/priv/schemas/workspace.v1.json` —— 加 `"folders": { "minItems": 1 }`（~3 LOC）
-- `runtime/lib/esr/resource/workspace/json_writer.ex` —— 写入前校验（~15 LOC）
+- `runtime/lib/esr/resource/workspace/json_writer.ex` —— hand-rolled validator。新加 `Esr.Resource.Workspace.Struct.valid?/1` 检 `is_list(struct.folders) and length(struct.folders) >= 1`；`JsonWriter.write/2` 写入前调用，失败返回 `{:error, :empty_folders}`。（选 hand-rolled 不引入 ExJsonSchema 依赖 —— schema 文件 `workspace.v1.json` 仍写 `minItems: 1` 作机器可读契约，但执行在 Elixir 侧）~20 LOC
 - `runtime/lib/esr/commands/workspace/remove_folder.ex` —— guard：拒绝删最后一个 folder，返回 `:cannot_remove_last_folder`
 - 测试（~40 LOC）
 
@@ -295,14 +304,15 @@ exit。§4.6 的 LifecycleObserver 补这个 gap。
    end
    ```
    **无 `other ->` 兜底**。每种 case explicit
-5. **InstanceRegistry 加 `fcp_for_session/1`** —— 当前 `Esr.Entity.Agent.InstanceRegistry` 按 role 索引；加便捷 helper 过滤 role=`:feishu_chat_proxy` for sid
+5. **用 `Esr.ActorQuery.list_by_role(sid, :feishu_chat_proxy)` 做 sid → FCP pid lookup**。该 module 已经拥有 role 索引（`runtime/lib/esr/actor_query.ex:70`，signature `list_by_role(session_id, role) :: [pid()]`）。加一个薄 helper `Esr.ActorQuery.fcp_for_session/1` 返回 `{:ok, pid} | :not_found`。**不**放 `Esr.Entity.Agent.InstanceRegistry` —— 那个 registry 索引 instance metadata，不是 runtime pid（rev-2 mis-attribution 修正）。
+6. **同时删 registry 模块里走 legacy 形态的 fall-through 分支**：`current_session/2` 的 legacy 分支 `registry.ex:105`、`list_sessions/2` 的 legacy 分支 `:124`、`lookup_by_chat/2` 的 shim `:175`。明列出来防 PR review 漏。
 
 **改动：**
-- `runtime/lib/esr/session/chat_routing/registry.ex` —— 删 legacy API + 持久化（~80 LOC 删）
+- `runtime/lib/esr/session/chat_routing/registry.ex` —— 删 legacy API + 持久化 + legacy-shape 分支（~80 LOC 删）
 - `runtime/lib/esr/session/agent_spawner.ex:145, :460` —— 迁移（~10 LOC）
 - `runtime/lib/esr/session/router.ex:121` —— 迁移（~5 LOC）
 - `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238-275` —— 重写 pattern + 删 `other ->`（~40 LOC）
-- `runtime/lib/esr/entity/agent/instance_registry.ex` —— 加 `fcp_for_session/1`（~20 LOC）
+- `runtime/lib/esr/actor_query.ex` —— 加 `fcp_for_session/1`（~10 LOC）
 - 测试 + 清旧 fixture（~50 LOC）
 
 ### 4.6 LifecycleObserver + ETS cleanup —— PR-3
@@ -456,56 +466,91 @@ def dispatch(envelope, reply_to)
 }
 ```
 
-### 5.2 Handler —— 锚定真 dispatch 契约
+### 5.2 Handler —— 锚定真实 API（rev-3 修正）
+
+三个架构决策，每个都锚定到 rev-3 时阅读的代码：
+
+**决策 1：`handle_submit_slash` 住哪？** 真实 MCP dispatch 流（`runtime/lib/esr_web/mcp_controller.ex:191-217`）把 `{:tool_invoke, req_id, tool, args, channel_pid, principal_id}` 发给 `thread:<sid>` peer —— feishu/cc session 是 FCP。FCP 现有 `dispatch_tool_invoke/5`（`feishu_chat_proxy.ex:307-310`）是新 tool 接入点。**`submit_slash` 作为 `dispatch_tool_invoke/5` 的新分支加进去。**（是的 —— FCP 处理 tool_invoke 本身有 plugin-decouple smell，但不是本 spec 修的；§8 flag）
+
+**决策 2：怎样不阻塞调用 peer？** `dispatch_tool_invoke/5` 跑在 FCP GenServer handle_info 路径；里面 `receive` 块会无限阻塞 mailbox。**spawn 一个 per-call `Task` 做 dispatch + receive + reply。** Task 拿到结果发 `{:tool_result, req_id, result_or_error}` 给 FCP，FCP 通过现有 plumbing 转给 MCP channel。
+
+**决策 3：拿 raw 结果，不要渲染文本。** `ChatPid.respond/3`（`runtime/lib/esr/slash/reply_target/chat_pid.ex:19-27` 验证）发 `{:reply, rendered_text, ref}` —— 文本已被 `format_result/1` 渲染。`submit_slash` 要 raw 结构化结果让 CC 解析。**新建 `Esr.Slash.ReplyTarget.RawCollector` ReplyTarget 实现**，发 `{:slash_raw, ref, result_or_error}`（~30 LOC，新模块实现 `@behaviour ReplyTarget`）。
+
+**解 chat 上下文。** Session struct（`resource/session/struct.ex:29-51`）有 `attached_chats: [%{chat_id, app_id, attached_by, attached_at}]` —— **session 可能挂 N 个 chat**。submit_slash v1 选**第一个 attached chat（按 `attached_at` 最早）** 作 origin chat —— agent 最初 spawn 时的 chat。多 chat 选 strategy 见 §8。
+
+**解 `submitted_by`。** Principal **不在** Session struct；MCP dispatch 自身带着（`{:tool_invoke, req_id, tool, args, channel_pid, principal_id}`）。**handler 直接从 tool_invoke 消息读 principal_id**，不查 session struct。
+
+**草图（按真实 API 修正）：**
 
 ```elixir
-def handle_submit_slash(%{"command" => cmd_str}, mcp_state) do
-  sid = mcp_state.session_id
+# 在 FCP 的 dispatch_tool_invoke/5（feishu_chat_proxy.ex:307+）
+defp dispatch_tool_invoke(req_id, "submit_slash", %{"command" => cmd_str},
+                          channel_pid, principal_id, state) do
+  sid = state.session_id
 
-  with {:ok, ctx} <- resolve_chat_ctx_for_session(sid) do
-    envelope = %{
-      "id" => "submit-#{UUID.uuid4()}",
-      "kind" => "event",
-      "payload" => %{
-        "args" => Map.merge(ctx, %{"content" => cmd_str, "msg_type" => "text"}),
-        "event_type" => "msg_received"
-      },
-      "source" => "esr://localhost/submit_slash",
-      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "type" => "event",
-      "principal_id" => ctx["submitted_by"]
-    }
+  Task.start(fn ->
+    result = run_submit_slash(sid, cmd_str, principal_id)
+    send(channel_pid, {:tool_result, req_id, result})
+  end)
 
-    {collector_pid, ref} = spawn_result_collector()
-    _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, collector_pid)
+  {:noreply, state}
+end
+
+defp run_submit_slash(sid, cmd_str, principal_id) do
+  with {:ok, session} <- Esr.Resource.Session.Registry.get_by_id(sid),
+       {:ok, chat} <- pick_origin_chat(session) do
+    envelope = build_internal_envelope(cmd_str, chat, principal_id)
+    ref = make_ref()
+    reply_target = {Esr.Slash.ReplyTarget.RawCollector, %{caller: self(), ref: ref}}
+    _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, reply_target)
 
     receive do
-      {:slash_result, ^ref, result} -> {:ok, result}
-      {:slash_error, ^ref, reason} -> {:error, %{kind: reason}}
+      {:slash_raw, ^ref, {:ok, result}} -> {:ok, result}
+      {:slash_raw, ^ref, {:error, reason}} -> {:error, %{kind: reason}}
     after
       30_000 -> {:error, %{kind: :slash_timeout}}
     end
+  else
+    {:error, reason} -> {:error, %{kind: reason}}
+    :not_found -> {:error, %{kind: :session_not_found}}
   end
 end
 
-defp resolve_chat_ctx_for_session(sid) do
-  case Esr.Resource.Session.Registry.get(sid) do
-    {:ok, session} ->
-      {:ok, %{
-        "chat_id" => session.chat_id,
-        "app_id" => session.app_id,
-        "submitted_by" => session.principal_id
-      }}
+defp pick_origin_chat(%{attached_chats: [first | _]}), do: {:ok, first}
+defp pick_origin_chat(%{attached_chats: []}), do: {:error, :no_attached_chat}
+```
 
-    :not_found ->
-      {:error, %{kind: :session_not_found}}
+**新 ReplyTarget 实现：**
+
+```elixir
+defmodule Esr.Slash.ReplyTarget.RawCollector do
+  @behaviour Esr.Slash.ReplyTarget
+
+  @impl true
+  def respond(%{caller: caller, ref: ref}, {:ok, result}, _slash_ref) do
+    send(caller, {:slash_raw, ref, {:ok, result}})
+    :ok
+  end
+
+  def respond(%{caller: caller, ref: ref}, {:error, reason}, _slash_ref) do
+    send(caller, {:slash_raw, ref, {:error, reason}})
+    :ok
+  end
+
+  def respond(%{caller: caller, ref: ref}, result, _slash_ref) do
+    send(caller, {:slash_raw, ref, {:ok, result}})
+    :ok
   end
 end
 ```
 
-**Auth：** `submitted_by` 是 chat-bound user（session.principal_id），不是
-ou_admin。CC 跟操作员同 cap。无 cap 的 slash 返回 `:missing_capability`，
-CC 翻译成自然语言。
+**Auth：** principal_id 直接来自 `:tool_invoke` 消息（`EsrWeb.McpController` 从 MCP request header 注入）—— 这就是 chat-bound user 的 principal。CC 跟操作员同 cap。Cap 拒绝的 slash 返回 `:missing_capability`，CC 翻译成自然语言。
+
+**改动（rev-3 修正）：**
+- `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex:307+` —— 加 `dispatch_tool_invoke/5` 的 "submit_slash" 分支 + helpers（~60 LOC）
+- `runtime/lib/esr/slash/reply_target/raw_collector.ex` —— 新 module（~30 LOC）
+- `runtime/lib/esr/plugins/claude_code/mcp/tools.ex` —— 注册 `submit_slash` tool 定义（~20 LOC）
+- 测试：`submit_slash_handler_test.exs` + `raw_collector_test.exs`（~50 LOC）
 
 ### 5.3 CC skill prompt
 

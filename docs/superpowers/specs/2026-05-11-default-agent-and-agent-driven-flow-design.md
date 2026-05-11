@@ -1,6 +1,6 @@
 # Default agent on session creation + agent-driven follow-up operations
 
-**Status:** Draft rev-2 — pending user approval (linyilun, 2026-05-11)
+**Status:** Draft rev-3 — pending user approval (linyilun, 2026-05-11)
 **Date:** 2026-05-11
 **Author:** Claude (with linyilun)
 **Companion:** [`.zh_cn.md`](2026-05-11-default-agent-and-agent-driven-flow-design.zh_cn.md)
@@ -8,9 +8,18 @@
 Worktree: `.worktrees/fix-unconsumed-msg`, branch `spec/default-agent-and-agent-driven-flow`.
 
 rev-2 changes: rewritten from scratch after subagent code review (commit
-`5d81734` → this commit) found 7 critical mis-grounded claims. Every
-proposed change in this rev is anchored to a verified file:line in
-`runtime/lib/`.
+`5d81734` → commit `00f5117`) found 7 critical mis-grounded claims. Every
+proposed change in that rev is anchored to a verified file:line.
+
+rev-3 changes: second-round subagent review on `00f5117` confirmed C1-C7
+fixed (Phase A solid) but found 3 NEW critical issues in §5.2:
+- `Esr.Resource.Session.Registry.get/1` doesn't exist → use `get_by_id/1`
+- Session struct has no `chat_id`/`app_id`/`principal_id` direct fields → chat is `attached_chats[]` (multi), principal comes from `:tool_invoke` message
+- `{:slash_result, ref, _}` reply shape invented → introduce new `Esr.Slash.ReplyTarget.RawCollector` to capture raw result, since `ChatPid.respond/3` only sends rendered text
+
+§4.1 also commits to hand-rolled validator (vs ExJsonSchema dep).
+§4.5 step 5 corrected: lookup helper lives on `Esr.ActorQuery` (not `InstanceRegistry`).
+§4.5 step 6 added: explicit listing of legacy-shape branches in registry.ex.
 
 ---
 
@@ -170,7 +179,7 @@ into it.
 **Files touched:**
 - `runtime/lib/esr/commands/workspace/new.ex` — body unification (~20 LOC)
 - `runtime/priv/schemas/workspace.v1.json` — add `"folders": { "minItems": 1 }` (~3 LOC)
-- `runtime/lib/esr/resource/workspace/json_writer.ex` — call `ExJsonSchema.Validator.validate(...)` before write (new dep; ~15 LOC). Or simpler: hand-roll a `Esr.Resource.Workspace.Struct.valid?/1` checking `length(folders) >= 1`.
+- `runtime/lib/esr/resource/workspace/json_writer.ex` — hand-rolled validator. Adds `Esr.Resource.Workspace.Struct.valid?/1` checking `is_list(struct.folders) and length(struct.folders) >= 1`; `JsonWriter.write/2` calls it before encode + returns `{:error, :empty_folders}` on fail. (Hand-rolled chosen over `ExJsonSchema` to keep deps minimal — schema file `workspace.v1.json` keeps `minItems: 1` as machine-readable contract for human readers, but enforcement is in Elixir.) ~20 LOC.
 - `runtime/lib/esr/commands/workspace/remove_folder.ex` — guard: refuse removing the last folder; return `:cannot_remove_last_folder` error.
 - Tests (~40 LOC).
 
@@ -342,17 +351,15 @@ semantic meaning.
    `current_session/2` at `chat_routing/registry.ex:99` — it returns
    `{:ok, sid}` or `:not_found`. After legacy deletion that's the only
    two cases.)
-5. **Add `fcp_for_session(sid)` to InstanceRegistry** — currently
-   `Esr.Entity.Agent.InstanceRegistry` indexes by role; need a convenience
-   lookup that filters role=`:feishu_chat_proxy` for a given sid.
-   Probably ~20 LOC delegating to existing `list_by_role/2`.
+5. **Use `Esr.ActorQuery.list_by_role(sid, :feishu_chat_proxy)` for sid → FCP pid lookup.** This module already owns the role index (verified at `runtime/lib/esr/actor_query.ex:70`, signature `list_by_role(session_id, role) :: [pid()]`). Add a thin helper `Esr.ActorQuery.fcp_for_session/1` returning `{:ok, pid} | :not_found` (`[pid|_] -> {:ok, pid}; [] -> :not_found`). **Not** on `Esr.Entity.Agent.InstanceRegistry` — that registry indexes instance metadata, not runtime pids. (Correcting rev-2 mis-attribution.)
+6. **Also delete the legacy-shape branches inside the registry module that become unreachable after step 1**: `current_session/2` legacy branch at `registry.ex:105`, `list_sessions/2` legacy branch at `:124`, and `lookup_by_chat/2`'s shim at `:175`. Listed explicitly so the reviewer of the PR catches them.
 
 **Files touched:**
-- `runtime/lib/esr/session/chat_routing/registry.ex` — delete legacy API + persistence code (~80 LOC removed)
+- `runtime/lib/esr/session/chat_routing/registry.ex` — delete legacy API + persistence code + legacy-shape branches at :105/:124/:175 (~80 LOC removed)
 - `runtime/lib/esr/session/agent_spawner.ex:145, :460` — migrate callers (~10 LOC)
 - `runtime/lib/esr/session/router.ex:121` — migrate caller (~5 LOC)
 - `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238-275` — replace pattern + delete `other -> Logger.warning + drop` (~40 LOC)
-- `runtime/lib/esr/entity/agent/instance_registry.ex` — add `fcp_for_session/1` (~20 LOC)
+- `runtime/lib/esr/actor_query.ex` — add `fcp_for_session/1` (~10 LOC)
 - Tests + cleanup of obsolete fixtures (~50 LOC).
 
 ### 4.6 LifecycleObserver + ETS cleanup — PR-3
@@ -520,65 +527,144 @@ def dispatch(envelope, reply_to)
 }
 ```
 
-### 5.2 Handler — anchored to real dispatch contract
+### 5.2 Handler — anchored to verified APIs
+
+Three architectural decisions, each grounded in code I read at rev-3 time:
+
+**Decision 1: where `handle_submit_slash` lives.** The real MCP dispatch
+flow (`runtime/lib/esr_web/mcp_controller.ex:191-217`) sends
+`{:tool_invoke, req_id, tool, args, channel_pid, principal_id}` to the
+`thread:<sid>` peer — which is FCP for feishu/cc sessions. FCP's
+existing `dispatch_tool_invoke/5` (`feishu_chat_proxy.ex:307-310`) is
+where new tool branches plug in. **`submit_slash` is added as a new branch
+of `dispatch_tool_invoke/5`.** (Yes — FCP dispatching tool invokes is a
+pre-existing plugin-decouple smell, but it's not the smell we're fixing
+in this spec; flagging in §8.)
+
+**Decision 2: how to avoid blocking the calling peer.** `dispatch_tool_invoke/5`
+runs inside FCP's GenServer (handle_info path); a `receive` block inside
+would block the mailbox indefinitely. **Spawn a per-call `Task` that does
+the dispatch + receive + reply.** When the Task gets the result, it sends
+`{:tool_result, req_id, result_or_error}` back to FCP, which then forwards
+to the MCP channel via existing plumbing.
+
+**Decision 3: capture raw result, not rendered text.** `ChatPid.respond/3`
+(verified at `runtime/lib/esr/slash/reply_target/chat_pid.ex:19-27`) sends
+`{:reply, rendered_text, ref}` — text is already `format_result/1`-rendered.
+For `submit_slash` we want the raw result map so CC can inspect structure.
+**Add a new `Esr.Slash.ReplyTarget.RawCollector` ReplyTarget impl** that
+sends `{:slash_raw, ref, result_or_error}` — preserves the structured
+form. (~30 LOC, single-file new module implementing `@behaviour ReplyTarget`.)
+
+**Resolving chat context.** Session struct (`resource/session/struct.ex:29-51`)
+has `attached_chats: [%{chat_id, app_id, attached_by, attached_at}]` —
+**a session may have N attached chats**. For `submit_slash` v1 we pick
+**the first attached chat (oldest by `attached_at`)** as the originating
+chat — that's the chat where the agent was originally spawned. Multi-chat
+selection beyond v1 is tracked in §8.
+
+**Resolving `submitted_by`.** Principal is NOT on the Session struct;
+the MCP dispatch DOES carry it (`{:tool_invoke, req_id, tool, args, channel_pid, principal_id}`).
+**The handler reads `principal_id` from the tool_invoke message directly,**
+not from the session struct.
+
+**Sketch (corrected against real APIs):**
 
 ```elixir
-def handle_submit_slash(%{"command" => cmd_str}, mcp_state) do
-  # mcp_state.session_id is known (cc_mcp Channel was started with it).
-  # Resolve chat_ctx by looking up session metadata.
-  sid = mcp_state.session_id
+# In FCP's dispatch_tool_invoke/5 (feishu_chat_proxy.ex:307+)
+defp dispatch_tool_invoke(req_id, "submit_slash", %{"command" => cmd_str},
+                          channel_pid, principal_id, state) do
+  sid = state.session_id
 
-  with {:ok, ctx} <- resolve_chat_ctx_for_session(sid) do
-    envelope = %{
-      "id" => "submit-#{UUID.uuid4()}",
-      "kind" => "event",
-      "payload" => %{
-        "args" => Map.merge(ctx, %{
-          "content" => cmd_str,
-          "msg_type" => "text"
-        }),
-        "event_type" => "msg_received"
-      },
-      "source" => "esr://localhost/submit_slash",
-      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "type" => "event",
-      "principal_id" => ctx["submitted_by"]
-    }
+  Task.start(fn ->
+    result = run_submit_slash(sid, cmd_str, principal_id)
+    send(channel_pid, {:tool_result, req_id, result})
+  end)
 
-    # Use a per-call collector pid as reply_to to capture the result.
-    {collector_pid, ref} = spawn_result_collector()
-    _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, collector_pid)
+  {:noreply, state}
+end
 
-    # Wait for reply (with timeout)
+defp run_submit_slash(sid, cmd_str, principal_id) do
+  with {:ok, session} <- Esr.Resource.Session.Registry.get_by_id(sid),
+       {:ok, chat} <- pick_origin_chat(session) do
+    envelope = build_internal_envelope(cmd_str, chat, principal_id)
+    ref = make_ref()
+    reply_target = {Esr.Slash.ReplyTarget.RawCollector, %{caller: self(), ref: ref}}
+    _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, reply_target)
+
     receive do
-      {:slash_result, ^ref, result} -> {:ok, result}
-      {:slash_error, ^ref, reason} -> {:error, %{kind: reason}}
+      {:slash_raw, ^ref, {:ok, result}} -> {:ok, result}
+      {:slash_raw, ^ref, {:error, reason}} -> {:error, %{kind: reason}}
     after
       30_000 -> {:error, %{kind: :slash_timeout}}
     end
+  else
+    {:error, reason} -> {:error, %{kind: reason}}
+    :not_found -> {:error, %{kind: :session_not_found}}
   end
 end
 
-defp resolve_chat_ctx_for_session(sid) do
-  # Look up session metadata to find chat_id / app_id / submitter.
-  case Esr.Resource.Session.Registry.get(sid) do
-    {:ok, session} ->
-      {:ok, %{
-        "chat_id" => session.chat_id,
-        "app_id" => session.app_id,
-        "submitted_by" => session.principal_id  # chat-bound user
-      }}
+defp pick_origin_chat(%{attached_chats: [first | _]}), do: {:ok, first}
+defp pick_origin_chat(%{attached_chats: []}), do: {:error, :no_attached_chat}
 
-    :not_found ->
-      {:error, %{kind: :session_not_found}}
+defp build_internal_envelope(cmd_str, %{chat_id: chat_id, app_id: app_id}, principal_id) do
+  %{
+    "id" => "submit-#{Esr.Util.UuidGen.generate()}",
+    "kind" => "event",
+    "payload" => %{
+      "args" => %{
+        "content" => cmd_str,
+        "msg_type" => "text",
+        "chat_id" => chat_id,
+        "app_id" => app_id,
+        "submitted_by" => principal_id
+      },
+      "event_type" => "msg_received"
+    },
+    "source" => "esr://localhost/submit_slash",
+    "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+    "type" => "event",
+    "principal_id" => principal_id
+  }
+end
+```
+
+**The new ReplyTarget impl:**
+
+```elixir
+defmodule Esr.Slash.ReplyTarget.RawCollector do
+  @behaviour Esr.Slash.ReplyTarget
+
+  @impl true
+  def respond(%{caller: caller, ref: ref}, {:ok, result}, _slash_ref) do
+    send(caller, {:slash_raw, ref, {:ok, result}})
+    :ok
+  end
+
+  def respond(%{caller: caller, ref: ref}, {:error, reason}, _slash_ref) do
+    send(caller, {:slash_raw, ref, {:error, reason}})
+    :ok
+  end
+
+  def respond(%{caller: caller, ref: ref}, result, _slash_ref) do
+    # Generic non-tagged result — wrap as ok
+    send(caller, {:slash_raw, ref, {:ok, result}})
+    :ok
   end
 end
 ```
 
-**Auth:** `submitted_by` is the chat-bound user (session.principal_id),
-NOT ou_admin. CC operates with the operator's capabilities. Cap-denied
-slashes return `:missing_capability`, which CC translates to natural
-language for the user.
+**Auth:** principal_id comes directly from the `:tool_invoke` message
+(populated by `EsrWeb.McpController` from the MCP request header) — that
+IS the chat-bound user's principal. CC operates with the operator's
+capabilities; cap-denied slashes return `:missing_capability`, which CC
+translates to natural language.
+
+**Files touched (rev-3 corrected):**
+- `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex:307+` — add `dispatch_tool_invoke/5` branch for "submit_slash" + helpers (~60 LOC)
+- `runtime/lib/esr/slash/reply_target/raw_collector.ex` — new module (~30 LOC)
+- `runtime/lib/esr/plugins/claude_code/mcp/tools.ex` — register `submit_slash` tool definition (~20 LOC)
+- Tests: `submit_slash_handler_test.exs` + `raw_collector_test.exs` (~50 LOC)
 
 ### 5.3 CC skill prompt
 
