@@ -346,6 +346,60 @@ defmodule Esr.Commands.Session.NewTest do
     end
   end
 
+  describe "execute/1 :pipeline_incomplete surface (PR-2 2026-05-11)" do
+    test "AgentSpawner integrity terminal surfaces as pipeline_incomplete chat error" do
+      # PR-2 spec rev-3 §PR-2: when do_create returns
+      # {:error, :pipeline_incomplete} (post-spawn integrity check
+      # detected a declared inbound stage that didn't materialize),
+      # Session.New must surface a specific :pipeline_incomplete error
+      # rather than smuggling it through the generic
+      # :session_start_failed with `inspect(:pipeline_incomplete)`.
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/incomplete",
+          "chat_id" => "oc_inc",
+          "thread_id" => "om_inc",
+          "app_id" => "app_inc"
+        }
+      }
+
+      # Stub the chat-bound path so we don't need to wire up real
+      # AgentSpawner state for the integrity check to fire.
+      stub = fn _params -> {:error, :pipeline_incomplete} end
+
+      assert {:error, %{"type" => "pipeline_incomplete", "message" => msg}} =
+               SessionNew.execute(cmd, create_session_fn: stub)
+
+      assert msg =~ "未全部 spawn"
+    end
+
+    test "non-:pipeline_incomplete errors still route to session_start_failed" do
+      Grants.load_snapshot(%{"ou_admin" => ["*"]})
+
+      cmd = %{
+        "submitted_by" => "ou_admin",
+        "args" => %{
+          "agent" => "cc",
+          "dir" => "/tmp/other",
+          "chat_id" => "oc_o",
+          "thread_id" => "om_o",
+          "app_id" => "app_o"
+        }
+      }
+
+      stub = fn _params -> {:error, :some_other_failure} end
+
+      assert {:error, %{"type" => "session_start_failed", "message" => msg}} =
+               SessionNew.execute(cmd, create_session_fn: stub)
+
+      assert msg =~ "some_other_failure"
+    end
+  end
+
   describe "execute/2 chat_thread_key threading (PR-8 T2)" do
     test "chat_id + thread_id args flow into Scope.Router.create_session params" do
       # PR-8 T4: the chat-bound path now dispatches via `create_session_fn`

@@ -90,6 +90,7 @@ defmodule Esr.Commands.Session.New do
     error :template_materialize_failed, "session template '%{template}' could not be materialized: %{details}"
     error :missing_capabilities,    "missing capabilities: %{caps}"
     error :session_start_failed,    "session start failed: %{details}"
+    error :pipeline_incomplete,     "session 启动失败:声明的 pipeline stage 未全部 spawn(spec rev-3 §PR-2 invariant)"
   end
 
   @behaviour Esr.Role.Control
@@ -689,6 +690,13 @@ defmodule Esr.Commands.Session.New do
     case create_session_fn.(params) do
       {:ok, sid} when is_binary(sid) ->
         {:ok, sid}
+
+      # PR-2 (2026-05-11 spec rev-3): surface the agent_spawner integrity
+      # check's structured terminal so chat sees a specific failure
+      # symbol rather than `inspect(:pipeline_incomplete)` smuggled into
+      # a generic "session start failed" body.
+      {:error, :pipeline_incomplete} ->
+        Render.error(__MODULE__.command_meta(), :pipeline_incomplete, %{})
 
       {:error, reason} ->
         Render.error(__MODULE__.command_meta(), :session_start_failed, %{
