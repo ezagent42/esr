@@ -126,17 +126,50 @@ defmodule Esr.Plugins.ClaudeCode.Mcp.Tools do
     }
   }
 
+  # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.1):
+  # admin operations tool. Lets the operator drive ESR slash commands by
+  # asking the agent in natural language (any language) — the agent calls
+  # `submit_slash` with the literal slash string, which FCP dispatches
+  # through `Esr.Entity.SlashHandler` and returns the raw structured
+  # result for the agent to interpret.
+  @submit_slash %{
+    "name" => "submit_slash",
+    "description" =>
+      "Execute an ESR slash command on behalf of the operator. Use when " <>
+        "the user asks (in any language) to perform admin work: adding " <>
+        "agents, listing sessions, switching workspace, etc. Returns the " <>
+        "structured result map from the command's execute/2 callback " <>
+        "(success or {error, %{kind: reason}}). Translate the result into " <>
+        "the user's language in your reply.",
+    "inputSchema" => %{
+      "type" => "object",
+      "properties" => %{
+        "command" => %{
+          "type" => "string",
+          "description" =>
+            "Full slash command including the leading /, e.g. " <>
+              "\"/agent:add type=cc name=helper\" or \"/session:list\"."
+        }
+      },
+      "required" => ["command"]
+    }
+  }
+
   @doc """
   Return the tool list the controller advertises in `tools/list`.
   Filtered by workspace role: only `role: diagnostic` workspaces see
   the `_echo` tool.
+
+  `submit_slash` is exposed unconditionally — it's the channel through
+  which the agent drives admin operations on behalf of the operator
+  (see PR-4 of the 2026-05-11 default-agent plan).
   """
   @spec list(role :: String.t()) :: [map()]
   def list(role \\ "dev")
 
   def list("diagnostic"),
-    do: [@reply, @send_file, @echo]
+    do: [@reply, @send_file, @submit_slash, @echo]
 
   def list(_),
-    do: [@reply, @send_file]
+    do: [@reply, @send_file, @submit_slash]
 end

@@ -244,5 +244,31 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       assert {:ok, %{cmd: cmd, env: _env}} = Launcher.prepare_spawn(state)
       assert is_list(cmd)
     end
+
+    # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.3):
+    # the admin skill prompt is injected via --append-system-prompt-file
+    # when the in-tree feishu-cc bundle exposes one. Asserts the flag is
+    # present AND points at a readable file containing the submit_slash
+    # hint.
+    test "argv contains --append-system-prompt-file pointing at the admin skill", %{cwd: cwd} do
+      {:ok, %{cmd: cmd}} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          plugin_config: %{"esrd_url" => "ws://127.0.0.1:4001"},
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      idx = Enum.find_index(cmd, &(&1 == "--append-system-prompt-file"))
+      assert is_integer(idx), "Launcher must inject --append-system-prompt-file (PR-4)"
+
+      prompt_path = Enum.at(cmd, idx + 1)
+      assert is_binary(prompt_path)
+      assert File.exists?(prompt_path), "skill prompt file must exist on disk: #{prompt_path}"
+
+      contents = File.read!(prompt_path)
+      assert contents =~ "submit_slash",
+             "admin skill prompt must mention submit_slash so the agent knows when to use it"
+    end
   end
 end

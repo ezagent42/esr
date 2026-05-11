@@ -129,3 +129,60 @@ jobs:
       #     run: mix test
       #
       # Tracking: docs/futures/todo.md "CI mix test on Linux".
+
+  # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.4):
+  # opt-in real-claude integration test. Runs on macos-latest because
+  # ESR's only production target is macOS and the `claude` binary
+  # currently has no stable Linux install path. The test is tagged
+  # `:real_claude` and is excluded from the default run; this job opts
+  # in via `--only real_claude`.
+  #
+  # If `claude` is not present on the runner (no install step that we
+  # can rely on yet), the moduletag setup short-circuits and the test
+  # logs a skip — so the job stays green either way. When/if a
+  # claude-install action lands, drop the install step here and the
+  # job will start asserting the real boot pipeline.
+  real-claude-integration:
+    runs-on: macos-latest
+    env:
+      MIX_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '27'
+
+      - name: Probe for claude binary
+        run: |
+          if command -v claude > /dev/null 2>&1; then
+            echo "claude is on PATH at: $(command -v claude)"
+          else
+            echo "claude not on PATH — :real_claude setup will skip"
+          fi
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            runtime/deps
+            runtime/_build
+          key: ${{ runner.os }}-mix-${{ hashFiles('runtime/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Fetch deps
+        working-directory: runtime
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: runtime
+        run: mix compile
+
+      - name: Run real-claude integration test
+        working-directory: runtime
+        run: mix test --only real_claude
