@@ -387,6 +387,11 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   # over and the bridge is silent.
   @bridge_flush_ms 500
 
+  # Max time to await a `submit_slash` result before returning :slash_timeout
+  # to the caller. Slash commands typically complete in <100ms, but slow
+  # commands (e.g. /session:new full pipeline spawn) can take seconds.
+  @submit_slash_timeout_ms 30_000
+
   def handle_info({:pty_stdout, _data}, %{boot_mode: false} = state),
     do: {:noreply, state}
 
@@ -855,7 +860,7 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
               {:slash_raw, ^ref, {:error, reason}} ->
                 {:error, %{"kind" => normalize_kind(reason)}}
             after
-              30_000 ->
+              @submit_slash_timeout_ms ->
                 {:error, %{"kind" => "slash_timeout"}}
             end
 
