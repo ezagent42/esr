@@ -1,11 +1,16 @@
 # Default agent on session creation + agent-driven follow-up operations
 
-**Status:** Draft — pending user approval (linyilun, 2026-05-11)
+**Status:** Draft rev-2 — pending user approval (linyilun, 2026-05-11)
 **Date:** 2026-05-11
 **Author:** Claude (with linyilun)
 **Companion:** [`.zh_cn.md`](2026-05-11-default-agent-and-agent-driven-flow-design.zh_cn.md)
 
 Worktree: `.worktrees/fix-unconsumed-msg`, branch `spec/default-agent-and-agent-driven-flow`.
+
+rev-2 changes: rewritten from scratch after subagent code review (commit
+`5d81734` → this commit) found 7 critical mis-grounded claims. Every
+proposed change in this rev is anchored to a verified file:line in
+`runtime/lib/`.
 
 ---
 
@@ -20,54 +25,78 @@ On 2026-05-11 the operator (linyilun) ran a manual Feishu test:
 hello?                     → (NO REPLY — silent hang)
 ```
 
-The `hello?` was silently dropped. Investigating `~/.esrd-dev/default/logs/launchd-stdout.log`
-revealed a 5-step cascade rooted in two production bugs and amplified by three
-silent-drop bug classes:
+`~/.esrd-dev/default/logs/launchd-stdout.log` showed a 4-step cascade
+(verified at 2026-05-11 14:33:41 GMT+8, session `b6bfbe47-91ae-...`):
 
-1. **PtyProcess launched `claude` with `dir=/tmp`** (workspace `test-dev` had 0
-   folders; the resolve-dir code fell through to `/tmp`). `claude` reads
-   `.mcp.json` from `cwd`; `/tmp/.mcp.json` doesn't exist; `claude` refuses to
-   start and exits 256.
-2. **PtyProcess GenServer crashed** with `{:pty_crashed, 256}`. Per the
-   `Esr.Session.AgentInstanceSupervisor` `:one_for_all` strategy (deliberate
-   per spec Q5.3 sub-2, 2026-05-07: CC + PTY must move together), the CC
-   process was killed too.
-3. **PtyProcess `terminate/2` broadcast `:pty_closed` to FCP** via PubSub.
-4. **`Esr.Plugins.Feishu.FeishuChatProxy.handle_info/2` has no clause for
-   `:pty_closed`** → `FunctionClauseError` at
-   `feishu_chat_proxy.ex:274` → FCP crashes with the same error every time
-   it receives `:pty_closed`.
-5. **Cascade**: PTY restarts (via `:one_for_all`) → claude exits 256 again
-   → PTY crashes → FCP gets `:pty_closed` → FunctionClauseError →
-   `AgentInstanceSupervisor` hits `max_restarts: 3` in 60s → instance
-   subtree terminated with `restart: :transient` (no auto-restart).
-6. **`:esr_session_chat_routing` ETS entry still points at the now-dead FCP
-   pid**. FAA looks up by `(chat_id, app_id)`, gets the dead pid, calls
-   `send(dead_pid, msg)` — Erlang silent no-op. The user's `hello?` vanishes.
+1. **PtyProcess spawned `claude` with `dir: "/tmp"`** even though
+   `workspace_name: "test-dev"` was set. The PtyProcess init's
+   `dir: get_param(params, :dir) || "/tmp"` (`runtime/lib/esr/entity/pty_process.ex:80`)
+   silently fell through because `params[:dir]` was nil. The workspace
+   `test-dev` was created via `/workspace:new name=test-dev` (no `folder=`),
+   which currently writes `folders: []` with `location: {:esr_bound, ...}`
+   (`runtime/lib/esr/commands/workspace/new.ex:119-129`). `/session:new`'s
+   `resolve_dir_from_workspace/1` (`runtime/lib/esr/commands/session/new.ex`)
+   reads `workspace.folders[0].path` — returns nil for the 0-folder case.
+2. **`claude` exited 256** immediately:
+   ```
+   Error: Invalid MCP configuration:
+   MCP config file not found: /private/tmp/.mcp.json
+   ```
+   No `.mcp.json` is written anywhere in the live spawn path. `Esr.Plugins.ClaudeCode.Launcher`
+   has `prepare_spawn/1` and `write_mcp_json/1` at
+   `runtime/lib/esr/plugins/claude_code/launcher.ex:68-183` — but those
+   functions are **only called from tests**. The production PTY spawn at
+   `runtime/lib/esr/entity/pty_process.ex:202-216` calls
+   `Launcher.spawn_cmd/1` which just appends `--mcp-config .mcp.json` to
+   argv without writing the file. `claude` reads its `cwd` (which is `/tmp`),
+   finds no `.mcp.json`, refuses to start.
+3. **PtyProcess crash** with `{:pty_crashed, 256}`. `Esr.Session.AgentInstanceSupervisor`
+   (`runtime/lib/esr/session/agent_instance_supervisor.ex`) uses
+   `:one_for_all` per spec Q5.3 sub-2 (2026-05-07) — correct for CC+PTY
+   consistency; CC is killed too. PtyProcess's `terminate/2` broadcasts
+   `:pty_closed` on PubSub topic `pty:<actor_id>`.
+4. **FCP receives `:pty_closed` but has no `handle_info/2` clause for it.**
+   `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex:162` subscribes to
+   `pty:<actor_id>` at init; line 274 has no matching clause for the
+   `:pty_closed` atom. **FunctionClauseError** → FCP crashes → its own
+   supervisor restarts FCP → cycle repeats → `AgentInstanceSupervisor`
+   exhausts `max_restarts: 3` in 60s → subtree terminated with
+   `restart: :transient` (no auto-restart).
+5. **`:esr_session_chat_routing` ETS entry still points at dead FCP pid.**
+   FAA at `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238` looks
+   up by `(chat_id, app_id)`, pattern-matches the old-shape ETS row
+   `{key, sid, %{feishu_chat_proxy: pid}}`, calls `send(dead_pid, msg)` —
+   Erlang silent no-op. **The user's `hello?` vanishes.**
 
-**Manual test from operator (linyilun, 2026-05-11):** "session 建立的时候，
-就默认帮我创建一个 agent（默认类型是 cc），后续我的操作应该让这个 agent
-来帮我完成。如果我需要添加新的 agent，既可以使用 slash 命令，也可以使用
-自然语言请主 agent 帮我来操作。"
+**Five distinct production bugs** are at play:
 
-The "default agent on session" intent IS already implemented (SessionTemplate
-+ AgentSpawner.do_create + cc_mcp Channel). The bugs above prevent it from
-working in production. This spec fixes the cascade AND adds the natural-language
-admin layer that completes the operator's mental model.
+| # | Bug | File:line |
+|---|---|---|
+| **B1** | 0-folder workspace is legal but unusable (data model split: `folders: []` + `location: {:esr_bound, ...}`) | `commands/workspace/new.ex:119-129` |
+| **B2** | `PtyProcess.init` falls back to `dir: "/tmp"` when params lacks `:dir` | `entity/pty_process.ex:80` |
+| **B3** | `Launcher.prepare_spawn` and `write_mcp_json` are dead — only called from tests; production goes through `spawn_cmd` which skips the file write | `plugins/claude_code/launcher.ex:68-183` |
+| **B4** | FCP has no `handle_info/2` clause for `:pty_closed` | `plugins/feishu/feishu_chat_proxy.ex:274` |
+| **B5** | `:esr_session_chat_routing` ETS has two coexisting row shapes (`register_session/3` writes 3-tuple with refs; `attach_session/3` writes 2-tuple with no refs). FAA absorbs the new shape with a silent `other -> Logger.warning + drop` (line 270) | `session/chat_routing/registry.ex` + `feishu_app_adapter.ex:270` |
+
+**Operator intent (linyilun, 2026-05-11):** "session 建立的时候，就默认帮我
+创建一个 agent（默认类型是 cc），后续我的操作应该让这个 agent 来帮我完成。
+如果我需要添加新的 agent，既可以使用 slash 命令，也可以使用自然语言请主
+agent 帮我来操作。"
+
+This spec fixes B1-B5 and adds the natural-language admin layer.
 
 ---
 
 ## 2. Vocabulary
 
-This spec inherits all terms from `docs/notes/concepts.md` (rev-11) and
-`CONTEXT.md`. New terms:
+Inherits `docs/notes/concepts.md` (rev-11) + `CONTEXT.md`. New:
 
 | Term | Definition |
 |---|---|
-| **silent-drop cascade** | The 5-step chain in §1 where a single production bug causes a chat-visible regression to disappear without an error |
-| **lifecycle message** | A PubSub or direct-send message representing a state transition: `:pty_closed`, `{:agent_crashed, _}`, `{:supervisor_giveup, _}` |
-| **effect-level invariant** | A system-wide property (e.g. "no inbound is silently dropped") whose verification spans multiple supervisors; contrasted with per-supervisor invariants |
-| **ChaosScenarios DSL** | A test macro library (this spec introduces) that lets us declare "kill child X under chaos, assert system invariant Y holds" |
+| **silent-drop cascade** | The 4-step chain in §1 where a single production bug causes a chat-visible regression to disappear without any error reaching the operator |
+| **lifecycle message** | A PubSub message representing a state transition: `:pty_closed`, `:agent_crashed`, `:supervisor_giveup` |
+| **effect-level invariant** | A system-wide property (e.g. "no inbound is silently dropped") whose verification spans multiple supervisors |
+| **dead code** | Code that compiles and is referenced from tests but never reached from the production code path |
 
 ---
 
@@ -75,295 +104,329 @@ This spec inherits all terms from `docs/notes/concepts.md` (rev-11) and
 
 ### Goals
 
-- `/session:new <name>` reliably produces a working chat → CC reply round-trip
-  (the original design intent finally lands in production).
-- Every chat inbound either produces a chat-visible reply or a chat-visible
-  error within 5 seconds. **No silent drops.**
-- Workspace data model becomes well-formed: workspace ⊇ ≥1 folder, enforced
-  at write time.
-- ESR exposes a `submit_slash` MCP tool so CC can execute admin operations
-  on behalf of the user via natural language.
-- A test scaffold (real-claude boot + ChaosScenarios + audit mix task) prevents
-  this bug class from recurring.
+- `/session:new <name>` reliably produces a chat → CC reply round-trip
+- Every chat inbound either produces a chat-visible reply or chat-visible error within 5s — **no silent drops**
+- Workspace data model is well-formed: every workspace has ≥1 folder; ESR-bound mode keeps working but as a real 1-folder workspace (not a 0-folder split-state)
+- ESR exposes `submit_slash` MCP tool so CC can execute admin operations via natural language
+- All proposed code paths anchor to real APIs verified in this rev
+- Plugin boundaries respected: feishu plugin does NOT know about cc plugin's process types (per user 2026-05-11: "feishu 和 cc 是两个独立的 plugin")
 
 ### Non-goals
 
-- **Not** changing the `:one_for_all` strategy on `AgentInstanceSupervisor`.
-  That decision (spec Q5.3 sub-2, 2026-05-07) is correct: CC + PTY must move
-  together. ADR-0002 records this so a future engineer doesn't unwittingly
-  reverse it.
-- **Not** redesigning the workspace → folder relationship to VS Code style
-  (workspace contains all per-session state). Per concepts.md §四,
-  Resources (Dirs) are independent and shareable across Sessions; the
-  current parallel `workspaces/` + `sessions/` layout is correct.
-- **Not** introducing rate-limiting on `submit_slash`. If CC misbehaves,
-  invariant I4 (chat reply within 5s) bounds the damage; explicit rate
-  limit deferred.
-- **Not** supporting `submit_slash` from a non-CC agent in v1. Bundle author
-  can opt in later by exposing the tool from their own channel.
+- **Not** changing `:one_for_all` on `Esr.Session.AgentInstanceSupervisor` —
+  CC+PTY consistency invariant from spec Q5.3 sub-2 (2026-05-07) is correct.
+  ADR-0002 records this so a future engineer doesn't reverse it.
+- **Not** redesigning workspace ↔ folder as VS Code style — per concepts.md
+  §四, Dir is a Resource referenced by Session, not owned. (Brainstorm
+  decision 2026-05-11.)
+- **Not** introducing rate-limiting on `submit_slash` — invariant I4 bounds
+  damage; rate-limit deferred.
+- **Not** keeping legacy support in esrd-dev fixtures — user 2026-05-11:
+  "全部都可以删掉重建，不需要考虑后向兼容性".
 
 ---
 
-## 4. Phase A — silent-drop cascade fix (PR-1, PR-2, PR-3)
+## 4. Phase A — silent-drop cascade fix (PR-1 through PR-4)
 
-### 4.1 Workspace ≥1 folder invariant (PR-1, ~120 LOC)
+Each sub-section names the verified file:line being modified and grounds
+the proposed change in current code shape.
 
-Workspaces with zero folders are data corruption: every downstream consumer
-(session create, agent spawn, claude cwd) needs a real path. Enforce at three
-layers:
+### 4.1 Workspace folders ≥1 + ESR-bound becomes 1-folder (fixes B1) — PR-1
 
-**A. schema:** `runtime/priv/schemas/workspace.v2.json` (or v3 if v2 is
-post-Phase-1 of session-first migration) gains `folders: { minItems: 1 }`.
-`Esr.Resource.Workspace.JsonWriter.write/2` validates the struct against the
-schema before persisting; 0-folder write returns `{:error, :empty_folders}`.
-
-**B. commands:**
-- `/workspace:new name=X path=Y` — `path` becomes required (was optional);
-  on success the workspace starts with one folder seeded from `path`. Updates
-  to `Esr.Commands.Workspace.New.command_meta/0`.
-- `/workspace:remove-folder workspace=X path=Y` — adds a guard: if removing
-  this folder leaves the workspace at 0 folders, return
-  `:cannot_remove_last_folder` with message "workspace %{name} has only
-  1 folder; use /workspace:remove to delete the entire workspace instead".
-
-**C. boot:** Since `~/.esrd-dev/` may be wiped + rebuilt per user instruction
-(2026-05-11 Feishu: "esrd-dev 中的文件，全部都可以删掉重建，不需要考虑后向兼容性"),
-no boot validator for legacy 0-folder workspaces is needed. The schema-level
-constraint plus the command guards ensure no new 0-folder state can be
-created.
-
-**D. tests:**
-- `runtime/test/esr/commands/workspace/new_test.exs` — `path` missing returns
-  meta-DSL validation error.
-- `runtime/test/esr/commands/workspace/remove_folder_test.exs` — removing the
-  last folder returns `:cannot_remove_last_folder`.
-- `flow-bootstrap.md` fence #3 (`/workspace:new`) passes `path=` explicitly.
-
-### 4.2 `/session:new` pre-flight + `.mcp.json` generation (PR-2, ~280 LOC)
-
-Replace the partial pre-flight in `Esr.Commands.Session.New.execute/2` with a
-single `pre_flight/3` function that fails fast on any unmet pre-condition.
-
+**Current state** (`commands/workspace/new.ex:119-129`):
 ```elixir
-defp pre_flight(args, submitter, chat_ctx) do
-  with {:ok, claude_path}    <- check_claude_binary(),
-       {:ok, workspace}      <- resolve_workspace(args, chat_ctx),
-       {:ok, cwd}            <- pick_primary_folder_path(workspace),
-       {:ok, session_dir}    <- prepare_session_dir(args[:sid]),
-       {:ok, template_name}  <- resolve_template_name(args),
-       {:ok, agent_def}      <- materialize_template(template_name) do
-    {:ok, %{claude_path: claude_path, workspace: workspace, cwd: cwd,
-            session_dir: session_dir, agent_def: agent_def}}
-  end
+location = case folder do
+  nil -> {:esr_bound, Esr.Paths.workspace_dir(name)}
+  path -> {:repo_bound, path}
+end
+folders = case folder do
+  nil -> []                                  ← 0-folder split state
+  path -> [%{path: path, name: Path.basename(path)}]
 end
 ```
 
-**Error returns are structured** (link to `structured-reply-envelope` design
-in `docs/futures/todo.md`). Concrete error kinds:
+ESR-bound workspaces hold the path in `location` but `folders` is empty.
+Every downstream (session create, dir resolve) reads `folders` → split
+state surfaces as bug.
 
-| Kind | When | Chat reply |
-|---|---|---|
-| `:missing_claude_binary` | `System.find_executable("claude")` nil | "claude binary not found on PATH; install Claude Code" |
-| `:workspace_not_bound` | M-5 resolution chain returns nothing | "no workspace bound to this chat; run /workspace:use <name> first" |
-| `:empty_workspace` | resolved workspace has 0 folders (defense-in-depth even though §4.1 prevents creation) | "workspace %{name} has no folders; run /workspace:add-folder first" |
-| `:template_not_found` | template resolution returns `:not_found` | "template %{name} not found; available: ..." |
+**Change:** unify. Both branches produce a 1+ folder workspace; ESR-bound
+just uses the ESR-managed path as the first folder.
 
-**`.mcp.json` generation lives in `session_dir`, NOT in the workspace folder:**
-
-- Path: `$ESRD_HOME/<instance>/sessions/<sid>/mcp.json`
-- Why not in workspace folder: see §3 non-goals + concepts.md §四 (Dir is a
-  shared Resource; multi-session-per-workspace would conflict on a shared
-  `.mcp.json`).
-- Generation timing: AFTER cc_mcp Channel `start_link/1` returns
-  `{:ok, %{port: N}}` (so we know the ephemeral port), BEFORE PtyProcess
-  `start_link/1` (so claude can read it). The spawn pipeline becomes:
-  ```
-  AgentSpawner.do_create
-    ↓
-    1. Start cc_mcp Channel  → returns {:ok, %{port: N}}
-    ↓
-    2. Write session_dir/mcp.json with port=N
-    ↓
-    3. Start CCProcess (which doesn't shell out)
-    ↓
-    4. Start PtyProcess with cmd =
-       claude --mcp-config $session_dir/mcp.json --cwd $cwd
-  ```
-
-**`.mcp.json` schema:**
-```json
-{
-  "mcpServers": {
-    "esr-channel": {
-      "type": "http",
-      "url": "http://127.0.0.1:<port>/mcp"
-    }
-  }
-}
+```elixir
+folder_path = folder || Esr.Paths.workspace_dir(name)
+folders = [%{path: folder_path, name: Path.basename(folder_path)}]
+location = case folder do
+  nil -> {:esr_bound, folder_path}
+  path -> {:repo_bound, path}
+end
+# location is now redundant with folders[0].path BUT retained
+# for backwards-compat readers; eventually removable.
 ```
 
-**Spawn-failure cleanup:** if any step 1–4 returns `{:error, _}`, AgentSpawner
-calls `Esr.Session.Supervisor.stop_session(sid)`, deletes the
-`:esr_session_chat_routing` ETS entry for the chat, and returns the error to
-the command handler. **No half-started state.**
+`Esr.Paths.workspace_dir(name)` (the ESR-managed directory) gets created
+on disk (`File.mkdir_p!`) at workspace creation so PtyProcess can `cd`
+into it.
 
-### 4.3 FCP explicit lifecycle handlers (PR-2, ~80 LOC)
+**Files touched:**
+- `runtime/lib/esr/commands/workspace/new.ex` — body unification (~20 LOC)
+- `runtime/priv/schemas/workspace.v1.json` — add `"folders": { "minItems": 1 }` (~3 LOC)
+- `runtime/lib/esr/resource/workspace/json_writer.ex` — call `ExJsonSchema.Validator.validate(...)` before write (new dep; ~15 LOC). Or simpler: hand-roll a `Esr.Resource.Workspace.Struct.valid?/1` checking `length(folders) >= 1`.
+- `runtime/lib/esr/commands/workspace/remove_folder.ex` — guard: refuse removing the last folder; return `:cannot_remove_last_folder` error.
+- Tests (~40 LOC).
 
-`runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex` adds explicit
-`handle_info/2` clauses for every lifecycle message it may receive. The
-current `FunctionClauseError` from §1 step 4 disappears.
+**Note on esrd-dev:** user's 2026-05-11 instruction — wipe and rebuild
+~/.esrd-dev/, no migrator needed.
+
+### 4.2 Make `Launcher.prepare_spawn` the only spawn entry; delete `spawn_cmd` (fixes B2 + B3) — PR-2
+
+**Current state** (`plugins/claude_code/launcher.ex:68-183`):
+- `prepare_spawn/1` — reads workspace dir, writes `.mcp.json`, builds claude argv, returns full spawn args. **Called only from tests.**
+- `spawn_cmd/1` — builds claude argv with `--mcp-config .mcp.json` but does NOT write the file. **Called by `PtyProcess` at runtime/lib/esr/entity/pty_process.ex:202-216.**
+
+**Change:**
+
+1. **Delete `Launcher.spawn_cmd/1` entirely.** Move its caller in
+   `entity/pty_process.ex:202-216` to call `Launcher.prepare_spawn/1` instead.
+2. **`prepare_spawn/1` becomes the sole spawn entry.** Asserts (with
+   `{:ok, _}` / `{:error, _}` returns, NOT `raise`):
+   - `cwd` (workspace folder path) exists as a directory
+   - `claude` binary on PATH
+   - `.mcp.json` writes successfully to `session_dir`
+   - argv includes `--mcp-config <session_dir>/mcp.json` (absolute path)
+3. **Delete the `dir || "/tmp"` fallback** at `entity/pty_process.ex:80`.
+   If `dir` is missing, return `{:error, :missing_dir}` to AgentSpawner.
+4. **`.mcp.json` location: `$ESRD_HOME/<instance>/sessions/<sid>/mcp.json`.**
+   Per brainstorm 2026-05-11: session-owned, not workspace-folder-owned.
+   Path computed by a new helper `Esr.Paths.session_mcp_json(sid)`.
+5. **`.mcp.json` content** (verified against existing `Launcher.write_mcp_json/1`):
+   ```json
+   {
+     "mcpServers": {
+       "esr-channel": {
+         "type": "http",
+         "url": "<esrd_http_base>/mcp/<session_id>"
+       }
+     }
+   }
+   ```
+   `<esrd_http_base>` from `EsrWeb.Endpoint.config(:url)`; path-based session
+   routing already exists at `EsrWeb.McpController` (verified — McpHttp
+   Channel is a thin PubSub wrapper around the singleton controller, NOT
+   a per-session port-binding HTTP server).
+
+**Files touched:**
+- `runtime/lib/esr/plugins/claude_code/launcher.ex` — delete `spawn_cmd/1`, generalize `prepare_spawn/1` to return `{:ok, args}` / `{:error, reason}` (~40 LOC of changes)
+- `runtime/lib/esr/entity/pty_process.ex:80, :202-216` — remove `/tmp` fallback, call `prepare_spawn/1`, propagate errors (~30 LOC)
+- `runtime/lib/esr/paths.ex` — add `session_mcp_json/1` helper (~10 LOC)
+- `runtime/lib/esr/plugins/claude_code/launcher_test.exs` — adjust tests to use the new entry point (~20 LOC)
+
+### 4.3 SessionTemplate pipeline integrity check (plugin-decouple framing) — PR-2
+
+**User insight (2026-05-11):** "feishu 和 cc 是两个独立的 plugin，最终形态下，
+按照 feishu 的用户不一定会安装 cc... 问题出在 SessionTemplate 没有被编译好，
+导致这里面环节中出现了 process 被丢失的情况"
+
+The original spec rev-1 wanted FCP to monitor CCProcess. That violates
+plugin independence: FCP should not know CC's process type. The correct
+architectural fix is: **SessionTemplate's materializer verifies the
+pipeline is whole before declaring session ready**.
+
+**Current state:** `AgentSpawner.do_create/1` (`runtime/lib/esr/session/agent_spawner.ex:178-188`)
+iterates `pipeline.inbound` and calls `spawn_one/5` for each peer (line 364).
+On any spawn failure it throws `{:spawn_failed, spec, reason}` which is
+caught and returned. **However:** the throw cleanup may leave intermediate
+peers running (the failure happens mid-iteration; already-spawned peers
+are not torn down).
+
+**Change:**
+1. In `agent_spawner.ex`, wrap `spawn_pipeline/3` in a try/throw block that
+   on partial failure calls `Esr.Session.Router.end_session(sid)` to tear
+   down everything spawned so far. Verified API at
+   `runtime/lib/esr/session/router.ex:67-69`.
+2. Add a final post-spawn assertion: **after all stages complete, verify
+   each declared pipeline stage has a registered live pid** in the per-
+   session `Esr.Entity.Agent.InstanceRegistry`. If any stage is missing,
+   tear down and return `:pipeline_incomplete`.
+3. `/session:new` propagates the error to the operator with a structured
+   error reply listing which stage failed and why.
+
+**Files touched:**
+- `runtime/lib/esr/session/agent_spawner.ex` — wrap `spawn_pipeline/3`, add post-spawn integrity check (~50 LOC)
+- `runtime/lib/esr/commands/session/new.ex` — surface `:pipeline_incomplete` as a chat reply (~10 LOC)
+- Tests (~30 LOC).
+
+### 4.4 FCP `:pty_closed` clause (plugin-self-consistent) (fixes B4) — PR-2
+
+FCP subscribes to `pty:<actor_id>` PubSub at init (verified at
+`feishu_chat_proxy.ex:162`). Add the missing clause:
 
 ```elixir
 @impl GenServer
 def handle_info(:pty_closed, state) do
-  notify_chat(state, :agent_died, %{
-    message: "claude agent exited; supervisor will restart shortly. If this " <>
-             "repeats, run /session:end and /session:new to recover."
+  # The downstream PTY (whoever owns it; FCP doesn't care about the
+  # specific agent kind) has exited. Tell the chat; let supervisor
+  # decide restart. Plugin boundary preserved: this clause doesn't
+  # mention CC at all.
+  notify_chat(state, %{
+    kind: :downstream_died,
+    message: "agent process exited; supervisor will restart if " <>
+             "possible. If this repeats, run /session:end then " <>
+             "/session:new to rebuild."
   })
-  {:noreply, %{state | agent_state: :pty_restarting}}
-end
-
-def handle_info({:DOWN, _ref, :process, pid, reason}, state) when pid == state.cc_process_pid do
-  notify_chat(state, :cc_crashed, %{reason: inspect(reason)})
-  {:noreply, %{state | agent_state: :cc_restarting}}
-end
-
-def handle_info({:supervisor_giveup, sid}, state) when sid == state.session_id do
-  notify_chat(state, :session_fatal, %{
-    message: "session #{sid} exceeded max_restarts and was terminated. " <>
-             "Run /session:end + /session:new to rebuild."
-  })
-  cleanup_routing_entry(state)
-  {:stop, :normal, state}
+  {:noreply, state}
 end
 ```
 
-`notify_chat/3` formats a structured envelope (link `structured-reply-envelope`)
-and forwards it through the existing Feishu reply path.
+`notify_chat/2` constructs a chat reply via existing FCP reply path
+(`emit_reply_envelope/2` or similar). The message text does not name
+"CC" or "claude" — it says "agent process", maintaining plugin
+neutrality.
 
-`{:supervisor_giveup, sid}` is broadcast by the per-session
-**`Esr.Session.LifecycleObserver`** introduced in §4.4.
+**No `{:DOWN, _, _, cc_pid, _}` monitor** — FCP does not know cc_process.
+That would violate plugin independence. The lifecycle signal comes via
+the pty PubSub topic which any plugin's PTY can publish to.
 
-### 4.4 ETS cleanup + LifecycleObserver + `Process.alive?` guards (PR-3, ~130 LOC)
+**Supervisor giveup notification:** if `AgentInstanceSupervisor` exits
+(max_restarts), FCP doesn't directly observe it via `:pty_closed` (which
+fires on each PTY death, not the final supervisor exit). The
+LifecycleObserver in §4.6 fills this gap.
 
-**`Esr.Session.LifecycleObserver`** — a per-session GenServer that survives
-its supervisor tree's death. Spawned by `/session:new` (registered in an
-instance-level `Esr.Session.LifecycleObservers` registry), it
-`Process.monitor`s the session supervisor pid. On `:DOWN`, it:
+**Files touched:**
+- `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex:274` — add clause (~30 LOC)
+- `runtime/lib/esr/plugins/feishu/feishu_chat_proxy.ex:?` — add `notify_chat/2` helper if not present (~30 LOC)
+- Tests (~40 LOC).
 
-1. Broadcasts `{:supervisor_giveup, sid}` to the FCP (if FCP alive).
-2. Deletes the `:esr_session_chat_routing` entry for the session.
-3. Logs `Logger.warning "session #{sid} terminated; reason=#{inspect(reason)}"`.
-4. Stops itself.
+### 4.5 ChatRouting: delete legacy register_session, unify on attach (fixes B5) — PR-3
 
-**FAA route-time alive check** —
-`runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238` (the
-`do_handle_upstream_inbound/5` lookup site):
+**Current state** (`session/chat_routing/registry.ex`):
+- `register_session/3` (line 63) — single caller `agent_spawner.ex:460`, writes ETS row `{(chat_id, app_id), sid, peer_refs}` (3-tuple, has refs)
+- `attach_session/3` (line 74) — `/session:bind-chat` etc, writes ETS row `{(chat_id, app_id), %{current: sid, attached: [...]}}` (2-tuple, no refs)
+- `lookup_by_chat/2` returns three shapes; FAA matches old-shape and absorbs new-shape via `other -> drop`
+
+This is the dual-shape ETS bug class. Plus the API name `register_session`
+is a leaky abstraction — it's just "write a row" exposed as if it had
+semantic meaning.
+
+**Change:** delete legacy. One ETS shape, one API.
+
+1. **Delete `register_session/3` and `unregister_session/1`** from the
+   registry module.
+2. **Migrate the sole caller** `agent_spawner.ex:460` to use
+   `attach_session(chat_id, app_id, sid)` (no peer refs).
+3. **Migrate `agent_spawner.ex:145` + `router.ex:121`** (the two
+   `unregister_session/1` callers) to a new `detach_session/3` if not
+   already present, or `delete_by_session/1`.
+4. **FAA route logic** (`feishu_app_adapter.ex:238`) updates to:
+   ```elixir
+   case ChatRouting.Registry.current_session(chat_id, app_id) do
+     {:ok, sid} ->
+       case Esr.Entity.Agent.InstanceRegistry.fcp_for_session(sid) do
+         {:ok, fcp_pid} when is_pid(fcp_pid) ->
+           if Process.alive?(fcp_pid) do
+             send(fcp_pid, {:feishu_inbound, envelope})
+           else
+             # Stale pid — clean up + error
+             cleanup_and_reply(chat_id, app_id, sid, :session_dead)
+           end
+         :not_found ->
+           # Session exists in routing but has no FCP registered.
+           # This is :pipeline_incomplete recovery.
+           cleanup_and_reply(chat_id, app_id, sid, :session_incomplete)
+       end
+
+     :not_found ->
+       handle_unbound_chat(envelope)  # existing :new_chat_thread broadcast
+   end
+   ```
+   **No `other ->` catch-all.** Every case is explicit. (Verified shape of
+   `current_session/2` at `chat_routing/registry.ex:99` — it returns
+   `{:ok, sid}` or `:not_found`. After legacy deletion that's the only
+   two cases.)
+5. **Add `fcp_for_session(sid)` to InstanceRegistry** — currently
+   `Esr.Entity.Agent.InstanceRegistry` indexes by role; need a convenience
+   lookup that filters role=`:feishu_chat_proxy` for a given sid.
+   Probably ~20 LOC delegating to existing `list_by_role/2`.
+
+**Files touched:**
+- `runtime/lib/esr/session/chat_routing/registry.ex` — delete legacy API + persistence code (~80 LOC removed)
+- `runtime/lib/esr/session/agent_spawner.ex:145, :460` — migrate callers (~10 LOC)
+- `runtime/lib/esr/session/router.ex:121` — migrate caller (~5 LOC)
+- `runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex:238-275` — replace pattern + delete `other -> Logger.warning + drop` (~40 LOC)
+- `runtime/lib/esr/entity/agent/instance_registry.ex` — add `fcp_for_session/1` (~20 LOC)
+- Tests + cleanup of obsolete fixtures (~50 LOC).
+
+### 4.6 LifecycleObserver + ETS cleanup — PR-3
+
+Per-session observer process. Spawned alongside session by `/session:new`
+or `AgentSpawner.do_create/1`. Lives in a top-level supervisor
+(`Esr.Session.LifecycleObservers`) — survives session subtree death.
 
 ```elixir
-case Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id) do
-  {:ok, _sid, %{feishu_chat_proxy: pid}} when is_pid(pid) ->
-    if Process.alive?(pid) do
-      send(pid, {:feishu_inbound, envelope})
-    else
-      # Stale entry — clean up + surface to chat
-      :ok = Esr.Session.ChatRouting.Registry.delete_by_chat(chat_id, app_id)
-      reply_chat_error(chat_id, app_id, :stale_session,
-        "session for this chat died; run /session:new to recreate")
-    end
+defmodule Esr.Session.LifecycleObserver do
+  use GenServer
+  require Logger
 
-  :not_found ->
-    # existing handling: PubSub broadcast :new_chat_thread for auto-spawn
-    handle_unbound_chat(envelope)
+  def start_link(%{session_id: sid, session_sup_pid: sup_pid,
+                   chat_id: chat_id, app_id: app_id}) do
+    GenServer.start_link(__MODULE__, %{sid: sid, chat_id: chat_id,
+                                       app_id: app_id, sup_pid: sup_pid})
+  end
+
+  def init(state) do
+    Process.monitor(state.sup_pid)
+    {:ok, state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
+    Logger.warning("session #{state.sid} supervisor exited: #{inspect(reason)}")
+    # Tell the chat (best-effort via FAA reply route — FCP is dead at this point).
+    Esr.Plugins.Feishu.FeishuAppAdapter.reply_chat_error(
+      state.chat_id, state.app_id, :session_terminated,
+      "session #{state.sid} 异常终止: #{inspect(reason)}"
+    )
+    # Clean ETS routing entry.
+    Esr.Session.ChatRouting.Registry.detach_session(
+      state.chat_id, state.app_id, state.sid)
+    {:stop, :normal, state}
+  end
 end
-# NO `other ->` catch-all. Any unexpected return shape → MatchError → crash → supervisor.
 ```
 
-### 4.5 `other ->` catch-all sweep (PR-3, ~60 LOC across files)
+**Files touched:**
+- New: `runtime/lib/esr/session/lifecycle_observer.ex` (~70 LOC)
+- New: `runtime/lib/esr/session/lifecycle_observers.ex` — DynamicSupervisor for observers (~20 LOC)
+- `runtime/lib/esr/session/agent_spawner.ex` — start observer post-spawn (~10 LOC)
+- Tests (~40 LOC).
 
-Grep target: `rg -n "other ->" runtime/lib/`. For each hit, decide:
+### 4.7 System invariants + ChaosScenarios DSL — PR-3
 
-| Hit type | Rewrite |
-|---|---|
-| Routing / lifecycle code (FAA, Router, SlashHandler) | Replace with explicit `:ok`, `:not_found`, etc.; let MatchError crash on unexpected shape |
-| Cosmetic catch-all in a non-critical GenServer.handle_info that should ignore unknown messages | Rewrite as `_other -> :ok` with inline comment "intentional ignore" |
-| Value-coercion fallback (`other -> default`) | Rewrite as `:error` and let the caller decide |
-
-Tracked in invariant I5 (see §4.6).
-
-### 4.6 System-level invariants + ChaosScenarios DSL (PR-3, ~150 LOC)
-
-Capture cross-supervisor effect-level invariants in a single source of truth.
-
-**`docs/notes/system-invariants.md`** — a prescriptive list:
+`docs/notes/system-invariants.md` (new):
 
 | ID | Invariant | Verified by |
 |---|---|---|
-| **I1** | Every chat inbound that reaches FAA results in a chat-visible reply or chat-visible error within 5 seconds | `chaos_invariant_test/1` in `invariants_test.exs` |
-| **I2** | Every entry in `:esr_session_chat_routing` ETS points at a process where `Process.alive?(pid) == true` | `eventually(fn -> ... end)` after chaos injection |
-| **I3** | A session has on-disk state (`session_dir/`) iff its supervisor tree is alive | observer pattern in `invariants_test.exs` |
-| **I4** | Agent death (any cause, including supervisor giveup) produces a chat-visible lifecycle reply within 5 seconds | direct timing assertion |
-| **I5** | No routing-layer code uses `other -> Logger.warning + drop` catch-all | grep CI gate (file scan, not runtime) |
+| **I1** | Every chat inbound reaching FAA produces a chat-visible reply or chat-visible error within 5 seconds | `invariant_test/1` in `invariants_test.exs` using ChaosScenarios |
+| **I2** | Every alive entry in `:esr_session_chat_routing` ETS points at a real session with a live FCP in InstanceRegistry | `eventually` poll |
+| **I3** | A session_dir exists iff its supervisor tree has alive root | observer-based check |
+| **I4** | Agent process death (any cause, including supervisor giveup) produces a chat-visible lifecycle reply within 5 seconds | direct timing |
+| **I5** | No routing code uses `other -> Logger.warning + drop` | grep CI gate on file content |
 
-**`Esr.Test.ChaosScenarios` macro** (`runtime/test/support/chaos_scenarios.ex`):
+`runtime/test/support/chaos_scenarios.ex` (new): `~80 LOC` macro library
+with helpers `chaos_inject/2`, `assert_chat_reply_within/1`, `eventually/2`,
+`setup_session_with_listener/0`, `kill_role_in_session/2`.
 
-```elixir
-defmodule Esr.Test.ChaosScenarios do
-  defmacro invariant_test(description, do: block) do
-    quote do
-      test "INVARIANT: " <> unquote(description) do
-        unquote(block)
-      end
-    end
-  end
+`runtime/test/esr/system/invariants_test.exs` (new): I1-I5 implementations
+(~120 LOC).
 
-  def chaos_inject(targets, opts \\ []) do
-    times = Keyword.get(opts, :times, 1)
-    Enum.each(1..times, fn _ ->
-      target = Enum.random(List.wrap(targets))
-      pid = resolve_chaos_target(target)
-      if pid && Process.alive?(pid), do: Process.exit(pid, :kill)
-      Process.sleep(50)
-    end)
-  end
+**Files touched:**
+- New: `runtime/test/support/chaos_scenarios.ex`
+- New: `runtime/test/esr/system/invariants_test.exs`
+- New: `docs/notes/system-invariants.md`
 
-  def assert_chat_reply_within(timeout_ms) do
-    assert_receive {:chat_reply, _}, timeout_ms
-  end
-end
-```
+### 4.8 Real-claude integration test — PR-4
 
-Tests in `runtime/test/esr/system/invariants_test.exs`:
-
-```elixir
-use Esr.Test.ChaosScenarios
-
-invariant_test "I1: every inbound produces a reply under chaos" do
-  {:ok, sid} = setup_session_with_chat_listener()
-  chaos_inject([:kill_pty, :kill_cc, :kill_channel], times: 5)
-  send_chat_text("hello?")
-  assert_chat_reply_within(5_000)
-end
-
-invariant_test "I2: ETS routing has no dead pids" do
-  {:ok, sid} = setup_session()
-  chaos_inject(:kill_pty)
-  eventually(fn ->
-    Enum.all?(ets_routing_entries(), fn {_key, _sid, refs} ->
-      Enum.all?(Map.values(refs), &Process.alive?/1)
-    end)
-  end, 3_000)
-end
-
-# I3, I4, I5 likewise
-```
-
-### 4.7 Real-claude boot integration test (PR-4, ~80 LOC)
-
-`runtime/test/esr/integration/real_claude_boot_test.exs` — **the test that
-would have caught today's regression**. Tagged `:real_claude`; the CI step
-runs `mix test --only real_claude` on macos-latest (per Phase 1 of
-guide-driven-e2e CI policy).
+`runtime/test/esr/integration/real_claude_boot_test.exs` (new). Tag
+`:real_claude`. CI runs on macos-latest only (per Phase 1 of
+guide-driven-e2e CI policy):
 
 ```elixir
 @moduletag :real_claude
@@ -375,172 +438,199 @@ setup do
   end
 end
 
-test "real claude boots and responds via cc_mcp end-to-end" do
-  {:ok, workspace} = setup_real_workspace_with_folder()
-  {:ok, sid} = Esr.Session.Router.create_session(real_session_params(workspace))
+test "real claude boots, mcp.json written, chat reply round-trip" do
+  {:ok, ws} = setup_real_workspace_with_folder()
+  {:ok, sid} = Esr.Session.Router.create_session(real_params(ws))
 
-  # Wait for cc_mcp + mcp.json + claude handshake
   assert eventually(fn ->
-    Process.alive?(pid_of(sid, :cc_process)) and
-    File.exists?(session_dir(sid) <> "/mcp.json") and
-    claude_handshake_complete?(sid)
+    File.exists?(Esr.Paths.session_mcp_json(sid)) and
+    instance_registry_has_role?(sid, :feishu_chat_proxy) and
+    instance_registry_has_role?(sid, :cc_process) and
+    cc_mcp_ready?(sid)  # subscribe to PubSub topic cc_mcp_ready/<sid>
   end, 30_000)
 
-  send_test_inbound("hello", sid)
-  assert_receive {:chat_reply, _text}, 60_000
+  send_test_inbound("hello", sid, ws.chat)
+  assert_receive {:chat_reply, _}, 60_000
 
-  :ok = Esr.Session.Router.stop_session(sid)
+  :ok = Esr.Session.Router.end_session(sid)
 end
 ```
 
-### 4.8 `mix esr.audit_supervision` (PR-3, ~50 LOC)
+`cc_mcp_ready?/1` subscribes to topic `cc_mcp_ready/<sid>` (verified —
+broadcast by `EsrWeb.McpController` on first MCP request).
 
-A maintenance mix task that, given a running esrd fixture, snapshots the
-supervision tree (`Supervisor.which_children/1` recursively + strategy of
-each supervisor) into a structured format, and diffs against
-`docs/notes/supervisor-inventory.md`. CI gate fails on non-empty diff,
-forcing intentional acknowledgement of supervisor structure changes.
+**Files touched:**
+- New: `runtime/test/esr/integration/real_claude_boot_test.exs` (~80 LOC)
+- `.github/workflows/ci.yml` — add macos-latest job running `mix test --only real_claude` (~30 LOC of workflow YAML; user previously authorized macos-CI scope in guide-driven-e2e Phase 1)
 
-This complements §4.6 — invariant tests catch behavioral regression;
-supervision audit catches structural drift.
+### 4.9 `mix esr.audit_supervision` — PR-3
 
-### 4.9 ADR-0002 (PR-3)
+`runtime/lib/mix/tasks/esr.audit_supervision.ex` (new). Walks live
+supervision tree via `Supervisor.which_children/1`, compares against
+`docs/notes/supervisor-inventory.md` snapshot. Non-empty diff fails the
+CI gate.
 
-`docs/adr/0002-cc-pty-pair-one-for-all-invariant.md`:
+Initial snapshot committed in PR-3 as the baseline. Future supervisor
+changes require updating the snapshot, forcing intentional ack.
 
-```markdown
-# CC + PTY pair uses :one_for_all supervisor
+**Files touched:**
+- New: `runtime/lib/mix/tasks/esr.audit_supervision.ex` (~80 LOC)
+- New: `docs/notes/supervisor-inventory.md` (baseline)
+- `.github/workflows/ci.yml` — add gate (~5 LOC YAML)
 
-**Status:** accepted  **Date:** 2026-05-11
+### 4.10 ADR-0002 — PR-3
 
-`Esr.Session.AgentInstanceSupervisor` supervises CC + PTY with
-`:one_for_all` strategy. Both children must restart together; lone-survivor
-restart is prohibited.
-
-**Rationale:** CCProcess manages the active claude session via PtyProcess.
-Restarting one without the other leaves the surviving process holding a
-stale connection (CC waiting on a dead PTY pipe, or PTY managing a child
-whose CC consumer is gone). Both states are unrecoverable in-place.
-`:one_for_all` guarantees consistent restart.
-
-**Originally established:** 2026-05-07 Feishu spec Q5.3 sub-2 (per the
-moduledoc on `agent_instance_supervisor.ex`).
-
-**Reversing this requires:** invalidating invariants I1-I4 (see
-`docs/notes/system-invariants.md`) — the chaos tests will catch any
-attempt to switch strategy here.
-
-**Out of scope:** `Esr.Session.AgentSupervisor` (the parent DynamicSupervisor)
-uses `:one_for_one` and that is also correct (multiple agent instances
-in a session are independent).
-```
+`docs/adr/0002-cc-pty-pair-one-for-all-invariant.md` (new). Records the
+`AgentInstanceSupervisor :one_for_all` design choice from spec Q5.3 sub-2
+(2026-05-07). Same content as rev-1, unchanged.
 
 ---
 
-## 5. Phase B — `submit_slash` MCP tool + CC skill (PR-4, ~150 LOC)
+## 5. Phase B — `submit_slash` MCP tool via real SlashHandler API (PR-4)
 
-### 5.1 Tool definition
+**Real `SlashHandler.dispatch/2` signature** (verified at
+`runtime/lib/esr/entity/slash_handler.ex:112-115`):
+```elixir
+@spec dispatch(map(), reply_to()) :: reference()
+def dispatch(envelope, reply_to)
+```
+- Second arg is reply target, NOT options.
+- Returns `reference()` — the async dispatch ref.
+- Submitter lives inside the envelope: `args.submitted_by`.
 
-`runtime/lib/esr/plugins/claude_code/mcp/tools.ex` registers a new admin tool
-on the cc_mcp Channel:
+### 5.1 Tool registration
 
+`runtime/lib/esr/plugins/claude_code/mcp/tools.ex` adds:
 ```elixir
 @admin_tool %{
   name: "submit_slash",
   description: """
-  Execute an ESR slash command on behalf of the operator. Use this when the
-  user asks (in any language) to perform admin work: adding agents, listing
-  sessions, switching workspace, registering adapters, etc. Returns a
-  structured result; on error, translate the result into natural language
-  before replying.
+  Execute an ESR slash command on behalf of the operator. Use when the
+  user asks (in any language) to perform admin work: adding agents,
+  listing sessions, switching workspace, etc. Returns structured result.
   """,
   input_schema: %{
     type: "object",
     properties: %{
-      command: %{
-        type: "string",
-        description: "Full slash command including leading slash, e.g. /agent:add type=cc name=helper"
-      }
+      command: %{type: "string",
+                 description: "Full slash command with leading /, e.g. /agent:add type=cc name=helper"}
     },
     required: ["command"]
   }
 }
 ```
 
-### 5.2 Handler
-
-The tool handler (in the same module) builds an internal envelope using
-chat context from the cc_mcp Channel state (cc_mcp knows the chat_id /
-app_id / principal_id from its init args — populated by the SessionTemplate
-when the bundle materialized):
+### 5.2 Handler — anchored to real dispatch contract
 
 ```elixir
-def handle_submit_slash(%{"command" => cmd_str}, %{chat_ctx: ctx}) do
-  envelope = %{
-    "payload" => %{
-      "args" => Map.merge(ctx, %{"content" => cmd_str, "msg_type" => "text"})
+def handle_submit_slash(%{"command" => cmd_str}, mcp_state) do
+  # mcp_state.session_id is known (cc_mcp Channel was started with it).
+  # Resolve chat_ctx by looking up session metadata.
+  sid = mcp_state.session_id
+
+  with {:ok, ctx} <- resolve_chat_ctx_for_session(sid) do
+    envelope = %{
+      "id" => "submit-#{UUID.uuid4()}",
+      "kind" => "event",
+      "payload" => %{
+        "args" => Map.merge(ctx, %{
+          "content" => cmd_str,
+          "msg_type" => "text"
+        }),
+        "event_type" => "msg_received"
+      },
+      "source" => "esr://localhost/submit_slash",
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "event",
+      "principal_id" => ctx["submitted_by"]
     }
-  }
-  case Esr.Entity.SlashHandler.dispatch(envelope, submitter: ctx[:principal_id]) do
-    {:ok, result} -> {:ok, result}
-    {:error, reason} -> {:error, %{kind: reason, ...}}
+
+    # Use a per-call collector pid as reply_to to capture the result.
+    {collector_pid, ref} = spawn_result_collector()
+    _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, collector_pid)
+
+    # Wait for reply (with timeout)
+    receive do
+      {:slash_result, ^ref, result} -> {:ok, result}
+      {:slash_error, ^ref, reason} -> {:error, %{kind: reason}}
+    after
+      30_000 -> {:error, %{kind: :slash_timeout}}
+    end
+  end
+end
+
+defp resolve_chat_ctx_for_session(sid) do
+  # Look up session metadata to find chat_id / app_id / submitter.
+  case Esr.Resource.Session.Registry.get(sid) do
+    {:ok, session} ->
+      {:ok, %{
+        "chat_id" => session.chat_id,
+        "app_id" => session.app_id,
+        "submitted_by" => session.principal_id  # chat-bound user
+      }}
+
+    :not_found ->
+      {:error, %{kind: :session_not_found}}
   end
 end
 ```
 
-**Authentication:** the dispatch uses the **chat-bound user's principal_id**
-(not ou_admin, not system). CC operates with the same capabilities as the
-operator. If the user lacks a capability, the slash returns
-`:missing_capability` and CC translates that to a chat reply.
+**Auth:** `submitted_by` is the chat-bound user (session.principal_id),
+NOT ou_admin. CC operates with the operator's capabilities. Cap-denied
+slashes return `:missing_capability`, which CC translates to natural
+language for the user.
 
 ### 5.3 CC skill prompt
 
-`runtime/lib/esr/bundles/feishu-cc/agent_skills/admin.md` (loaded into CC's
-system prompt at agent start; the cc agent_kind already supports
-`--system-prompt` via its launcher):
+`runtime/lib/esr/bundles/feishu-cc/agent_skills/admin.md` (new):
 
 ```markdown
 # Admin Operations Skill
 
-If the operator asks you (in any language) to perform an ESR admin operation
-— add an agent, list sessions, register an adapter, change the workspace
-— use the `submit_slash` MCP tool.
+If the operator asks you (in any language) to perform an ESR admin
+operation — add an agent, list sessions, register an adapter, change
+workspace, etc. — use the `submit_slash` MCP tool.
 
 Examples:
 - 用户："加个新 agent 叫 helper" → submit_slash(command="/agent:add type=cc name=helper")
 - 用户："列出现在的 session" → submit_slash(command="/session:list")
 - 用户："换到 my-other workspace" → submit_slash(command="/workspace:use my-other")
 
-If submit_slash returns an error result, translate the error into the user's
-language and explain what they need to do next. Do not silently retry; ask
-the operator for direction.
+If submit_slash returns an error, translate it into the user's language
+and explain what they need to do next. Do not silently retry; ask the
+operator for direction.
 
-Slashes available: see /help.
+Slashes available: /help.
 ```
+
+Injected into CC's system prompt at agent start (via `--system-prompt`
+or equivalent in `Launcher.prepare_spawn/1`).
 
 ### 5.4 Tests
 
-- Unit: `submit_slash_handler_test.exs` — chat_ctx injection, principal_id
-  threading, error path translation.
-- Integration: extend `real_claude_boot_test.exs` to verify CC can execute a
-  `submit_slash` call after boot (e.g. `/session:list` returning the current
-  session as a sanity check).
+- Unit: `submit_slash_handler_test.exs` — chat_ctx resolution, principal_id threading, error translation.
+- Integration: extend `real_claude_boot_test.exs` with a follow-up assertion: after boot, CC successfully calls `submit_slash(command="/session:list")` and gets the current session back.
 
 ---
 
 ## 6. Migration plan — 4 PRs
 
-| PR | Title | LOC | Contents |
+| PR | Title | LOC est | Contents |
 |---|---|---|---|
-| **PR-1** | `feat(workspace): enforce workspace ≥1 folder invariant` | ~120 | §4.1 (schema, command guards, tests) |
-| **PR-2** | `fix(session): /session:new pre-flight + mcp.json + FCP lifecycle handlers` | ~360 | §4.2 + §4.3 (pre-flight, mcp.json gen, FCP `handle_info/2` clauses) |
-| **PR-3** | `feat(supervision): LifecycleObserver + ETS cleanup + ChaosScenarios + system invariants` | ~390 | §4.4 + §4.5 + §4.6 + §4.8 + ADR-0002 + `system-invariants.md` |
-| **PR-4** | `feat(agent): submit_slash MCP tool + CC admin skill + real-claude integration test` | ~280 | §4.7 + Phase B (§5) + e2e fence #5 |
+| **PR-1** | `feat(workspace): folders ≥1 + ESR-bound 1-folder unification` | ~120 | §4.1 |
+| **PR-2** | `fix(session): delete spawn_cmd dead code + FCP :pty_closed handler + pipeline integrity check` | ~250 | §4.2 + §4.3 + §4.4 |
+| **PR-3** | `feat(supervision): unify ChatRouting on attach + LifecycleObserver + ChaosScenarios + audit + ADR-0002` | ~400 | §4.5 + §4.6 + §4.7 + §4.9 + §4.10 |
+| **PR-4** | `feat(agent): submit_slash MCP tool + CC admin skill + real-claude integration test` | ~270 | §4.8 + §5 |
 
-Each PR is independent in CI but ordered in dependencies: PR-1 must merge
-before PR-2 (pre-flight assumes ≥1 folder); PR-2 before PR-3 (LifecycleObserver
-assumes pre-flight is in place); PR-3 before PR-4 (real-claude test relies
-on lifecycle visibility).
+**Total ~1040 LOC across 4 PRs.** Net LOC will be lower than estimate
+because §4.5 + §4.2 delete dead/legacy code.
+
+**Dependency order:**
+- PR-1 before PR-2 (§4.2 cwd resolution depends on §4.1 unified folders)
+- PR-2 before PR-3 (lifecycle handlers must exist before ChaosScenarios
+  can verify invariant I4)
+- PR-3 before PR-4 (real-claude test depends on lifecycle visibility +
+  unified ChatRouting)
 
 ---
 
@@ -548,34 +638,34 @@ on lifecycle visibility).
 
 | # | Acceptance | Verify |
 |---|---|---|
-| 1 | `/workspace:new name=X path=/some/dir` succeeds; `/workspace:new name=X` (no path) fails with explicit error | unit test + e2e fence |
-| 2 | `/session:new name=test-cc` after `/workspace:use test-dev` produces a session with live FCP + CC + PTY + ready cc_mcp | manual replay of the 2026-05-11 hang scenario |
-| 3 | `hello?` after `/session:new` produces a chat-visible reply (from CC) or chat-visible error within 5s | manual + invariant test I1 |
-| 4 | Killing PtyProcess does not produce silent state — chat receives ":agent_died" lifecycle reply within 5s | invariant test I4 |
-| 5 | Killing the entire session supervisor (`max_restarts` exhaustion) → chat receives ":session_fatal" reply; ETS routing entry deleted | invariant test I2 + I4 |
-| 6 | `rg "other ->" runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex` returns 0 matches | invariant test I5 (file scan) |
-| 7 | `mix esr.audit_supervision` runs green against current dev tree | CI gate |
-| 8 | Real-claude integration test boots + receives reply | macos-latest CI step |
-| 9 | CC can execute `/agent:add type=cc name=helper` when user says "加个 helper agent" | manual test (Feishu) + integration test |
+| 1 | `/workspace:new name=X` (no folder=) creates a workspace with `folders: [%{path: <esr_managed_dir>}]` and `<esr_managed_dir>` exists on disk | unit test |
+| 2 | `/workspace:new name=X folder=/some/dir` creates `folders: [%{path: "/some/dir"}]` | unit test |
+| 3 | `/session:new name=test-cc` after `/workspace:use test-dev` (where test-dev has ≥1 folder) succeeds; PtyProcess starts with cwd = workspace folder, NOT `/tmp` | manual replay 2026-05-11 hang + unit |
+| 4 | Real `claude` binary starts when launched via `Launcher.prepare_spawn/1`; `.mcp.json` exists at `$session_dir/mcp.json` with correct content | real-claude integration test |
+| 5 | After `/session:new`, sending plain `hello?` produces a chat-visible reply from CC (or chat-visible error within 5s) | manual + I1 |
+| 6 | Killing PtyProcess produces chat-visible `:downstream_died` reply within 5s | I4 |
+| 7 | `AgentInstanceSupervisor` exhausting max_restarts produces chat-visible `:session_terminated` reply; ETS routing entry deleted by LifecycleObserver | I2 + I4 |
+| 8 | `rg "register_session\|unregister_session\|other -> Logger\.warning" runtime/lib/` returns 0 matches | I5 + grep CI |
+| 9 | `mix esr.audit_supervision` runs green | CI gate |
+| 10 | Real-claude integration test boots + receives chat reply | macos-latest CI |
+| 11 | CC executes `/agent:add type=cc name=helper` when user says "加个 helper agent" | manual Feishu + integration |
 
 ---
 
 ## 8. Open questions / future work
 
-Tracked in `docs/futures/todo.md`. The following are explicitly **closed** by
-this spec:
+`docs/futures/todo.md` tracks. **Closed by this spec:**
+- `phase-3-fence-cc-reply` → see §4.8 (real-claude test) + flow-bootstrap.md fence #5 re-enabled
+- `unconsumed-message-errors-not-hangs` → resolved by §4.4 + §4.5 + §4.6 (I1)
 
-- `phase-3-fence-cc-reply` → reopens fence #5 in `flow-bootstrap.md` per §4.7
-- `unconsumed-message-errors-not-hangs` → resolved by §4.3 + §4.4 + §4.6 (I1)
-
-Remaining open items potentially impacted but **not** addressed here:
-
-- `structured-reply-envelope` (existing todo) — this spec assumes structured
-  replies are available; if `task #220` doesn't ship first, the FCP
-  `notify_chat/3` helper will use a minimal local envelope shape and the
-  full schema lands in a follow-up.
-- `e2e-15-principal-isolation` — submit_slash with non-admin principal needs
-  testing once a non-admin test principal exists in the e2e fixture.
+**Still open, this spec depends on or interacts with:**
+- `structured-reply-envelope` (`docs/futures/todo.md:37`) — this spec assumes
+  structured replies. If that todo doesn't ship first, `notify_chat/2` uses
+  a minimal local envelope shape and the full schema lands in a follow-up.
+  (rev-1 reference to closed task #220 was a stale mis-attribution; rev-2
+  corrects to `structured-reply-envelope`.)
+- `e2e-15-principal-isolation` — submit_slash with a non-admin principal
+  needs testing once a non-admin test principal exists in the e2e fixture.
 
 ---
 
