@@ -65,6 +65,21 @@ jobs:
         working-directory: runtime
         run: mix esr.check_bundles
 
+      - name: Lint scenario headers
+        run: bash scripts/check-scenario-headers.sh
+
+      - name: Replay guides with fences
+        run: |
+          for guide in docs/guides/*.md; do
+            base=$(basename "$guide")
+            [[ "$base" == _* ]] && continue
+            if grep -q '^```chat-input' "$guide"; then
+              bash scripts/replay-guide.sh "$guide"
+            fi
+          done
+          # Always run the smoke guide explicitly (it starts with _).
+          bash scripts/replay-guide.sh docs/guides/_replay_smoke.md
+
       # TODO(2026-05-09): mix test on Linux CI fails ~22 of 1436 tests
       # for reasons unrelated to this migration:
       #   - `claude` CLI not on PATH (used by PTY spawn in some tests)
