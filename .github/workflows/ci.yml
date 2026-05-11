@@ -20,6 +20,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # scripts/verify-e2e-report.sh runs `git log origin/dev..HEAD`
+          # to find PR commits touching command handlers. Default
+          # fetch-depth=1 doesn't include base ref history.
+          fetch-depth: 0
 
       - name: Install inotify-tools
         # Esr.Resource.SlashRoute.Registry.Watcher uses the `:file_system`

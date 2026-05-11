@@ -15,7 +15,20 @@ cd "${REPO_ROOT}"
 # ESR convention: feature PRs target dev; dev cherry-picks to main on release.
 BASE_REF="${GITHUB_BASE_REF:-dev}"
 DIFF_BASE="origin/${BASE_REF}"
-git fetch --no-tags origin "${BASE_REF}" >/dev/null 2>&1 || true
+
+# Make the base ref reachable. GH Actions checkout@v4 with default
+# fetch-depth=1 doesn't fetch arbitrary base refs, so do it here.
+# Loud-fail if the base ref still isn't resolvable — better than silent
+# fallback to "every commit in history" which mis-triggers the gate.
+if ! git rev-parse --verify "${DIFF_BASE}" >/dev/null 2>&1; then
+  git fetch --no-tags --depth=50 origin "${BASE_REF}" || true
+fi
+if ! git rev-parse --verify "${DIFF_BASE}" >/dev/null 2>&1; then
+  echo "FAIL: cannot resolve ${DIFF_BASE}. Run with fetch-depth: 0 in checkout, or fetch ${BASE_REF} before this step." >&2
+  exit 1
+fi
+
+echo "verify-e2e-report: base=${DIFF_BASE} ($(git rev-parse --short=8 "${DIFF_BASE}")) head=$(git rev-parse --short=8 HEAD)"
 
 # Find the latest non-merge commit in the PR that touches command handlers
 # or fenced flow guides. That commit is what the e2e report must reference.
