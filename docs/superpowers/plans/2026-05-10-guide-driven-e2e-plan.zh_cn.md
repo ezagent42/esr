@@ -526,10 +526,18 @@ git add CLAUDE.md
 git commit -m "docs(claude-md): add Guide-driven e2e anti-drift section (spec §3.6)"
 ```
 
-### Task 1.8：加 CI workflow 步骤
+### Task 1.8：加 CI workflow 步骤 —— 报告制 gate
+
+> **Spec rev-5 改动（2026-05-11）：** CI 不再直接跑 replay（ubuntu-latest
+> 起不了 FAA Python sidecar，见 `.github/workflows/ci.yml` 末尾的
+> `mix test on Linux CI` TODO）。改为：开发者本地跑
+> `scripts/generate-e2e-report.sh` 后提交 `docs/e2e-reports/<short-sha>.md`；
+> CI 验证报告存在、新鲜、所有 guide PASS。详见 spec §3.7。
 
 **文件：**
 - 修改：`.github/workflows/ci.yml`
+- 新建：`scripts/verify-e2e-report.sh`
+- 新建：`scripts/generate-e2e-report.sh`
 
 - [ ] **Step 1：读现有 ci.yml**
 
@@ -539,7 +547,20 @@ cat .github/workflows/ci.yml
 
 确认有 `build-and-test`（或同等）job 可以扩展。
 
-- [ ] **Step 2：往跑 e2e 的 job 追加两步**
+- [ ] **Step 2：写两个脚本**
+
+`scripts/verify-e2e-report.sh`（~50 LOC）：用
+`git log --reverse "${GITHUB_BASE_REF:-dev}"..HEAD -- <paths>` 找 PR diff 中
+最新一个触及 `runtime/lib/esr/commands/` 或 `docs/guides/flow-*.md` 的 commit，
+要求 `docs/e2e-reports/<short-sha>.md` 存在、引用该 commit 的 full sha、
+没有 `| FAIL ` 行。
+
+`scripts/generate-e2e-report.sh`（~80 LOC）：遍历 fenced guide
+（`_replay_smoke.md` + 所有有 `^```chat-input` 的 `flow-*.md`），对每个跑
+`replay-guide.sh`，累积 PASS/FAIL + 步骤数 + wall time，按 spec §3.7
+schema 写出 `docs/e2e-reports/<HEAD-short-sha>.md`。
+
+- [ ] **Step 3：往 build-and-test job 追加两步**
 
 在现有 e2e 步骤之后（或 job 的 `steps:` 末尾），加：
 
@@ -547,17 +568,12 @@ cat .github/workflows/ci.yml
       - name: Lint scenario headers
         run: bash scripts/check-scenario-headers.sh
 
-      - name: Replay guides with fences
-        run: |
-          for guide in docs/guides/*.md; do
-            base=$(basename "$guide")
-            [[ "$base" == _* ]] && continue
-            if grep -q '^```chat-input' "$guide"; then
-              bash scripts/replay-guide.sh "$guide"
-            fi
-          done
-          # 烟测 guide 以 _ 开头，显式跑一次。
-          bash scripts/replay-guide.sh docs/guides/_replay_smoke.md
+      - name: Verify e2e report
+        # Anti-drift gate 按 spec §3.7。报告制而不是 CI 跑 replay，
+        # 因为 Ubuntu CI 起不了 FAA Python sidecar；ESR 生产目标
+        # 只有 macOS。开发者本地跑 scripts/generate-e2e-report.sh
+        # 然后提交 docs/e2e-reports/<short-sha>.md。
+        run: bash scripts/verify-e2e-report.sh
 ```
 
 - [ ] **Step 3：如有 actionlint 则用它校验**

@@ -327,23 +327,70 @@ Three short lines, link out to this spec for detail:
 Per the user's CLAUDE.md discipline (set 2026-05-10): keep CLAUDE.md
 tight, link out for detail.
 
-### 3.7 CI workflow step
+### 3.7 CI workflow step — report-based gate
 
-Append to `.github/workflows/ci.yml`'s `build-and-test` job:
+ESR's production target is macOS; CI is GH Actions on `ubuntu-latest`.
+The Ubuntu runner cannot spawn the FAA Python sidecar needed by the
+e2e fixture (a pre-existing limitation, see the `mix test on Linux CI`
+TODO at the bottom of `.github/workflows/ci.yml`). Rather than burn
+macos-CI minutes per PR, the gate is **report-based**: developers run
+`scripts/generate-e2e-report.sh` locally before opening a PR, the
+script writes `docs/e2e-reports/<short-sha>.md`, and CI verifies the
+report exists, is current, and shows all guides PASS.
+
+Trade-off accepted: this is trust-based (developer can skip the local
+run). Mitigated by:
+- A `PostToolUse` hook (§3.5) reminds developers to run replay when
+  they edit a command handler.
+- The CI verifier is strict — it requires the report's commit hash to
+  match HEAD exactly, so stale reports are rejected.
+- A weekly periodic full e2e job (tracked in `docs/futures/todo.md`)
+  catches drift even if a PR slips through.
+
+**Append to `.github/workflows/ci.yml`'s `build-and-test` job:**
 
 ```yaml
-- name: Replay guides with fences
-  run: |
-    for guide in docs/guides/*.md; do
-      if grep -q '^```chat-input' "$guide"; then
-        bash scripts/replay-guide.sh "$guide"
-      fi
-    done
+- name: Verify e2e report
+  # Only enforce when the PR touches command handlers or fenced guides.
+  # If it does, docs/e2e-reports/<short-sha>.md must exist for HEAD,
+  # reference HEAD's full sha, and show all guides PASS.
+  run: bash scripts/verify-e2e-report.sh
 ```
 
-Guides without fences are skipped (no failure). When Phase 2 lands
-fences in `operator-bootstrap-journey.md`, this step starts catching
-drift on the next PR.
+**Report file** `docs/e2e-reports/<8-char-sha>.md` (developer-generated
+locally, committed to the PR):
+
+```markdown
+# E2E report — <full sha>
+
+- Generated: <ISO-8601 timestamp>
+- Branch: <branch>
+- Run by: <git config user.email>
+
+## Results
+
+| Guide | Status | Steps | Wall time |
+|---|---|---|---|
+| _replay_smoke.md | PASS | 1/1 | 0m32s |
+| flow-bootstrap.md | PASS | 5/5 | 0m47s |
+
+## Overall
+
+PASS — N/N guides
+```
+
+**Verifier** `scripts/verify-e2e-report.sh` (~40 LOC bash):
+
+1. If the PR diff (`git diff origin/main...HEAD`) doesn't touch
+   `runtime/lib/esr/commands/` or `docs/guides/flow-*.md`, skip — exit 0.
+2. Compute `short_sha=$(git rev-parse --short=8 HEAD)`.
+3. Require `docs/e2e-reports/${short_sha}.md` exists; else exit 1
+   with "run scripts/generate-e2e-report.sh and commit the result".
+4. Require the report contains the full HEAD sha (`grep -q "$(git rev-parse HEAD)" "$report"`); else exit 1.
+5. Require no `| FAIL ` rows in the report; else exit 1 with the failing rows.
+6. Print `PASS: e2e report verified`.
+
+Reports are retained (small markdown files, git history acts as audit trail).
 
 ### 3.8 Fixture state convention — all-inline
 
