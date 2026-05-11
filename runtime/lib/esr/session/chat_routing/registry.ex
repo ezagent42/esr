@@ -147,6 +147,34 @@ defmodule Esr.Session.ChatRouting.Registry do
   end
 
   @doc """
+  Detach a session UUID from every `(chat_id, app_id)` scope it currently
+  occupies — used on session teardown when the caller only has a sid.
+
+  Replaces the legacy `unregister_session/1` API (deleted in Task 3.3b)
+  with a single semantically-named helper that walks the ETS table by
+  sid value rather than depending on the in-memory `sessions` map.
+
+  Semantics:
+    * For each row keyed by `{chat_id, app_id}`:
+      * Remove `sid` from `attached`.
+      * If `current == sid`, promote the first remaining attached UUID
+        (or set `current` to nil when the attached set empties).
+      * Delete the row entirely if both `current` becomes nil AND
+        `attached` is empty.
+
+  Persists to disk when `ESRD_HOME` is set. Idempotent (no-op when sid
+  appears nowhere). Also releases the URI claim via
+  `Esr.Session.NameIndex.Registry.release_uri/1` for parity with the
+  legacy contract — tolerates NameIndex not being started.
+  """
+  @spec detach_session_by_id(String.t()) :: :ok
+  def detach_session_by_id(sid) when is_binary(sid) do
+    result = GenServer.call(__MODULE__, {:detach_session_by_id, sid})
+    _ = safe_release(sid)
+    result
+  end
+
+  @doc """
   Reload attached state from disk. Clears the `@ets_table` entries
   and repopulates from `chat_attached.yaml`.
 
@@ -361,6 +389,62 @@ defmodule Esr.Session.ChatRouting.Registry do
 
     persist_attached_to_disk()
     {:reply, :ok, state}
+  end
+
+  def handle_call({:detach_session_by_id, sid}, _from, state) do
+    # Walk every ETS row, remove `sid` from each entry. Handles BOTH ETS
+    # shapes for the transition window before Task 3.3b deletes legacy
+    # rows from the table; once 3.3b lands, only the map shape remains
+    # but the legacy clause below is harmless.
+    Enum.each(:ets.tab2list(@ets_table), fn
+      {{c, a} = key, %{current: cur, attached: set}} ->
+        if MapSet.member?(set, sid) or cur == sid do
+          new_attached = MapSet.delete(set, sid)
+
+          new_current =
+            cond do
+              cur != sid -> cur
+              MapSet.size(new_attached) == 0 -> nil
+              true -> MapSet.to_list(new_attached) |> List.first()
+            end
+
+          if new_current == nil and MapSet.size(new_attached) == 0 do
+            :ets.delete(@ets_table, key)
+          else
+            :ets.insert(@ets_table, {key, %{current: new_current, attached: new_attached}})
+          end
+
+          _ = {c, a}
+          :ok
+        else
+          :ok
+        end
+
+      # Legacy 3-tuple shape from register_session/3. Drop the row when
+      # the legacy sid matches. (After Task 3.3b deletes register_session,
+      # no new rows of this shape are produced; this branch only matters
+      # if a caller runs `detach_session_by_id/1` against persisted state
+      # from a previous build. Safe to keep until the next major.)
+      {{_c, _a} = key, legacy_sid, _refs} when is_binary(legacy_sid) ->
+        if legacy_sid == sid, do: :ets.delete(@ets_table, key), else: :ok
+
+      _other ->
+        :ok
+    end)
+
+    # Drop the in-memory `sessions` entry too so subsequent
+    # `unregister_session/1` calls (during transition) stay idempotent.
+    new_state =
+      state
+      |> update_in([:sessions], &Map.delete(&1, sid))
+      |> update_in([:chat_to_session], fn map ->
+        map
+        |> Enum.reject(fn {_k, v} -> v == sid end)
+        |> Enum.into(%{})
+      end)
+
+    persist_attached_to_disk()
+    {:reply, :ok, new_state}
   end
 
   def handle_call({:unregister_session, sid}, _from, state) do
