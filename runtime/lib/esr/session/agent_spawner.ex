@@ -493,11 +493,8 @@ defmodule Esr.Session.AgentSpawner do
       |> Enum.reject(&is_nil/1)
 
     missing =
-      Enum.reject(expected_roles, fn role ->
-        case Esr.ActorQuery.list_by_role(sid, role) do
-          [_pid | _] -> true
-          [] -> false
-        end
+      Enum.filter(expected_roles, fn role ->
+        Esr.ActorQuery.list_by_role(sid, role) == []
       end)
 
     case missing do
@@ -530,7 +527,6 @@ defmodule Esr.Session.AgentSpawner do
   # role to verify) return nil so they're excluded from the expected set.
   defp role_for_impl("Esr.Plugins.Feishu.FeishuChatProxy"), do: :feishu_chat_proxy
   defp role_for_impl("Esr.Entity.CCProcess"), do: :cc_process
-  defp role_for_impl("Esr.Plugins.ClaudeCode.CCProcess"), do: :cc_process
   defp role_for_impl("Esr.Entity.PtyProcess"), do: :pty_process
   defp role_for_impl(_), do: nil
 
