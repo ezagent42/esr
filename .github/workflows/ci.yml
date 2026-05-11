@@ -70,6 +70,39 @@ jobs:
         working-directory: runtime
         run: mix esr.check_bundles
 
+      - name: Supervisor audit drift gate (PR-3 Task 3.10)
+        # Boots app, snapshots every named supervisor reachable from the
+        # @roots list, and diffs against docs/notes/supervisor-inventory.md.
+        # Non-empty diff exits 1; regenerate the baseline with
+        # `cd runtime && mix esr.audit_supervision --write=../docs/notes/supervisor-inventory.md`.
+        working-directory: runtime
+        run: mix esr.audit_supervision
+
+      - name: Routing-layer catch-all grep gate (PR-3 invariant I5)
+        # Static gate over the routing-layer files: any `other -> Logger.warning`
+        # catch-all is forbidden because it silently drops envelopes the
+        # operator never sees an error for. Every case clause must be
+        # exhaustive on the upstream contract (current_session/2 → {:ok, sid} | :not_found,
+        # ActorQuery.fcp_for_session/1 → {:ok, pid} | :not_found, etc.).
+        # See docs/notes/system-invariants.md row I5.
+        run: |
+          set -e
+          files=(
+            runtime/lib/esr/plugins/feishu/feishu_app_adapter.ex
+            runtime/lib/esr/session/router.ex
+            runtime/lib/esr/entity/slash_handler.ex
+          )
+          # `grep -v '^[[:space:]]*#'` strips comment-only lines so the gate
+          # doesn't fire on text that documents the rule.
+          hits=$(grep -hn 'other -> Logger\.warning' "${files[@]}" 2>/dev/null \
+                  | grep -v '^[[:space:]]*[0-9]*:[[:space:]]*#' || true)
+          if [ -n "$hits" ]; then
+            echo "FAIL: routing-layer code retains 'other -> Logger.warning' catch-all (I5):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "PASS: I5 grep gate"
+
       - name: Lint scenario headers
         run: bash scripts/check-scenario-headers.sh
 
