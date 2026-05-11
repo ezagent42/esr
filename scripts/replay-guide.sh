@@ -138,6 +138,47 @@ fi
 seed_capabilities
 seed_workspaces
 seed_adapters
+# Pre-seed users.yaml BEFORE start_esrd so Esr.Entity.User.Watcher's
+# init/1 finds the file and FileLoader.load/1 populates the
+# `:esr_users_by_feishu_id` ETS index. Without this the chat-side
+# `requires_user_binding: true` check (slash_handler.resolve_username/1)
+# returns nil for the first chat message after CLI feishu_bind because
+# the file watcher only subscribes when users.yaml exists at boot —
+# see runtime/lib/esr/entity/user/watcher.ex `case File.exists?(path)`.
+# Each USER_MAP_JSON entry gets one row so multi-user guides work
+# uniformly.
+seed_users_for_replay() {
+  local path="${ESRD_HOME}/${ESRD_INSTANCE}/users.yaml"
+  local body="users:"
+  # bash-3.2 has no built-in JSON parser; emit one line per (name, open_id)
+  # tuple via jq.
+  while IFS=$'\t' read -r name open_id; do
+    [[ -z "${name}" ]] && continue
+    body+=$'\n'"  ${name}:"$'\n'"    feishu_ids: [${open_id}]"
+  done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${USER_MAP_JSON}")
+  printf '%s\n' "${body}" > "${path}"
+}
+seed_users_for_replay
+
+# Append each USER_MAP_JSON open_id as a wildcard-cap principal so chat-side
+# slash commands (verify_caps gate) pass for the synthetic test user. Mirrors
+# the real-operator flow where the first /user:add bootstraps an admin —
+# replay-guide is testing the chat path, not the bootstrap path, so we
+# pre-grant rather than relying on the sentinel which is dormant once
+# `seed_capabilities`'s ou_admin row is in place.
+grant_replay_users_admin() {
+  local caps_path="${ESRD_HOME}/${ESRD_INSTANCE}/capabilities.yaml"
+  while IFS=$'\t' read -r _name open_id; do
+    [[ -z "${open_id}" ]] && continue
+    cat >> "${caps_path}" <<EOF
+  - id: ${open_id}
+    kind: feishu_user
+    note: replay-guide synthetic admin
+    capabilities: ["*"]
+EOF
+  done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${USER_MAP_JSON}")
+}
+grant_replay_users_admin
 start_mock_feishu
 start_esrd
 wait_for_sidecar_ready 30

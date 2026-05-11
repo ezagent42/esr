@@ -418,7 +418,7 @@ seed_capabilities() {
   cat > "$operator_json" <<EOF
 {
   "schema_version": 1,
-  "principal_id": "${ESR_OPERATOR_PRINCIPAL_ID}",
+  "caller_principal_id": "${ESR_OPERATOR_PRINCIPAL_ID}",
   "name": "ou_admin",
   "set_at": "2026-05-09T00:00:00Z",
   "set_by": "manual"
