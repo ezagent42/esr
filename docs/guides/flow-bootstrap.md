@@ -165,6 +165,21 @@ Response: `{"adapter_id": "esr_helper", "running": true}`.
 see [`feishu-adapter-setup.md`](feishu-adapter-setup.md) §
 Troubleshooting.
 
+From Feishu chat with the bot, `/adapter:list` confirms the wiring:
+
+```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
+/adapter:list
+```
+
+```chat-output
+feishu_app_e2e-mock  type=feishu  app_id=e2e-mock  base_url=http://127.0.0.1:<int>  app_secret=***
+```
+
+The fence's `base_url` placeholder is the runtime port for the mock
+Feishu used in e2e — in a real install you'd see no `base_url=` field
+(it defaults to `open.feishu.cn`). The other fields render verbatim
+per `Esr.Commands.Adapter.List.format_row/1`.
+
 ### 5. Bind your Feishu identity
 
 ```bash
@@ -179,6 +194,25 @@ Inbound Feishu messages from `ou_xxx` are now recognised as
 > in each Feishu app — Feishu derives it from `(app_id, user)`.
 > If you later register a second Feishu adapter, run a second
 > `feishu_bind` with the new app's `ou_xxx`.
+
+Operators can also self-bind from inside the chat with `/feishu:bind`
+— the dispatcher reads the calling Feishu `open_id` from the inbound
+envelope and binds it to the named esr user. Running it a second time
+is a safe no-op:
+
+```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
+/feishu:bind name=linyilun
+```
+
+```chat-output
+ou_test_linyilun already bound to linyilun
+```
+
+Note the reply contains the caller's `open_id` (`ou_test_linyilun`
+here is the synthetic id used in the e2e fixture; a real install
+shows your live `ou_xxx`). See
+`runtime/lib/esr/plugins/feishu/commands/bind_user.ex` for the exact
+text rendering.
 
 ### 6. (Feishu console) verify event subscription
 
@@ -212,15 +246,53 @@ PTY, Plugins, Capabilities). `/doctor` runs the meta-system self-
 check (dispatcher up, plugins loaded, capabilities readable). If the
 bot doesn't respond, see [Common pitfalls](#common-pitfalls) below.
 
+### 8a. `/workspace:new` (optional — only when you want a named workspace)
+
+The auto-created `<username>-default` workspace from step 2 is enough
+for most operators, but you may want a named workspace for a specific
+project. Create one from chat with `/workspace:new`:
+
+```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
+/workspace:new name=demo
+```
+
+```chat-output
+ok: %{"action" => "created", "chats" => [%{"app_id" => "feishu_app_e2e-mock", "chat_id" => "oc_mock_single", "kind" => "dm"}], "folders" => [], "id" => "<UUID>", "location" => "esr:<...>/workspaces/demo", "name" => "demo", "owner" => "linyilun"}
+```
+
+The chat automatically gets bound to the new workspace as a side
+effect (see `chats` in the reply) — subsequent `/session:new` calls
+resolve to `demo` via the chat-bound layer of the M-5 fallback chain.
+
 ### 9. `/session:new`
 
 ```
-/session:new
+/session:new name=test-cc
 ```
 
-Creates a session bound to the current chat. Default workspace comes
-from your user's `default_workspace` (set by step 2). Returns the
-session UUID.
+Creates a session bound to the current chat. Workspace + agent are
+resolved automatically: workspace via the M-5 fallback chain (chat-
+current → user-default), agent from the session template's
+`agent_def`. With nothing else configured, the auto-elected
+`feishu-cc` template fills both in for you — `/session:new
+name=<anything>` is the minimum operator gesture once steps 1-5 are
+in place.
+
+```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
+/session:new name=test-cc
+```
+
+```chat-output capture=session_id
+session started: <UUID>
+```
+
+This bare-name `/session:new` form is THE regression gate for
+2026-05-10: prior to PR #334 the command failed at the legacy
+`validate_args(agent, dir)` step with `invalid_args: dir required`
+when neither was passed. The fence above will FAIL against any
+build that re-introduces that gate (see
+`tests/e2e/scenarios/19_session_first_default.sh` for the thin-
+wrapper that drives this exact replay in CI).
 
 ### 10. `/agent:add`
 
