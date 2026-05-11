@@ -345,9 +345,6 @@ defmodule Esr.Session.AgentSpawner do
         end)
 
       {:ok, refs, monitors}
-    catch
-      {:spawn_failed, spec, reason} ->
-        {:error, {:peer_spawn_failed, spec, reason}}
     rescue
       # PR-2 (2026-05-11 spec rev-3): Esr.Entity.PtyProcess.spawn_args/1
       # now raises ArgumentError on nil/empty :dir (pre-PR-2 it silently
@@ -357,6 +354,9 @@ defmodule Esr.Session.AgentSpawner do
       # invariant violation.
       e in ArgumentError ->
         {:error, {:peer_spawn_failed, :spawn_args, {:bad_argument, Exception.message(e)}}}
+    catch
+      {:spawn_failed, spec, reason} ->
+        {:error, {:peer_spawn_failed, spec, reason}}
     end
   end
 
