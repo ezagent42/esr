@@ -17,7 +17,7 @@ SCENARIO_DIR="${REPO_ROOT}/tests/e2e/scenarios"
 # Helpers (_common_selftest.sh, common.sh) take `\.` to require the literal
 # `.sh` suffix; numbered scenarios take just the `NN_` prefix because their
 # filenames vary (e.g. `01_single_user_create_and_end.sh`).
-EXEMPT_REGEX='^(_common_selftest\.|common\.|01_|02_|04_|05_|06_|07_|08_|11_|14_|15_|16_|17_|18_|19_|20_|21_|22_|23_|24_|25_|26_|27_|28_|29_|30_)'
+EXEMPT_REGEX='^(_common_selftest\.|common\.|01_|02_|04_|05_|06_|07_|08_|11_|14_|15_|16_|17_|18_|20_|21_|22_|23_|24_|25_|26_|27_|28_|29_|30_)'
 
 fail=0
 for f in "${SCENARIO_DIR}"/*.sh; do

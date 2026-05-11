@@ -437,8 +437,12 @@ workspace 状态都**必须**作为显式 fence 出现。
 ### Phase 2：Canary（~50 LOC + 指南升级）
 
 - 升级 `docs/guides/flow-bootstrap.md`（从 `operator-bootstrap-journey.md`
-  改名，连同 `.zh_cn.md` 镜像），给 5 个主步骤加 fence（workspace、
-  session、agent、纯文本 → CC reply、TUI URL）
+  改名，连同 `.zh_cn.md` 镜像），给 4 个 chat 侧 bootstrap 步骤加 fence：
+  `/adapter:list`、`/feishu:bind`、`/workspace:new`、`/session:new`。
+  第 5 对（plain text → CC reply）**推到 Phase 3** —— `/session:new`
+  不会自动绑定 CC agent 到 chat，第 5 对 fence 需要先修
+  `unconsumed-message-errors-not-hangs` 或在 guide 里加显式 `/agent:add`
+  fence（见 `docs/futures/todo.md` 的 `phase-3-fence-cc-reply`）
 - `tests/e2e/scenarios/19_session_first_default.sh` 加
   `# Replays: docs/guides/flow-bootstrap.md` 头（或按 §3.4 替成
   thin-wrapper 形态）
@@ -471,7 +475,7 @@ workspace 状态都**必须**作为显式 fence 出现。
 | 2 | 改 `runtime/lib/esr/commands/*.ex` 时 hook 触发 | 手工触发 |
 | 3 | CLAUDE.md 更新；spec 链接到位 | 看文件 |
 | 4 | CI 对有 fence 指南跑 replay | 绿 PR |
-| 5 | `docs/guides/flow-bootstrap.md` 5 主步骤都有 fence | 看指南 |
+| 5 | `docs/guides/flow-bootstrap.md` 4 个 chat 侧 bootstrap 步骤都有 fence（CC reply 第 5 对推到 Phase 3，见 `docs/futures/todo.md` 的 `phase-3-fence-cc-reply`）| 看指南 |
 | 6 | 2026-05-10 regression 可表达成 fence；pre-#334 FAIL，post-#334 PASS | bisect 烟测（手工一次性）|
 | 7 | `docs/guides/full-user-journey.md` 存在做金标准索引，列出每个 fenced sub-flow | 看文件 |
 | 8 | 每个 `tests/e2e/scenarios/*.sh` 在头部声明 `# Replays: docs/guides/<file>.md` | `scripts/check-scenario-headers.sh` exit 0 |
