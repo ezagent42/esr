@@ -64,7 +64,7 @@ defmodule Esr.Integration.WorkspaceLifecycleTest do
 
     folder_path = hd(ws.folders).path
 
-    assert {:error, %{kind: :cannot_remove_last_folder}} =
+    assert {:error, %{"type" => "cannot_remove_last_folder"}} =
              RemoveFolder.execute(%{
                "args" => %{"name" => name, "path" => folder_path}
              })

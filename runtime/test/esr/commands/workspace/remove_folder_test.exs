@@ -92,7 +92,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     repo = init_tmp_git_repo()
     put_esr_ws("ws-rm-1", id, tmp, [%{path: Path.expand(repo), name: "repo"}])
 
-    assert {:error, %{kind: :cannot_remove_last_folder}} =
+    assert {:error, %{"type" => "cannot_remove_last_folder"}} =
              WorkspaceRemoveFolder.execute(%{
                "args" => %{"name" => "ws-rm-1", "path" => repo}
              })
@@ -295,13 +295,13 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
       {:ok, ws} = Registry.get_by_id(wid)
       [%{path: only_path}] = ws.folders
 
-      assert {:error, %{kind: :cannot_remove_last_folder}} =
+      assert {:error, %{"type" => "cannot_remove_last_folder"}} =
                WorkspaceRemoveFolder.execute(%{
                  "args" => %{"name" => esr_name, "path" => only_path}
                })
 
       # repo-bound case: same workspace, removing its only folder
-      assert {:error, %{kind: :cannot_remove_last_folder}} =
+      assert {:error, %{"type" => "cannot_remove_last_folder"}} =
                WorkspaceRemoveFolder.execute(%{
                  "args" => %{"name" => name, "path" => repo}
                })

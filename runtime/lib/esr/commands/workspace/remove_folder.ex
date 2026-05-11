@@ -40,6 +40,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
     error :unknown_workspace,        "workspace %{name} not found"
     error :folder_not_in_workspace,  "path %{path} is not in this workspace's folders"
     error :cannot_remove_root_folder, "cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead"
+    error :cannot_remove_last_folder, "workspace %{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace"
   end
 
   @behaviour Esr.Role.Control
@@ -104,12 +105,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   # JsonWriter would then reject. Refuse early — operator should call
   # /workspace:remove to delete the whole workspace instead.
   defp validate_not_last_folder(%Struct{folders: folders, name: name}) when length(folders) == 1 do
-    {:error,
-     %{
-       kind: :cannot_remove_last_folder,
-       message:
-         "workspace #{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace"
-     }}
+    Render.error(__MODULE__.command_meta(), :cannot_remove_last_folder, %{name: name})
   end
 
   defp validate_not_last_folder(_ws), do: :ok
