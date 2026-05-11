@@ -13,7 +13,7 @@ Relates to:
 - `docs/notes/mock-feishu-fidelity.md` — pre-condition audit; sign-off checklist in §9 of that doc gates this PR's testability
 - `docs/notes/e2e-pyramid-lessons.md` — testing-pyramid principles this PR consciously follows (walking-skeleton first, contract tests at boundaries)
 - `docs/notes/cc-mcp-pubsub-race.md` — patterns we're reusing for the cross-app dispatch path
-- (legacy agent-topology guide, since deleted in Phase 0 of the guide-driven e2e plan) §三 — full feishu→cc message flow this PR extends
+- `docs/guides/writing-an-agent-topology.md` §三 — full feishu→cc message flow this PR extends
 
 ---
 
@@ -664,9 +664,8 @@ Atomic tasks (one commit per task ideally):
 10. **T10**: existing scenarios 01-03 prompt edits to include
     `app_id` parameter explicitly. Depends on T3 (schema change).
 11. **T11**: docs/notes/mock-feishu-fidelity.md sign-off update +
-    legacy agent-topology guide (since deleted in Phase 0 of the
-    guide-driven e2e plan) cross-references for multi-app +
-    `<channel>` tag `app_id`.
+    docs/guides/writing-an-agent-topology.md cross-references for
+    multi-app + `<channel>` tag `app_id`.
 
 Dependency edges (refined post-review):
 

@@ -295,7 +295,7 @@ Scope:
 6. Add new command modules `Esr.Commands.Adapter.{Disable,Enable,Remove,List}` per § 4.6 (DSL form, structured errors)
 7. Regenerate `runtime/priv/slash-routes.default.yaml` via the grammar generator (do NOT hand-edit) — adds `/adapter:disable`, `/adapter:enable`, `/adapter:remove`, `/adapter:list` entries derived from command_meta
 8. Tests per § 5
-9. Update operator docs: `README.md` "E2E test scenarios" + `docs/dev-guide.md` "esrd home layout" section + the agent-topology guide (since deleted in Phase 0 of the guide-driven e2e plan) if it referenced `adapters.yaml`
+9. Update operator docs: `README.md` "E2E test scenarios" + `docs/dev-guide.md` "esrd home layout" section + `docs/guides/writing-an-agent-topology.md` if it references `adapters.yaml`
 10. CI: `mix esr.check_command_docs` must pass on the new modules
 
 If a regression appears post-merge: revert the PR; operators delete `adapters/`, `plugins/` directories and recreate via CLI. No data loss because there is no production data to lose.

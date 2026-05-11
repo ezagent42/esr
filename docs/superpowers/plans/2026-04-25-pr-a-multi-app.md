@@ -53,7 +53,7 @@
 | `runtime/test/esr/peers/feishu_app_adapter_test.exs` | inbound forwarded with app_id from envelope (with state fallback) |
 | `adapters/cc_mcp/tests/test_tools.py` (or `test_tools_schema_language.py`) | reply schema requires `app_id` |
 | `docs/notes/mock-feishu-fidelity.md` | Sign-off checkboxes ticked |
-| (legacy agent-topology guide) | Cross-references for multi-app + `<channel>` tag `app_id` |
+| `docs/guides/writing-an-agent-topology.md` | Cross-references for multi-app + `<channel>` tag `app_id` |
 | `docs/notes/futures/` (new dir) | Stash deferred items: ETS-wipe race, cross-tenant principal aliasing |
 
 ---
@@ -2159,7 +2159,7 @@ Pin the audit sign-off; add cross-references in the topology guide.
 
 **Files:**
 - Modify: `docs/notes/mock-feishu-fidelity.md` (tick §9 sign-off boxes)
-- Modify: legacy agent-topology guide, since deleted in Phase 0 of the guide-driven e2e plan (cross-ref §三 + add multi-app section)
+- Modify: `docs/guides/writing-an-agent-topology.md` (cross-ref §三 + add multi-app section)
 - Create: `docs/notes/futures/multi-app-deferred.md` (ETS-wipe race + cross-tenant principal aliasing)
 
 - [ ] **Step 1: Tick the sign-off boxes**
@@ -2168,7 +2168,7 @@ Edit `docs/notes/mock-feishu-fidelity.md` §9. Replace `- [ ]` with `- [x]` for 
 
 - [ ] **Step 2: Add a multi-app section to the topology guide**
 
-Edit the legacy agent-topology guide (since deleted in Phase 0 of the guide-driven e2e plan). After §三 (which lays out the message flow), add a new sub-section §三.5 referencing the multi-app changes. ~30 lines:
+Edit `docs/guides/writing-an-agent-topology.md`. After §三 (which lays out the message flow), add a new sub-section §三.5 referencing the multi-app changes. ~30 lines:
 
 ```markdown
 ### 三.5 多 app 的扩展（PR-A 后）
@@ -2259,13 +2259,13 @@ Expected: `PASS: scenario 01`, `PASS: scenario 02`, `PASS: scenario 03`, `PASS: 
 
 ```bash
 git add docs/notes/mock-feishu-fidelity.md \
-        docs/guides/<legacy-agent-topology>.md \
+        docs/guides/writing-an-agent-topology.md \
         docs/notes/futures/multi-app-deferred.md
 
 git commit -m "PR-A T10: docs — sign-off audit + topology guide xref + deferred items
 
 - mock-feishu-fidelity.md §9 sign-off boxes ticked for PR-A scope
-- legacy agent-topology guide §三.5 added: multi-app extension
+- writing-an-agent-topology.md §三.5 added: multi-app extension
   reference for future agent authors
 - docs/notes/futures/multi-app-deferred.md tracks 3 known-but-
   deferred items: ETS wipe race (now no-op per plan v1.1),
