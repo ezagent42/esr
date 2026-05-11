@@ -185,42 +185,21 @@ defmodule Esr.Commands.Workspace.InfoTest do
       assert is_list(info["topology"]["nodes"])
     end
 
-    test "topology overlay nil when folders empty or topology.yaml absent", %{unique: unique} do
+    test "topology overlay nil when topology.yaml absent", %{unique: unique} do
+      # PR-1 ≥1-folder invariant (spec 2026-05-11 §4.1): the
+      # historical "folders empty" branch is no longer reachable —
+      # JsonWriter/Registry.put rejects empty-folder structs. Only
+      # the "folder present but no topology.yaml" case remains.
       tmp_repo = Path.join(System.tmp_dir!(), "topo_test_absent_#{unique}")
       File.mkdir_p!(tmp_repo)
       # No .esr/topology.yaml created
 
-      ws_name_no_folders = "ws_topo_no_folders_#{unique}"
       ws_name_no_yaml = "ws_topo_no_yaml_#{unique}"
 
       on_exit(fn ->
         File.rm_rf!(tmp_repo)
-        Esr.Test.WorkspaceFixture.delete!(ws_name_no_folders)
         Esr.Test.WorkspaceFixture.delete!(ws_name_no_yaml)
       end)
-
-      # Workspace with empty folders list
-      :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Struct{
-          id: UUID.uuid4(),
-          name: ws_name_no_folders,
-          owner: "eve",
-          agent: "cc",
-          folders: [],
-          settings: %{},
-          env: %{},
-          chats: [],
-          transient: false,
-          location: nil
-        })
-
-      cmd_no_folders = %{
-        "submitted_by" => "ou_test",
-        "args" => %{"workspace" => ws_name_no_folders}
-      }
-
-      assert {:ok, info_no_folders} = WorkspaceInfo.execute(cmd_no_folders)
-      assert info_no_folders["topology"] == nil
 
       # Workspace with a folder but no topology.yaml in that folder
       :ok =

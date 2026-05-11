@@ -46,7 +46,8 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     dir
   end
 
-  # Helper: put a fresh ESR-bound workspace
+  # Helper: put a fresh ESR-bound workspace. PR-1 ≥1-folder invariant
+  # means the workspace seeds with its ESR-managed dir as folders[0].
   defp put_esr_ws(name, id, tmp) do
     dir = Path.join([tmp, "default", "workspaces", name])
     File.mkdir_p!(dir)
@@ -55,7 +56,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
       id: id,
       name: name,
       owner: "tester",
-      folders: [],
+      folders: [%{path: dir, name: Path.basename(dir)}],
       agent: "cc",
       settings: %{},
       env: %{},
@@ -92,8 +93,11 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
   # ── Happy-path tests ──────────────────────────────────────────────────────────
 
-  # Test 1: ESR-bound workspace, add valid git repo path → ok, folders has 1 entry, persisted
-  test "ESR-bound workspace, add valid git repo path → ok, 1 entry persisted", %{tmp: tmp} do
+  # Test 1: ESR-bound workspace, add valid git repo path → ok, persisted.
+  # PR-1 ≥1-folder invariant: workspace already has its ESR-managed dir
+  # as folders[0]; adding a repo appends folders[1].
+  test "ESR-bound workspace, add valid git repo path → ok, appended entry persisted",
+       %{tmp: tmp} do
     id = "aaf00001-0001-4000-8000-000000000001"
     put_esr_ws("ws-add-1", id, tmp)
     repo = init_tmp_git_repo()
@@ -105,13 +109,15 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
     assert result["name"] == "ws-add-1"
     assert result["id"] == id
-    assert length(result["folders"]) == 1
-    assert hd(result["folders"])["path"] == Path.expand(repo)
+    assert length(result["folders"]) == 2
+    paths = Enum.map(result["folders"], & &1["path"])
+    assert Path.expand(repo) in paths
 
     # Verify persisted
     assert {:ok, updated} = Registry.get_by_id(id)
-    assert length(updated.folders) == 1
-    assert hd(updated.folders).path == Path.expand(repo)
+    assert length(updated.folders) == 2
+    persisted_paths = Enum.map(updated.folders, & &1.path)
+    assert Path.expand(repo) in persisted_paths
   end
 
   # Test 2: add to workspace that already has folders → folders count increments by 1
@@ -137,16 +143,19 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     id = "aaf00003-0003-4000-8000-000000000003"
     put_esr_ws("ws-add-3", id, tmp)
     repo = init_tmp_git_repo()
+    expanded = Path.expand(repo)
 
     assert {:ok, result} =
              WorkspaceAddFolder.execute(%{
                "args" => %{"name" => "ws-add-3", "path" => repo, "folder_name" => "my-tools"}
              })
 
-    assert hd(result["folders"])["name"] == "my-tools"
+    added = Enum.find(result["folders"], fn f -> f["path"] == expanded end)
+    assert added["name"] == "my-tools"
 
     assert {:ok, updated} = Registry.get_by_id(id)
-    assert hd(updated.folders).name == "my-tools"
+    persisted = Enum.find(updated.folders, fn f -> f.path == expanded end)
+    assert persisted.name == "my-tools"
   end
 
   # Test 4: omitted folder_name → defaults to Path.basename(path)
@@ -154,13 +163,15 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     id = "aaf00004-0004-4000-8000-000000000004"
     put_esr_ws("ws-add-4", id, tmp)
     repo = init_tmp_git_repo()
+    expanded = Path.expand(repo)
 
     assert {:ok, result} =
              WorkspaceAddFolder.execute(%{
                "args" => %{"name" => "ws-add-4", "path" => repo}
              })
 
-    assert hd(result["folders"])["name"] == Path.basename(repo)
+    added = Enum.find(result["folders"], fn f -> f["path"] == expanded end)
+    assert added["name"] == Path.basename(repo)
   end
 
   # ── Validation error tests ────────────────────────────────────────────────────

@@ -93,34 +93,41 @@ defmodule Esr.Commands.Workspace.ListTest do
 
   test "multiple workspaces → sorted by name", %{tmp: tmp} do
     # Create three workspaces in non-alphabetical order
+    beta_dir = Path.join(tmp, "default/workspaces/beta-ws")
+    alpha_dir = Path.join(tmp, "default/workspaces/alpha-ws")
+    gamma_dir = Path.join(tmp, "default/workspaces/gamma-ws")
+    File.mkdir_p!(beta_dir)
+    File.mkdir_p!(alpha_dir)
+    File.mkdir_p!(gamma_dir)
+
     ws_beta = %Esr.Resource.Workspace.Struct{
       id: "11111111-1111-1111-1111-111111111111",
       name: "beta-ws",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: beta_dir, name: "beta-ws"}],
       chats: [],
       transient: false,
-      location: {:esr_bound, Path.join(tmp, "default/workspaces/beta-ws")}
+      location: {:esr_bound, beta_dir}
     }
 
     ws_alpha = %Esr.Resource.Workspace.Struct{
       id: "22222222-2222-2222-2222-222222222222",
       name: "alpha-ws",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: alpha_dir, name: "alpha-ws"}],
       chats: [],
       transient: false,
-      location: {:esr_bound, Path.join(tmp, "default/workspaces/alpha-ws")}
+      location: {:esr_bound, alpha_dir}
     }
 
     ws_gamma = %Esr.Resource.Workspace.Struct{
       id: "33333333-3333-3333-3333-333333333333",
       name: "gamma-ws",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: gamma_dir, name: "gamma-ws"}],
       chats: [],
       transient: false,
-      location: {:esr_bound, Path.join(tmp, "default/workspaces/gamma-ws")}
+      location: {:esr_bound, gamma_dir}
     }
 
     Esr.Resource.Workspace.Registry.put(ws_beta)
@@ -143,19 +150,22 @@ defmodule Esr.Commands.Workspace.ListTest do
     assert beta_line < gamma_line
   end
 
-  test "workspace with multiple chats → chats count is correct" do
+  test "workspace with multiple chats → chats count is correct", %{tmp: tmp} do
+    dir = Path.join(tmp, "default/workspaces/multi-chat-ws")
+    File.mkdir_p!(dir)
+
     ws = %Esr.Resource.Workspace.Struct{
       id: "44444444-4444-4444-4444-444444444444",
       name: "multi-chat-ws",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: dir, name: "multi-chat-ws"}],
       chats: [
         %{chat_id: "oc_chat1", app_id: "cli_test", kind: "dm"},
         %{chat_id: "oc_chat2", app_id: "cli_test", kind: "dm"},
         %{chat_id: "oc_chat3", app_id: "cli_test", kind: "dm"}
       ],
       transient: false,
-      location: {:esr_bound, "/some/path"}
+      location: {:esr_bound, dir}
     }
 
     Esr.Resource.Workspace.Registry.put(ws)
@@ -166,15 +176,18 @@ defmodule Esr.Commands.Workspace.ListTest do
     assert text =~ "chats: 3"
   end
 
-  test "transient workspace → transient: true rendered" do
+  test "transient workspace → transient: true rendered", %{tmp: tmp} do
+    dir = Path.join(tmp, "default/workspaces/temp-ws")
+    File.mkdir_p!(dir)
+
     ws = %Esr.Resource.Workspace.Struct{
       id: "55555555-5555-5555-5555-555555555555",
       name: "temp-ws",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: dir, name: "temp-ws"}],
       chats: [],
       transient: true,
-      location: {:esr_bound, "/some/path"}
+      location: {:esr_bound, dir}
     }
 
     Esr.Resource.Workspace.Registry.put(ws)
@@ -187,15 +200,17 @@ defmodule Esr.Commands.Workspace.ListTest do
 
   test "mixed ESR-bound and repo-bound workspaces → both listed", %{tmp: tmp} do
     repo_path = Path.join(tmp, "my-repo")
+    esr_dir = Path.join(tmp, "default/workspaces/esr-workspace")
+    File.mkdir_p!(esr_dir)
 
     ws_esr = %Esr.Resource.Workspace.Struct{
       id: "66666666-6666-6666-6666-666666666666",
       name: "esr-workspace",
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: esr_dir, name: "esr-workspace"}],
       chats: [],
       transient: false,
-      location: {:esr_bound, Path.join(tmp, "default/workspaces/esr-workspace")}
+      location: {:esr_bound, esr_dir}
     }
 
     ws_repo = %Esr.Resource.Workspace.Struct{

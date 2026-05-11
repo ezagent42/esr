@@ -40,7 +40,8 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
     {:ok, tmp: tmp}
   end
 
-  # Helper: create and register a transient ESR-bound workspace
+  # Helper: create and register a transient ESR-bound workspace.
+  # PR-1 ≥1-folder invariant: seed with the ESR-managed dir as folders[0].
   defp put_transient_ws(name, id, tmp) do
     dir = Path.join([tmp, "default", "workspaces", name])
     File.mkdir_p!(dir)
@@ -49,7 +50,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
       id: id,
       name: name,
       owner: "tester",
-      folders: [],
+      folders: [%{path: dir, name: Path.basename(dir)}],
       agent: "cc",
       settings: %{},
       env: %{},
@@ -62,7 +63,8 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
     ws
   end
 
-  # Helper: create and register a non-transient ESR-bound workspace
+  # Helper: create and register a non-transient ESR-bound workspace.
+  # PR-1 ≥1-folder invariant: seed with the ESR-managed dir as folders[0].
   defp put_permanent_ws(name, id, tmp) do
     dir = Path.join([tmp, "default", "workspaces", name])
     File.mkdir_p!(dir)
@@ -71,7 +73,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
       id: id,
       name: name,
       owner: "tester",
-      folders: [],
+      folders: [%{path: dir, name: Path.basename(dir)}],
       agent: "cc",
       settings: %{},
       env: %{},
@@ -158,7 +160,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
         id: ws_id,
         name: ws_name,
         owner: "tester",
-        folders: [],
+        folders: [%{path: ws_dir, name: Path.basename(ws_dir)}],
         agent: "cc",
         settings: %{},
         env: %{},
