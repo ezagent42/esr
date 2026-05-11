@@ -124,6 +124,14 @@ defmodule Esr.Paths do
   def session_json(uuid) when is_binary(uuid),
     do: Path.join(session_dir(uuid), "session.json")
 
+  @doc """
+  Path to the per-session `.mcp.json` file. Written by AgentSpawner
+  post-channel-up, read by `claude` via `--mcp-config` flag.
+  """
+  @spec session_mcp_json(String.t()) :: String.t()
+  def session_mcp_json(sid) when is_binary(sid),
+    do: Path.join([esrd_home(), current_instance(), "sessions", sid, "mcp.json"])
+
   @doc "Path to .esr/ config overlay dir inside a session state dir."
   def session_workspace_dir(uuid) when is_binary(uuid),
     do: Path.join(session_dir(uuid), ".esr")

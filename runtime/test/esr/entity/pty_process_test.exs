@@ -59,6 +59,120 @@ defmodule Esr.Entity.PtyProcessTest do
     end
   end
 
+  describe "spawn_args/1 — PR-2 nil :dir rejection" do
+    test "raises ArgumentError when :dir is missing" do
+      assert_raise ArgumentError, ~r/missing :dir/, fn ->
+        PtyProcess.spawn_args(%{session_id: "test-sid"})
+      end
+    end
+
+    test "raises ArgumentError when :dir is nil" do
+      assert_raise ArgumentError, ~r/missing :dir/, fn ->
+        PtyProcess.spawn_args(%{session_id: "test-sid", dir: nil})
+      end
+    end
+
+    test "raises ArgumentError when :dir is empty string" do
+      assert_raise ArgumentError, ~r/missing :dir/, fn ->
+        PtyProcess.spawn_args(%{session_id: "test-sid", dir: ""})
+      end
+    end
+
+    test "returns args map when :dir is a non-empty string" do
+      args =
+        PtyProcess.spawn_args(%{
+          session_id: "test-sid",
+          dir: "/tmp/explicit"
+        })
+
+      assert args.dir == "/tmp/explicit"
+      assert args.session_id == "test-sid"
+      assert is_binary(args.session_name)
+    end
+  end
+
+  describe "os_cmd/1 — PR-2 prepare_spawn wiring" do
+    setup do
+      # Per-test ESRD_HOME so the .mcp.json write in prepare_spawn lands
+      # in an isolated dir.
+      saved_home = System.get_env("ESRD_HOME")
+      saved_inst = System.get_env("ESR_INSTANCE")
+
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "pty_os_cmd_test_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp)
+      System.put_env("ESRD_HOME", tmp)
+      System.put_env("ESR_INSTANCE", "test")
+
+      on_exit(fn ->
+        File.rm_rf!(tmp)
+
+        if saved_home,
+          do: System.put_env("ESRD_HOME", saved_home),
+          else: System.delete_env("ESRD_HOME")
+
+        if saved_inst,
+          do: System.put_env("ESR_INSTANCE", saved_inst),
+          else: System.delete_env("ESR_INSTANCE")
+      end)
+
+      {:ok, tmp: tmp}
+    end
+
+    test "start_cmd override bypasses Launcher (operator escape hatch)" do
+      state = %{
+        start_cmd: "echo hi",
+        dir: System.tmp_dir!(),
+        session_id: "sid"
+      }
+
+      assert ["bash", "-c", "echo hi"] = PtyProcess.os_cmd(state)
+    end
+
+    test "raises RuntimeError when prepare_spawn returns :missing_dir" do
+      state = %{
+        start_cmd: nil,
+        # No :dir → prepare_spawn returns {:error, :missing_dir}
+        session_id: "sid-x"
+      }
+
+      assert_raise RuntimeError, ~r/prepare_spawn failed.*missing_dir/, fn ->
+        PtyProcess.os_cmd(state)
+      end
+    end
+
+    test "returns argv on happy path (claude binary on PATH or via override)", %{tmp: _tmp} do
+      # Use a stub binary path via the launcher's claude_binary option.
+      # We can't thread it through state directly — PtyProcess.os_cmd
+      # builds the opts map from state — so this test verifies the
+      # success path WHEN claude is on PATH (the local dev box has it).
+      # If claude is NOT on PATH, prepare_spawn returns
+      # {:missing_claude_binary} and os_cmd raises. Skip-on-absence.
+      if System.find_executable("claude") do
+        cwd =
+          Path.join(System.tmp_dir!(), "pty_os_cmd_ok_#{System.unique_integer([:positive])}")
+
+        File.mkdir_p!(cwd)
+        on_exit(fn -> File.rm_rf!(cwd) end)
+
+        state = %{
+          start_cmd: nil,
+          dir: cwd,
+          session_id: "sid-ok",
+          workspace_role: "dev"
+        }
+
+        cmd = PtyProcess.os_cmd(state)
+        assert is_list(cmd)
+        assert hd(cmd) =~ "claude"
+      end
+    end
+  end
+
 end
 
 defmodule Esr.Entity.PtyProcessIsolationTest do
