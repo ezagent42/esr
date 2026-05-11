@@ -17,15 +17,20 @@ BASE_REF="${GITHUB_BASE_REF:-dev}"
 DIFF_BASE="origin/${BASE_REF}"
 git fetch --no-tags origin "${BASE_REF}" >/dev/null 2>&1 || true
 
-# Find the latest commit in the PR that touches command handlers or fenced
-# flow guides. That commit is what the e2e report must reference. Commits
-# AFTER it (typically the report commit itself, or unrelated cleanup) do
-# not invalidate the report.
+# Find the latest non-merge commit in the PR that touches command handlers
+# or fenced flow guides. That commit is what the e2e report must reference.
+# Commits AFTER it (typically the report commit itself, or unrelated
+# cleanup) do not invalidate the report.
 #
 # Using `git log -- <paths>` avoids the chicken-and-egg of "the report
 # referencing its own commit hash" — the report is allowed to live in a
 # commit AFTER the relevant code commit.
-TARGET_SHA=$(git log --reverse --format=%H "${DIFF_BASE}..HEAD" \
+#
+# `--no-merges` skips the merge commit that GH Actions checkout creates
+# (refs/pull/<n>/merge); its diff against the PR's base ref looks like it
+# touches every modified file in the PR, which would always trigger the
+# report requirement even on PRs that don't change relevant paths.
+TARGET_SHA=$(git log --reverse --no-merges --format=%H "${DIFF_BASE}..HEAD" \
               -- runtime/lib/esr/commands/ 'docs/guides/flow-*.md' \
               2>/dev/null | tail -1)
 
