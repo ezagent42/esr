@@ -811,6 +811,127 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
     end
   end
 
+  # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.2):
+  # admin operations dispatched by the agent on behalf of the operator.
+  # The agent calls `submit_slash(command="/agent:add type=cc name=helper")`;
+  # we route the command through `Esr.Entity.SlashHandler.dispatch/2`
+  # using `Esr.Slash.ReplyTarget.RawCollector` so we get back the raw
+  # structured result (not the chat-rendered text that `ChatPid` produces).
+  #
+  # Per-call `Task`: SlashHandler dispatch can take 30s (e.g. /session:new
+  # spawning agents); doing the `receive` inline would block FCP's
+  # GenServer mailbox for that duration, backing up Feishu inbound and
+  # tool-invoke traffic for the same session. The Task captures the
+  # result and delivers the production-shape `tool_result` envelope back
+  # on `channel_pid` via the standard `:push_envelope` flow.
+  defp dispatch_tool_invoke("submit_slash", %{"command" => cmd_str},
+                            req_id, channel_pid, state)
+       when is_binary(cmd_str) do
+    sid = state.session_id
+    principal_id = state.principal_id
+
+    Task.start(fn ->
+      case run_submit_slash(sid, cmd_str, principal_id) do
+        {:ok, result} ->
+          reply_tool_result(channel_pid, req_id, true, result)
+
+        {:error, err_map} ->
+          reply_tool_result(channel_pid, req_id, false, nil, err_map)
+      end
+    end)
+
+    state
+  end
+
+  defp dispatch_tool_invoke("submit_slash", _args, req_id, channel_pid, state) do
+    # Schema enforces `command` required at the MCP layer; this clause
+    # catches the unlikely case of a malformed args map (e.g. wrong type
+    # for "command") without crashing the GenServer.
+    reply_tool_result(channel_pid, req_id, false, nil, %{
+      "type" => "invalid_args",
+      "message" => "submit_slash requires args.command :: string"
+    })
+
+    state
+  end
+
+  # PR-4: resolve a session + originating chat, build a synthetic
+  # inbound-shape envelope around `cmd_str`, dispatch it through
+  # SlashHandler, await the raw result on `RawCollector`. Runs inside the
+  # per-call Task spawned by the `"submit_slash"` clause above; the Task
+  # owns the mailbox the RawCollector sends to (`caller: self()`).
+  defp run_submit_slash(sid, cmd_str, principal_id) do
+    case Esr.Resource.Session.Registry.get_by_id(sid) do
+      {:ok, session} ->
+        case pick_origin_chat(session) do
+          {:ok, chat} ->
+            envelope = build_submit_slash_envelope(cmd_str, chat, principal_id)
+            ref = make_ref()
+            reply_target = {Esr.Slash.ReplyTarget.RawCollector, %{caller: self(), ref: ref}}
+            _dispatch_ref = Esr.Entity.SlashHandler.dispatch(envelope, reply_target)
+
+            receive do
+              {:slash_raw, ^ref, {:ok, result}} ->
+                {:ok, result}
+
+              {:slash_raw, ^ref, {:error, reason}} ->
+                {:error, %{"kind" => normalize_kind(reason)}}
+            after
+              30_000 ->
+                {:error, %{"kind" => "slash_timeout"}}
+            end
+
+          {:error, :no_attached_chat} ->
+            {:error, %{"kind" => "no_attached_chat"}}
+        end
+
+      :not_found ->
+        {:error, %{"kind" => "session_not_found"}}
+    end
+  end
+
+  # PR-4: pick the originating chat for a submit_slash envelope. v1
+  # picks the first attached chat (oldest by `attached_at`, since
+  # Session.attached_chats is append-only — see resource/session/struct.ex
+  # docstring). Multi-chat selection beyond v1 is spec §8 open work.
+  defp pick_origin_chat(%{attached_chats: [first | _]}), do: {:ok, first}
+  defp pick_origin_chat(%{attached_chats: []}), do: {:error, :no_attached_chat}
+
+  # PR-4: assemble a synthetic msg_received envelope around `cmd_str`
+  # so SlashHandler's existing inbound parser sees the same shape it
+  # would see for a user-typed slash. `args.submitted_by` carries the
+  # operator's principal id (used by capability checks downstream).
+  defp build_submit_slash_envelope(cmd_str, %{chat_id: chat_id, app_id: app_id}, principal_id) do
+    %{
+      "id" => "submit-#{:erlang.unique_integer([:positive])}",
+      "kind" => "event",
+      "payload" => %{
+        "args" => %{
+          "content" => cmd_str,
+          "msg_type" => "text",
+          "chat_id" => chat_id,
+          "app_id" => app_id,
+          "submitted_by" => principal_id
+        },
+        "event_type" => "msg_received"
+      },
+      "source" => "esr://localhost/submit_slash",
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "type" => "event",
+      "principal_id" => principal_id
+    }
+  end
+
+  # PR-4: normalize SlashHandler error reasons into a stable string
+  # `kind` for the MCP tool_result error map. Atoms become their
+  # to_string form; structured maps keep `type` if present, else fall
+  # back to inspect. Keeps the wire shape predictable for the agent's
+  # error-translation logic.
+  defp normalize_kind(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp normalize_kind(reason) when is_binary(reason), do: reason
+  defp normalize_kind(%{"type" => t}) when is_binary(t), do: t
+  defp normalize_kind(other), do: inspect(other)
+
   defp dispatch_tool_invoke(unknown_tool, _args, req_id, channel_pid, state) do
     Logger.warning(
       "feishu_chat_proxy: unknown tool_invoke tool=#{inspect(unknown_tool)} " <>
