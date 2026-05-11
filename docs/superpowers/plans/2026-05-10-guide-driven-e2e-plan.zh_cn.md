@@ -29,9 +29,9 @@
 | `scripts/hooks/replay-guide-reminder.sh` | 1 | ~20 | PostToolUse hook：编辑 command handler 时提示 |
 | `docs/guides/_replay_smoke.md` | 1 | ~15 | CI 烟测用的合成 guide；1 对 input/output |
 | `docs/guides/full-user-journey.md` | 0 | ~30 | 金标准 journey 索引 |
-| `docs/guides/flow-bootstrap.md` | 0（改名）+ 2（加 fence）| ~60 | Phase 0 改名 |
+| `docs/guides/flow-bootstrap.md` | 0（改名）+ 2（加 fence）| ~60 | 由 `operator-bootstrap-journey.md` 改名 |
 | `docs/guides/flow-bootstrap.zh_cn.md` | 0 + 2 | ~60 | zh_cn 镜像 |
-| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0（改名） | n/a | Phase 0 由日期前缀名改名 |
+| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0（改名） | n/a | 由 `2026-05-10-sessiontemplate-feishu-test.md` 改名 |
 | `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md` | 0（改名） | n/a | zh_cn 镜像 |
 
 ### 修改文件
@@ -43,7 +43,7 @@
 | `.github/workflows/ci.yml` | 1 | 加 replay 步骤 + header-lint 步骤 |
 | `tests/e2e/scenarios/19_session_first_default.sh` | 2 | 加 `# Replays:` 头 + 改为 replay 驱动 |
 | `docs/guides/full-user-journey.md` | 1, 2 | fence 落地时填行 |
-| （旧 agent-topology 指南）| 0 | Phase 0 删除（引用已解散的 `agents.yaml`）|
+| `docs/guides/writing-an-agent-topology.md` | 0 | 审核；若引用已解散的 `agents.yaml` 则删除 |
 
 ---
 
@@ -86,109 +86,103 @@ echo "=== rev-3 前的 grammar 标记 ===" ; rg -l "Esr\.Commands\.Plugin\.Insta
 - [ ] **Step 2：把审计决策写进 PR 描述**
 
 在最终 PR body 里列出：
-- （旧 agent-topology 指南）—— 引用 `agents.yaml`：**删除**（SessionTemplate 迁移 Phase 6 已解散 agents.yaml；拓扑现在从插件 manifest 的 `agent_kinds:` 派生，不再由用户手写）
+- `writing-an-agent-topology.md` —— 引用 `agents.yaml`：**删除**（SessionTemplate 迁移 Phase 6 已解散 agents.yaml；拓扑现在从插件 manifest 的 `agent_kinds:` 派生，不再由用户手写）
 - `operator-bootstrap-checklist.md` —— 保留（是核验清单不是 flow）
 - `feishu-adapter-setup.md` —— 保留；fence 在 Phase 3 organic 期间补
 
 本步骤不 commit —— 删除动作在 Task 0.5 落地。
 
-### Task 0.3：把旧 bootstrap-journey 指南改名为 `flow-bootstrap.md`
-
-（旧文件名：`operator` + `-bootstrap-journey.md` —— 拆开写以避免 Phase 0 acceptance grep 在这段已完成任务描述里命中。）
+### Task 0.3：把 `operator-bootstrap-journey.md` 改名为 `flow-bootstrap.md`
 
 **文件：**
-- 改名：旧指南 → `docs/guides/flow-bootstrap.md`
-- 改名：zh_cn 镜像（若存在）→ `docs/guides/flow-bootstrap.zh_cn.md`
+- 改名：`docs/guides/operator-bootstrap-journey.md` → `docs/guides/flow-bootstrap.md`
+- 改名：`docs/guides/operator-bootstrap-journey.zh_cn.md` → `docs/guides/flow-bootstrap.zh_cn.md`（若存在）
 
-- [x] **Step 1：查 zh_cn 镜像是否存在**
+- [ ] **Step 1：查 zh_cn 镜像是否存在**
 
-Run: `ls docs/guides/<legacy>*`（旧 glob）。
-已记录：只有英文版存在。
+Run: `ls docs/guides/operator-bootstrap-journey*`
+预期：1 或 2 个文件。记录是哪种。
 
-- [x] **Step 2：用 git mv 改名**
+- [ ] **Step 2：用 git mv 改名**
 
 ```bash
-git mv docs/guides/<legacy>.md docs/guides/flow-bootstrap.md
+git mv docs/guides/operator-bootstrap-journey.md docs/guides/flow-bootstrap.md
 # 若 zh_cn 镜像存在：
-# git mv docs/guides/<legacy>.zh_cn.md docs/guides/flow-bootstrap.zh_cn.md
+# git mv docs/guides/operator-bootstrap-journey.zh_cn.md docs/guides/flow-bootstrap.zh_cn.md
 ```
 
-- [x] **Step 3：找入向链接并更新**
+- [ ] **Step 3：找入向链接并更新**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "operator-bootstrap-journey" --type md
 ```
 
-逐个编辑指向 `flow-bootstrap.md`（zh_cn 链则指向 `.zh_cn.md`）。
+预期：引用旧名的 markdown 文件列表。逐个编辑指向 `flow-bootstrap.md`（zh_cn 链则指向 `.zh_cn.md`）。
 
-- [x] **Step 4：Commit**
+- [ ] **Step 4：Commit**
 
 ```bash
-git commit -m "docs: rename legacy bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
+git commit -m "docs: rename operator-bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
 ```
 
-### Task 0.4：把旧日期前缀 sessiontemplate 指南改名为 `flow-sessiontemplate-feishu-test.md`
-
-（旧 stem：日期前缀 `<YYYY-MM-DD>-sessiontemplate-feishu-test` —— 拆开写以避免 grep 自命中。）
+### Task 0.4：把 `2026-05-10-sessiontemplate-feishu-test.md` 改名为 `flow-sessiontemplate-feishu-test.md`
 
 **文件：**
-- 改名：旧 `.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
-- 改名：旧 `.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
+- 改名：`docs/guides/2026-05-10-sessiontemplate-feishu-test.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
+- 改名：`docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
 
-- [x] **Step 1：git mv 两个文件**
+- [ ] **Step 1：git mv 两个文件**
 
 ```bash
-git mv docs/guides/<legacy>.md \
+git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.md \
        docs/guides/flow-sessiontemplate-feishu-test.md
-git mv docs/guides/<legacy>.zh_cn.md \
+git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md \
        docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md
 ```
 
-- [x] **Step 2：找入向链接并更新**
+- [ ] **Step 2：找入向链接并更新**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "2026-05-10-sessiontemplate-feishu-test" --type md
 ```
 
 逐个 match 更新到新文件名。
 
-- [x] **Step 3：Commit**
+- [ ] **Step 3：Commit**
 
 ```bash
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"
 ```
 
-### Task 0.5：删除旧 agent-topology 指南（已陈旧）
-
-（旧 stem：`writing` + `-an-agent-topology.md` —— 拆开写以避免 grep 自命中。）
+### Task 0.5：删除 `writing-an-agent-topology.md`（已陈旧）
 
 **文件：**
-- 删：`docs/guides/<legacy>.md`
-- 删：`docs/guides/<legacy>.zh_cn.md`（若存在）
+- 删：`docs/guides/writing-an-agent-topology.md`
+- 删：`docs/guides/writing-an-agent-topology.zh_cn.md`（若存在）
 
-- [x] **Step 1：确认 guide 真的陈旧**
+- [ ] **Step 1：确认 guide 真的陈旧**
 
 ```bash
-rg -n "agents\.yaml" docs/guides/<legacy>.md | head -5
+rg -n "agents\.yaml" docs/guides/writing-an-agent-topology.md | head -5
 ```
 
 预期：出现引用已解散的 `agents.yaml` 的命中行。若输出为空（说明审计后已更新），STOP 并重评估 —— 跳过本任务，在 PR body 备注。
 
-- [x] **Step 2：找入向链接**
+- [ ] **Step 2：找入向链接**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "writing-an-agent-topology" --type md
 ```
 
 预期：零个或少量 match。每个 match：要么把链接换成对应插件 manifest spec 中 `agent_kinds:` 的文档指针，要么直接删链接。
 
-- [x] **Step 3：删除 + Commit**
+- [ ] **Step 3：删除 + Commit**
 
 ```bash
-git rm docs/guides/<legacy>.md
+git rm docs/guides/writing-an-agent-topology.md
 # 若 zh_cn 存在：
-# git rm docs/guides/<legacy>.zh_cn.md
-git commit -m "docs: drop legacy agent-topology guide — agents.yaml dissolved PR-328"
+# git rm docs/guides/writing-an-agent-topology.zh_cn.md
+git commit -m "docs: drop writing-an-agent-topology — agents.yaml dissolved PR-328"
 ```
 
 ### Task 0.6：建立 `docs/guides/full-user-journey.md` 索引骨架
@@ -270,15 +264,15 @@ gh pr create --base dev --title "docs(guides): Phase 0 audit + rename for guide-
 ## Summary
 Phase 0 of [docs/superpowers/plans/2026-05-10-guide-driven-e2e-plan.md](../docs/superpowers/plans/2026-05-10-guide-driven-e2e-plan.md). 纯文档清理 —— 无行为变更。
 
-- 改名旧 bootstrap-journey 指南 → `flow-bootstrap.md`（+ zh_cn）
-- 改名旧日期前缀 sessiontemplate-feishu-test 指南 → `flow-sessiontemplate-feishu-test.md`（+ zh_cn）
-- 删除旧 agent-topology 指南（引用已解散的 `agents.yaml`，PR-328 起被插件 manifest 的 `agent_kinds:` 块取代）
+- 改名 `operator-bootstrap-journey.md` → `flow-bootstrap.md`（+ zh_cn）
+- 改名 `2026-05-10-sessiontemplate-feishu-test.md` → `flow-sessiontemplate-feishu-test.md`（+ zh_cn）
+- 删除 `writing-an-agent-topology.md`（引用已解散的 `agents.yaml`，PR-328 起被插件 manifest 的 `agent_kinds:` 块取代）
 - 新建 `docs/guides/full-user-journey.md`（+ zh_cn）作为 journey 官方索引
 
 ## Test plan
-- [ ] `rg <legacy-bootstrap-stem> --type md` 无 match
-- [ ] `rg <legacy-sessiontemplate-stem> --type md` 无 match
-- [ ] `rg <legacy-agent-topology-stem> --type md` 无 match
+- [ ] `rg "operator-bootstrap-journey" --type md` 无 match
+- [ ] `rg "2026-05-10-sessiontemplate-feishu-test" --type md` 无 match
+- [ ] `rg "writing-an-agent-topology" --type md` 无 match
 - [ ] `docs/guides/full-user-journey.md` 存在且有两条种子行
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

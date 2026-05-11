@@ -95,7 +95,7 @@ bash 脚本（~100 LOC，bash 处理不灵的地方用 `python3 -c` heredoc 帮�
 
 ```
 scripts/replay-guide.sh <guide-path>
-scripts/replay-guide.sh docs/guides/flow-bootstrap.md
+scripts/replay-guide.sh docs/guides/operator-bootstrap-journey.md
 ```
 
 全部 match exit 0；有 mismatch 时给 diff，non-zero。
@@ -320,7 +320,7 @@ esac
 ```
 
 没 fence 的指南跳过（不挂）。等 Phase 2 给
-`flow-bootstrap.md` 加上 fence，下个 PR 起 CI 就开始
+`operator-bootstrap-journey.md` 加上 fence，下个 PR 起 CI 就开始
 抓 drift。
 
 ### 3.8 Fixture state 约定 —— all-inline
@@ -366,11 +366,11 @@ workspace 状态都**必须**作为显式 fence 出现。
 
 | 文件 | 状态 | 动作 |
 |---|---|---|
-| `flow-sessiontemplate-feishu-test.md`（Phase 0 由日期前缀名改名）| 当前（刚发）| 加 fence |
+| `2026-05-10-sessiontemplate-feishu-test.md` | 当前（刚发）| 改名 → `flow-sessiontemplate-feishu-test.md`；加 fence |
 | `feishu-adapter-setup.md` | 当前 | 留；加 fence |
-| `flow-bootstrap.md`（Phase 0 改名）| 当前 | 加 fence（可后续拆 `flow-bootstrap.md` + `flow-workspace-session.md`）|
+| `operator-bootstrap-journey.md` | 当前 | 改名 → `flow-bootstrap.md`（或拆 `flow-bootstrap.md` + `flow-workspace-session.md`）；加 fence |
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | 是 checklist 不是 journey | 留；从 `full-user-journey.md` 链作「验证 checklist」|
-| （旧 agent-topology 指南）| 已过期（agents.yaml 在 Phase 6 注销）| **Phase 0 删除**；canonical 来源现在是插件 manifest 的 `agent_kinds:` 块 |
+| `writing-an-agent-topology.md` | 可能过期（agents.yaml 在 Phase 6 注销）| **审计**：如果引用 `agents.yaml` 当 canonical → 删或重写为 `agent_kinds:` 块 |
 
 动作：
 1. grep 每个 guide 找过期引用：`agents.yaml`、删除的 slash、rev-3
@@ -395,9 +395,9 @@ workspace 状态都**必须**作为显式 fence 出现。
 
 ### Phase 2：Canary（~50 LOC + 指南升级）
 
-- 升级 `docs/guides/flow-bootstrap.md`（Phase 0 改名，连同
-  `.zh_cn.md` 镜像），给 5 个主步骤加 fence（workspace、session、
-  agent、纯文本 → CC reply、TUI URL）
+- 升级 `docs/guides/flow-bootstrap.md`（从 `operator-bootstrap-journey.md`
+  改名，连同 `.zh_cn.md` 镜像），给 5 个主步骤加 fence（workspace、
+  session、agent、纯文本 → CC reply、TUI URL）
 - `tests/e2e/scenarios/19_session_first_default.sh` 加
   `# Replays: docs/guides/flow-bootstrap.md` 头（或按 §3.4 替成
   thin-wrapper 形态）

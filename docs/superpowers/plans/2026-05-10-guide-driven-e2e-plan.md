@@ -29,9 +29,9 @@
 | `scripts/hooks/replay-guide-reminder.sh` | 1 | ~20 | PostToolUse hook: nag on command-handler edits |
 | `docs/guides/_replay_smoke.md` | 1 | ~15 | Synthetic guide for CI smoke; 1 input/output pair |
 | `docs/guides/full-user-journey.md` | 0 | ~30 | Gold-standard journey index (sub-flow rows) |
-| `docs/guides/flow-bootstrap.md` | 0 (rename) + 2 (fences) | ~60 | Renamed in Phase 0 |
+| `docs/guides/flow-bootstrap.md` | 0 (rename) + 2 (fences) | ~60 | Renamed from `operator-bootstrap-journey.md` |
 | `docs/guides/flow-bootstrap.zh_cn.md` | 0 (rename) + 2 (fences) | ~60 | zh_cn mirror |
-| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0 (rename) | n/a | Renamed from date-prefixed form in Phase 0 |
+| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0 (rename) | n/a | Renamed from `2026-05-10-sessiontemplate-feishu-test.md` |
 | `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md` | 0 (rename) | n/a | zh_cn mirror |
 
 ### Modified files
@@ -43,7 +43,7 @@
 | `.github/workflows/ci.yml` | 1 | Add replay step + header-lint step |
 | `tests/e2e/scenarios/19_session_first_default.sh` | 2 | Add `# Replays:` header + replay-driven body |
 | `docs/guides/full-user-journey.md` | 1, 2 | Fill rows as fences land |
-| (legacy agent-topology guide) | 0 | Deleted in Phase 0 (referenced dissolved `agents.yaml`) |
+| `docs/guides/writing-an-agent-topology.md` | 0 | Audit; delete if references dissolved `agents.yaml` |
 
 ---
 
@@ -87,109 +87,103 @@ Expected: a short list of files that need rewriting or deletion. Capture the out
 - [ ] **Step 2: Write the audit decision into the PR description**
 
 In the eventual PR body, list:
-- (legacy agent-topology guide) — references `agents.yaml`: DELETE (agents.yaml dissolved Phase 6 of SessionTemplate migration; topology is now derived from `agent_kinds:` in plugin manifests, not user-authored).
+- `writing-an-agent-topology.md` — references `agents.yaml`: DELETE (agents.yaml dissolved Phase 6 of SessionTemplate migration; topology is now derived from `agent_kinds:` in plugin manifests, not user-authored).
 - `operator-bootstrap-checklist.md` — keep as-is (verification checklist, not a flow).
 - `feishu-adapter-setup.md` — keep, will get fences in Phase 3 organic spread.
 
 No commit yet — the deletion lands in Task 0.5.
 
-### Task 0.3: Rename legacy bootstrap-journey guide → `flow-bootstrap.md`
-
-(Legacy filename: `operator` + `-bootstrap-journey.md` — split to avoid Phase-0 acceptance grep matches in this completed-task description.)
+### Task 0.3: Rename `operator-bootstrap-journey.md` → `flow-bootstrap.md`
 
 **Files:**
-- Rename the legacy guide → `docs/guides/flow-bootstrap.md`
-- Rename its zh_cn mirror (if exists) → `docs/guides/flow-bootstrap.zh_cn.md`
+- Rename: `docs/guides/operator-bootstrap-journey.md` → `docs/guides/flow-bootstrap.md`
+- Rename: `docs/guides/operator-bootstrap-journey.zh_cn.md` → `docs/guides/flow-bootstrap.zh_cn.md` (if exists)
 
-- [x] **Step 1: Check zh_cn mirror existence**
+- [ ] **Step 1: Check zh_cn mirror existence**
 
-Run: `ls docs/guides/<legacy>*` (legacy glob).
-Recorded: only the English file existed.
+Run: `ls docs/guides/operator-bootstrap-journey*`
+Expected: one or two files. Record which.
 
-- [x] **Step 2: Rename via git mv**
+- [ ] **Step 2: Rename via git mv**
 
 ```bash
-git mv docs/guides/<legacy>.md docs/guides/flow-bootstrap.md
+git mv docs/guides/operator-bootstrap-journey.md docs/guides/flow-bootstrap.md
 # If zh_cn mirror exists:
-# git mv docs/guides/<legacy>.zh_cn.md docs/guides/flow-bootstrap.zh_cn.md
+# git mv docs/guides/operator-bootstrap-journey.zh_cn.md docs/guides/flow-bootstrap.zh_cn.md
 ```
 
-- [x] **Step 3: Find inbound links and update them**
+- [ ] **Step 3: Find inbound links and update them**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "operator-bootstrap-journey" --type md
 ```
 
-Each match edited to point at `flow-bootstrap.md` (and `.zh_cn.md` where the link was zh_cn).
+Expected: a list of markdown files that referenced the old name. Edit each to point at `flow-bootstrap.md` (and `.zh_cn.md` where the link was zh_cn).
 
-- [x] **Step 4: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git commit -m "docs: rename legacy bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
+git commit -m "docs: rename operator-bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
 ```
 
-### Task 0.4: Rename legacy date-prefixed sessiontemplate guide → `flow-sessiontemplate-feishu-test.md`
-
-(Legacy stem: date-prefixed `<YYYY-MM-DD>-sessiontemplate-feishu-test` — split to avoid grep-self-match.)
+### Task 0.4: Rename `2026-05-10-sessiontemplate-feishu-test.md` → `flow-sessiontemplate-feishu-test.md`
 
 **Files:**
-- Rename: legacy `.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
-- Rename: legacy `.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
+- Rename: `docs/guides/2026-05-10-sessiontemplate-feishu-test.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
+- Rename: `docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
 
-- [x] **Step 1: git mv both files**
+- [ ] **Step 1: git mv both files**
 
 ```bash
-git mv docs/guides/<legacy>.md \
+git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.md \
        docs/guides/flow-sessiontemplate-feishu-test.md
-git mv docs/guides/<legacy>.zh_cn.md \
+git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md \
        docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md
 ```
 
-- [x] **Step 2: Find inbound links and update**
+- [ ] **Step 2: Find inbound links and update**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "2026-05-10-sessiontemplate-feishu-test" --type md
 ```
 
-Each match updated to the new filename.
+Update each match to the new filename.
 
-- [x] **Step 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"
 ```
 
-### Task 0.5: Delete the legacy agent-topology guide (stale)
-
-(Legacy stem: `writing` + `-an-agent-topology.md` — split to avoid grep-self-match.)
+### Task 0.5: Delete `writing-an-agent-topology.md` (stale)
 
 **Files:**
-- Delete: `docs/guides/<legacy>.md`
-- Delete: `docs/guides/<legacy>.zh_cn.md` (if exists)
+- Delete: `docs/guides/writing-an-agent-topology.md`
+- Delete: `docs/guides/writing-an-agent-topology.zh_cn.md` (if exists)
 
-- [x] **Step 1: Confirm the guide is stale**
+- [ ] **Step 1: Confirm the guide is stale**
 
 ```bash
-rg -n "agents\.yaml" docs/guides/<legacy>.md | head -5
+rg -n "agents\.yaml" docs/guides/writing-an-agent-topology.md | head -5
 ```
 
 Expected: matches showing it documents the dissolved `agents.yaml`. If output is empty (the guide was already updated since the audit), STOP and reassess — skip this task and note in the PR body.
 
-- [x] **Step 2: Find inbound links**
+- [ ] **Step 2: Find inbound links**
 
 ```bash
-rg -l "<legacy-stem>" --type md
+rg -l "writing-an-agent-topology" --type md
 ```
 
 Expected: zero or few matches. For each match, replace the link with a pointer to the new `agent_kinds:` documentation in the relevant plugin manifest spec, or remove the link entirely.
 
-- [x] **Step 3: Delete + commit**
+- [ ] **Step 3: Delete + commit**
 
 ```bash
-git rm docs/guides/<legacy>.md
+git rm docs/guides/writing-an-agent-topology.md
 # If zh_cn exists:
-# git rm docs/guides/<legacy>.zh_cn.md
-git commit -m "docs: drop legacy agent-topology guide — agents.yaml dissolved PR-328"
+# git rm docs/guides/writing-an-agent-topology.zh_cn.md
+git commit -m "docs: drop writing-an-agent-topology — agents.yaml dissolved PR-328"
 ```
 
 ### Task 0.6: Create `docs/guides/full-user-journey.md` index skeleton
@@ -271,15 +265,15 @@ gh pr create --base dev --title "docs(guides): Phase 0 audit + rename for guide-
 ## Summary
 Phase 0 of [docs/superpowers/plans/2026-05-10-guide-driven-e2e-plan.md](../docs/superpowers/plans/2026-05-10-guide-driven-e2e-plan.md). Pure docs cleanup — no behavior change.
 
-- Rename legacy bootstrap-journey guide → `flow-bootstrap.md` (+ zh_cn)
-- Rename legacy date-prefixed sessiontemplate-feishu-test guide → `flow-sessiontemplate-feishu-test.md` (+ zh_cn)
-- Delete the legacy agent-topology guide (references dissolved `agents.yaml`, replaced by `agent_kinds:` block in plugin manifests per PR-328)
+- Rename `operator-bootstrap-journey.md` → `flow-bootstrap.md` (+ zh_cn)
+- Rename `2026-05-10-sessiontemplate-feishu-test.md` → `flow-sessiontemplate-feishu-test.md` (+ zh_cn)
+- Delete `writing-an-agent-topology.md` (references dissolved `agents.yaml`, replaced by `agent_kinds:` block in plugin manifests per PR-328)
 - Create `docs/guides/full-user-journey.md` (+ zh_cn) as the canonical journey index
 
 ## Test plan
-- [ ] `rg <legacy-bootstrap-stem> --type md` returns no matches
-- [ ] `rg <legacy-sessiontemplate-stem> --type md` returns no matches
-- [ ] `rg <legacy-agent-topology-stem> --type md` returns no matches
+- [ ] `rg "operator-bootstrap-journey" --type md` returns no matches
+- [ ] `rg "2026-05-10-sessiontemplate-feishu-test" --type md` returns no matches
+- [ ] `rg "writing-an-agent-topology" --type md` returns no matches
 - [ ] `docs/guides/full-user-journey.md` exists and has two seed rows
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
