@@ -47,4 +47,13 @@ defmodule Esr.Resource.Workspace.Struct do
           transient: boolean(),
           location: location() | nil
         }
+
+  @doc """
+  Returns true iff the workspace struct satisfies the ≥1-folder invariant
+  established by spec 2026-05-11-default-agent-and-agent-driven-flow-design.md
+  §4.1. Used by JsonWriter.write/2 as a pre-encode gate.
+  """
+  @spec valid?(t()) :: boolean()
+  def valid?(%__MODULE__{folders: folders}) when is_list(folders) and length(folders) >= 1, do: true
+  def valid?(%__MODULE__{}), do: false
 end
