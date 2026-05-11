@@ -149,3 +149,9 @@ Long-form rationale lives in the linked notes.
 - "How do I address a thing across processes / boundaries?" → [`docs/notes/esr-uri-grammar.md`](docs/notes/esr-uri-grammar.md) + [`runtime/lib/esr/uri.ex`](runtime/lib/esr/uri.ex). **Don't invent a new identifier shape — extend the existing `esr://` URI grammar.**
 - "What suffix should I use for a new module / actor / peer?" → [`docs/notes/actor-role-vocabulary.md`](docs/notes/actor-role-vocabulary.md). **Don't drift — pick the canonical role suffix (`*Adapter`, `*Proxy`, `*Process`, `*Handler`, `*Guard`, `*Registry`, `*Watcher`, `*FileLoader`, `*Dispatcher`, `*Router`, `*Supervisor`, `*Channel`, `*Socket`).** Adding a new suffix requires a documentation update first (PR-21u policy).
 - "What's the durable TODO list / what's left to do?" → [`docs/futures/todo.md`](docs/futures/todo.md). Persists across sessions (in-memory `TaskCreate` is session-scoped). Update this file when deferring work or recording new known issues; CC sessions before / after this one share it as the canonical state.
+
+## Guide-driven e2e (anti-drift)
+
+- Edit a command handler? Run `scripts/replay-guide.sh` on the relevant guide before committing.
+- Guide drift detected? Prompt the user — fix implementation OR update the guide. Don't silently ignore.
+- Spec: [docs/superpowers/specs/2026-05-10-guide-driven-e2e.md](docs/superpowers/specs/2026-05-10-guide-driven-e2e.md).

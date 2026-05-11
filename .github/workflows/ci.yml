@@ -20,6 +20,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # scripts/verify-e2e-report.sh runs `git log origin/dev..HEAD`
+          # to find PR commits touching command handlers. Default
+          # fetch-depth=1 doesn't include base ref history.
+          fetch-depth: 0
 
       - name: Install inotify-tools
         # Esr.Resource.SlashRoute.Registry.Watcher uses the `:file_system`
@@ -64,6 +69,17 @@ jobs:
         # statically; no esrd boot required.
         working-directory: runtime
         run: mix esr.check_bundles
+
+      - name: Lint scenario headers
+        run: bash scripts/check-scenario-headers.sh
+
+      - name: Verify e2e report
+        # Anti-drift gate per spec §3.7. Report-based instead of CI-runs-replay
+        # because Ubuntu CI cannot spawn the FAA Python sidecar; ESR's only
+        # production target is macOS. Developers run scripts/generate-e2e-report.sh
+        # locally and commit docs/e2e-reports/<short-sha>.md. This step only
+        # enforces presence + freshness — see scripts/verify-e2e-report.sh.
+        run: bash scripts/verify-e2e-report.sh
 
       # TODO(2026-05-09): mix test on Linux CI fails ~22 of 1436 tests
       # for reasons unrelated to this migration:

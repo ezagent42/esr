@@ -305,23 +305,64 @@ esac
 按用户 CLAUDE.md 纪律（2026-05-10 设）：CLAUDE.md 保持紧凑，
 长内容外链。
 
-### 3.7 CI workflow step
+### 3.7 CI workflow step —— 报告制 gate
 
-`.github/workflows/ci.yml` 的 `build-and-test` job 追加：
+ESR 生产目标是 macOS；CI 在 GH Actions 跑 `ubuntu-latest`。Ubuntu
+runner 没法起 FAA Python sidecar（e2e fixture 必需的，预存问题——
+见 `.github/workflows/ci.yml` 末尾的 `mix test on Linux CI` TODO）。
+不为了每个 PR 烧 macos-CI 分钟，gate 改成**报告制**：开发者本地跑
+`scripts/generate-e2e-report.sh` 后开 PR，脚本把
+`docs/e2e-reports/<short-sha>.md` 写出来，CI 验证报告存在、新鲜、
+所有 guide 都 PASS。
+
+**取舍：** 这是基于信任（开发者可以跳过本地跑）。缓解措施：
+- §3.5 的 PostToolUse hook 在编辑 command handler 时提醒跑 replay
+- CI 验证器严格 —— 报告的 commit hash 必须与 HEAD 一致，过期报告会拒
+- 周期性全 e2e job（记在 `docs/futures/todo.md`），即使 PR 漏了也能抓
+
+**`.github/workflows/ci.yml` 的 `build-and-test` job 追加：**
 
 ```yaml
-- name: Replay guides with fences
-  run: |
-    for guide in docs/guides/*.md; do
-      if grep -q '^```chat-input' "$guide"; then
-        bash scripts/replay-guide.sh "$guide"
-      fi
-    done
+- name: Verify e2e report
+  # 仅当 PR 触及 command handler 或 fenced guide 时强制。
+  # 若触及，docs/e2e-reports/<short-sha>.md 必须存在，引用 HEAD 的
+  # full sha，所有 guide 都 PASS。
+  run: bash scripts/verify-e2e-report.sh
 ```
 
-没 fence 的指南跳过（不挂）。等 Phase 2 给
-`operator-bootstrap-journey.md` 加上 fence，下个 PR 起 CI 就开始
-抓 drift。
+**报告文件** `docs/e2e-reports/<8-char-sha>.md`（开发者本地生成、提交到 PR）：
+
+```markdown
+# E2E report — <full sha>
+
+- Generated: <ISO-8601 时间戳>
+- Branch: <分支>
+- Run by: <git config user.email>
+
+## Results
+
+| Guide | Status | Steps | Wall time |
+|---|---|---|---|
+| _replay_smoke.md | PASS | 1/1 | 0m32s |
+| flow-bootstrap.md | PASS | 5/5 | 0m47s |
+
+## Overall
+
+PASS — N/N guides
+```
+
+**验证器** `scripts/verify-e2e-report.sh`（~40 LOC bash）：
+
+1. 若 PR diff（`git diff origin/main...HEAD`）没动 `runtime/lib/esr/commands/`
+   或 `docs/guides/flow-*.md` → 跳过，exit 0
+2. 算 `short_sha=$(git rev-parse --short=8 HEAD)`
+3. 要求 `docs/e2e-reports/${short_sha}.md` 存在，否则 exit 1
+   提示 "run scripts/generate-e2e-report.sh and commit the result"
+4. 要求报告含 HEAD full sha（`grep -q "$(git rev-parse HEAD)" "$report"`），否则 exit 1
+5. 要求没有 `| FAIL ` 行，否则 exit 1 列出失败行
+6. 打印 `PASS: e2e report verified`
+
+报告保留（小 markdown 文件，git history 做审计记录）。
 
 ### 3.8 Fixture state 约定 —— all-inline
 
