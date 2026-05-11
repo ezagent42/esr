@@ -92,6 +92,12 @@ defmodule Esr.PathsTest do
              "/tmp/pth-test/default/sessions/#{uuid}/session.json"
   end
 
+  test "session_mcp_json/1 returns ESRD-rooted sessions path" do
+    path = Esr.Paths.session_mcp_json("test-sid")
+    assert String.ends_with?(path, "/sessions/test-sid/mcp.json")
+    assert path == "/tmp/pth-test/default/sessions/test-sid/mcp.json"
+  end
+
   test "session_workspace_dir/1 builds .esr dir path" do
     uuid = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5"
     assert Esr.Paths.session_workspace_dir(uuid) ==

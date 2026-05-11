@@ -122,6 +122,47 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxyTest do
     end
   end
 
+  describe ":pty_closed lifecycle handler (PR-2 2026-05-11)" do
+    test "FCP handles :pty_closed without FunctionClauseError" do
+      me = self()
+      app_proxy = spawn_link(fn -> relay(me, :app) end)
+
+      _ = register_role(app_proxy, "s_pty_close", :feishu_app_proxy)
+
+      {:ok, peer} =
+        GenServer.start_link(FeishuChatProxy, %{
+          session_id: "s_pty_close",
+          chat_id: "oc_pty",
+          thread_id: "om_pty",
+          app_id: "app_pty",
+          principal_id: "ou_p",
+          proxy_ctx: %{}
+        })
+
+      # Pre-PR-2 this raised FunctionClauseError on the unmatched
+      # :pty_closed atom (delivered via PtyProcess.on_terminate's
+      # `PubSub.broadcast("pty:<actor_id>", :pty_closed)`), crashing
+      # the FCP GenServer and cascading the AgentInstanceSupervisor's
+      # :one_for_all restart strategy across the entire session.
+      send(peer, :pty_closed)
+      Process.sleep(50)
+
+      assert Process.alive?(peer),
+             "FCP must stay alive after :pty_closed (no FunctionClauseError)"
+
+      # Surfaces a Feishu reply via the existing forward_reply path —
+      # same outbound channel CC-replies use, so the plugin boundary
+      # is intact (FCP never touches Feishu HTTP API directly).
+      assert_receive {:relay, :app,
+                      {:outbound, %{"kind" => "reply", "args" => args}}},
+                     500
+
+      assert args["chat_id"] == "oc_pty"
+      assert is_binary(args["text"])
+      assert args["text"] =~ "agent 进程退出"
+    end
+  end
+
   describe "CC reply → forward reply with reply_to_message_id passthrough (PR-21λ)" do
     test "{:reply, text, %{reply_to_message_id: mid}} threads mid into outbound for FAA un_react" do
       me = self()
