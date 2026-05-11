@@ -79,4 +79,69 @@ defmodule Esr.Session.ChatRouting.RegistryTest do
                ChatRouting.set_current_session(chat, app, sid)
     end
   end
+
+  describe "detach_session_by_id/1" do
+    test "is a no-op when the sid is registered nowhere" do
+      assert :ok = ChatRouting.detach_session_by_id("aaaa1111-7777-4777-8777-aaaa11117777")
+    end
+
+    test "detaches sid from a single-session slot and removes the row entirely" do
+      chat = "oc_detach_test_a"
+      app = "esr_helper_detach_a"
+      sid = "ababab11-7777-4777-8777-ababab117777"
+
+      :ok = ChatRouting.attach_session(chat, app, sid)
+      assert {:ok, ^sid} = ChatRouting.current_session(chat, app)
+
+      assert :ok = ChatRouting.detach_session_by_id(sid)
+
+      # Row should be gone entirely once attached/current both empty.
+      assert :not_found = ChatRouting.current_session(chat, app)
+      assert [] = ChatRouting.list_sessions(chat, app)
+    end
+
+    test "detaches a non-current sid without changing current" do
+      chat = "oc_detach_test_b"
+      app = "esr_helper_detach_b"
+      sid_a = "abab1111-7777-4777-8777-abab11117777"
+      sid_b = "abab2222-7777-4777-8777-abab22227777"
+
+      :ok = ChatRouting.attach_session(chat, app, sid_a)
+      :ok = ChatRouting.attach_session(chat, app, sid_b)
+      assert {:ok, ^sid_a} = ChatRouting.current_session(chat, app)
+
+      assert :ok = ChatRouting.detach_session_by_id(sid_b)
+      assert {:ok, ^sid_a} = ChatRouting.current_session(chat, app)
+      assert ChatRouting.list_sessions(chat, app) == [sid_a]
+    end
+
+    test "promotes a remaining attached sid when current is detached" do
+      chat = "oc_detach_test_c"
+      app = "esr_helper_detach_c"
+      sid_a = "abab1111-8888-4888-8888-abab11118888"
+      sid_b = "abab2222-8888-4888-8888-abab22228888"
+
+      :ok = ChatRouting.attach_session(chat, app, sid_a)
+      :ok = ChatRouting.attach_session(chat, app, sid_b)
+      assert {:ok, ^sid_a} = ChatRouting.current_session(chat, app)
+
+      assert :ok = ChatRouting.detach_session_by_id(sid_a)
+      assert {:ok, ^sid_b} = ChatRouting.current_session(chat, app)
+      assert ChatRouting.list_sessions(chat, app) == [sid_b]
+    end
+
+    test "removes the sid from multiple chat scopes" do
+      chat_x = "oc_detach_test_d_x"
+      chat_y = "oc_detach_test_d_y"
+      app = "esr_helper_detach_d"
+      sid = "abab3333-9999-4999-8999-abab33339999"
+
+      :ok = ChatRouting.attach_session(chat_x, app, sid)
+      :ok = ChatRouting.attach_session(chat_y, app, sid)
+
+      assert :ok = ChatRouting.detach_session_by_id(sid)
+      assert :not_found = ChatRouting.current_session(chat_x, app)
+      assert :not_found = ChatRouting.current_session(chat_y, app)
+    end
+  end
 end

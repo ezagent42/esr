@@ -183,17 +183,18 @@ defmodule Esr.Integration.CCE2ETest do
         agent_def: cc_def
       })
 
-    # 4. Resolve the spawned peer pids from SessionRegistry.
-    assert {:ok, ^sid, refs} =
-             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
+    # 4. Resolve the spawned peer pids via ActorQuery role index
+    #    (PR-3 Task 3.3b: peer refs no longer live in chat-routing ETS).
+    assert {:ok, ^sid} =
+             Esr.Session.ChatRouting.Registry.current_session(chat_id, app_id)
 
-    assert is_pid(refs.feishu_chat_proxy)
-    assert is_pid(refs.cc_process)
-    assert is_pid(refs.pty_process)
+    assert {:ok, fcp_pid} = Esr.ActorQuery.fcp_for_session(sid)
+    assert [cc_pid | _] = Esr.ActorQuery.list_by_role(sid, :cc_process)
+    assert [pty_pid | _] = Esr.ActorQuery.list_by_role(sid, :pty_process)
 
-    fcp_pid = refs.feishu_chat_proxy
-    cc_pid = refs.cc_process
-    pty_pid = refs.pty_process
+    assert is_pid(fcp_pid)
+    assert is_pid(cc_pid)
+    assert is_pid(pty_pid)
 
     assert Process.alive?(fcp_pid)
     assert Process.alive?(cc_pid)
@@ -319,7 +320,7 @@ defmodule Esr.Integration.CCE2ETest do
 
     # Registry reflects the teardown.
     assert :not_found =
-             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
+             Esr.Session.ChatRouting.Registry.current_session(chat_id, app_id)
   end
 
   # ------------------------------------------------------------------
