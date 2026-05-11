@@ -515,6 +515,55 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
 
   def handle_info({:pty_attach, _other}, state), do: {:noreply, state}
 
+  # PR-2 (2026-05-11 spec rev-3) — :pty_closed lifecycle handler.
+  #
+  # Pre-PR-2 there was no clause for `:pty_closed`. PtyProcess broadcasts
+  # this on `pty:<actor_id>` when the wrapped claude process exits
+  # (see Esr.Entity.PtyProcess.on_terminate/1). FCP subscribes to that
+  # topic at init for the boot-bridge — so the message landed in FCP's
+  # mailbox with no matching clause, triggering FunctionClauseError,
+  # which crashed FCP, which (via :one_for_all on AgentInstanceSupervisor)
+  # cascaded into the silent-drop incident: every subsequent inbound to
+  # the chat saw no FCP and dropped on the unknown-actor lookup.
+  #
+  # The clause notifies the bound chat that the agent process died
+  # (supervisor will restart it where possible) and stays alive itself.
+  # No PID monitor / no plugin-specific PTY API — FCP is already
+  # subscribed to the PubSub topic that delivers the close signal.
+  def handle_info(:pty_closed, state) do
+    notify_chat(state, %{
+      kind: :downstream_died,
+      message:
+        "agent 进程退出;supervisor 会重启(如有可能)。" <>
+          "如重复,运行 /session:end + /session:new 重建"
+    })
+
+    {:noreply, state}
+  end
+
+  # PR-2 (2026-05-11) — outbound helper for unsolicited FCP-originated
+  # messages (lifecycle notifications, error surfaces). Uses the same
+  # `forward_reply` path that CC-reply takes, so the same FAA routing /
+  # adapter contract applies. The `payload.kind` is recorded for ops
+  # log diagnosis; today only `:downstream_died` exists but future
+  # lifecycle events (e.g. `:downstream_starting`) reuse the same shape.
+  defp notify_chat(state, %{message: text} = payload) when is_binary(text) do
+    require Logger
+
+    Logger.info(
+      "feishu_chat_proxy: notify_chat kind=#{inspect(payload[:kind])} " <>
+        "session_id=#{state.session_id} chat_id=#{state.chat_id}"
+    )
+
+    # Reuse forward_reply (no reply_to_message_id — this is unsolicited,
+    # not threaded to a specific inbound). forward_reply already routes
+    # through emit_to_feishu_app_proxy → FAA → α-wire adapter, so the
+    # plugin boundary stays intact: FCP never touches the Feishu HTTP
+    # API directly; the adapter does.
+    _ = forward_reply(text, nil, state)
+    :ok
+  end
+
   # M-1.5: deregister Index 2/3 entries on graceful shutdown. The
   # IndexWatcher monitor still cleans up if we crash before this hook
   # runs, so this is purely an optimization that closes the stale-entry
