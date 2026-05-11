@@ -132,6 +132,14 @@ defmodule Esr.Application do
       # fail with :noproc even though tests pass via start_supervised.
       Esr.Session.Router,
 
+      # 4e.4b LifecycleObservers (PR-3 Task 3.7): top-level
+      # DynamicSupervisor for per-session DOWN-watchers. Lives OUTSIDE
+      # Esr.Session.Supervisor so observers survive the session subtree
+      # crash they're watching — they emit a chat-visible
+      # :session_terminated reply via FAA + detach the chat-routing slot
+      # before exiting :normal. ADR-0002 records the supervisor split.
+      Esr.Session.LifecycleObservers,
+
       # 4d.4 Media PluginRegistry — ETS-backed capability lookup for routing-
       # layer fail-fast gating (spec 2026-05-08 D5). No dependencies on other
       # supervised processes. Populated by Esr.Plugin.Loader at boot (Task 1.9)

@@ -48,7 +48,7 @@ defmodule Esr.Integration.N2SessionsTest do
 
     on_exit(fn ->
       for sid <- ["n2-session-A", "n2-session-B"] do
-        Esr.Session.ChatRouting.Registry.unregister_session(sid)
+        Esr.Session.ChatRouting.Registry.detach_session_by_id(sid)
       end
 
       if Process.alive?(sup_a), do: Process.exit(sup_a, :shutdown)
@@ -93,24 +93,26 @@ defmodule Esr.Integration.N2SessionsTest do
     assert Process.alive?(session_sup_a)
     assert Process.alive?(session_sup_b)
 
-    # Register each session in SessionRegistry with a distinct
-    # (chat_id, app_id, thread_id) key. The `feishu_chat_proxy` ref
-    # points at our test-owned relay pid so we can observe dispatch
-    # decisions. PR-A T1: app_id mirrors the FAA instance_id below so
-    # the legacy fallback path resolves correctly.
-    :ok =
-      Esr.Session.ChatRouting.Registry.register_session(
-        "n2-session-A",
-        %{chat_id: "oc_a", app_id: "app_A", thread_id: "om_a"},
-        %{feishu_chat_proxy: proxy_a}
-      )
+    # PR-3 Task 3.3b: register each session in the chat routing slot
+    # (sid only — peer refs no longer live in ETS) and inject the test
+    # relay pid into Index 3 (role index) as the session's FCP so
+    # FAA's ActorQuery.fcp_for_session/1 lookup resolves to the relay.
+    :ok = Esr.Session.ChatRouting.Registry.attach_session("oc_a", "app_A", "n2-session-A")
+    :ok = Esr.Session.ChatRouting.Registry.attach_session("oc_b", "app_B", "n2-session-B")
 
-    :ok =
-      Esr.Session.ChatRouting.Registry.register_session(
-        "n2-session-B",
-        %{chat_id: "oc_b", app_id: "app_B", thread_id: "om_b"},
-        %{feishu_chat_proxy: proxy_b}
-      )
+    # Direct ETS insert into Index 3 — tests bypass the IndexWatcher
+    # monitor because the relay pid is owned by the test, not a real
+    # peer. (Same pattern used by other fixtures that synthesize role
+    # registrations from outside a peer's init/1.)
+    :ets.insert(
+      :esr_actor_role_index,
+      {{"n2-session-A", :feishu_chat_proxy}, {proxy_a, "actor-a-#{:rand.uniform(99_999)}"}}
+    )
+
+    :ets.insert(
+      :esr_actor_role_index,
+      {{"n2-session-B", :feishu_chat_proxy}, {proxy_b, "actor-b-#{:rand.uniform(99_999)}"}}
+    )
 
     # Start one FeishuAppAdapter per app_id under a per-test
     # DynamicSupervisor (the app boot does not start adapters for
@@ -171,10 +173,10 @@ defmodule Esr.Integration.N2SessionsTest do
     refute_receive {:DOWN, ^ref_b, :process, _, _}, 100
     assert Process.alive?(session_sup_b)
 
-    # Unregister A so the adapter's lookup returns :not_found for A's
+    # Detach A so the adapter's lookup returns :not_found for A's
     # (chat_id, thread_id). A second A-inbound must NOT resurrect the
     # dead relay or leak to B.
-    :ok = Esr.Session.ChatRouting.Registry.unregister_session("n2-session-A")
+    :ok = Esr.Session.ChatRouting.Registry.detach_session_by_id("n2-session-A")
 
     env_b2 = %{
       "payload" => %{

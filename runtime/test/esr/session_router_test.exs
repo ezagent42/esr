@@ -87,21 +87,23 @@ defmodule Esr.SessionRouterTest do
     via = {:via, Registry, {Esr.Session.Registry, {:session_sup, session_id}}}
     assert is_pid(GenServer.whereis(via))
 
-    # SessionRegistry records the chat-thread → session mapping and
-    # the Stateful peer refs.
-    assert {:ok, ^session_id, refs} =
-             Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_xx", "cli_test")
+    # SessionRegistry records the chat → session mapping.
+    assert {:ok, ^session_id} =
+             Esr.Session.ChatRouting.Registry.current_session("oc_xx", "cli_test")
 
-    # simple.yaml inbound (post-P3-6): feishu_chat_proxy → cc_proxy →
-    # cc_process → pty_process. The three Stateful peers are spawned
-    # as pids; cc_proxy is a stateless module and not recorded in refs
-    # via spawn (see drift note in moduledoc).
-    assert is_pid(refs.feishu_chat_proxy)
-    assert is_pid(refs.cc_process)
-    assert is_pid(refs.pty_process)
-    assert Process.alive?(refs.feishu_chat_proxy)
-    assert Process.alive?(refs.cc_process)
-    assert Process.alive?(refs.pty_process)
+    # PR-3 Task 3.3b: peer refs no longer live in the ChatRouting ETS
+    # row. The Stateful peers (feishu_chat_proxy, cc_process,
+    # pty_process per simple.yaml) register themselves in
+    # Esr.ActorQuery's role index on init, so we assert their presence
+    # there instead.
+    assert {:ok, fcp_pid} = Esr.ActorQuery.fcp_for_session(session_id)
+    assert is_pid(fcp_pid) and Process.alive?(fcp_pid)
+
+    assert [cc_pid | _] = Esr.ActorQuery.list_by_role(session_id, :cc_process)
+    assert is_pid(cc_pid) and Process.alive?(cc_pid)
+
+    assert [pty_pid | _] = Esr.ActorQuery.list_by_role(session_id, :pty_process)
+    assert is_pid(pty_pid) and Process.alive?(pty_pid)
   end
 
   test "create_session enriches params with session_id + workspace_name (PR-9 T11b.2)", %{cc_def: cc_def} do
@@ -131,10 +133,11 @@ defmodule Esr.SessionRouterTest do
 
     # FeishuChatProxy's state already carries session_id; workspace_name
     # should be reachable to peers via enriched params.
-    {:ok, ^session_id, refs} =
-      Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T11b2", "cli_test")
+    {:ok, ^session_id} =
+      Esr.Session.ChatRouting.Registry.current_session("oc_T11b2", "cli_test")
 
-    fcp_state = :sys.get_state(refs.feishu_chat_proxy)
+    {:ok, fcp_pid} = Esr.ActorQuery.fcp_for_session(session_id)
+    fcp_state = :sys.get_state(fcp_pid)
     assert fcp_state.session_id == session_id
   end
 
@@ -177,12 +180,12 @@ defmodule Esr.SessionRouterTest do
       })
 
     # Precondition: lookup succeeds.
-    assert {:ok, ^sid, _refs} =
-             Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_aa", "cli_test")
+    assert {:ok, ^sid} =
+             Esr.Session.ChatRouting.Registry.current_session("oc_aa", "cli_test")
 
     :ok = Session.Router.end_session(sid)
 
-    assert :not_found = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_aa", "cli_test")
+    assert :not_found = Esr.Session.ChatRouting.Registry.current_session("oc_aa", "cli_test")
 
     # And the Session supervisor is gone.
     via = {:via, Registry, {Esr.Session.Registry, {:session_sup, sid}}}
@@ -268,9 +271,11 @@ defmodule Esr.SessionRouterTest do
 
       # Find one spawned peer and kill it; the router's monitor will
       # DOWN and fire the telemetry event.
-      {:ok, _sid2, refs} =
-        Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_crash", "cli_test")
-      Process.exit(refs.cc_process, :kill)
+      {:ok, sid2} =
+        Esr.Session.ChatRouting.Registry.current_session("oc_crash", "cli_test")
+
+      [cc_pid | _] = Esr.ActorQuery.list_by_role(sid2, :cc_process)
+      Process.exit(cc_pid, :kill)
 
       assert_receive {[:esr, :session_router, :peer_crashed], _ref, %{count: 1}, meta}, 500
       assert is_binary(meta.session_id)
@@ -325,11 +330,13 @@ defmodule Esr.SessionRouterTest do
         agent_def: cc_def
       })
 
-    {:ok, _sid2, refs} = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T6", app_id)
+    {:ok, sid2} = Esr.Session.ChatRouting.Registry.current_session("oc_T6", app_id)
 
-    fcp = refs.feishu_chat_proxy
-    cc = refs.cc_process
-    pty = refs.pty_process
+    # PR-3 Task 3.3b: peer refs no longer live in ETS — look up via
+    # the role index directly.
+    {:ok, fcp} = Esr.ActorQuery.fcp_for_session(sid2)
+    [cc | _] = Esr.ActorQuery.list_by_role(sid2, :cc_process)
+    [pty | _] = Esr.ActorQuery.list_by_role(sid2, :pty_process)
 
     assert is_pid(fcp)
     assert is_pid(cc)

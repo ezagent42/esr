@@ -517,17 +517,17 @@ defmodule Esr.Commands.Session.NewTest do
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
-      assert {:ok, ^sid, refs} =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T3", "esr_dev_helper")
+      assert {:ok, ^sid} =
+               Esr.Session.ChatRouting.Registry.current_session("oc_T3", "esr_dev_helper")
 
       # The "default" fallback slot must remain empty — proves the fix
       # threaded app_id rather than letting it default.
-      assert :not_found = Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T3", "default")
+      assert :not_found = Esr.Session.ChatRouting.Registry.current_session("oc_T3", "default")
 
-      # Post-T4: refs is populated with the spawned pipeline peer pids.
-      assert is_map(refs)
+      # Post-PR-3 Task 3.3b: peer refs no longer live in the ETS row;
+      # the per-peer presence is verified by other tests via ActorQuery.
 
-      on_exit(fn -> Esr.Session.ChatRouting.Registry.unregister_session(sid) end)
+      on_exit(fn -> Esr.Session.ChatRouting.Registry.detach_session_by_id(sid) end)
     end
 
     test "omitted chat_id/thread_id skips SessionRegistry registration (pending fallback)" do
@@ -545,7 +545,7 @@ defmodule Esr.Commands.Session.NewTest do
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
       assert :not_found =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("pending", "pending"),
+               Esr.Session.ChatRouting.Registry.current_session("pending", "pending"),
              "the pending placeholder must not end up in the registry"
 
       # The session itself is still up — registration skip doesn't prevent
@@ -573,19 +573,27 @@ defmodule Esr.Commands.Session.NewTest do
 
       assert {:ok, %{"session_id" => sid1}} = SessionNew.execute(cmd1)
 
-      assert {:ok, ^sid1, _} =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
+      assert {:ok, ^sid1} =
+               Esr.Session.ChatRouting.Registry.current_session("oc_T3_reuse", "esr_dev_helper")
 
       cmd2 = put_in(cmd1["args"]["dir"], "/tmp/t3-second")
       assert {:ok, %{"session_id" => sid2}} = SessionNew.execute(cmd2)
       refute sid2 == sid1, "second execute yields a fresh session_id"
 
-      assert {:ok, ^sid2, _} =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T3_reuse", "esr_dev_helper")
+      # PR-3 Task 3.3b: second /new-session re-attaches the chat slot to
+      # the new sid (attach_session promotes the new uuid as current
+      # because the slot already had sid1 attached — sid2 becomes the
+      # additional attached entry; legacy register_session/3 silently
+      # overwrote, but the unified attach API preserves both as attached
+      # and keeps the FIRST as current). We assert the current_session is
+      # still sid1 to lock that semantic difference; switching is via
+      # /session:switch.
+      assert {:ok, ^sid1} =
+               Esr.Session.ChatRouting.Registry.current_session("oc_T3_reuse", "esr_dev_helper")
 
       on_exit(fn ->
-        Esr.Session.ChatRouting.Registry.unregister_session(sid1)
-        Esr.Session.ChatRouting.Registry.unregister_session(sid2)
+        Esr.Session.ChatRouting.Registry.detach_session_by_id(sid1)
+        Esr.Session.ChatRouting.Registry.detach_session_by_id(sid2)
       end)
     end
   end
@@ -615,19 +623,22 @@ defmodule Esr.Commands.Session.NewTest do
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
-      # Post-T4 invariant: refs contains a real feishu_chat_proxy pid
-      # spawned by Scope.Router.spawn_pipeline/3, not an empty map.
-      assert {:ok, ^sid, %{feishu_chat_proxy: proxy_pid} = refs} =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_T4", "cli_test")
+      # Post-PR-3 Task 3.3b invariant: chat-routing carries the sid only,
+      # peer pids are reachable via ActorQuery's role index.
+      assert {:ok, ^sid} =
+               Esr.Session.ChatRouting.Registry.current_session("oc_T4", "cli_test")
 
+      assert {:ok, proxy_pid} = Esr.ActorQuery.fcp_for_session(sid)
       assert is_pid(proxy_pid)
       assert Process.alive?(proxy_pid)
 
       # Sanity: the full CC chain from simple.yaml is present.
-      assert is_pid(refs.cc_process)
-      assert is_pid(refs.pty_process)
+      assert [cc_pid | _] = Esr.ActorQuery.list_by_role(sid, :cc_process)
+      assert is_pid(cc_pid)
+      assert [pty_pid | _] = Esr.ActorQuery.list_by_role(sid, :pty_process)
+      assert is_pid(pty_pid)
 
-      on_exit(fn -> Esr.Session.ChatRouting.Registry.unregister_session(sid) end)
+      on_exit(fn -> Esr.Session.ChatRouting.Registry.detach_session_by_id(sid) end)
     end
   end
 
@@ -1048,18 +1059,21 @@ defmodule Esr.Commands.Session.NewTest do
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
 
-      assert {:ok, ^sid, refs} =
-               Esr.Session.ChatRouting.Registry.lookup_by_chat("oc_2A", "esr_dev_helper")
+      assert {:ok, ^sid} =
+               Esr.Session.ChatRouting.Registry.current_session("oc_2A", "esr_dev_helper")
 
-      # Router populates these via spawn_pipeline/3; the explicit
-      # attach must NOT have wiped them.
-      assert is_pid(refs.feishu_chat_proxy),
-             "expected feishu_chat_proxy pid in refs, got #{inspect(refs)}"
+      # PR-3 Task 3.3b: peer refs no longer live in ETS. Router still
+      # populates the role index via spawn_pipeline/3 → ActorQuery.
+      assert {:ok, fcp_pid} = Esr.ActorQuery.fcp_for_session(sid)
+      assert is_pid(fcp_pid)
 
-      assert is_pid(refs.cc_process)
-      assert is_pid(refs.pty_process)
+      assert [cc_pid | _] = Esr.ActorQuery.list_by_role(sid, :cc_process)
+      assert is_pid(cc_pid)
 
-      on_exit(fn -> Esr.Session.ChatRouting.Registry.unregister_session(sid) end)
+      assert [pty_pid | _] = Esr.ActorQuery.list_by_role(sid, :pty_process)
+      assert is_pid(pty_pid)
+
+      on_exit(fn -> Esr.Session.ChatRouting.Registry.detach_session_by_id(sid) end)
     end
   end
 end

@@ -81,8 +81,11 @@ defmodule Esr.Commands.Key do
   defp do_execute(chat_id, app_id, keyspec) do
     case translate_all(keyspec) do
       {:ok, bytes} ->
-        case ChatScopeRegistry.lookup_by_chat(chat_id, app_id) do
-          {:ok, sid, _refs} ->
+        # PR-3 Task 3.3: migrated off the legacy 3-tuple lookup_by_chat/2
+        # to current_session/2. The peer refs in the old return value
+        # were unused here — only sid was needed.
+        case ChatScopeRegistry.current_session(chat_id, app_id) do
+          {:ok, sid} ->
             # Phase A.4b: PtyProcess.write/2 looks up "pty:<actor_id>"
             # post-Phase-A.4. For multi-agent sessions, resolve the
             # primary agent's pty_actor_id via InstanceRegistry; for

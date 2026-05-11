@@ -170,9 +170,9 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
     on_exit(fn ->
       # PR-A T1: Scope.Router defaults app_id to "default" when the
       # slash flow doesn't carry one (T3 will surface app_id explicitly).
-      Esr.Session.ChatRouting.Registry.lookup_by_chat(@chat_id, "default")
+      Esr.Session.ChatRouting.Registry.current_session(@chat_id, "default")
       |> case do
-        {:ok, sid, _} -> Esr.Session.ChatRouting.Registry.unregister_session(sid)
+        {:ok, sid} -> Esr.Session.ChatRouting.Registry.detach_session_by_id(sid)
         _ -> :ok
       end
     end)

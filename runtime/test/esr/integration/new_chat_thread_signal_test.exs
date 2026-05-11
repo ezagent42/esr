@@ -88,13 +88,17 @@ defmodule Esr.Integration.NewChatThreadSignalTest do
     assert meta.thread_id == thread_id
     assert is_binary(meta.session_id)
 
-    # SessionRegistry now knows about the (chat_id, app_id, thread_id) mapping.
-    assert {:ok, sid, refs} =
-             Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id)
+    # SessionRegistry now knows about the (chat_id, app_id) mapping.
+    assert {:ok, sid} =
+             Esr.Session.ChatRouting.Registry.current_session(chat_id, app_id)
 
     assert sid == meta.session_id
-    assert is_pid(refs.feishu_chat_proxy)
-    assert is_pid(refs.cc_process)
+
+    # PR-3 Task 3.3b: peer pids reachable via ActorQuery role index.
+    assert {:ok, fcp_pid} = Esr.ActorQuery.fcp_for_session(sid)
+    assert is_pid(fcp_pid)
+    assert [cc_pid | _] = Esr.ActorQuery.list_by_role(sid, :cc_process)
+    assert is_pid(cc_pid)
 
     :telemetry.detach(ref)
   end

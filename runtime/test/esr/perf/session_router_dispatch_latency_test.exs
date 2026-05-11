@@ -70,18 +70,19 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
 
     assert Process.alive?(session_sup)
 
-    # Register the Session in SessionRegistry with feishu_chat_proxy
-    # pointing at the stub relay. FeishuAppAdapter.handle_upstream/2
-    # forwards `{:feishu_inbound, envelope}` here on
-    # lookup_by_chat_thread hit.
+    # PR-3 Task 3.3b: attach the sid to the chat-routing slot, then
+    # inject the stub_relay pid into Index 3 (role index) under
+    # :feishu_chat_proxy so FAA's ActorQuery.fcp_for_session/1 lookup
+    # resolves to the relay. (Tests bypass IndexWatcher monitor — the
+    # relay pid is test-owned and not a real peer.)
     :ok =
-      Esr.Session.ChatRouting.Registry.register_session(
-        session_id,
-        # PR-A T1: app_id mirrors instance_id so the FAA fallback path
-        # (state.instance_id when args["app_id"] absent) hits this row.
-        %{chat_id: chat_id, app_id: app_id, thread_id: thread_id},
-        %{feishu_chat_proxy: stub_relay, pty_process: stub_relay}
-      )
+      Esr.Session.ChatRouting.Registry.attach_session(chat_id, app_id, session_id)
+
+    :ets.insert(
+      :esr_actor_role_index,
+      {{session_id, :feishu_chat_proxy},
+       {stub_relay, "actor-#{System.unique_integer([:positive])}"}}
+    )
 
     # Per-test FeishuAppAdapter under a scoped DynamicSupervisor so we
     # don't leak into app-level Scope.Admin children.
@@ -99,7 +100,7 @@ defmodule Esr.Perf.SessionRouterDispatchLatencyTest do
       )
 
     on_exit(fn ->
-      Esr.Session.ChatRouting.Registry.unregister_session(session_id)
+      Esr.Session.ChatRouting.Registry.detach_session_by_id(session_id)
 
       if Process.alive?(session_sup) do
         Esr.Session.Supervisor.stop_session(session_sup)
