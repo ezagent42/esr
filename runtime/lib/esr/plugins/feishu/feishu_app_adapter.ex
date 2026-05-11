@@ -276,10 +276,34 @@ defmodule Esr.Entity.FeishuAppAdapter do
     # PR-21λ: routing key is (chat_id, app_id) only. thread_id still
     # flows downstream via the envelope so FCP/CC can quote-reply, but
     # it does not select the session anymore.
-    case Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id) do
-      {:ok, _session_id, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
-        send(proxy_pid, {:feishu_inbound, envelope})
-        {:forward, [], state}
+    #
+    # PR-3 Task 3.6: rewritten with explicit clauses for every reachable
+    # case — no `other -> Logger.warning + drop` catch-all (invariant I5).
+    #   * current_session/2 always returns {:ok, sid} | :not_found
+    #   * ActorQuery.fcp_for_session/1 always returns {:ok, pid} | :not_found
+    # Each branch either forwards, recovers, or surfaces a chat-visible
+    # error via cleanup_and_reply/4. No envelope is dropped silently.
+    case Esr.Session.ChatRouting.Registry.current_session(chat_id, app_id) do
+      {:ok, sid} ->
+        case Esr.ActorQuery.fcp_for_session(sid) do
+          {:ok, fcp_pid} ->
+            if Process.alive?(fcp_pid) do
+              send(fcp_pid, {:feishu_inbound, envelope})
+              {:forward, [], state}
+            else
+              # Stale pid in role index — cleanup + chat-visible error.
+              cleanup_and_reply(chat_id, app_id, sid, :session_dead)
+              {:drop, :session_dead, state}
+            end
+
+          :not_found ->
+            # Routing entry exists but no FCP registered for the sid.
+            # This is the pipeline_incomplete recovery path: the
+            # supervisor tree dropped between attach_session/3 and FCP
+            # init, so the chat slot points at a phantom session.
+            cleanup_and_reply(chat_id, app_id, sid, :session_incomplete)
+            {:drop, :session_incomplete, state}
+        end
 
       :not_found ->
         Logger.info("FAA.do_handle_upstream_inbound: lookup=:not_found, calling UnboundChatGuard")
@@ -308,14 +332,24 @@ defmodule Esr.Entity.FeishuAppAdapter do
 
             {:drop, :new_chat_thread_pending, state}
         end
-
-      other ->
-        Logger.warning(
-          "FeishuAppAdapter: unexpected SessionRegistry reply #{inspect(other)}"
-        )
-
-        {:drop, :session_lookup_failed, state}
     end
+  end
+
+  # PR-3 Task 3.6: explicit recovery helper for the two FAA-route failure
+  # modes (`:session_dead`, `:session_incomplete`). Detaches the stale
+  # routing entry and sends a chat-visible error via the FCP-free
+  # `reply_chat_error/4` path (Task 3.6a) so the user always gets a
+  # message — never a silent drop.
+  defp cleanup_and_reply(chat_id, app_id, sid, reason) do
+    :ok = Esr.Session.ChatRouting.Registry.detach_session(chat_id, app_id, sid)
+
+    msg =
+      case reason do
+        :session_dead -> "session 死了；运行 /session:new 重建"
+        :session_incomplete -> "session 启动不完整；运行 /session:end 后 /session:new 重试"
+      end
+
+    reply_chat_error(chat_id, app_id, reason, msg)
   end
 
   @impl Esr.Entity.Stateful
