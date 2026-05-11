@@ -238,22 +238,57 @@ linter（`scripts/check-scenario-headers.sh`，~30 LOC bash）：
 
 ### 3.5 Claude Code hook
 
-`.claude/hooks/replay-guide-reminder.json`：
+Claude Code hook 配置在 `.claude/settings.json` 的 `hooks` 键下。
+matcher 只能 match tool 名（regex 字符串）——matcher 层**没有**
+`args.file_path` 过滤字段。文件路径过滤要在脚本里做，脚本从 stdin
+读 `tool_input` JSON（仓库里 `scripts/hooks/openclaw-channel-postcheck.sh`
+就是这个约定）。
+
+**加到 `.claude/settings.json`：**
 
 ```json
 {
-  "event": "PostToolUse",
-  "matcher": {
-    "tool_name": ["Edit", "Write", "MultiEdit"],
-    "args.file_path": "runtime/lib/esr/commands/.*\\.ex$"
-  },
-  "command": "echo '⚠️  改了 command handler。提交前跑 scripts/replay-guide.sh 对相关 guide 验证。找相关 guide：rg \"$(basename $(echo \"<file_path>\" | sed -e \"s|.*/||\" -e \"s|\\.ex$||\" | tr A-Z a-z))\" docs/guides/'"
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/scripts/hooks/replay-guide-reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-具体 hook DSL 跟项目现有 hook 约定（看 `docs/futures/todo.md` 或
-`hookify:` skill）。目标：改 command 文件时 agent / 开发者收到
-一行提醒。
+**新文件 `scripts/hooks/replay-guide-reminder.sh`**（~20 LOC bash）。
+从 stdin 读 `tool_input` JSON，取 `file_path` 字段，只在文件匹配
+`runtime/lib/esr/commands/.*\.ex$` 时打提醒：
+
+```bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
+input="$(cat)"
+fp="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')"
+case "$fp" in
+  runtime/lib/esr/commands/*.ex|*/runtime/lib/esr/commands/*.ex)
+    base="$(basename "$fp" .ex | tr A-Z a-z)"
+    cat >&2 <<EOF
+⚠️  你改了 $fp。
+提交前跑 scripts/replay-guide.sh 对引用此命令的 guide 验证。
+找候选 guide：rg "$base" docs/guides/
+EOF
+    ;;
+esac
+```
+
+目标：改 command 文件时 agent / 开发者收到一行提醒。hook 跟现有
+`pre-merge-dev-gate.sh`、`openclaw-channel-postcheck.sh` 装一起——
+同一种约定、同一个 `scripts/hooks/` 目录。
 
 ### 3.6 CLAUDE.md 新增
 

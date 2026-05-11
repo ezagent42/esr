@@ -257,23 +257,60 @@ sneaks in without an annotation.
 
 ### 3.5 Claude Code hook
 
-`.claude/hooks/replay-guide-reminder.json`:
+Claude Code hooks live in `.claude/settings.json` under the `hooks` key.
+The matcher is a regex against the tool name only — there is no
+`args.file_path` filter at the matcher level. File-path filtering is
+done by the shell script itself, reading the `tool_input` JSON from
+stdin (the convention used by `scripts/hooks/openclaw-channel-postcheck.sh`
+in this repo).
+
+**Add to `.claude/settings.json`:**
 
 ```json
 {
-  "event": "PostToolUse",
-  "matcher": {
-    "tool_name": ["Edit", "Write", "MultiEdit"],
-    "args.file_path": "runtime/lib/esr/commands/.*\\.ex$"
-  },
-  "command": "echo '⚠️  You edited a command handler. Before committing, run scripts/replay-guide.sh against any guide that uses this command. Find the relevant guide via: rg \"$(basename $(echo \"<file_path>\" | sed -e \"s|.*/||\" -e \"s|\\.ex$||\" | tr A-Z a-z))\" docs/guides/'"
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/scripts/hooks/replay-guide-reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-The exact hook DSL follows the project's existing hook conventions
-(check `docs/futures/todo.md` or the `hookify:` skill for the canonical
-schema). Goal: the agent / dev gets a one-line reminder when a command
-file is edited.
+**New file `scripts/hooks/replay-guide-reminder.sh`** (~20 LOC bash).
+Reads `tool_input` JSON from stdin, extracts the `file_path` field, and
+only emits the reminder when the edited file matches
+`runtime/lib/esr/commands/.*\.ex$`:
+
+```bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
+input="$(cat)"
+fp="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')"
+case "$fp" in
+  runtime/lib/esr/commands/*.ex|*/runtime/lib/esr/commands/*.ex)
+    base="$(basename "$fp" .ex | tr A-Z a-z)"
+    cat >&2 <<EOF
+⚠️  You edited $fp.
+Before committing, run scripts/replay-guide.sh against any guide that
+references this command. Find candidates: rg "$base" docs/guides/
+EOF
+    ;;
+esac
+```
+
+Goal: the agent / dev gets a one-line reminder when a command file is
+edited. The hook installs alongside the existing
+`pre-merge-dev-gate.sh` and `openclaw-channel-postcheck.sh` hooks —
+same convention, same `scripts/hooks/` directory.
 
 ### 3.6 CLAUDE.md addition
 
