@@ -182,11 +182,59 @@ defmodule Esr.Session.AgentSpawner do
          {:ok, agent_def} <- fetch_agent_def(params),
          session_id <- Esr.Resource.Session.Id.new(),
          params <- enrich_params(params, session_id),
-         {:ok, _sup} <- start_session_sup(session_id, agent_name, params, agent_def),
+         {:ok, session_sup_pid} <- start_session_sup(session_id, agent_name, params, agent_def),
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
          :ok <- verify_pipeline_complete(session_id, agent_def),
-         :ok <- register(session_id, params, refs_map) do
+         :ok <- register(session_id, params, refs_map),
+         :ok <- start_lifecycle_observer(session_id, session_sup_pid, params) do
       {:ok, session_id, mon}
+    end
+  end
+
+  # PR-3 Task 3.7: spawn a per-session LifecycleObserver under the
+  # top-level `Esr.Session.LifecycleObservers` DynamicSupervisor (NOT
+  # under the per-session supervisor) so it survives a session subtree
+  # crash. The observer monitors the per-session supervisor and emits a
+  # chat-visible error via FAA.reply_chat_error/4 when DOWN fires.
+  #
+  # Best-effort: failure to start the observer must NOT roll back the
+  # session create — log + carry on. The session is operational without
+  # an observer; the only cost is no chat-visible :session_terminated
+  # message on supervisor giveup.
+  defp start_lifecycle_observer(session_id, session_sup_pid, params)
+       when is_pid(session_sup_pid) do
+    chat_id = get_param(params, :chat_id) || ""
+    app_id = get_param(params, :app_id) || "default"
+
+    args = %{
+      session_id: session_id,
+      session_sup_pid: session_sup_pid,
+      chat_id: chat_id,
+      app_id: app_id
+    }
+
+    case Process.whereis(Esr.Session.LifecycleObservers) do
+      nil ->
+        # Observer supervisor not running (unit tests that don't boot
+        # the full app, or pre-deploy). Log + treat as no-op.
+        Logger.debug(
+          "agent_spawner: LifecycleObservers not running — skipping observer start for #{session_id}"
+        )
+
+        :ok
+
+      _pid ->
+        case Esr.Session.LifecycleObservers.start_observer(args) do
+          {:ok, _obs_pid} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "agent_spawner: LifecycleObserver start failed for #{session_id}: #{inspect(reason)}"
+            )
+
+            :ok
+        end
     end
   end
 
