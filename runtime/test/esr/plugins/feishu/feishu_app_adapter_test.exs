@@ -870,4 +870,59 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       }, 500
     end
   end
+
+  describe "reply_chat_error/4 (PR-3 Task 3.6a)" do
+    setup %{sup: sup} do
+      instance_id = "inst_reply_err_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {FeishuAppAdapter, %{instance_id: instance_id, neighbors: [], proxy_ctx: %{}}}
+        )
+
+      :ok = Phoenix.PubSub.subscribe(EsrWeb.PubSub, "adapter:feishu/#{instance_id}")
+      {:ok, peer: pid, instance_id: instance_id}
+    end
+
+    test "emits a send_message directive prefixed with the error kind",
+         %{instance_id: app_id} do
+      assert :ok =
+               FeishuAppAdapter.reply_chat_error(
+                 "oc_err_target",
+                 app_id,
+                 :session_dead,
+                 "运行 /session:new 重建"
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "envelope",
+                       payload: %{
+                         "payload" => %{
+                           "action" => "send_message",
+                           "args" => %{
+                             "chat_id" => "oc_err_target",
+                             "content" => "[session_dead] 运行 /session:new 重建"
+                           }
+                         }
+                       }
+                     },
+                     500
+    end
+
+    test "returns :ok and drops with a warning when no FAA is registered for the app_id" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok =
+                   FeishuAppAdapter.reply_chat_error(
+                     "oc_missing",
+                     "missing_app_id_#{System.unique_integer([:positive])}",
+                     :session_dead,
+                     "lost"
+                   )
+        end)
+
+      assert log =~ "no adapter registered"
+    end
+  end
 end

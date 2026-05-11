@@ -58,6 +58,48 @@ defmodule Esr.Entity.FeishuAppAdapter do
 
   defp via(instance_id), do: String.to_atom("feishu_app_adapter_#{instance_id}")
 
+  @doc """
+  Send a chat-visible error reply to `(chat_id, app_id)` without
+  requiring a live FCP — used when the FCP is dead or never existed
+  (e.g. `:session_dead`, `:session_incomplete`, supervisor giveup).
+
+  Resolves the FAA pid by `app_id` via `Esr.Entity.Registry` (the same
+  lookup `FeishuChatProxy.lookup_target_app_proxy/1` uses for cross-app
+  replies) and sends `{:outbound, %{kind: "reply", args: ...}}`, which
+  reuses the FAA's existing `handle_downstream/2` directive-wrap +
+  Phoenix-channel broadcast path. No FCP needed.
+
+  Returns `:ok` regardless of whether the FAA was found — drops with
+  Logger.warning when the app_id has no FAA registered (the only failure
+  mode here, distinct from the routing path's catch-alls because the
+  alternative is silence to a user who is owed an error message).
+
+  Plan: PR-3 Task 3.6a. Spec §4.6 + §4.5 step 4.
+  """
+  @spec reply_chat_error(String.t(), String.t(), atom(), String.t()) :: :ok
+  def reply_chat_error(chat_id, app_id, kind, message)
+      when is_binary(chat_id) and is_binary(app_id) and is_atom(kind) and is_binary(message) do
+    text = "[#{kind}] #{message}"
+
+    case Registry.lookup(Esr.Entity.Registry, "feishu_app_adapter_#{app_id}") do
+      [{pid, _}] when is_pid(pid) ->
+        send(
+          pid,
+          {:outbound, %{"kind" => "reply", "args" => %{"chat_id" => chat_id, "text" => text}}}
+        )
+
+        :ok
+
+      _ ->
+        Logger.warning(
+          "FAA.reply_chat_error: no adapter registered for app_id=#{inspect(app_id)} " <>
+            "(chat_id=#{inspect(chat_id)} kind=#{inspect(kind)}) — error reply dropped"
+        )
+
+        :ok
+    end
+  end
+
   @impl GenServer
   def init(%{instance_id: instance_id} = args) do
     :ok =

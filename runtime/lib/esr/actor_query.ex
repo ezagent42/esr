@@ -98,7 +98,7 @@ defmodule Esr.ActorQuery do
   "session id → FCP pid" lookup. Returns the first FCP registered for
   the session, or `:not_found`.
 
-  Used by `Esr.Plugins.Feishu.FeishuAppAdapter` to route inbound chat
+  Used by `Esr.Entity.FeishuAppAdapter` to route inbound chat
   envelopes to a session's FCP without consulting the per-session
   routing map a second time. (Plan PR-3 Task 3.2.)
 
