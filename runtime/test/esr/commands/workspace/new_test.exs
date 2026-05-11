@@ -367,4 +367,27 @@ defmodule Esr.Commands.Workspace.NewTest do
     assert {:ok, %{"id" => id2}} = WorkspaceNew.execute(make.("uuid-ws-b"))
     assert id1 != id2
   end
+
+  # ---------------------------------------------------------------------------
+  # ≥1-folder invariant (spec 2026-05-11 §4.1)
+  # ---------------------------------------------------------------------------
+
+  describe "ESR-bound workspace (no folder= arg) — ≥1 folder invariant" do
+    test "creates workspace with folders containing the ESR-managed path", %{tmp: _tmp} do
+      name = "esr-bound-#{:erlang.unique_integer([:positive])}"
+
+      {:ok, _result} =
+        WorkspaceNew.execute(%{
+          "args" => %{"name" => name, "username" => "linyilun"}
+        })
+
+      {:ok, wid} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name)
+
+      {:ok, struct} = Esr.Resource.Workspace.Registry.get_by_id(wid)
+      expected_path = Esr.Paths.workspace_dir(name)
+      assert [%{path: ^expected_path}] = struct.folders
+      assert File.dir?(expected_path)
+    end
+  end
 end

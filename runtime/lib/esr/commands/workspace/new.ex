@@ -116,16 +116,14 @@ defmodule Esr.Commands.Workspace.New do
   defp create_new(name, owner, folder, transient, chat_id, app_id) do
     chats = build_chats(chat_id, app_id)
 
+    folder_path = folder || Esr.Paths.workspace_dir(name)
+    File.mkdir_p!(folder_path)
+    folders = [%{path: folder_path, name: Path.basename(folder_path)}]
+
     location =
       case folder do
-        nil -> {:esr_bound, Esr.Paths.workspace_dir(name)}
+        nil -> {:esr_bound, folder_path}
         path -> {:repo_bound, path}
-      end
-
-    folders =
-      case folder do
-        nil -> []
-        path -> [%{path: path, name: Path.basename(path)}]
       end
 
     ws = %Struct{

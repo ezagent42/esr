@@ -61,7 +61,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
   end
 
   # Helper: put a repo-bound workspace with given folders
-  defp put_repo_ws(name, id, repo_path, extra_folders \\ []) do
+  defp put_repo_ws(name, id, repo_path, extra_folders) do
     folders = [%{path: Path.expand(repo_path), name: Path.basename(repo_path)} | extra_folders]
 
     ws = %Struct{
@@ -83,24 +83,23 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
 
   # ── Happy-path tests ──────────────────────────────────────────────────────────
 
-  # Test 1: ESR-bound workspace with one folder, remove it → ok, folders empty
-  test "ESR-bound workspace with one folder, remove it → ok, folders empty", %{tmp: tmp} do
+  # Test 1: ESR-bound workspace with one folder, removing it now fails the
+  # ≥1-folder invariant (PR-1, spec 2026-05-11 §4.1) — use /workspace:remove
+  # to delete the whole workspace instead.
+  test "ESR-bound workspace with one folder, removing it → cannot_remove_last_folder",
+       %{tmp: tmp} do
     id = "bbf00001-0001-4000-8000-000000000001"
     repo = init_tmp_git_repo()
     put_esr_ws("ws-rm-1", id, tmp, [%{path: Path.expand(repo), name: "repo"}])
 
-    assert {:ok, result} =
+    assert {:error, %{"type" => "cannot_remove_last_folder"}} =
              WorkspaceRemoveFolder.execute(%{
                "args" => %{"name" => "ws-rm-1", "path" => repo}
              })
 
-    assert result["name"] == "ws-rm-1"
-    assert result["id"] == id
-    assert result["folders"] == []
-    assert result["removed"] == Path.expand(repo)
-
-    assert {:ok, updated} = Registry.get_by_id(id)
-    assert updated.folders == []
+    # State is unchanged after the rejected removal.
+    assert {:ok, unchanged} = Registry.get_by_id(id)
+    assert length(unchanged.folders) == 1
   end
 
   # Test 2: ESR-bound, multiple folders, remove middle → ok, others remain
@@ -131,11 +130,14 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     assert length(updated.folders) == 2
   end
 
-  # Test 3: Repo-bound workspace, remove folders[0] → cannot_remove_root_folder
+  # Test 3: Repo-bound workspace with >1 folder, remove folders[0] →
+  # cannot_remove_root_folder. (Single-folder repo-bound is covered by the
+  # ≥1-folder guard test below — see ":cannot_remove_last_folder guard".)
   test "repo-bound workspace, remove folders[0] → cannot_remove_root_folder", %{tmp: _tmp} do
     id = "bbf00003-0003-4000-8000-000000000003"
     repo = init_tmp_git_repo()
-    put_repo_ws("ws-rm-3", id, repo)
+    extra = init_tmp_git_repo()
+    put_repo_ws("ws-rm-3", id, repo, [%{path: Path.expand(extra), name: "extra"}])
 
     assert {:error, err} =
              WorkspaceRemoveFolder.execute(%{
@@ -248,5 +250,64 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     assert Map.has_key?(remaining, "path")
     assert Map.has_key?(remaining, "name")
     assert remaining["path"] == Path.expand(repo_b)
+  end
+
+  # ── ≥1-folder invariant guard (spec 2026-05-11 §4.1) ──────────────────────────
+
+  describe ":cannot_remove_last_folder guard" do
+    test "removing the only folder fails (created via New.execute, repo-bound)" do
+      # Use Esr.Commands.Workspace.New end-to-end so the test exercises the
+      # production path; the new workspace has exactly 1 folder.
+      if Process.whereis(Esr.Entity.User.Registry) == nil do
+        start_supervised!(Esr.Entity.User.Registry)
+      end
+
+      Esr.Entity.User.Registry.load_snapshot(%{
+        "alice" => %Esr.Entity.User.Registry.User{
+          username: "alice",
+          feishu_ids: ["ou_alice"]
+        }
+      })
+
+      repo = init_tmp_git_repo()
+      name = "single-#{:erlang.unique_integer([:positive])}"
+
+      {:ok, _} =
+        Esr.Commands.Workspace.New.execute(%{
+          "args" => %{"name" => name, "username" => "alice", "folder" => repo}
+        })
+
+      # validate_not_last_folder runs BEFORE validate_not_root_folder in
+      # execute/1, so repo-bound single-folder also yields
+      # :cannot_remove_last_folder (not :cannot_remove_root_folder).
+      # We assert that below for the repo-bound case; first we set up an
+      # ESR-bound 1-folder workspace to assert the same envelope independently
+      # of the root-folder guard.
+      esr_name = "esr-single-#{:erlang.unique_integer([:positive])}"
+
+      {:ok, _} =
+        Esr.Commands.Workspace.New.execute(%{
+          "args" => %{"name" => esr_name, "username" => "alice"}
+        })
+
+      {:ok, wid} =
+        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, esr_name)
+
+      {:ok, ws} = Registry.get_by_id(wid)
+      [%{path: only_path}] = ws.folders
+
+      assert {:error, %{"type" => "cannot_remove_last_folder"}} =
+               WorkspaceRemoveFolder.execute(%{
+                 "args" => %{"name" => esr_name, "path" => only_path}
+               })
+
+      # repo-bound case: same workspace, removing its only folder
+      assert {:error, %{"type" => "cannot_remove_last_folder"}} =
+               WorkspaceRemoveFolder.execute(%{
+                 "args" => %{"name" => name, "path" => repo}
+               })
+
+      Esr.Entity.User.Registry.load_snapshot(%{})
+    end
   end
 end

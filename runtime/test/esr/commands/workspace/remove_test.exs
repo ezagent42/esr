@@ -39,7 +39,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
       id: id,
       name: name,
       owner: "tester",
-      folders: [],
+      folders: [%{path: dir, name: Path.basename(dir)}],
       agent: "cc",
       settings: %{},
       env: %{},
