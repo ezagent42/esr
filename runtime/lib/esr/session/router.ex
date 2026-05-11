@@ -300,19 +300,33 @@ defmodule Esr.Session.Router do
   # `register_session/3` on its success path; we just need to look it
   # up and send the message.
   defp redeliver_triggering_envelope(chat_id, app_id, _thread_id, envelope) do
-    case Esr.Session.ChatRouting.Registry.lookup_by_chat(chat_id, app_id) do
-      {:ok, _sid, %{feishu_chat_proxy: proxy_pid}} when is_pid(proxy_pid) ->
-        send(proxy_pid, {:feishu_inbound, envelope})
-        :ok
+    # PR-3 Task 3.3: switched off the legacy `lookup_by_chat/2` 3-tuple
+    # API. We now resolve sid via `current_session/2` and the FCP pid via
+    # `ActorQuery.fcp_for_session/1` (Task 3.2). Same observable behaviour
+    # — drop on missing FCP, send on hit — but the routing path no longer
+    # depends on `register_session/3` writing refs into the ETS row.
+    case Esr.Session.ChatRouting.Registry.current_session(chat_id, app_id) do
+      {:ok, sid} ->
+        case Esr.ActorQuery.fcp_for_session(sid) do
+          {:ok, proxy_pid} ->
+            send(proxy_pid, {:feishu_inbound, envelope})
+            :ok
 
-      _ ->
-        # Degraded: the pipeline didn't spawn a FeishuChatProxy. Log and
-        # continue; the inbound is lost but the session is live so
-        # subsequent messages will route via FAA's normal lookup path.
+          :not_found ->
+            Logger.warning(
+              "session_router: auto-create succeeded but no feishu_chat_proxy " <>
+                "for sid=#{inspect(sid)} chat_id=#{inspect(chat_id)} " <>
+                "app_id=#{inspect(app_id)} — triggering envelope dropped"
+            )
+
+            :ok
+        end
+
+      :not_found ->
         Logger.warning(
-          "session_router: auto-create succeeded but no feishu_chat_proxy " <>
-            "in refs for chat_id=#{inspect(chat_id)} app_id=#{inspect(app_id)} " <>
-            "— triggering envelope dropped"
+          "session_router: auto-create succeeded but no chat-routing entry " <>
+            "for chat_id=#{inspect(chat_id)} app_id=#{inspect(app_id)} — " <>
+            "triggering envelope dropped"
         )
 
         :ok
