@@ -40,6 +40,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
     error :unknown_workspace,        "workspace %{name} not found"
     error :folder_not_in_workspace,  "path %{path} is not in this workspace's folders"
     error :cannot_remove_root_folder, "cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead"
+    error :cannot_remove_last_folder, "workspace %{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace"
   end
 
   @behaviour Esr.Role.Control
@@ -58,8 +59,9 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
 
     with {:ok, ws} <- lookup_struct_by_name(name),
          :ok <- validate_folder_in_workspace(ws, expanded),
+         :ok <- validate_not_last_folder(ws),
          :ok <- validate_not_root_folder(ws, expanded),
-         remaining = Enum.reject(ws.folders, fn f -> Path.expand(f.path) == expanded end),
+         remaining = Enum.reject(ws.folders, &folder_matches?(&1, expanded)),
          updated = %{ws | folders: remaining},
          :ok <- Registry.put(updated) do
       {:ok,
@@ -79,9 +81,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   ## Internals ---------------------------------------------------------------
 
   defp validate_folder_in_workspace(%Struct{folders: folders}, expanded) do
-    in_ws = Enum.any?(folders, fn f -> Path.expand(f.path) == expanded end)
-
-    if in_ws do
+    if Enum.any?(folders, &folder_matches?(&1, expanded)) do
       :ok
     else
       Render.error(__MODULE__.command_meta(), :folder_not_in_workspace, %{path: expanded})
@@ -89,7 +89,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   end
 
   defp validate_not_root_folder(%Struct{location: {:repo_bound, _}, folders: [first | _]}, expanded) do
-    if Path.expand(first.path) == expanded do
+    if folder_matches?(first, expanded) do
       Render.error(__MODULE__.command_meta(), :cannot_remove_root_folder, %{path: expanded})
     else
       :ok
@@ -97,6 +97,18 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   end
 
   defp validate_not_root_folder(_ws, _expanded), do: :ok
+
+  defp folder_matches?(folder, expanded), do: Path.expand(folder.path) == expanded
+
+  # ≥1-folder invariant (spec 2026-05-11 §4.1). Removing the only folder
+  # would strand the workspace at 0 folders, which violates the invariant
+  # JsonWriter would then reject. Refuse early — operator should call
+  # /workspace:remove to delete the whole workspace instead.
+  defp validate_not_last_folder(%Struct{folders: folders, name: name}) when length(folders) == 1 do
+    Render.error(__MODULE__.command_meta(), :cannot_remove_last_folder, %{name: name})
+  end
+
+  defp validate_not_last_folder(_ws), do: :ok
 
   defp lookup_struct_by_name(name) do
     case NameIndex.id_for_name(:esr_workspace_name_index, name) do

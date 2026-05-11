@@ -32,7 +32,13 @@ defmodule Esr.Resource.Workspace.JsonWriterTest do
   end
 
   test "atomically writes via *.tmp + rename", %{tmp: tmp} do
-    ws = %Struct{id: "7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71", name: "x", owner: "u"}
+    ws = %Struct{
+      id: "7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71",
+      name: "x",
+      owner: "u",
+      folders: [%{path: "/tmp/x", name: "x"}]
+    }
+
     path = Path.join(tmp, "workspace.json")
 
     File.write!(path, "PRE-EXISTING-INVALID-JSON")
@@ -44,11 +50,40 @@ defmodule Esr.Resource.Workspace.JsonWriterTest do
   end
 
   test "creates parent dir if missing", %{tmp: tmp} do
-    ws = %Struct{id: "7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71", name: "y", owner: "u"}
+    ws = %Struct{
+      id: "7b9f3c1a-2d8e-4f1b-9a35-c4e2f8d63b71",
+      name: "y",
+      owner: "u",
+      folders: [%{path: "/tmp/y", name: "y"}]
+    }
+
     path = Path.join([tmp, "deep", "nested", "workspace.json"])
 
     assert :ok = JsonWriter.write(path, ws)
     assert File.exists?(path)
+  end
+
+  describe "write/2 enforces ≥1 folder invariant" do
+    test "returns {:error, :empty_folders} when struct has 0 folders" do
+      ws = %Esr.Resource.Workspace.Struct{
+        id: "wid-empty",
+        name: "empty",
+        owner: "alice",
+        folders: [],
+        location: {:esr_bound, "/foo"},
+        transient: false,
+        agent: "cc",
+        settings: %{},
+        env: %{},
+        chats: []
+      }
+
+      path =
+        Path.join(System.tmp_dir!(), "test-empty-#{:erlang.unique_integer([:positive])}.json")
+
+      assert {:error, :empty_folders} = Esr.Resource.Workspace.JsonWriter.write(path, ws)
+      refute File.exists?(path)
+    end
   end
 
   test "round-trips through FileLoader", %{tmp: tmp} do

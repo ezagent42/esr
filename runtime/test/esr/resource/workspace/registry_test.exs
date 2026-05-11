@@ -32,11 +32,14 @@ defmodule Esr.Resource.Workspace.Registry.NewApiTest do
     dir = Path.join([tmp, "default", "workspaces", name])
     File.mkdir_p!(dir)
 
+    # PR-1 ≥1-folder invariant (spec 2026-05-11 §4.1) — seed the ESR-managed
+    # dir as folders[0] so Registry round-trips (refresh → rename → write).
     base = %{
       "schema_version" => 1,
       "id" => UUID.uuid4(),
       "name" => name,
-      "owner" => "linyilun"
+      "owner" => "linyilun",
+      "folders" => [%{"path" => dir, "name" => Path.basename(dir)}]
     }
 
     File.write!(Path.join(dir, "workspace.json"), Jason.encode!(Map.merge(base, json_overrides)))

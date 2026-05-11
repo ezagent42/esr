@@ -82,11 +82,13 @@ defmodule Esr.Resource.Workspace.Bootstrap do
         dir = Esr.Paths.workspace_dir(ws_name)
         File.mkdir_p!(dir)
 
+        # PR-1 ≥1-folder invariant (spec 2026-05-11 §4.1): ESR-bound
+        # workspaces include the ESR-managed dir as their sole folder.
         ws = %Esr.Resource.Workspace.Struct{
           id: ws_uuid,
           name: ws_name,
           owner: username,
-          folders: [],
+          folders: [%{path: dir, name: Path.basename(dir)}],
           agent: "cc",
           settings: %{},
           env: %{},

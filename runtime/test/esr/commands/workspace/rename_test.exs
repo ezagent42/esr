@@ -40,7 +40,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
       id: id,
       name: name,
       owner: "linyilun",
-      folders: [],
+      folders: [%{path: dir, name: Path.basename(dir)}],
       agent: "cc",
       settings: %{},
       env: %{},
