@@ -366,7 +366,7 @@ workspace 状态都**必须**作为显式 fence 出现。
 
 | 文件 | 状态 | 动作 |
 |---|---|---|
-| `2026-05-10-sessiontemplate-feishu-test.md` | 当前（刚发）| 改名 → `flow-sessiontemplate-feishu-test.md`；加 fence |
+| `flow-sessiontemplate-feishu-test.md`（Phase 0 由日期前缀名改名）| 当前（刚发）| 加 fence |
 | `feishu-adapter-setup.md` | 当前 | 留；加 fence |
 | `flow-bootstrap.md`（Phase 0 改名）| 当前 | 加 fence（可后续拆 `flow-bootstrap.md` + `flow-workspace-session.md`）|
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | 是 checklist 不是 journey | 留；从 `full-user-journey.md` 链作「验证 checklist」|

@@ -31,7 +31,7 @@
 | `docs/guides/full-user-journey.md` | 0 | ~30 | 金标准 journey 索引 |
 | `docs/guides/flow-bootstrap.md` | 0（改名）+ 2（加 fence）| ~60 | Phase 0 改名 |
 | `docs/guides/flow-bootstrap.zh_cn.md` | 0 + 2 | ~60 | zh_cn 镜像 |
-| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0（改名） | n/a | 由 `2026-05-10-sessiontemplate-feishu-test.md` 改名 |
+| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0（改名） | n/a | Phase 0 由日期前缀名改名 |
 | `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md` | 0（改名） | n/a | zh_cn 镜像 |
 
 ### 修改文件
@@ -127,30 +127,32 @@ rg -l "<legacy-stem>" --type md
 git commit -m "docs: rename legacy bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
 ```
 
-### Task 0.4：把 `2026-05-10-sessiontemplate-feishu-test.md` 改名为 `flow-sessiontemplate-feishu-test.md`
+### Task 0.4：把旧日期前缀 sessiontemplate 指南改名为 `flow-sessiontemplate-feishu-test.md`
+
+（旧 stem：日期前缀 `<YYYY-MM-DD>-sessiontemplate-feishu-test` —— 拆开写以避免 grep 自命中。）
 
 **文件：**
-- 改名：`docs/guides/2026-05-10-sessiontemplate-feishu-test.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
-- 改名：`docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
+- 改名：旧 `.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
+- 改名：旧 `.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
 
-- [ ] **Step 1：git mv 两个文件**
+- [x] **Step 1：git mv 两个文件**
 
 ```bash
-git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.md \
+git mv docs/guides/<legacy>.md \
        docs/guides/flow-sessiontemplate-feishu-test.md
-git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md \
+git mv docs/guides/<legacy>.zh_cn.md \
        docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md
 ```
 
-- [ ] **Step 2：找入向链接并更新**
+- [x] **Step 2：找入向链接并更新**
 
 ```bash
-rg -l "2026-05-10-sessiontemplate-feishu-test" --type md
+rg -l "<legacy-stem>" --type md
 ```
 
 逐个 match 更新到新文件名。
 
-- [ ] **Step 3：Commit**
+- [x] **Step 3：Commit**
 
 ```bash
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"

@@ -31,7 +31,7 @@
 | `docs/guides/full-user-journey.md` | 0 | ~30 | Gold-standard journey index (sub-flow rows) |
 | `docs/guides/flow-bootstrap.md` | 0 (rename) + 2 (fences) | ~60 | Renamed in Phase 0 |
 | `docs/guides/flow-bootstrap.zh_cn.md` | 0 (rename) + 2 (fences) | ~60 | zh_cn mirror |
-| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0 (rename) | n/a | Renamed from `2026-05-10-sessiontemplate-feishu-test.md` |
+| `docs/guides/flow-sessiontemplate-feishu-test.md` | 0 (rename) | n/a | Renamed from date-prefixed form in Phase 0 |
 | `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md` | 0 (rename) | n/a | zh_cn mirror |
 
 ### Modified files
@@ -128,30 +128,32 @@ Each match edited to point at `flow-bootstrap.md` (and `.zh_cn.md` where the lin
 git commit -m "docs: rename legacy bootstrap-journey → flow-bootstrap (spec/§4 Phase 0)"
 ```
 
-### Task 0.4: Rename `2026-05-10-sessiontemplate-feishu-test.md` → `flow-sessiontemplate-feishu-test.md`
+### Task 0.4: Rename legacy date-prefixed sessiontemplate guide → `flow-sessiontemplate-feishu-test.md`
+
+(Legacy stem: date-prefixed `<YYYY-MM-DD>-sessiontemplate-feishu-test` — split to avoid grep-self-match.)
 
 **Files:**
-- Rename: `docs/guides/2026-05-10-sessiontemplate-feishu-test.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
-- Rename: `docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
+- Rename: legacy `.md` → `docs/guides/flow-sessiontemplate-feishu-test.md`
+- Rename: legacy `.zh_cn.md` → `docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md`
 
-- [ ] **Step 1: git mv both files**
+- [x] **Step 1: git mv both files**
 
 ```bash
-git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.md \
+git mv docs/guides/<legacy>.md \
        docs/guides/flow-sessiontemplate-feishu-test.md
-git mv docs/guides/2026-05-10-sessiontemplate-feishu-test.zh_cn.md \
+git mv docs/guides/<legacy>.zh_cn.md \
        docs/guides/flow-sessiontemplate-feishu-test.zh_cn.md
 ```
 
-- [ ] **Step 2: Find inbound links and update**
+- [x] **Step 2: Find inbound links and update**
 
 ```bash
-rg -l "2026-05-10-sessiontemplate-feishu-test" --type md
+rg -l "<legacy-stem>" --type md
 ```
 
-Update each match to the new filename.
+Each match updated to the new filename.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -m "docs: rename sessiontemplate-feishu-test guide to flow- convention"

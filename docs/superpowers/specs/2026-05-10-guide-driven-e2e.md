@@ -393,7 +393,7 @@ Current `docs/guides/` contents (audited 2026-05-10):
 
 | File | Status | Action |
 |---|---|---|
-| `2026-05-10-sessiontemplate-feishu-test.md` | Current (just shipped) | Rename → `flow-sessiontemplate-feishu-test.md`; add fences |
+| `flow-sessiontemplate-feishu-test.md` (renamed from date-prefixed form in Phase 0) | Current (just shipped) | Add fences |
 | `feishu-adapter-setup.md` | Current | Keep; add fences |
 | `flow-bootstrap.md` (renamed in Phase 0) | Current | Add fences (may further split into `flow-bootstrap.md` + `flow-workspace-session.md` later) |
 | `operator-bootstrap-checklist.md` (+ `.zh_cn.md`) | Checklist not journey | Keep as-is; link from `full-user-journey.md` as "verification checklist" |
