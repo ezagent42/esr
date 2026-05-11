@@ -242,6 +242,19 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         :error      -> flags
       end
 
+    # PR-4 (2026-05-11 default-agent + agent-driven-flow plan §5.3):
+    # inject the admin operations skill prompt so claude knows when to
+    # call the `submit_slash` MCP tool. The file ships in the in-tree
+    # feishu-cc bundle at `bundles/feishu-cc/agent_skills/admin.md`; if
+    # the file is missing (e.g. a stripped-down release without that
+    # bundle), skip the flag rather than crashing — the tool still
+    # works, the agent just won't have the natural-language hint.
+    flags =
+      case admin_skill_prompt_file() do
+        {:ok, path} -> flags ++ ["--append-system-prompt-file", path]
+        :error      -> flags
+      end
+
     [binary | flags]
   end
 
@@ -272,4 +285,16 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
   end
 
   defp settings_file_for_role(_), do: :error
+
+  # PR-4: resolve the in-tree path to the admin operations skill prompt.
+  # Lives at `runtime/lib/esr/bundles/feishu-cc/agent_skills/admin.md`,
+  # discovered via `Esr.Paths.bundles_dir()` (the same root that
+  # `Esr.Bundle.Loader` walks).
+  defp admin_skill_prompt_file do
+    path =
+      Esr.Paths.bundles_dir()
+      |> Path.join("feishu-cc/agent_skills/admin.md")
+
+    if File.exists?(path), do: {:ok, path}, else: :error
+  end
 end
