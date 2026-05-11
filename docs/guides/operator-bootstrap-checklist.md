@@ -2,7 +2,7 @@
 
 **Audience:** an operator (or reviewer) verifying that a fresh-install
 `esrd` actually delivers the 12-step bootstrap journey. Sister doc:
-[`operator-bootstrap-journey.md`](operator-bootstrap-journey.md) is the
+[`flow-bootstrap.md`](flow-bootstrap.md) is the
 **how-to**; this file is the **checklist**.
 
 Each row scores three dimensions:

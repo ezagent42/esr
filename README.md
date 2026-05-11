@@ -16,8 +16,9 @@ ESR ("Elixir Social Runtime") routes inbound messages from IM platforms through
 a per-user **session** — a supervisor subtree of typed peers — into an LLM
 process, and routes the LLM's tool calls back out as outbound IM directives.
 
-The runtime is one fixed substrate; **agents** are declarative pipelines authored
-in `agents.yaml` (see [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)).
+The runtime is one fixed substrate; **agent kinds** are declared in plugin
+`manifest.yaml` files under `runtime/lib/esr/plugins/<plugin>/` (the previous
+user-authored `agents.yaml` was dissolved in PR-328).
 
 ```
 Feishu user ─► feishu sidecar ─► FeishuAppAdapter ─► FeishuChatProxy ─► CCProxy
@@ -90,7 +91,6 @@ See [`docs/dev-guide.md`](docs/dev-guide.md) for handler / adapter / pattern aut
 
 **Authoring**
 - [`docs/dev-guide.md`](docs/dev-guide.md) — handler / adapter / pattern authoring
-- [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) — agent topology guide (中文)
 - [`docs/cookbook.md`](docs/cookbook.md) — recipe-style how-tos
 
 **Operations**
@@ -166,8 +166,8 @@ ESR（Elixir Social Runtime）把 IM 平台的入站消息经过一棵**会话**
 （typed peer 组成的 supervisor 子树）路由到 LLM 进程，再把 LLM 的工具调用
 反向路由为出站 IM 指令。
 
-运行时是固定底座；**agent** 是声明在 `agents.yaml` 里的拓扑（参见
-[`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md)）。
+运行时是固定底座；**agent kinds** 由 `runtime/lib/esr/plugins/<plugin>/manifest.yaml`
+中的 `agent_kinds:` 声明（原先用户手写的 `agents.yaml` 已在 PR-328 解散）。
 
 ```
 Feishu 用户 ─► feishu sidecar ─► FeishuAppAdapter ─► FeishuChatProxy ─► CCProxy
@@ -240,7 +240,6 @@ bash scripts/esrd.sh start --instance=default
 
 **写代码**
 - [`docs/dev-guide.md`](docs/dev-guide.md) —— handler / adapter / pattern 写法
-- [`docs/guides/writing-an-agent-topology.md`](docs/guides/writing-an-agent-topology.md) —— agent 拓扑写法（中文）
 - [`docs/cookbook.md`](docs/cookbook.md) —— 食谱式 how-to
 
 **运维**
