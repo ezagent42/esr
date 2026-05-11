@@ -9,12 +9,12 @@ SlashHandler's "unknown command" branch fires BEFORE any capability
 gate, before workspace-binding checks, before user-binding checks —
 the simplest cap-free single-line reply the runtime can produce.
 
-### Step 1: unknown slash — bot replies with the canonical not-found line
+### Step 1: unknown resource — bot replies with the canonical not-found line
 
-```chat-input app_id=feishu_app_e2e-mock chat_id=oc_mock_single user=linyilun
+```chat-input app_id=e2e-mock chat_id=oc_mock_single user=linyilun
 /smoke_probe
 ```
 
 ```chat-output
-unknown command: /smoke_probe
+未知 resource: smoke_probe。用 / 看 top-level resources，/help 看完整清单。
 ```
