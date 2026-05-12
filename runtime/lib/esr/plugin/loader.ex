@@ -186,7 +186,8 @@ defmodule Esr.Plugin.Loader do
          :ok <- register_startup(name, manifest),
          :ok <- register_media_types(name, manifest),
          :ok <- register_channels(name, manifest),
-         :ok <- register_agent_kinds(name, manifest) do
+         :ok <- register_agent_kinds(name, manifest),
+         :ok <- register_uri_subtrees(manifest) do
       # HR-1: take a config snapshot at plugin load time so the first
       # /plugin:reload always has a baseline to diff against.
       # ConfigSnapshot.create_table/0 is guaranteed to have been called
@@ -442,6 +443,28 @@ defmodule Esr.Plugin.Loader do
       :ok = Esr.Plugin.AgentKindRegistry.register(plugin_name, entry.name, spec)
     end)
 
+    :ok
+  end
+
+  # PR-0 Task 0.5 (URI identity subsystem): merge the manifest's
+  # `uri_subtrees:` entries into the global `prefix → handler` map
+  # stored at `:persistent_term {Esr.Uri, :plugin_handlers}`.
+  # `Esr.Uri.resolve/1` reads this map when a URI's `<kind>/<plugin_seg>`
+  # path is not in the URI store and needs plugin dispatch.
+  #
+  # Idempotent (re-registering the same prefix overwrites the entry).
+  # An absent block is a no-op (default `[]`).
+  # Spec: docs/superpowers/specs/2026-05-12-uri-identity-design.md §6.
+  defp register_uri_subtrees(%Manifest{uri_subtrees: subtrees})
+       when is_list(subtrees) do
+    current = :persistent_term.get({Esr.Uri, :plugin_handlers}, %{})
+
+    new =
+      Enum.reduce(subtrees, current, fn %{prefix: prefix, handler: handler}, acc ->
+        Map.put(acc, prefix, handler)
+      end)
+
+    :persistent_term.put({Esr.Uri, :plugin_handlers}, new)
     :ok
   end
 end

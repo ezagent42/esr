@@ -89,6 +89,17 @@ defmodule Esr.Application do
       # `Esr.Entity.Agent.Registry` (the agents.yaml cache —
       # `Esr.Plugin.AgentKindRegistry` below replaces it).
 
+      # 4d.1b URI identity Store (PR-0 Task 0.1, spec
+      # docs/superpowers/specs/2026-05-12-uri-identity-design.md §8).
+      # Owns ETS `:esr_uri_store`, the single-table tagged-value
+      # `{:entity, kind, data} | {:alias, canonical_uri}` registry that
+      # future PR-1+ work migrates callers onto. Reads bypass GenServer;
+      # writes serialize for the alias→canonical 1-hop invariant.
+      # No dependencies on any prior child; placed before
+      # InstanceRegistry so Phase-1 agent-instance migration (later PR)
+      # has the table available without a re-ordering churn commit.
+      Esr.Uri.Store,
+
       # 4d.2 Agent InstanceRegistry (Phase 3): per-session ETS backing the
       # multi-agent model. Single global instance — session UUID+name key
       # provides the per-session isolation. Started before Session.Registry
