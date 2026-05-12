@@ -2,16 +2,16 @@ defmodule Esr.Commands.Session.BindChatTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Session.BindChat
-  alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
 
   @submitter "user-uuid-0000-0000-000000000010"
 
   setup do
-    # Session registry
-    case Process.whereis(SessionRegistry) do
-      nil -> start_supervised!(SessionRegistry)
+    # URI store: backing canonical :session entity rows for
+    # `Esr.Uri.Compat.session_by_uuid/1` lookups (PR-3 URI identity).
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
     end
 
@@ -37,11 +37,11 @@ defmodule Esr.Commands.Session.BindChatTest do
     chat_id = "chat-bind-chat-#{:rand.uniform(9_999_999)}"
     app_id = "app-bind-chat-#{:rand.uniform(9_999_999)}"
 
-    # Seed a real session in the registry
+    # Seed a real session in the URI store (PR-3).
     data_dir = Esr.Paths.runtime_home()
 
     {:ok, session_id} =
-      SessionRegistry.create_session(data_dir, %{
+      Esr.Uri.Compat.create_session(data_dir, %{
         name: "bind-chat-test-session-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""

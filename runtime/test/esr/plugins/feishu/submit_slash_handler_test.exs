@@ -26,16 +26,15 @@ defmodule Esr.Plugins.Feishu.SubmitSlashHandlerTest do
   alias Esr.Plugins.Feishu.FeishuChatProxy
   alias Esr.Resource.Session.Struct, as: SessionStruct
 
-  @uuid_table :esr_resource_sessions_by_uuid
-
   setup do
     # Same prereqs as feishu_chat_proxy_test.exs.
     assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
     assert is_pid(Process.whereis(Esr.Session.Admin.Process))
 
-    # Session.Registry runs at boot; ETS table must exist.
-    assert :ets.info(@uuid_table) != :undefined,
-           "Esr.Resource.Session.Registry ETS table must be up at test boot"
+    # PR-3 (URI identity): Session entity rows now live in
+    # :esr_uri_store via the Esr.Uri.Store GenServer.
+    assert is_pid(Process.whereis(Esr.Uri.Store)),
+           "Esr.Uri.Store must be running for session entity lookups"
 
     :ok
   end
@@ -195,7 +194,7 @@ defmodule Esr.Plugins.Feishu.SubmitSlashHandlerTest do
       transient: true
     }
 
-    :ets.insert(@uuid_table, {sid, session})
+    Esr.Uri.put_entity("esr://localhost/sessions/" <> sid, :session, session)
   end
 
   defp seed_session_no_chats(sid, principal_id) do
@@ -211,10 +210,10 @@ defmodule Esr.Plugins.Feishu.SubmitSlashHandlerTest do
       transient: true
     }
 
-    :ets.insert(@uuid_table, {sid, session})
+    Esr.Uri.put_entity("esr://localhost/sessions/" <> sid, :session, session)
   end
 
   defp cleanup_session(sid) do
-    :ets.delete(@uuid_table, sid)
+    Esr.Uri.delete("esr://localhost/sessions/" <> sid)
   end
 end

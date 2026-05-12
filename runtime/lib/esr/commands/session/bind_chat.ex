@@ -11,7 +11,7 @@ defmodule Esr.Commands.Session.BindChat do
 
     1. Validate `session` arg is a valid UUID v4; reject names with a
        descriptive error directing the user to `/session:list`.
-    2. `Session.Registry.get_by_id/1` — if `:not_found`, return
+    2. `Esr.Uri.Compat.session_by_uuid/1` — if `:not_found`, return
        `unknown_session`.
     3. Cap check: `Capability.Grants.has?(submitter,
        "session:<uuid>/attach")` or `"session:<uuid>/admin"` — if
@@ -41,7 +41,6 @@ defmodule Esr.Commands.Session.BindChat do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
   alias Esr.Resource.Capability.Grants
 
@@ -88,7 +87,7 @@ defmodule Esr.Commands.Session.BindChat do
   end
 
   defp fetch_session(uuid) do
-    case SessionRegistry.get_by_id(uuid) do
+    case Esr.Uri.Compat.session_by_uuid(uuid) do
       {:ok, _s} = ok ->
         ok
 

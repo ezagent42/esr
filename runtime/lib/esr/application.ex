@@ -106,10 +106,12 @@ defmodule Esr.Application do
       # since add_agent_to_session delegates to it at write time.
       {Esr.Entity.Agent.InstanceRegistry, []},
 
-      # 4d.3 Session.Registry (Phase 1): ETS-backed session UUID+name index
-      # rebuilt from disk at boot. Wraps session.json I/O via FileLoader +
-      # JsonWriter. Phase 3 adds add_agent_to_session write-through.
-      {Esr.Resource.Session.Registry, []},
+      # 4d.3 Session.Loader (PR-3 URI identity, 2026-05-12): boot-time
+      # Task that walks <data_dir>/sessions/*/session.json and populates
+      # the URI store with canonical :session entity rows. Replaces the
+      # deleted Esr.Resource.Session.Registry's init/1 side-effect.
+      # Must run AFTER Esr.Uri.Store is up (line earlier in the tree).
+      {Esr.Resource.Session.Loader, []},
 
       # 4e.1 Session registry for the Peer/Session refactor (spec §3.5).
       # Must come BEFORE Scope.Admin (which calls Esr.Session.supervisor_name/1
@@ -125,22 +127,24 @@ defmodule Esr.Application do
       # 4e.3 Scope.Supervisor (DynamicSupervisor, max_children=128).
       Esr.Session.Supervisor,
 
-      # 4e.3b Session.ChatRouting.Registry + Session.NameIndex.Registry
-      # (cleanup-PR commit 3 split from the legacy `ChatScope.Registry`):
-      # ChatRouting owns `(chat_id, app_id) → session_id` chat-current
-      # routing; NameIndex owns the D8 URI-uniqueness indexes
-      # `(env, username, workspace, name)` and `(…, worktree_branch)`.
-      # Both must start BEFORE Scope.Router since Router writes through
-      # them on every spawn / unregister path.
+      # 4e.3b Session.ChatRouting.Registry: owns `(chat_id, app_id) →
+      # session_id` chat-current routing. Must start BEFORE Scope.Router
+      # since Router writes through it on every spawn / unregister path.
+      #
+      # PR-3 (URI identity, 2026-05-12): Session.NameIndex.Registry was
+      # deleted; its `(env, username, workspace, name)` and `(…,
+      # worktree_branch)` D8 uniqueness indexes now live as URI store
+      # aliases under `esr://localhost/sessions/by-name/.../...`. Accessed
+      # via `Esr.Uri.Compat.{claim_session_uri, session_uuid_in_scope,
+      # list_session_uris_in_scope, release_session_uri}`.
       {Esr.Session.ChatRouting.Registry, []},
-      {Esr.Session.NameIndex.Registry, []},
 
       # 4e.4 Scope.Router (PR-8 T4): control-plane GenServer that
       # `Session.New` and Feishu adapters dispatch through to spawn
       # the SessionTemplate-driven pipeline. Depends on ChatRouting.Registry,
-      # NameIndex.Registry, Scope.Supervisor, and Session.Registry (all
-      # earlier children). Without this, production `/new-session` calls
-      # fail with :noproc even though tests pass via start_supervised.
+      # Scope.Supervisor, and Esr.Uri.Store (all earlier children). Without
+      # this, production `/new-session` calls fail with :noproc even
+      # though tests pass via start_supervised.
       Esr.Session.Router,
 
       # 4e.4b LifecycleObservers (PR-3 Task 3.7): top-level
