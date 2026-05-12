@@ -49,6 +49,11 @@ esr-dev exec feishu_bind --name=linyilun --feishu_user_id=ou_xxx
 #    → click the URL → browser TUI opens on your CC session
 ```
 
+**What this does (atomic):** writes `~/.esrd-dev/default/adapters/<name>/config.yaml`,
+spawns the Python sidecar, AND spawns the Elixir-side `FeishuAppAdapter`
+peer that handles inbound Feishu events. All three happen in one call —
+no `esr exec adapter_refresh` follow-up needed.
+
 That's the whole journey. The rest of this doc explains each step,
 the underlying identity model, and what to do when something breaks.
 
