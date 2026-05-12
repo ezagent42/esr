@@ -222,9 +222,9 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       )
 
     prior_ws =
-      case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "esr-dev") do
+      case Esr.Uri.Compat.uuid_for_workspace_name("esr-dev") do
         {:ok, id} ->
-          case Esr.Resource.Workspace.Registry.get_by_id(id) do
+          case Esr.Uri.Compat.workspace_by_uuid(id) do
             {:ok, ws} -> ws
             :not_found -> nil
           end
@@ -233,7 +233,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
           nil
       end
 
-    Esr.Resource.Workspace.Registry.put(workspace)
+    Esr.Uri.Compat.workspace_put(workspace)
 
     # PR-21κ Phase 6: dispatch/3 also enforces requires_user_binding
     # for /new-session. Bind both test principals to esr users via
@@ -253,7 +253,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
 
     on_exit(fn ->
       File.rm_rf!(smoke_repo)
-      if prior_ws, do: Esr.Resource.Workspace.Registry.put(prior_ws)
+      if prior_ws, do: Esr.Uri.Compat.workspace_put(prior_ws)
 
       # Restore prior users snapshot (best-effort; cross-test pollution
       # bounded because this is async: false).

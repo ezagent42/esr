@@ -61,7 +61,7 @@ defmodule Esr.Commands.Workspace.New do
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
+  alias Esr.Resource.Workspace.{Struct, RepoRegistry}
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -139,7 +139,7 @@ defmodule Esr.Commands.Workspace.New do
       location: location
     }
 
-    case Registry.put(ws) do
+    case Esr.Uri.Compat.workspace_put(ws) do
       :ok ->
         # Repo-bound: also register the path in registered_repos.yaml
         if folder do
@@ -194,7 +194,7 @@ defmodule Esr.Commands.Workspace.New do
         updated_chats = existing.chats ++ [new_chat]
         updated = %{existing | chats: updated_chats}
 
-        case Registry.put(updated) do
+        case Esr.Uri.Compat.workspace_put(updated) do
           :ok ->
             {:ok,
              %{
@@ -211,8 +211,8 @@ defmodule Esr.Commands.Workspace.New do
   end
 
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
-      {:ok, id} -> Registry.get_by_id(id)
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
+      {:ok, id} -> Esr.Uri.Compat.workspace_by_uuid(id)
       :not_found -> :not_found
     end
   end

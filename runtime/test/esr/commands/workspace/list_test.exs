@@ -4,7 +4,7 @@ defmodule Esr.Commands.Workspace.ListTest do
   alias Esr.Commands.Workspace.List, as: WorkspaceList
 
   setup do
-    assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     # Isolate workspace storage to a tmp dir
     unique = System.unique_integer([:positive])
@@ -53,7 +53,7 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:esr_bound, Path.join([tmp, "default", "workspaces", "esr-dev"])}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 
@@ -80,7 +80,7 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:repo_bound, repo_path}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 
@@ -130,9 +130,9 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:esr_bound, gamma_dir}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws_beta)
-    Esr.Resource.Workspace.Registry.put(ws_alpha)
-    Esr.Resource.Workspace.Registry.put(ws_gamma)
+    Esr.Uri.Compat.workspace_put(ws_beta)
+    Esr.Uri.Compat.workspace_put(ws_alpha)
+    Esr.Uri.Compat.workspace_put(ws_gamma)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 
@@ -168,7 +168,7 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:esr_bound, dir}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 
@@ -190,7 +190,7 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:esr_bound, dir}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 
@@ -223,8 +223,8 @@ defmodule Esr.Commands.Workspace.ListTest do
       location: {:repo_bound, repo_path}
     }
 
-    Esr.Resource.Workspace.Registry.put(ws_esr)
-    Esr.Resource.Workspace.Registry.put(ws_repo)
+    Esr.Uri.Compat.workspace_put(ws_esr)
+    Esr.Uri.Compat.workspace_put(ws_repo)
 
     assert {:ok, %{"text" => text}} = WorkspaceList.execute(%{})
 

@@ -67,9 +67,7 @@ defmodule Esr.Commands.Doctor do
 
     workspace_count =
       try do
-        :esr_workspace_name_index
-        |> Esr.Resource.Workspace.NameIndex.all()
-        |> length()
+        Esr.Uri.Compat.list_workspaces() |> length()
       rescue
         _ -> 0
       end
@@ -117,7 +115,7 @@ defmodule Esr.Commands.Doctor do
   end
 
   defp check_chat(chat_id, app_id) do
-    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id) do
       {:ok, ws} -> {"  ✅ Chat 绑定: workspace `#{ws}`", true, ws}
       :not_found -> {"  ❌ Chat 绑定: 未绑定任何 workspace", false, nil}
     end

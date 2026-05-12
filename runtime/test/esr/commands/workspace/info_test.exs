@@ -4,7 +4,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
   alias Esr.Commands.Workspace.Info, as: WorkspaceInfo
 
   setup do
-    assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("ws_info_test") end)
 
@@ -13,7 +13,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
   test "returns the workspace record when present" do
     :ok =
-      Esr.Resource.Workspace.Registry.put(
+      Esr.Uri.Compat.workspace_put(
         Esr.Test.WorkspaceFixture.build(
           name: "ws_info_test",
           owner: "linyilun",
@@ -70,7 +70,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
       # metadata go into plain settings keys (the loader/serializer
       # treats them as just-another-setting).
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Struct{
+        Esr.Uri.Compat.workspace_put(%Esr.Resource.Workspace.Struct{
           id: ws_id,
           name: ws_name,
           owner: "alice",
@@ -110,7 +110,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
     test "role + metadata surfaced from settings keys", %{ws_name: ws_name} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: ws_name,
             owner: "bob",
@@ -128,7 +128,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
     test "args.name alias accepted in place of args.workspace", %{ws_name: ws_name} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: ws_name,
             owner: "carol",
@@ -164,7 +164,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
       ws_id = UUID.uuid4()
 
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Struct{
+        Esr.Uri.Compat.workspace_put(%Esr.Resource.Workspace.Struct{
           id: ws_id,
           name: ws_name,
           owner: "dave",
@@ -203,7 +203,7 @@ defmodule Esr.Commands.Workspace.InfoTest do
 
       # Workspace with a folder but no topology.yaml in that folder
       :ok =
-        Esr.Resource.Workspace.Registry.put(%Esr.Resource.Workspace.Struct{
+        Esr.Uri.Compat.workspace_put(%Esr.Resource.Workspace.Struct{
           id: UUID.uuid4(),
           name: ws_name_no_yaml,
           owner: "eve",

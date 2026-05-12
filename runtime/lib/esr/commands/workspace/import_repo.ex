@@ -35,7 +35,7 @@ defmodule Esr.Commands.Workspace.ImportRepo do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Registry, RepoRegistry, FileLoader}
+  alias Esr.Resource.Workspace.{RepoRegistry, FileLoader}
   alias Esr.Paths
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -60,7 +60,7 @@ defmodule Esr.Commands.Workspace.ImportRepo do
       true ->
         with {:ok, ws} <- FileLoader.load(json_path, location: {:repo_bound, path}),
              :ok <- RepoRegistry.register(Paths.registered_repos_yaml(), path),
-             :ok <- Registry.refresh() do
+             :ok <- FileLoader.populate_uri_store() do
           {:ok,
            %{
              "path" => path,

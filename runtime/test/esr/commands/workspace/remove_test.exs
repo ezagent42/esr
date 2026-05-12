@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.RemoveTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.Remove, as: WorkspaceRemove
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
+  alias Esr.Resource.Workspace.{Struct, RepoRegistry}
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_remove_test_#{unique}")
@@ -48,7 +48,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
       location: {:esr_bound, dir}
     }
 
-    :ok = Registry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -81,7 +81,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
       location: {:repo_bound, repo_path}
     }
 
-    :ok = Registry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -132,7 +132,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
       location: {:repo_bound, repo}
     }
 
-    :ok = Registry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
 
     # Remove
     assert {:ok, result} =
@@ -186,8 +186,8 @@ defmodule Esr.Commands.Workspace.RemoveTest do
 
     assert {:ok, _} = WorkspaceRemove.execute(%{"args" => %{"name" => "esr-ws-gone"}})
 
-    assert Registry.get_by_id(id) == :not_found
-    assert NameIndex.id_for_name(:esr_workspace_name_index, "esr-ws-gone") == :not_found
+    assert Esr.Uri.Compat.workspace_by_uuid(id) == :not_found
+    assert Esr.Uri.Compat.uuid_for_workspace_name("esr-ws-gone") == :not_found
   end
 
   # ── Test 4: Repo-bound remove unregisters from registered_repos.yaml ─────────
@@ -232,7 +232,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
     assert err["message"] =~ "active session"
 
     # Workspace still in registry
-    assert {:ok, _} = Registry.get_by_id(id)
+    assert {:ok, _} = Esr.Uri.Compat.workspace_by_uuid(id)
   end
 
   # ── Test 6: Active sessions + force=true → succeeds ─────────────────────────
@@ -255,7 +255,7 @@ defmodule Esr.Commands.Workspace.RemoveTest do
     # Removed successfully
     refute File.exists?(dir)
     assert result["name"] == "esr-ws-forced"
-    assert Registry.get_by_id(id) == :not_found
+    assert Esr.Uri.Compat.workspace_by_uuid(id) == :not_found
   end
 
   # ── Test 7: Repo-bound remove when topology.yaml is missing ──────────────────

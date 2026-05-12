@@ -61,7 +61,7 @@ defmodule Esr.Commands.Workspace.Edit do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
+  alias Esr.Resource.Workspace.Struct
 
   @locked_fields ~w(id name chats folders location)
 
@@ -79,7 +79,7 @@ defmodule Esr.Commands.Workspace.Edit do
          {:ok, ws} <- lookup_struct_by_name(name),
          :ok <- check_transient_repo_bound(top, parsed_value, ws),
          {:ok, updated} <- apply_mutation(ws, top, sub, parsed_value),
-         :ok <- Registry.put(updated) do
+         :ok <- Esr.Uri.Compat.workspace_put(updated) do
       field_label = field_label(top, sub)
 
       {:ok,
@@ -220,9 +220,9 @@ defmodule Esr.Commands.Workspace.Edit do
 
   # Workspace lookup
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> workspace_not_found(name)
         end

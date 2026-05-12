@@ -33,7 +33,6 @@ defmodule Esr.Commands.Workspace.Use do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.NameIndex
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -71,5 +70,5 @@ defmodule Esr.Commands.Workspace.Use do
     Render.error(__MODULE__.command_meta(), :invalid_args)
   end
 
-  defp lookup_id(name), do: NameIndex.id_for_name(:esr_workspace_name_index, name)
+  defp lookup_id(name), do: Esr.Uri.Compat.uuid_for_workspace_name(name)
 end

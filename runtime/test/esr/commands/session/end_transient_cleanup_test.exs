@@ -12,13 +12,16 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry)),
-           "Esr.Resource.Workspace.Registry must be running (started by Application)"
+    assert is_pid(Process.whereis(Esr.Uri.Store)),
+           "Esr.Uri.Store must be running (started by Application)"
+
+    assert is_pid(Process.whereis(Esr.Resource.Workspace.SessionBindings)),
+           "Esr.Resource.Workspace.SessionBindings must be running (started by Application)"
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_transient_cleanup_#{unique}")
@@ -59,7 +62,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
       location: {:esr_bound, dir}
     }
 
-    :ok = Registry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -82,7 +85,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
       location: {:esr_bound, dir}
     }
 
-    :ok = Registry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -93,16 +96,16 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
     ws_id = UUID.uuid4()
     put_transient_ws("ws-single-#{System.unique_integer([:positive])}", ws_id, tmp)
 
-    :ok = Registry.bind_session(ws_id, "sid-solo")
+    :ok = Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, "sid-solo")
 
     # Workspace exists before cleanup
-    assert {:ok, _} = Registry.get_by_id(ws_id)
+    assert {:ok, _} = Esr.Uri.Compat.workspace_by_uuid(ws_id)
 
-    :ok = Registry.unbind_session("sid-solo")
-    assert {:ok, :deleted} = Registry.delete_if_no_sessions(ws_id)
+    :ok = Esr.Resource.Workspace.SessionBindings.unbind_session("sid-solo")
+    assert {:ok, :deleted} = Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(ws_id)
 
     # Workspace is gone
-    assert :not_found = Registry.get_by_id(ws_id)
+    assert :not_found = Esr.Uri.Compat.workspace_by_uuid(ws_id)
   end
 
   # ── Test 2: non-transient workspace → :not_transient ────────────────────────
@@ -112,10 +115,10 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
     ws_id = UUID.uuid4()
     put_permanent_ws("ws-perm-#{System.unique_integer([:positive])}", ws_id, tmp)
 
-    assert {:ok, :not_transient} = Registry.delete_if_no_sessions(ws_id)
+    assert {:ok, :not_transient} = Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(ws_id)
 
     # Workspace still exists
-    assert {:ok, _} = Registry.get_by_id(ws_id)
+    assert {:ok, _} = Esr.Uri.Compat.workspace_by_uuid(ws_id)
   end
 
   # ── Test 3: transient + 2 sessions, unbind only 1 → :has_sessions ───────────
@@ -125,25 +128,25 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
     ws_id = UUID.uuid4()
     put_transient_ws("ws-multi-#{System.unique_integer([:positive])}", ws_id, tmp)
 
-    :ok = Registry.bind_session(ws_id, "sid-a")
-    :ok = Registry.bind_session(ws_id, "sid-b")
+    :ok = Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, "sid-a")
+    :ok = Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, "sid-b")
 
     # Unbind only one session
-    :ok = Registry.unbind_session("sid-a")
+    :ok = Esr.Resource.Workspace.SessionBindings.unbind_session("sid-a")
 
-    assert {:ok, :has_sessions} = Registry.delete_if_no_sessions(ws_id)
+    assert {:ok, :has_sessions} = Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(ws_id)
 
     # Workspace still exists
-    assert {:ok, _} = Registry.get_by_id(ws_id)
+    assert {:ok, _} = Esr.Uri.Compat.workspace_by_uuid(ws_id)
     # sid-b still bound
-    assert "sid-b" in Registry.sessions_for(ws_id)
+    assert "sid-b" in Esr.Resource.Workspace.SessionBindings.sessions_for(ws_id)
   end
 
   # ── Test 4: unknown UUID → :not_found ───────────────────────────────────────
 
   test "delete_if_no_sessions on unknown UUID returns :not_found" do
     unknown_id = UUID.uuid4()
-    assert {:error, :not_found} = Registry.delete_if_no_sessions(unknown_id)
+    assert {:error, :not_found} = Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(unknown_id)
   end
 
   # ── Test 5: Risk #2 race — serialised via GenServer (20 iterations) ─────────
@@ -169,19 +172,19 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
         location: {:esr_bound, ws_dir}
       }
 
-      :ok = Registry.put(ws)
-      :ok = Registry.bind_session(ws_id, "sid-1-#{i}")
+      :ok = Esr.Uri.Compat.workspace_put(ws)
+      :ok = Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, "sid-1-#{i}")
 
       # Two concurrent operations:
       task_a =
         Task.async(fn ->
-          :ok = Registry.unbind_session("sid-1-#{i}")
-          Registry.delete_if_no_sessions(ws_id)
+          :ok = Esr.Resource.Workspace.SessionBindings.unbind_session("sid-1-#{i}")
+          Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(ws_id)
         end)
 
       task_b =
         Task.async(fn ->
-          Registry.bind_session(ws_id, "sid-2-#{i}")
+          Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, "sid-2-#{i}")
         end)
 
       result_a = Task.await(task_a, 5000)
@@ -189,7 +192,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
 
       cleanup_happened = match?({:ok, :deleted}, result_a)
       bind_happened = match?(:ok, result_b)
-      workspace_exists = match?({:ok, _}, Registry.get_by_id(ws_id))
+      workspace_exists = match?({:ok, _}, Esr.Uri.Compat.workspace_by_uuid(ws_id))
 
       cond do
         cleanup_happened ->
@@ -209,7 +212,7 @@ defmodule Esr.Commands.Session.EndTransientCleanupTest do
           assert workspace_exists,
                  "iter #{i}: bind won but workspace does not exist"
 
-          assert "sid-2-#{i}" in Registry.sessions_for(ws_id),
+          assert "sid-2-#{i}" in Esr.Resource.Workspace.SessionBindings.sessions_for(ws_id),
                  "iter #{i}: bind won but sid-2 not in sessions_for"
 
         true ->

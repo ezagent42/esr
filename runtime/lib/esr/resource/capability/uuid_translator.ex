@@ -34,8 +34,6 @@ defmodule Esr.Resource.Capability.UuidTranslator do
       "workspace:esr-dev/read"  # falls back to <UNKNOWN-...> if no match
   """
 
-  alias Esr.Resource.Workspace.NameIndex
-
   # Only workspace caps accept name input at the name_to_uuid level.
   # Session caps: UUID-only (spec D2, D5). Name input is rejected upstream
   # by validate_session_cap_input/1.
@@ -49,8 +47,8 @@ defmodule Esr.Resource.Capability.UuidTranslator do
           # Scope is already a UUID — pass through unchanged.
           {:ok, cap}
         else
-          # Treat scope as a workspace name; translate via NameIndex.
-          case NameIndex.id_for_name(scope) do
+          # Treat scope as a workspace name; translate via URI store.
+          case Esr.Uri.Compat.uuid_for_workspace_name(scope) do
             {:ok, id} -> {:ok, "#{resource}:#{id}/#{perm}"}
             :not_found -> {:error, :unknown_workspace}
           end
@@ -65,7 +63,7 @@ defmodule Esr.Resource.Capability.UuidTranslator do
   def uuid_to_name(cap) do
     case parse(cap) do
       {:scoped, resource, uuid, perm} when resource in @workspace_scoped_resources ->
-        case NameIndex.name_for_id(uuid) do
+        case Esr.Uri.Compat.name_for_workspace_uuid(uuid) do
           {:ok, name} ->
             "#{resource}:#{name}/#{perm}"
 
@@ -155,7 +153,7 @@ defmodule Esr.Resource.Capability.UuidTranslator do
 
       {:scoped, "workspace", uuid, perm} ->
         if uuid_shape?(uuid) do
-          case NameIndex.name_for_id(uuid) do
+          case Esr.Uri.Compat.name_for_workspace_uuid(uuid) do
             {:ok, name} -> "workspace:#{name}/#{perm}"
             :not_found -> "workspace:<UNKNOWN-#{String.slice(uuid, 0, 8)}>/#{perm}"
           end

@@ -1,7 +1,7 @@
 defmodule Esr.ApplicationFirstBootTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Resource.Workspace.{Bootstrap, Registry}
+  alias Esr.Resource.Workspace.Bootstrap
 
   # NameIndex + Registry are started by Esr.Application; do not double-start.
   # The legacy-yaml path is driven by $ESRD_HOME, which we override per-test.
@@ -71,12 +71,10 @@ defmodule Esr.ApplicationFirstBootTest do
       assert :ok = Bootstrap.run()
 
       {:ok, id} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(
-          :esr_workspace_name_index,
-          "bootstrapper-default"
+        Esr.Uri.Compat.uuid_for_workspace_name("bootstrapper-default"
         )
 
-      assert {:ok, ws} = Registry.get_by_id(id)
+      assert {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(id)
       assert ws.name == "bootstrapper-default"
 
       assert {:ok, ^id} =
@@ -86,16 +84,12 @@ defmodule Esr.ApplicationFirstBootTest do
     test "is idempotent — running twice does not create a second workspace" do
       assert :ok = Bootstrap.run()
       {:ok, id1} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(
-          :esr_workspace_name_index,
-          "bootstrapper-default"
+        Esr.Uri.Compat.uuid_for_workspace_name("bootstrapper-default"
         )
 
       assert :ok = Bootstrap.run()
       {:ok, id2} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(
-          :esr_workspace_name_index,
-          "bootstrapper-default"
+        Esr.Uri.Compat.uuid_for_workspace_name("bootstrapper-default"
         )
 
       assert id1 == id2
@@ -110,12 +104,10 @@ defmodule Esr.ApplicationFirstBootTest do
       refute File.exists?(Path.join(runtime_home, "workspaces.yaml"))
 
       {:ok, id} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(
-          :esr_workspace_name_index,
-          "bootstrapper-default"
+        Esr.Uri.Compat.uuid_for_workspace_name("bootstrapper-default"
         )
 
-      assert {:ok, _} = Registry.get_by_id(id)
+      assert {:ok, _} = Esr.Uri.Compat.workspace_by_uuid(id)
     end
   end
 end

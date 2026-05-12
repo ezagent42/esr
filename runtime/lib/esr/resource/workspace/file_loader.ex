@@ -1,18 +1,40 @@
 defmodule Esr.Resource.Workspace.FileLoader do
   @moduledoc """
-  Read a workspace.json file from disk and return an
-  `%Esr.Resource.Workspace.Struct{}` or a structured error.
+  Read workspace.json file(s) from disk and either:
 
-  Used by both the ESR-bound discovery path (walks
-  `$ESRD_HOME/<inst>/workspaces/`) and the repo-bound path (walks
-  `registered_repos.yaml` paths). Caller passes the `location:` kwarg
-  so the loader knows which validity rules apply (e.g. ESR-bound
-  names must equal basename; repo-bound transient is forbidden).
+    1. Return a single `%Esr.Resource.Workspace.Struct{}` (`load/2` —
+       still used by `/workspace import-repo` and other callers that
+       parse a single file ad-hoc).
+
+    2. Walk both `Esr.Paths.workspaces_dir/0` (ESR-bound) and
+       `Esr.Paths.registered_repos_yaml/0` (repo-bound), then populate
+       the URI store with canonical workspace rows + by-name +
+       by-chat aliases (`populate_uri_store/0`).
+
+  PR-2 (URI identity migration, 2026-05-12) added `populate_uri_store/0`
+  to subsume the boot-time scan that used to live in
+  `Esr.Resource.Workspace.Registry.init/1`. The Registry module is
+  deleted; this loader (invoked by `Esr.Resource.Workspace.Loader`
+  Task at app boot) is the single boot-time entry point.
+
+  URI store layout (per workspace):
+    - canonical: esr://localhost/workspaces/<uuid>           → %Workspace.Struct{}
+    - by-name:   esr://localhost/workspaces/by-name/<name>   → alias
+    - by-chat:   esr://localhost/workspaces/by-chat/<cid>/<aid> → alias  (one per bound chat)
   """
 
-  alias Esr.Resource.Workspace.Struct
+  @behaviour Esr.Role.Control
+  require Logger
+
+  alias Esr.Paths
+  alias Esr.Resource.Workspace.{RepoRegistry, Struct}
 
   @uuid_re ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+  # ──────────────────────────────────────────────────────────────────
+  # Single-file load (unchanged from pre-PR-2 — keeps callers like
+  # /workspace import-repo working without churn)
+  # ──────────────────────────────────────────────────────────────────
 
   @spec load(String.t(), location: Struct.location()) ::
           {:ok, Struct.t()} | {:error, term()}
@@ -28,6 +50,128 @@ defmodule Esr.Resource.Workspace.FileLoader do
       {:ok, build_struct(doc, location)}
     end
   end
+
+  # ──────────────────────────────────────────────────────────────────
+  # Boot-time URI store populator (PR-2)
+  # ──────────────────────────────────────────────────────────────────
+
+  @doc """
+  Scan disk for all known workspaces (ESR-bound + repo-bound), wipe
+  the URI store's `:workspace` rows + their aliases, and rewrite them
+  fresh.
+
+  Returns `:ok` on success, `{:error, {:duplicate_uuid, id, locations}}`
+  if two different workspace.json files share the same uuid. On parse
+  failure of an individual file, the file is skipped with a warning
+  log (matches old Registry.scan_* behaviour).
+  """
+  @spec populate_uri_store() :: :ok | {:error, term()}
+  def populate_uri_store do
+    if uri_store_alive?() do
+      esr_bound = scan_esr_bound()
+      repo_bound = scan_repo_bound()
+      all = esr_bound ++ repo_bound
+
+      case duplicate_uuid(all) do
+        nil ->
+          _ = Esr.Uri.Store.delete_all_by_kind(:workspace)
+
+          Enum.each(all, fn ws ->
+            canonical = "esr://localhost/workspaces/" <> ws.id
+            :ok = Esr.Uri.put_entity(canonical, :workspace, ws)
+            _ = Esr.Uri.alias(canonical, "esr://localhost/workspaces/by-name/" <> ws.name)
+
+            Enum.each(ws.chats || [], fn chat ->
+              cid = Map.get(chat, :chat_id) || Map.get(chat, "chat_id")
+              aid = Map.get(chat, :app_id) || Map.get(chat, "app_id")
+
+              if is_binary(cid) and is_binary(aid) do
+                _ = Esr.Uri.alias(canonical, "esr://localhost/workspaces/by-chat/#{cid}/#{aid}")
+              end
+            end)
+          end)
+
+          Logger.info("workspaces: loaded #{length(all)} workspaces into URI store")
+          :ok
+
+        {dup_id, dup_locations} ->
+          Logger.error(
+            "workspaces: duplicate uuid #{dup_id} at #{inspect(dup_locations)}; refusing to load"
+          )
+
+          {:error, {:duplicate_uuid, dup_id, dup_locations}}
+      end
+    else
+      Logger.warning("workspaces: Esr.Uri.Store not running; skipping URI store population")
+      :ok
+    end
+  end
+
+  defp uri_store_alive? do
+    case Process.whereis(Esr.Uri.Store) do
+      pid when is_pid(pid) -> true
+      _ -> false
+    end
+  end
+
+  defp scan_esr_bound do
+    base = Paths.workspaces_dir()
+
+    if File.exists?(base) do
+      base
+      |> File.ls!()
+      |> Enum.flat_map(fn name ->
+        dir = Path.join(base, name)
+        path = Path.join(dir, "workspace.json")
+
+        case load(path, location: {:esr_bound, dir}) do
+          {:ok, ws} ->
+            [ws]
+
+          {:error, reason} ->
+            Logger.warning("workspaces: skipping #{path} (#{inspect(reason)})")
+            []
+        end
+      end)
+    else
+      []
+    end
+  end
+
+  defp scan_repo_bound do
+    case RepoRegistry.load(Paths.registered_repos_yaml()) do
+      {:ok, repos} ->
+        Enum.flat_map(repos, fn entry ->
+          path = Paths.workspace_json_repo(entry.path)
+
+          case load(path, location: {:repo_bound, entry.path}) do
+            {:ok, ws} ->
+              [ws]
+
+            {:error, reason} ->
+              Logger.warning("workspaces: skipping repo #{entry.path} (#{inspect(reason)})")
+              []
+          end
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp duplicate_uuid(workspaces) do
+    workspaces
+    |> Enum.group_by(& &1.id)
+    |> Enum.find(fn {_id, list} -> length(list) > 1 end)
+    |> case do
+      nil -> nil
+      {id, list} -> {id, Enum.map(list, & &1.location)}
+    end
+  end
+
+  # ──────────────────────────────────────────────────────────────────
+  # Private helpers
+  # ──────────────────────────────────────────────────────────────────
 
   defp read_file(path) do
     case File.read(path) do

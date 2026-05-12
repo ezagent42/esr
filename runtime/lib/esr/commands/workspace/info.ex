@@ -33,8 +33,7 @@ defmodule Esr.Commands.Workspace.Info do
         "topology"  => %{...} | nil            # <folders[0].path>/.esr/topology.yaml
       }}
 
-  Read-only — touches `Esr.Resource.Workspace.Registry` and
-  `Esr.Resource.Workspace.NameIndex` only.
+  Read-only — touches `Esr.Uri.Compat` lookups only.
   """
 
   use Esr.Commands.Meta
@@ -58,8 +57,6 @@ defmodule Esr.Commands.Workspace.Info do
   require Logger
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.NameIndex
-  alias Esr.Resource.Workspace.Registry
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -89,11 +86,11 @@ defmodule Esr.Commands.Workspace.Info do
     end
   end
 
-  # NameIndex → UUID → %Struct{}. M-4 deleted the legacy fallback path.
+  # URI store: by-name alias → canonical → %Struct{}.
   defp lookup_struct(ws_name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(ws_name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> :not_found
         end
@@ -102,8 +99,8 @@ defmodule Esr.Commands.Workspace.Info do
         :not_found
     end
   rescue
-    # NameIndex ETS tables not created yet (very early test setup with no
-    # Registry running). Treat as workspace-not-found.
+    # URI store ETS table not created yet (very early test setup).
+    # Treat as workspace-not-found.
     ArgumentError -> :not_found
   end
 

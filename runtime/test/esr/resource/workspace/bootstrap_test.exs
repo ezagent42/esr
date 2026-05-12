@@ -2,8 +2,8 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
   use ExUnit.Case, async: false
 
   alias Esr.Resource.Workspace.Bootstrap
-  alias Esr.Resource.Workspace.NameIndex
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
+  # (PR-2: NameIndex deleted; use Esr.Uri.Compat.*)
+  # (PR-2: Registry deleted; use Esr.Uri.Compat.*)
 
   setup do
     # Start clean: clear ETS state polluted by prior test/app boots so
@@ -18,7 +18,7 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
     assert :ok = Bootstrap.run()
 
     # Critical: no workspace named literally "default" was created
-    assert :not_found = NameIndex.id_for_name(:esr_workspace_name_index, "default")
+    assert :not_found = Esr.Uri.Compat.uuid_for_workspace_name("default")
   end
 
   test "creates <bootstrap_user>-default + sets it as user-default when env is set" do
@@ -34,14 +34,14 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
 
     assert :ok = Bootstrap.run()
 
-    {:ok, ws_id} = NameIndex.id_for_name(:esr_workspace_name_index, "linyilun-default")
-    assert {:ok, ws} = WsRegistry.get_by_id(ws_id)
+    {:ok, ws_id} = Esr.Uri.Compat.uuid_for_workspace_name("linyilun-default")
+    assert {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(ws_id)
     assert ws.owner == "linyilun"
 
     assert {:ok, ^ws_id} = Esr.Uri.Compat.default_workspace_for_user_name("linyilun")
 
     # Negative assertion: literal "default" still does not exist
-    assert :not_found = NameIndex.id_for_name(:esr_workspace_name_index, "default")
+    assert :not_found = Esr.Uri.Compat.uuid_for_workspace_name("default")
   end
 
   test "idempotent: re-running with the same user does not create a second workspace" do
@@ -56,10 +56,10 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
     on_exit(fn -> System.delete_env("ESR_BOOTSTRAP_PRINCIPAL_ID") end)
 
     :ok = Bootstrap.run()
-    {:ok, first_id} = NameIndex.id_for_name(:esr_workspace_name_index, "alice-default")
+    {:ok, first_id} = Esr.Uri.Compat.uuid_for_workspace_name("alice-default")
 
     :ok = Bootstrap.run()
-    {:ok, second_id} = NameIndex.id_for_name(:esr_workspace_name_index, "alice-default")
+    {:ok, second_id} = Esr.Uri.Compat.uuid_for_workspace_name("alice-default")
 
     assert first_id == second_id
   end

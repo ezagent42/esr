@@ -42,7 +42,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
+  alias Esr.Resource.Workspace.Struct
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -74,7 +74,7 @@ defmodule Esr.Commands.Workspace.AddFolder do
          :ok <- validate_not_duplicate(ws, expanded),
          new_folder = %{path: expanded, name: folder_name || Path.basename(expanded)},
          updated = %{ws | folders: ws.folders ++ [new_folder]},
-         :ok <- Registry.put(updated) do
+         :ok <- Esr.Uri.Compat.workspace_put(updated) do
       {:ok,
        %{
          "name" => ws.name,
@@ -134,9 +134,9 @@ defmodule Esr.Commands.Workspace.AddFolder do
   end
 
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> workspace_not_found(name)
         end

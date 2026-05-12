@@ -1,7 +1,7 @@
 defmodule Esr.Commands.Cap.UuidTranslationTest do
   use ExUnit.Case, async: false
   alias Esr.Commands.Cap.{Grant, Revoke}
-  alias Esr.Resource.Workspace.{Registry, Struct}
+  alias Esr.Resource.Workspace.Struct
   alias Esr.Commands.Cap.Show
   alias Esr.Commands.Cap.WhoCan
 
@@ -16,17 +16,18 @@ defmodule Esr.Commands.Cap.UuidTranslationTest do
     System.put_env("ESRD_HOME", tmp)
     System.put_env("ESR_INSTANCE", "default")
 
-    # Registry is supervised — don't stop it. Just register a workspace entry
+    # URI store is supervised — don't stop it. Just register a workspace entry
     # and clean up on exit.
-    Registry.put(%Struct{
+    Esr.Uri.Compat.workspace_put(%Struct{
       id: @uuid,
       name: "esr-dev",
       owner: "linyilun",
+      folders: [%{path: ws_dir, name: "esr-dev"}],
       location: {:esr_bound, ws_dir}
     })
 
     on_exit(fn ->
-      Registry.delete_by_id(@uuid)
+      Esr.Uri.Compat.workspace_delete_by_id(@uuid)
       System.delete_env("ESRD_HOME")
       System.delete_env("ESR_INSTANCE")
       File.rm_rf!(tmp)

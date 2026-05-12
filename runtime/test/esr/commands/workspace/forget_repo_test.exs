@@ -8,7 +8,7 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_forget_test_#{unique}")
@@ -59,7 +59,7 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
     # Register the repo first
     yaml_path = Paths.registered_repos_yaml()
     assert :ok = RepoRegistry.register(yaml_path, repo_path)
-    assert :ok = Registry.refresh()
+    assert :ok = Esr.Resource.Workspace.FileLoader.populate_uri_store()
 
     # Verify it's in the yaml
     {:ok, entries_before} = RepoRegistry.load(yaml_path)
@@ -93,7 +93,7 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
     assert result["action"] == "already_forgotten"
   end
 
-  # Test 4: After forget, Registry.refresh() does NOT include the workspace anymore
+  # Test 4: After forget, Esr.Resource.Workspace.FileLoader.populate_uri_store() does NOT include the workspace anymore
   test "after forget, workspace not found by Registry.get_by_id", %{tmp: tmp} do
     id = UUID.uuid4()
     repo_path = create_workspace_repo(tmp, "myrepo4", id, "myws4")
@@ -101,16 +101,16 @@ defmodule Esr.Commands.Workspace.ForgetRepoTest do
     # Register and refresh
     yaml_path = Paths.registered_repos_yaml()
     assert :ok = RepoRegistry.register(yaml_path, repo_path)
-    assert :ok = Registry.refresh()
+    assert :ok = Esr.Resource.Workspace.FileLoader.populate_uri_store()
 
     # Verify it's in the registry
-    assert {:ok, _ws} = Registry.get_by_id(id)
+    assert {:ok, _ws} = Esr.Uri.Compat.workspace_by_uuid(id)
 
     # Forget it
     assert {:ok, _result} = ForgetRepo.execute(%{"args" => %{"path" => repo_path}})
 
     # Verify it's no longer in the registry
-    assert :not_found = Registry.get_by_id(id)
+    assert :not_found = Esr.Uri.Compat.workspace_by_uuid(id)
   end
 
   # ── Error cases ───────────────────────────────────────────────────────────────
