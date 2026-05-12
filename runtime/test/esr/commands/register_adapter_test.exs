@@ -322,4 +322,60 @@ defmodule Esr.Commands.RegisterAdapterTest do
       assert get_in(doc, ["config", "app_id"]) == "cli_pX"
     end
   end
+
+  describe "post-spawn startup hook (2026-05-12 FAA atomicity fix)" do
+    test ":startup_fn is invoked after spawn_fn succeeds (default path wires FAA)", %{tmp: _tmp} do
+      test_pid = self()
+
+      cmd = %{
+        "args" => %{
+          "type" => "feishu",
+          "name" => "atomic_test",
+          "app_id" => "cli_atomic",
+          "app_secret" => "s"
+        }
+      }
+
+      assert {:ok, _} =
+               RegisterAdapter.execute(cmd,
+                 spawn_fn: fn _ ->
+                   send(test_pid, :spawn_fn_called)
+                   :ok
+                 end,
+                 startup_fn: fn ->
+                   send(test_pid, :startup_fn_called)
+                   :ok
+                 end
+               )
+
+      # Ordering: sidecar first, then FAA. If reversed, the FAA would
+      # spawn against a missing config file and fail.
+      assert_receive :spawn_fn_called, 1_000
+      assert_receive :startup_fn_called, 1_000
+    end
+
+    test ":startup_fn is NOT invoked when spawn_fn fails (no half-state)", %{tmp: _tmp} do
+      test_pid = self()
+
+      cmd = %{
+        "args" => %{
+          "type" => "feishu",
+          "name" => "spawn_fail",
+          "app_id" => "cli_x",
+          "app_secret" => "s"
+        }
+      }
+
+      assert {:error, %{"type" => "register_adapter_failed"}} =
+               RegisterAdapter.execute(cmd,
+                 spawn_fn: fn _ -> {:error, :sidecar_boom} end,
+                 startup_fn: fn ->
+                   send(test_pid, :startup_fn_called)
+                   :ok
+                 end
+               )
+
+      refute_receive :startup_fn_called, 200
+    end
+  end
 end
