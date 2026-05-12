@@ -411,6 +411,22 @@ For each plugin shipped with a URI handler (feishu in PR-1):
 
 After full migration: the old registry modules are gone. A test asserting `Code.ensure_compiled(Esr.Entity.User.Registry) == {:error, :nofile}` locks the deletion.
 
+Shipped in `runtime/test/esr/uri/old_api_unreachable_test.exs` (PR-5, 2026-05-12). Locks the 6 deleted modules:
+
+- `Esr.Entity.User.Registry`
+- `Esr.Entity.User.NameIndex`
+- `Esr.Resource.Workspace.Registry`
+- `Esr.Resource.Workspace.NameIndex`
+- `Esr.Resource.Session.Registry`
+- `Esr.Session.NameIndex.Registry`
+
+**Deferred** (tracked in `docs/futures/todo.md`):
+
+- `Esr.Entity.Agent.InstanceRegistry` — see `instance-registry-deletion-finalize`. PR-4 deferred the deletion because its atomic `add_instance_and_spawn/2` requires re-architecting supervision-pid tracking before the GenServer can be removed.
+- `Esr.Uri.Compat` — see `uri-compat-deletion-finalize`. PR-5 kept the shim because ~80 callers span the codebase and several wrappers (`workspace_put`, `workspace_rename`, `claim_session_uri`, `create_session`, `mirror_session_to_uri_store`) carry multi-step logic that belongs in a new `Esr.Uri.Ops` module, not inline at each callsite.
+
+The two deferred assertions are documented in `old_api_unreachable_test.exs` moduledoc and will be added to the test in the finalize PR.
+
 ### 11.5 E2E
 
 - `tests/e2e/scenarios/31_uri_identity_chat_flow.sh` — full wipe → boot → register_adapter → /feishu:bind → /session:new flow succeeds without manual cap_grant.
