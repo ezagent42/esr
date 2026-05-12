@@ -77,6 +77,10 @@ defmodule Esr.Commands.RegisterAdapter do
 
     case Esr.Adapters.add(name, "feishu", config) do
       :ok ->
+        # Half-state on run_startup_hooks failure is by design: the
+        # adapter config + sidecar persist, operator sees
+        # register_adapter_failed, and `adapter_refresh` reconciles
+        # idempotently. Same shape as pre-fix spawn-fail half-state.
         with :ok <- spawn_adapter(name, app_id, secret, opts),
              :ok <- run_startup_hooks(opts) do
           {:ok, %{"adapter_id" => name, "running" => true}}

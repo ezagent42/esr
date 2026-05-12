@@ -348,8 +348,11 @@ defmodule Esr.Commands.RegisterAdapterTest do
                  end
                )
 
-      # Ordering: sidecar first, then FAA. If reversed, the FAA would
-      # spawn against a missing config file and fail.
+      # Both messages fire. Production ordering (sidecar first, then
+      # FAA) is enforced by the `with` chain in execute/2 — these
+      # asserts confirm both ran but do NOT by themselves prove which
+      # ran first. The "spawn_fn fails → startup_fn NOT called" test
+      # below is the ordering proof: it only holds if spawn runs first.
       assert_receive :spawn_fn_called, 1_000
       assert_receive :startup_fn_called, 1_000
     end
