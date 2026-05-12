@@ -157,12 +157,19 @@ defmodule Esr.Application do
       # from each manifest's `declares.media_types` block.
       Esr.Resource.Media.PluginRegistry,
 
-      # 4d.5 Workspace name↔id index — must come before Workspace.Registry
-      # since Registry calls into NameIndex on every put/rename/delete.
-      {Esr.Resource.Workspace.NameIndex, []},
+      # 4d.5 Workspace runtime session-bindings — ephemeral
+      # `(workspace_uuid → sessions)` map. Replaces the old
+      # Workspace.Registry's state.session_index field (PR-2 URI
+      # identity migration, 2026-05-12). Must run before any caller
+      # that binds/unbinds sessions; identity rows live in :esr_uri_store.
+      {Esr.Resource.Workspace.SessionBindings, []},
 
-      # 4e. Workspaces registry (PRD v0.2 §3.6).
-      Esr.Resource.Workspace.Registry,
+      # 4e. Workspaces boot-time loader — walks workspaces_dir/ +
+      # registered_repos.yaml and populates :esr_uri_store with
+      # canonical entity rows + by-name + by-chat aliases. Task
+      # (restart=:transient) replacing the deleted Workspace.Registry's
+      # init/1 boot-scan side-effect (PR-2 URI identity migration).
+      Esr.Resource.Workspace.Loader,
 
       # 4e.1 First-boot tasks: delete legacy workspaces.yaml + ensure
       # default workspace. restart=:transient — Task exits :ok on success.

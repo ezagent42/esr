@@ -11,17 +11,16 @@ defmodule Esr.Commands.Workspace.Resolve do
       4. :no_match                                   ← caller maps to error
 
   The resolver only returns workspace **names** (not UUIDs); callers
-  re-resolve via `Workspace.NameIndex` if they need the UUID — keeps
-  the chain pure and testable without a UUID mocking layer.
+  re-resolve via `Esr.Uri.Compat.uuid_for_workspace_name/1` if they
+  need the UUID — keeps the chain pure and testable without a UUID
+  mocking layer.
 
   Submitter is sourced from `args["submitter_username"]` when present,
-  otherwise resolved via `User.Registry.lookup_by_feishu_id/1` from
-  `args["submitted_by"]`.
+  otherwise resolved via `Esr.Uri.Compat.username_for_feishu_id/1`
+  from `args["submitted_by"]`.
   """
 
   alias Esr.Session.ChatRouting.Registry, as: ChatScope
-  alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
 
   @type tag ::
           {:explicit, String.t()}
@@ -50,7 +49,7 @@ defmodule Esr.Commands.Workspace.Resolve do
     with chat_id when is_binary(chat_id) and chat_id != "" <- args["chat_id"],
          app_id when is_binary(app_id) and app_id != "" <- args["app_id"],
          {:ok, ws_uuid} <- ChatScope.get_default_workspace(chat_id, app_id),
-         {:ok, ws} <- WsRegistry.get_by_id(ws_uuid) do
+         {:ok, ws} <- Esr.Uri.Compat.workspace_by_uuid(ws_uuid) do
       ws.name
     else
       _ -> nil
@@ -60,7 +59,7 @@ defmodule Esr.Commands.Workspace.Resolve do
   defp lookup_user_default(args) do
     with {:ok, username} <- resolve_submitter(args),
          {:ok, ws_uuid} <- Esr.Uri.Compat.default_workspace_for_user_name(username),
-         {:ok, ws} <- WsRegistry.get_by_id(ws_uuid) do
+         {:ok, ws} <- Esr.Uri.Compat.workspace_by_uuid(ws_uuid) do
       ws.name
     else
       _ -> nil
@@ -91,7 +90,7 @@ defmodule Esr.Commands.Workspace.Resolve do
   @spec workspace_id_for_args(map()) :: {:ok, String.t()} | :no_match | :workspace_gone
   def workspace_id_for_args(args) do
     with {:ok, name} <- workspace_name_for_args(args),
-         {:ok, id} <- WsNameIndex.id_for_name(:esr_workspace_name_index, name) do
+         {:ok, id} <- Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id}
     else
       :no_match -> :no_match

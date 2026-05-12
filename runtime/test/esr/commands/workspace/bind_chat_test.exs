@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.BindChatTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.BindChat, as: WorkspaceBindChat
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_bind_chat_test_#{unique}")
@@ -47,7 +47,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -77,7 +77,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
     assert chat["kind"] == "dm"
 
     # Verify persisted
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.chats) == 1
     [saved] = updated.chats
     assert saved.chat_id == "oc_aaa111"
@@ -109,7 +109,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
     assert "oc_existing" in chat_ids
     assert "oc_new" in chat_ids
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.chats) == 2
   end
 
@@ -134,7 +134,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
     assert length(result["chats"]) == 1
 
     # Verify NOT written again (still just 1 chat)
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.chats) == 1
   end
 
@@ -158,7 +158,7 @@ defmodule Esr.Commands.Workspace.BindChatTest do
     [chat] = result["chats"]
     assert chat["kind"] == "group"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     [saved] = updated.chats
     assert saved.kind == "group"
   end

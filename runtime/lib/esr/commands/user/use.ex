@@ -38,8 +38,6 @@ defmodule Esr.Commands.User.Use do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -135,9 +133,9 @@ defmodule Esr.Commands.User.Use do
   end
 
   defp resolve_workspace_id(ws_name) do
-    case WsNameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(ws_name) do
       {:ok, ws_id} ->
-        case WsRegistry.get_by_id(ws_id) do
+        case Esr.Uri.Compat.workspace_by_uuid(ws_id) do
           {:ok, _} -> {:ok, ws_id}
           :not_found -> workspace_not_found(ws_name)
         end

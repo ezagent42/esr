@@ -138,22 +138,22 @@ defmodule Esr.Commands.Session.End do
     end
   end
 
-  # Safe wrapper: no-op when Workspace.Registry is not running (tests that
-  # don't boot the workspace subsystem).
+  # Safe wrapper: no-op when SessionBindings GenServer is not running
+  # (tests that don't boot the workspace subsystem).
   defp safe_unbind_session(sid) do
-    case Process.whereis(Esr.Resource.Workspace.Registry) do
+    case Process.whereis(Esr.Resource.Workspace.SessionBindings) do
       nil -> :ok
-      _pid -> Esr.Resource.Workspace.Registry.unbind_session(sid)
+      _pid -> Esr.Resource.Workspace.SessionBindings.unbind_session(sid)
     end
   end
 
   # Transient workspace cleanup — called after router teardown + unbind.
-  # Silent no-op when Workspace.Registry or NameIndex isn't running
-  # (e.g. tests that don't boot the workspace subsystem).
+  # Silent no-op when SessionBindings isn't running (tests that don't
+  # boot the workspace subsystem).
   defp maybe_cleanup_transient_workspace(_sid, args) do
     case lookup_workspace_id(args["workspace"]) do
       {:ok, ws_id} ->
-        case Esr.Resource.Workspace.Registry.delete_if_no_sessions(ws_id) do
+        case safe_delete_if_no_sessions(ws_id) do
           {:ok, :deleted} ->
             require Logger
 
@@ -163,10 +163,7 @@ defmodule Esr.Commands.Session.End do
 
             :ok
 
-          {:ok, _} ->
-            :ok
-
-          {:error, _} ->
+          _ ->
             :ok
         end
 
@@ -178,8 +175,15 @@ defmodule Esr.Commands.Session.End do
     end
   end
 
+  defp safe_delete_if_no_sessions(ws_id) do
+    case Process.whereis(Esr.Resource.Workspace.SessionBindings) do
+      nil -> {:error, :unavailable}
+      _pid -> Esr.Resource.Workspace.SessionBindings.delete_if_no_sessions(ws_id)
+    end
+  end
+
   defp lookup_workspace_id(name) when is_binary(name) and name != "" do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} -> {:ok, id}
       :not_found -> :not_found
     end

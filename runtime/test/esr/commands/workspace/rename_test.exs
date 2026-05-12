@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.RenameTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.Rename, as: WorkspaceRename
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_rename_test_#{unique}")
@@ -22,10 +22,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
 
       File.rm_rf!(tmp)
       Esr.Test.WorkspaceFixture.reset!()
-      Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
-      :ets.delete_all_objects(:esr_workspace_name_index_name_to_id)
-      :ets.delete_all_objects(:esr_workspace_name_index_id_to_name)
     end)
 
     {:ok, tmp: tmp}
@@ -49,7 +46,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -68,7 +65,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
       location: {:repo_bound, repo_path}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -88,7 +85,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
     assert result["id"] == id
 
     # Verify persisted: lookup by ID should return new name
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.name == "new-name"
   end
 
@@ -141,7 +138,7 @@ defmodule Esr.Commands.Workspace.RenameTest do
     assert File.exists?(ws_json)
 
     # Verify updated struct has new name
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.name == "repo-new"
   end
 

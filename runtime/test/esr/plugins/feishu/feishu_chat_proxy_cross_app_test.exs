@@ -114,7 +114,7 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxyCrossAppTest do
   # Workspaces.Registry.put/1 with the canonical %Struct{} built via
   # Esr.Test.WorkspaceFixture (M-4: legacy %Workspace{} struct deleted).
   defp put_chat_in_workspace(ws_name, chat_id, app_id) do
-    Esr.Resource.Workspace.Registry.put(
+    Esr.Uri.Compat.workspace_put(
       Esr.Test.WorkspaceFixture.build(
         name: ws_name,
         role: "dev",

@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.AddFolder, as: WorkspaceAddFolder
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_add_folder_test_#{unique}")
@@ -65,7 +65,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -87,7 +87,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -114,7 +114,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     assert Path.expand(repo) in paths
 
     # Verify persisted
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.folders) == 2
     persisted_paths = Enum.map(updated.folders, & &1.path)
     assert Path.expand(repo) in persisted_paths
@@ -134,7 +134,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
     assert length(result["folders"]) == 2
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.folders) == 2
   end
 
@@ -153,7 +153,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     added = Enum.find(result["folders"], fn f -> f["path"] == expanded end)
     assert added["name"] == "my-tools"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     persisted = Enum.find(updated.folders, fn f -> f.path == expanded end)
     assert persisted.name == "my-tools"
   end
@@ -292,7 +292,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
     test "name= falls back to chat-current when omitted" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
 
       :ok =
         Esr.Session.ChatRouting.Registry.set_default_workspace("oc_x", "cli_a", ws.id)
@@ -315,7 +315,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
     test "name= falls back to user-default when no chat-current" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       repo_path = make_tmp_git_repo!("addfolder-user-default")

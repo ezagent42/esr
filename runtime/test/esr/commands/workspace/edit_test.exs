@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.EditTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.Edit, as: WorkspaceEdit
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_edit_test_#{unique}")
@@ -47,7 +47,7 @@ defmodule Esr.Commands.Workspace.EditTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -66,7 +66,7 @@ defmodule Esr.Commands.Workspace.EditTest do
       location: {:repo_bound, repo_path}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -85,7 +85,7 @@ defmodule Esr.Commands.Workspace.EditTest do
     assert result["value"] == "claude"
 
     # Verify persisted
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.agent == "claude"
   end
 
@@ -99,7 +99,7 @@ defmodule Esr.Commands.Workspace.EditTest do
     assert result["field"] == "env.PROJECT_ENV"
     assert result["value"] == "dev"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.env["PROJECT_ENV"] == "dev"
   end
 
@@ -113,7 +113,7 @@ defmodule Esr.Commands.Workspace.EditTest do
     assert result["field"] == "settings.cc.model"
     assert result["value"] == "opus"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.settings["cc.model"] == "opus"
   end
 
@@ -126,7 +126,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert result["value"] == ["Bash", "Edit", "Read"]
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.settings["cc.allowed_tools"] == ["Bash", "Edit", "Read"]
   end
 
@@ -139,7 +139,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert result["value"] == 42
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.settings["cc.timeout"] == 42
   end
 
@@ -152,7 +152,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert result["value"] == true
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.settings["logging.enabled"] == true
   end
 
@@ -165,7 +165,7 @@ defmodule Esr.Commands.Workspace.EditTest do
 
     assert result["value"] == false
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.settings["logging.enabled"] == false
   end
 
@@ -179,7 +179,7 @@ defmodule Esr.Commands.Workspace.EditTest do
     assert result["field"] == "transient"
     assert result["value"] == true
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.transient == true
   end
 

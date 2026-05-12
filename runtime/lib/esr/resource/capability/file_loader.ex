@@ -125,12 +125,12 @@ defmodule Esr.Resource.Capability.FileLoader do
 
   defp validate_scope("workspace:" <> name = scope) do
     # Spec §11: warn but don't fail if workspace not yet configured.
-    # Cross-check against Esr.Resource.Workspace.Registry if it's up.
+    # Cross-check against the URI store if it's up.
     cond do
       name == "*" ->
         :ok
 
-      Process.whereis(Esr.Resource.Workspace.Registry) == nil ->
+      Process.whereis(Esr.Uri.Store) == nil ->
         :ok
 
       workspace_exists?(name) ->
@@ -160,12 +160,11 @@ defmodule Esr.Resource.Capability.FileLoader do
 
   defp validate_scope(scope), do: {:error, {:bad_scope_prefix, scope}}
 
-  # Existence check via NameIndex → UUID → Registry. M-4.1 removed the
-  # legacy `Registry.get/1` (name-keyed) call.
+  # Existence check via URI store: by-name alias → canonical → struct.
   defp workspace_exists?(name) do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, uuid} ->
-        match?({:ok, _}, Esr.Resource.Workspace.Registry.get_by_id(uuid))
+        match?({:ok, _}, Esr.Uri.Compat.workspace_by_uuid(uuid))
 
       :not_found ->
         false

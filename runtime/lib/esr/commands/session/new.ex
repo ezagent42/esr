@@ -414,9 +414,9 @@ defmodule Esr.Commands.Session.New do
 
   defp bind_session_to_workspace(%{"workspace" => ws_name}, sid)
        when is_binary(ws_name) and ws_name != "" do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(ws_name) do
       {:ok, ws_id} ->
-        case Esr.Resource.Workspace.Registry.bind_session(ws_id, sid) do
+        case safe_bind_session(ws_id, sid) do
           :ok ->
             :ok
 
@@ -427,17 +427,23 @@ defmodule Esr.Commands.Session.New do
               name: ws_name,
               detail: "was deleted while session was being created"
             })
+
+          {:error, :unavailable} ->
+            # SessionBindings not running (test env without the
+            # workspace subsystem) — silent skip mirrors pre-PR-2
+            # Registry-absent semantics.
+            :ok
         end
 
       :not_found ->
         # Distinguish two cases:
-        #   (a) Registry not running → test env; silent skip is correct.
-        #   (b) Registry running but workspace was deleted between
+        #   (a) URI store not running → test env; silent skip is correct.
+        #   (b) URI store running but workspace was deleted between
         #       resolve_workspace_if_needed/1 and here (race window with
         #       a concurrent transient cleanup). Roll back the spawn and
         #       surface the structured error so the operator's intent
         #       isn't silently lost.
-        if Process.whereis(Esr.Resource.Workspace.Registry) == nil do
+        if Process.whereis(Esr.Uri.Store) == nil do
           :ok
         else
           rollback_spawn(sid)
@@ -450,6 +456,13 @@ defmodule Esr.Commands.Session.New do
     end
   rescue
     ArgumentError -> :ok
+  end
+
+  defp safe_bind_session(ws_id, sid) do
+    case Process.whereis(Esr.Resource.Workspace.SessionBindings) do
+      nil -> {:error, :unavailable}
+      _pid -> Esr.Resource.Workspace.SessionBindings.bind_session(ws_id, sid)
+    end
   end
 
   defp bind_session_to_workspace(_args, _sid), do: :ok
@@ -543,19 +556,17 @@ defmodule Esr.Commands.Session.New do
   end
 
   defp resolve_dir_from_workspace(name) do
-    with {:ok, ws_id} <-
-           Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name),
-         {:ok, ws} <- Esr.Resource.Workspace.Registry.get_by_id(ws_id),
+    with {:ok, ws_id} <- Esr.Uri.Compat.uuid_for_workspace_name(name),
+         {:ok, ws} <- Esr.Uri.Compat.workspace_by_uuid(ws_id),
          [first_folder | _] <- ws.folders do
       Map.get(first_folder, :path) || Map.get(first_folder, "path")
     else
       _ -> nil
     end
   rescue
-    # Workspace.Registry not running (test env without the singleton) or
-    # NameIndex ETS table missing — silent fall-through to `nil`. Same
-    # philosophy as the rest of the registry-touching helpers in this
-    # module (`safe_create_session/2`, `bind_session_to_workspace/2`).
+    # URI store ETS table missing — silent fall-through to `nil`. Same
+    # philosophy as the rest of the URI-touching helpers in this module
+    # (`safe_create_session/2`, `bind_session_to_workspace/2`).
     ArgumentError -> nil
   catch
     :exit, _ -> nil

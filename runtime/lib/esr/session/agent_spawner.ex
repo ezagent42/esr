@@ -292,7 +292,7 @@ defmodule Esr.Session.AgentSpawner do
   # PR-9 T11b.2: thread `session_id` and `workspace_name` into the params
   # map so downstream peers' `spawn_args/1` callbacks can read them
   # without having to re-derive. `workspace_name` is resolved via
-  # `Esr.Resource.Workspace.Registry.workspace_for_chat/2` when the caller
+  # `Esr.Uri.Compat.workspace_name_for_chat/2` when the caller
   # didn't supply one explicitly. Falls back to `"default"` — not nil —
   # so peers downstream always see a string.
   defp enrich_params(params, session_id) do
@@ -301,7 +301,7 @@ defmodule Esr.Session.AgentSpawner do
 
     workspace_name =
       get_param(params, :workspace_name) ||
-        case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+        case Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id) do
           {:ok, name} -> name
           :not_found -> "default"
         end
@@ -605,10 +605,12 @@ defmodule Esr.Session.AgentSpawner do
 
   # M-4 inlined start-cmd resolution previously hosted in
   # Esr.Resource.Workspace.Registry (deleted alongside the legacy struct).
+  # PR-2 (2026-05-12 URI identity) repointed to the URI store via
+  # `Esr.Uri.Compat`.
   #   1. Caller-supplied params[:start_cmd] (atom or string key) wins
   #      when non-empty.
   #   2. Otherwise read the workspace's `settings["start_cmd"]` via
-  #      NameIndex → get_by_id.
+  #      URI-store name→uuid→struct lookup.
   #   3. Returns nil when neither is set.
   # ESR_REPO_DIR / ~ expansion + `/`-prefix passthrough match the
   # legacy expand_start_cmd/1 contract.
@@ -626,9 +628,9 @@ defmodule Esr.Session.AgentSpawner do
   end
 
   defp workspace_setting_start_cmd(name) when is_binary(name) and name != "" do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Esr.Resource.Workspace.Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, %{settings: settings}} when is_map(settings) ->
             Map.get(settings, "start_cmd")
 

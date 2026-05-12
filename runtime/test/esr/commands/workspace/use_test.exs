@@ -2,13 +2,13 @@ defmodule Esr.Commands.Workspace.UseTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.Use, as: WorkspaceUse
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
     assert is_pid(Process.whereis(ChatScopeRegistry))
 
     unique = System.unique_integer([:positive])
@@ -51,7 +51,7 @@ defmodule Esr.Commands.Workspace.UseTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 

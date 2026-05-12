@@ -26,12 +26,10 @@ defmodule Esr.Commands.Session.NewResolutionTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Session.New, as: SessionNew
-  alias Esr.Resource.Workspace.{Registry, Struct, NameIndex}
+  alias Esr.Resource.Workspace.Struct
   alias Esr.Session.ChatRouting.Registry, as: ChatReg
 
-  @name_index_table :esr_workspace_name_index
-
-  # Helpers to insert a minimal workspace struct into the Registry + NameIndex
+  # Helpers to insert a minimal workspace struct into the URI store
   # without touching disk, so tests are isolated and fast.
 
   defp register_workspace(name, id \\ nil) do
@@ -44,21 +42,22 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       location: nil
     }
 
-    # put/1 does an upsert into both ETS tables and calls NameIndex.put.
-    :ok = Registry.put(ws)
+    # workspace_put/1 does an upsert into the URI store with by-name +
+    # by-chat aliases.
+    :ok = Esr.Uri.Compat.workspace_put(ws)
     uuid
   end
 
   defp clean_workspace(name) do
-    case NameIndex.id_for_name(@name_index_table, name) do
-      {:ok, id} -> Registry.delete_by_id(id)
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
+      {:ok, id} -> Esr.Uri.Compat.workspace_delete_by_id(id)
       :not_found -> :ok
     end
   end
 
   setup do
     # Ensure the relevant GenServers are running (started by Esr.Application).
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
     assert is_pid(Process.whereis(ChatReg))
 
     :ok
@@ -215,7 +214,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
     test "user-default wins when chat-default absent" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       args = %{"submitter_username" => "alice"}
@@ -226,7 +225,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # Even if a workspace named literally `default` exists, it must not be
       # preferred — only chat-default / user-default layers fire.
       ws = Esr.Test.WorkspaceFixture.build(name: "default", owner: "alice")
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
 
       # alice has NO user-default link. No chat context.
       args = %{"submitter_username" => "alice"}

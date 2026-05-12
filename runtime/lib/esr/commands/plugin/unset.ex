@@ -133,7 +133,7 @@ defmodule Esr.Commands.Plugin.Unset do
   end
 
   defp workspace_plugin_dir(plugin_name, workspace_id) do
-    case Esr.Resource.Workspace.Registry.lookup(workspace_id) do
+    case Esr.Uri.Compat.workspace_by_uuid(workspace_id) do
       {:ok, ws} ->
         Esr.Paths.plugin_workspace_dir(plugin_name, ws.folders |> List.first(""))
 

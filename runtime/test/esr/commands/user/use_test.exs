@@ -2,7 +2,7 @@ defmodule Esr.Commands.User.UseTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.User.Use, as: UserUse
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
+  # (PR-2: Registry deleted; use Esr.Uri.Compat.*)
   alias Esr.Test.WorkspaceFixture
 
   setup do
@@ -19,7 +19,7 @@ defmodule Esr.Commands.User.UseTest do
 
   test "binds workspace by name to the submitting user's default" do
     ws = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-    :ok = WsRegistry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
 
     cmd = %{
       "submitted_by" => "ou_a",
@@ -51,7 +51,7 @@ defmodule Esr.Commands.User.UseTest do
 
   test "unresolvable submitter → unknown_user" do
     ws = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-    :ok = WsRegistry.put(ws)
+    :ok = Esr.Uri.Compat.workspace_put(ws)
 
     cmd = %{
       "submitted_by" => "ou_unknown",
@@ -101,7 +101,7 @@ defmodule Esr.Commands.User.UseTest do
       assert is_binary(original_ws_id)
 
       ws2 = WorkspaceFixture.build(name: "#{bob}-secondary", owner: bob)
-      :ok = WsRegistry.put(ws2)
+      :ok = Esr.Uri.Compat.workspace_put(ws2)
 
       cmd = %{
         "args" => %{"workspace" => "#{bob}-secondary"},

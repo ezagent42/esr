@@ -15,7 +15,6 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.{New, Remove, RemoveFolder}
-  alias Esr.Resource.Workspace.{NameIndex, Registry}
 
   setup do
     if Process.whereis(Esr.Uri.Store) == nil do
@@ -57,8 +56,8 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
         "args" => %{"name" => name, "username" => "alice"}
       })
 
-    {:ok, wid} = NameIndex.id_for_name(:esr_workspace_name_index, name)
-    {:ok, ws} = Registry.get_by_id(wid)
+    {:ok, wid} = Esr.Uri.Compat.uuid_for_workspace_name(name)
+    {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(wid)
     assert length(ws.folders) == 1
     assert File.dir?(hd(ws.folders).path)
 
@@ -74,6 +73,6 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
         "args" => %{"name" => name, "username" => "alice"}
       })
 
-    assert :not_found = NameIndex.id_for_name(:esr_workspace_name_index, name)
+    assert :not_found = Esr.Uri.Compat.uuid_for_workspace_name(name)
   end
 end

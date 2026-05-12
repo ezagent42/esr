@@ -192,7 +192,7 @@ defmodule Esr.Commands.User.Add do
         location: {:esr_bound, dir}
       }
 
-      Esr.Resource.Workspace.Registry.put(ws)
+      Esr.Uri.Compat.workspace_put(ws)
     end
   rescue
     e -> {:error, e}
@@ -221,7 +221,7 @@ defmodule Esr.Commands.User.Add do
     end)
 
     rollback_step(:evict_workspace_registry, fn ->
-      _ = Esr.Resource.Workspace.Registry.delete_by_id(ws_uuid)
+      _ = Esr.Uri.Compat.workspace_delete_by_id(ws_uuid)
       :ok
     end)
 

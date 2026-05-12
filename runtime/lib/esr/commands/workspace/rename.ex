@@ -37,7 +37,6 @@ defmodule Esr.Commands.Workspace.Rename do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Registry, NameIndex}
 
   @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
@@ -69,7 +68,7 @@ defmodule Esr.Commands.Workspace.Rename do
         Render.error(__MODULE__.command_meta(), :unknown_workspace, %{name: old})
 
       {:ok, id} ->
-        case Registry.rename(old, new) do
+        case Esr.Uri.Compat.workspace_rename(old, new) do
           :ok ->
             {:ok, %{"old_name" => old, "new_name" => new, "id" => id}}
 
@@ -80,6 +79,6 @@ defmodule Esr.Commands.Workspace.Rename do
   end
 
   defp lookup_id(name) do
-    NameIndex.id_for_name(:esr_workspace_name_index, name)
+    Esr.Uri.Compat.uuid_for_workspace_name(name)
   end
 end

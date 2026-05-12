@@ -46,7 +46,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex}
+  alias Esr.Resource.Workspace.Struct
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -63,7 +63,7 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
          :ok <- validate_not_root_folder(ws, expanded),
          remaining = Enum.reject(ws.folders, &folder_matches?(&1, expanded)),
          updated = %{ws | folders: remaining},
-         :ok <- Registry.put(updated) do
+         :ok <- Esr.Uri.Compat.workspace_put(updated) do
       {:ok,
        %{
          "name" => ws.name,
@@ -111,9 +111,9 @@ defmodule Esr.Commands.Workspace.RemoveFolder do
   defp validate_not_last_folder(_ws), do: :ok
 
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> workspace_not_found(name)
         end

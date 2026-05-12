@@ -4,7 +4,7 @@ defmodule Esr.Commands.Workspace.NewTest do
   alias Esr.Commands.Workspace.New, as: WorkspaceNew
 
   setup do
-    assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     if Process.whereis(Esr.Uri.Store) == nil do
       start_supervised!(Esr.Uri.Store)
@@ -80,12 +80,12 @@ defmodule Esr.Commands.Workspace.NewTest do
 
     # Registry populated proactively
     {:ok, id} =
-      Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, "test-ws-1")
+      Esr.Uri.Compat.uuid_for_workspace_name("test-ws-1")
 
-    assert {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_id(id)
+    assert {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert ws.owner == "linyilun"
 
-    structs = Esr.Resource.Workspace.Registry.list_all()
+    structs = Esr.Uri.Compat.list_workspaces()
     assert Enum.any?(structs, fn s -> s.name == "test-ws-1" end)
   end
 
@@ -125,7 +125,7 @@ defmodule Esr.Commands.Workspace.NewTest do
 
     assert {:ok, %{"action" => "created"}} = WorkspaceNew.execute(cmd)
 
-    structs = Esr.Resource.Workspace.Registry.list_all()
+    structs = Esr.Uri.Compat.list_workspaces()
     ws = Enum.find(structs, fn s -> s.name == "test-transient" end)
     assert ws.transient == true
   end
@@ -382,9 +382,9 @@ defmodule Esr.Commands.Workspace.NewTest do
         })
 
       {:ok, wid} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name)
+        Esr.Uri.Compat.uuid_for_workspace_name(name)
 
-      {:ok, struct} = Esr.Resource.Workspace.Registry.get_by_id(wid)
+      {:ok, struct} = Esr.Uri.Compat.workspace_by_uuid(wid)
       expected_path = Esr.Paths.workspace_dir(name)
       assert [%{path: ^expected_path}] = struct.folders
       assert File.dir?(expected_path)

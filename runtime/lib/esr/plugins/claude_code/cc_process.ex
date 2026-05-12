@@ -502,18 +502,18 @@ defmodule Esr.Entity.CCProcess do
     |> maybe_put_workspace(chat_id, app_id)
   end
 
-  # PR-C C5: workspace name attribute, looked up from
-  # Esr.Resource.Workspace.Registry.workspace_for_chat. Omitted when the
-  # registry has no entry — keeps the tag stable for tests that don't
-  # boot the registry GenServer.
+  # PR-C C5: workspace name attribute, looked up via
+  # `Esr.Uri.Compat.workspace_name_for_chat/2`. Omitted when the URI
+  # store has no entry — keeps the tag stable for tests that don't
+  # boot the workspace subsystem.
   defp maybe_put_workspace(envelope, chat_id, app_id)
        when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
-    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id) do
       {:ok, ws} -> Map.put(envelope, "workspace", ws)
       _ -> envelope
     end
   rescue
-    # Workspaces.Registry GenServer not started in some unit tests.
+    # URI store ETS table not started in some unit tests.
     ArgumentError -> envelope
   end
 

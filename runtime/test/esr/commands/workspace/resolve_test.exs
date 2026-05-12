@@ -3,7 +3,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
 
   alias Esr.Commands.Workspace.Resolve
   alias Esr.Session.ChatRouting.Registry, as: ChatScope
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
+  # (PR-2: Registry deleted; use Esr.Uri.Compat.*)
   alias Esr.Test.WorkspaceFixture
 
   setup do
@@ -21,7 +21,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
   describe "resolve_workspace_for_args/1 — fallback chain" do
     test "explicit args.workspace wins" do
       ws = WorkspaceFixture.build(name: "explicit-ws", owner: "alice")
-      :ok = WsRegistry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
 
       args = %{"workspace" => "explicit-ws", "submitter_username" => "alice"}
       assert {:explicit, "explicit-ws"} = Resolve.resolve_workspace_for_args(args)
@@ -29,10 +29,10 @@ defmodule Esr.Commands.Workspace.ResolveTest do
 
     test "chat-default wins over user-default" do
       ws_chat = WorkspaceFixture.build(name: "chat-ws", owner: "alice")
-      :ok = WsRegistry.put(ws_chat)
+      :ok = Esr.Uri.Compat.workspace_put(ws_chat)
 
       ws_user = WorkspaceFixture.build(name: "user-ws", owner: "alice")
-      :ok = WsRegistry.put(ws_user)
+      :ok = Esr.Uri.Compat.workspace_put(ws_user)
 
       :ok = ChatScope.set_default_workspace("oc_x", "cli_a", ws_chat.id)
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
@@ -48,7 +48,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
 
     test "user-default fires when no explicit + no chat-default" do
       ws_user = WorkspaceFixture.build(name: "user-ws", owner: "alice")
-      :ok = WsRegistry.put(ws_user)
+      :ok = Esr.Uri.Compat.workspace_put(ws_user)
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{"submitter_username" => "alice"}
@@ -62,7 +62,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
 
     test "submitter_username resolved via lookup_by_feishu_id when only submitted_by present" do
       ws_user = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
-      :ok = WsRegistry.put(ws_user)
+      :ok = Esr.Uri.Compat.workspace_put(ws_user)
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{"submitted_by" => "ou_a"}
