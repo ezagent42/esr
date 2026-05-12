@@ -1,6 +1,13 @@
 defmodule Esr.Entity.User.FileLoader do
   @moduledoc """
-  Parse `users.yaml` and atomically swap the `Esr.Entity.User.Registry` snapshot.
+  Parse `users.yaml` + per-uuid `users/<uuid>/user.json` and populate
+  the URI store (`:esr_uri_store`) with user entity rows + aliases.
+
+  PR-1 (URI identity migration, 2026-05-12) replaced the previous
+  `Esr.Entity.User.Registry.load_snapshot_with_uuids/2` + NameIndex
+  population with direct `Esr.Uri.put_entity/3` + `Esr.Uri.alias/2`
+  calls. Same yaml schema, same disk layout — only the in-memory
+  destination changed.
 
   Schema:
 
@@ -12,34 +19,28 @@ defmodule Esr.Entity.User.FileLoader do
           feishu_ids:
             - ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+  URI store layout (per user):
+    - canonical:  esr://localhost/users/<uuid>          → %User.Struct{}
+    - by-name:    esr://localhost/users/by-name/<name>  → alias
+    - feishu:     esr://localhost/users/feishu/<ou_id>  → alias  (one per id)
+
   Validation:
-  - Each top-level key is a username (ASCII alphanumeric + `-` + `_`,
-    enforced at write time by the CLI; the loader logs a warning if it
-    sees something else but still admits the entry — operator's yaml
-    edits shouldn't be rejected wholesale).
-  - `feishu_ids:` must be a list of strings; absent / empty list is
-    legal (user exists but has no binding yet).
+  - Each top-level key in users.yaml is a username (ASCII alphanumeric
+    + `-` + `_`, enforced at write time by the CLI; loader logs a
+    warning if it sees something else but still admits the entry).
+  - `feishu_ids:` must be a list of strings; absent / empty is legal.
 
-  Load is non-destructive on parse failure: the prior snapshot is kept
-  and the caller sees the specific error.
+  Load is non-destructive on parse failure: the prior URI store rows
+  for kind `:user` are kept and the caller sees the specific error.
 
-  UUID population (fix/user-name-index-population):
-  After building the snapshot from YAML, the loader also scans the
-  `users/` directory for `<uuid>/user.json` files to build a
-  `%{username => uuid}` map. This map is passed to
-  `Registry.load_snapshot_with_uuids/2` so that
-  `Esr.Entity.User.NameIndex` is populated at boot time, enabling
-  `/session:share user=<username>` to resolve usernames → UUIDs.
-
-  When `users.yaml` is absent (pre-migration or clean state) the loader
-  falls back to scanning the `users/` directory directly so that the
-  NameIndex is still populated from persisted `user.json` files.
+  When `users.yaml` is absent (clean state) the loader falls back to
+  scanning the `users/` directory directly so the URI store is still
+  populated from persisted `user.json` files.
   """
 
   @behaviour Esr.Role.Control
   require Logger
 
-  alias Esr.Entity.User.Registry
   alias Esr.Entity.User.Struct, as: User
 
   @username_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
@@ -52,7 +53,7 @@ defmodule Esr.Entity.User.FileLoader do
       not File.exists?(path) ->
         # No users.yaml — load from users/ directory directly if it exists.
         {snapshot, uuids} = load_from_users_dir(users_dir)
-        Registry.load_snapshot_with_uuids(snapshot, uuids)
+        populate_uri_store(snapshot, uuids, %{})
         :ok
 
       true ->
@@ -60,14 +61,13 @@ defmodule Esr.Entity.User.FileLoader do
              {:ok, snapshot} <- build_snapshot(yaml) do
           uuids = read_uuids_from_dir(users_dir)
           defaults = read_default_workspaces_from_dir(users_dir)
-          Registry.load_snapshot_with_uuids(snapshot, uuids)
-          apply_defaults(defaults)
+          populate_uri_store(snapshot, uuids, defaults)
           Logger.info("users: loaded #{map_size(snapshot)} users from #{path}")
           :ok
         else
           {:error, reason} = err ->
             Logger.error(
-              "users: load failed (#{inspect(reason)}); keeping previous snapshot"
+              "users: load failed (#{inspect(reason)}); keeping previous URI store rows"
             )
 
             err
@@ -76,7 +76,62 @@ defmodule Esr.Entity.User.FileLoader do
   end
 
   # ---------------------------------------------------------------------------
-  # Private helpers
+  # URI store population
+  # ---------------------------------------------------------------------------
+
+  # Clear every :user entity (+ its aliases), then write the fresh set.
+  # Inside-one-process atomicity matches old Registry.load_snapshot semantics
+  # well enough for boot-time + Watcher-triggered reloads. See spec P1-1.
+  defp populate_uri_store(snapshot, uuids, defaults) do
+    if uri_store_alive?() do
+      _ = Esr.Uri.Store.delete_all_by_kind(:user)
+
+      Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
+        case Map.get(uuids, username) do
+          nil ->
+            # No UUID assigned yet — user is in yaml but has no user.json.
+            # Skip URI store population; the next /user:add or external write
+            # of user.json will close the gap.
+            :ok
+
+          uuid ->
+            # Merge default_workspace_id from defaults map if present
+            user_with_default =
+              case Map.get(defaults, username) do
+                ws_id when is_binary(ws_id) and ws_id != "" ->
+                  %User{user | default_workspace_id: ws_id}
+
+                _ ->
+                  user
+              end
+
+            canonical = "esr://localhost/users/" <> uuid
+            :ok = Esr.Uri.put_entity(canonical, :user, user_with_default)
+
+            _ =
+              Esr.Uri.alias(canonical, "esr://localhost/users/by-name/" <> username)
+
+            Enum.each(ids, fn ou_id ->
+              _ = Esr.Uri.alias(canonical, "esr://localhost/users/feishu/" <> ou_id)
+            end)
+        end
+      end)
+    else
+      Logger.warning("users: Esr.Uri.Store not running; skipping URI store population")
+    end
+
+    :ok
+  end
+
+  defp uri_store_alive? do
+    case Process.whereis(Esr.Uri.Store) do
+      pid when is_pid(pid) -> true
+      _ -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — yaml / json parsing (unchanged from pre-PR-1)
   # ---------------------------------------------------------------------------
 
   defp parse(path) do
@@ -211,11 +266,5 @@ defmodule Esr.Entity.User.FileLoader do
     else
       _ -> :error
     end
-  end
-
-  defp apply_defaults(defaults) when is_map(defaults) do
-    Enum.each(defaults, fn {username, ws_id} ->
-      _ = Registry.set_default_workspace(username, ws_id)
-    end)
   end
 end
