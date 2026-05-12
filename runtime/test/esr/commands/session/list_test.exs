@@ -156,7 +156,7 @@ defmodule Esr.Commands.Session.ListTest do
       sid_b = "sid-listB-#{unique}"
 
       :ok =
-        Esr.Session.NameIndex.Registry.claim_uri(sid_a, %{
+        Esr.Uri.Compat.claim_session_uri(sid_a, %{
           env: env,
           username: "linyilun",
           workspace: ws_name,
@@ -165,7 +165,7 @@ defmodule Esr.Commands.Session.ListTest do
         })
 
       :ok =
-        Esr.Session.NameIndex.Registry.claim_uri(sid_b, %{
+        Esr.Uri.Compat.claim_session_uri(sid_b, %{
           env: env,
           username: "linyilun",
           workspace: ws_name,

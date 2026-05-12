@@ -119,7 +119,7 @@ defmodule Esr.Resource.Capability.UuidTranslator do
   @spec session_uuid_to_name(String.t(), map()) ::
           {:ok, String.t()} | {:error, :not_found}
   def session_uuid_to_name(uuid, _context) when is_binary(uuid) do
-    case Esr.Resource.Session.Registry.get_by_id(uuid) do
+    case Esr.Uri.Compat.session_by_uuid(uuid) do
       {:ok, session} -> {:ok, session.name}
       :not_found -> {:error, :not_found}
     end

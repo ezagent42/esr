@@ -2,19 +2,13 @@ defmodule Esr.Commands.Session.ShareTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Session.Share
-  alias Esr.Resource.Session.Registry, as: SessionRegistry
 
   @submitter "user-uuid-0000-0000-000000000030"
   @target_username "alice-share-#{:rand.uniform(999_999)}"
   @target_uuid "user-uuid-0000-0000-000000000031"
 
   setup do
-    case Process.whereis(SessionRegistry) do
-      nil -> start_supervised!(SessionRegistry)
-      _ -> :ok
-    end
-
-    # PR-1: URI store replaces NameIndex.
+    # PR-3 (URI identity): URI store now backs Session entity rows + user lookups.
     case Process.whereis(Esr.Uri.Store) do
       nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
@@ -23,11 +17,11 @@ defmodule Esr.Commands.Session.ShareTest do
     # Seed the user into URI store directly (idempotent).
     Esr.Test.UserFixture.put(@target_username, @target_uuid)
 
-    # Seed a session
+    # Seed a session (PR-3: goes through Esr.Uri.Compat).
     data_dir = Esr.Paths.runtime_home()
 
     {:ok, sid} =
-      SessionRegistry.create_session(data_dir, %{
+      Esr.Uri.Compat.create_session(data_dir, %{
         name: "share-test-session-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""

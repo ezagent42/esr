@@ -2,14 +2,14 @@ defmodule Esr.Commands.Session.UnbindChatTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Session.UnbindChat
-  alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @submitter "user-uuid-0000-0000-000000000020"
 
   setup do
-    case Process.whereis(SessionRegistry) do
-      nil -> start_supervised!(SessionRegistry)
+    # PR-3 (URI identity): URI store now backs Session entity rows.
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
     end
 
@@ -25,7 +25,7 @@ defmodule Esr.Commands.Session.UnbindChatTest do
     data_dir = Esr.Paths.runtime_home()
 
     {:ok, sid} =
-      SessionRegistry.create_session(data_dir, %{
+      Esr.Uri.Compat.create_session(data_dir, %{
         name: "unbind-chat-test-session-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""
@@ -72,14 +72,14 @@ defmodule Esr.Commands.Session.UnbindChatTest do
     data_dir = Esr.Paths.runtime_home()
 
     {:ok, sid1} =
-      SessionRegistry.create_session(data_dir, %{
+      Esr.Uri.Compat.create_session(data_dir, %{
         name: "multi-s1-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""
       })
 
     {:ok, sid2} =
-      SessionRegistry.create_session(data_dir, %{
+      Esr.Uri.Compat.create_session(data_dir, %{
         name: "multi-s2-#{:rand.uniform(99_999)}",
         owner_user: @submitter,
         workspace_id: ""

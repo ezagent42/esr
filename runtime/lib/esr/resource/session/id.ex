@@ -9,7 +9,7 @@ defmodule Esr.Resource.Session.Id do
   test mode) touches one file.
 
   Pre-2026-05-09 the three call sites
-  (`Esr.Commands.Session.New`, `Esr.Resource.Session.Registry`,
+  (`Esr.Commands.Session.New`, `Esr.Uri.Compat.create_session/2`,
   `Esr.Session.AgentSpawner`) each held a private `defp gen_id` /
   `defp generate_uuid` and a duplicate "Phase 5 D2: must be UUID v4"
   comment. Surfaced during Phase F (resource-typed grammar) e2e

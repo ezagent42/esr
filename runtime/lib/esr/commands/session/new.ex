@@ -96,7 +96,6 @@ defmodule Esr.Commands.Session.New do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Session.Registry, as: SessionRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScopeRegistry
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -219,7 +218,7 @@ defmodule Esr.Commands.Session.New do
         # (a) operator pointed at an existing checkout intentionally
         #     (e.g., session reuse) — proceed without re-running git
         # (b) collision with another session's worktree — would have
-        #     been caught by Esr.Session.NameIndex.Registry.claim_uri post-spawn
+        #     been caught by Esr.Uri.Compat.claim_session_uri post-spawn
         # Treating as (a) here; (b) is the URI-uniqueness gate's job.
         require Logger
         Logger.info("session_new: cwd #{cwd} already exists, treating as reuse")
@@ -249,7 +248,7 @@ defmodule Esr.Commands.Session.New do
               is_binary(ws) and ws != "" and is_binary(wt) and wt != "" do
     env = Esr.Paths.current_instance()
 
-    case Esr.Session.NameIndex.Registry.claim_uri(sid, %{
+    case Esr.Uri.Compat.claim_session_uri(sid, %{
            env: env,
            username: u,
            workspace: ws,
@@ -289,27 +288,28 @@ defmodule Esr.Commands.Session.New do
   end
 
   # Spec D6: session names are unique within `(owner_user, name)`.
-  # When the submitter passes args.name, check the Session.Registry's
-  # `:esr_resource_session_name_index` ETS table BEFORE spawning so the
-  # error path doesn't have to roll back a half-built supervisor tree.
+  # PR-3 (2026-05-12) replaces the legacy `:esr_resource_session_name_index`
+  # ETS check with a URI-store scan: a session is taken when any
+  # `:session` entity row matches both `owner_user` and `name`.
   # Skipped when name is absent — Session.New is also reachable from
   # admin-CLI / new_chat_thread auto-spawn paths that don't set a name.
   defp check_name_unique(_owner_user, name) when name in [nil, ""], do: :ok
 
   defp check_name_unique(owner_user, name) when is_binary(owner_user) and is_binary(name) do
-    case :ets.lookup(:esr_resource_session_name_index, {owner_user, name}) do
-      [] ->
-        :ok
+    taken? =
+      Esr.Uri.Compat.list_sessions()
+      |> Enum.any?(fn s ->
+        Map.get(s, :owner_user) == owner_user and Map.get(s, :name) == name
+      end)
 
-      [{_, _existing_uuid}] ->
-        Render.error(__MODULE__.command_meta(), :session_name_taken, %{
-          name: name,
-          owner_user: owner_user
-        })
+    if taken? do
+      Render.error(__MODULE__.command_meta(), :session_name_taken, %{
+        name: name,
+        owner_user: owner_user
+      })
+    else
+      :ok
     end
-  rescue
-    # ETS table not running (test env without Session.Registry boot).
-    ArgumentError -> :ok
   end
 
   defp check_name_unique(_owner, _name), do: :ok
@@ -349,14 +349,12 @@ defmodule Esr.Commands.Session.New do
     end
   end
 
-  # Wrap the GenServer call so a missing Session.Registry (test env that
-  # never started the singleton) degrades to a silent skip rather than an
-  # exit. Production always has the registry under Esr.Application.
+  # Wrap the create call so a missing Esr.Uri.Store (test env that
+  # never started the URI store) degrades to a disk-only write rather
+  # than an exit. Production always has the URI store under
+  # Esr.Application.
   defp safe_create_session(data_dir, attrs) do
-    case Process.whereis(SessionRegistry) do
-      nil -> :ok
-      _pid -> SessionRegistry.create_session(data_dir, attrs)
-    end
+    Esr.Uri.Compat.create_session(data_dir, attrs)
   rescue
     ArgumentError -> :ok
   end
