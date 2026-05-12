@@ -195,7 +195,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
   describe "resolve_workspace_if_needed/1 — M-5 chain (user-default replaces system default)" do
     setup do
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
           "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
         },

@@ -3,7 +3,8 @@ defmodule Esr.Commands.User.List do
   `user_list` slash / admin-queue command — print every registered esr
   user with their bound feishu_ids. Mirrors Python `esr user list`.
 
-  Reads `Esr.Entity.User.Registry` directly (in-memory ETS).
+  Reads the URI store directly via `Esr.Uri.Compat.list_users/0`
+  (PR-1: User.Registry deleted, replaced by `:esr_uri_store`).
 
   Phase B-3 of the Phase 3/4 finish (2026-05-05).
   """

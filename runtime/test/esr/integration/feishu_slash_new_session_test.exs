@@ -205,7 +205,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
     Esr.Resource.Workspace.Registry.put(workspace)
 
-    Esr.Entity.User.Registry.load_snapshot(%{
+    Esr.Test.UserFixture.load_snapshot(%{
       "t3_user" => %Esr.Entity.User.Struct{
         username: "t3_user",
         feishu_ids: [@test_principal]

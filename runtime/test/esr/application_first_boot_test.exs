@@ -52,7 +52,7 @@ defmodule Esr.ApplicationFirstBootTest do
   describe "bootstrap user-default workspace" do
     setup do
       # Seed a known user so Bootstrap can resolve the env id
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
           "bootstrapper" => %Esr.Entity.User.Struct{
             username: "bootstrapper",

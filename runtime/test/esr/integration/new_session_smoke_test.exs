@@ -238,9 +238,9 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     # PR-21κ Phase 6: dispatch/3 also enforces requires_user_binding
     # for /new-session. Bind both test principals to esr users via
     # an in-memory snapshot.
-    prior_users = Esr.Entity.User.Registry.list()
+    prior_users = Esr.Uri.Compat.list_users()
 
-    Esr.Entity.User.Registry.load_snapshot(%{
+    Esr.Test.UserFixture.load_snapshot(%{
       "smoke_user" => %Esr.Entity.User.Struct{
         username: "smoke_user",
         feishu_ids: [@test_principal]
@@ -262,7 +262,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
         |> Enum.map(fn %Esr.Entity.User.Struct{username: u} = user -> {u, user} end)
         |> Map.new()
 
-      Esr.Entity.User.Registry.load_snapshot(restored)
+      Esr.Test.UserFixture.load_snapshot(restored)
     end)
 
     {:ok, slash: slash_pid, smoke_repo: smoke_repo, app_id: test_app_id, chat_id: smoke_chat_id}

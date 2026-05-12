@@ -3,7 +3,6 @@ defmodule Esr.Commands.User.AddTest do
 
   alias Esr.Commands.User.Add
   alias Esr.Commands.User.Remove
-  alias Esr.Entity.User.NameIndex
 
   # Unique prefix to isolate this test module's users.yaml writes from siblings.
   @prefix "addtest-#{System.system_time(:millisecond)}"

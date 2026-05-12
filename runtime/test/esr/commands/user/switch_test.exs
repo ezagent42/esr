@@ -9,7 +9,6 @@ defmodule Esr.Commands.User.SwitchTest do
 
   alias Esr.Commands.User.Add
   alias Esr.Commands.User.Switch
-  alias Esr.Entity.User.NameIndex
 
   setup do
     # NameIndex GenServer must exist for Add → put + Switch → id_for_name.

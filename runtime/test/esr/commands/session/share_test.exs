@@ -3,7 +3,6 @@ defmodule Esr.Commands.Session.ShareTest do
 
   alias Esr.Commands.Session.Share
   alias Esr.Resource.Session.Registry, as: SessionRegistry
-  alias Esr.Entity.User.NameIndex
 
   @submitter "user-uuid-0000-0000-000000000030"
   @target_username "alice-share-#{:rand.uniform(999_999)}"

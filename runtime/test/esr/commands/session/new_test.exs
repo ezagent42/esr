@@ -745,7 +745,7 @@ defmodule Esr.Commands.Session.NewTest do
 
       # The M-5 user-default lookup keys off `username`, not `submitted_by`.
       # Provide a User.Registry entry + per-user default workspace link.
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
           "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_alice"]}
         },
@@ -789,7 +789,7 @@ defmodule Esr.Commands.Session.NewTest do
 
       on_exit(fn ->
         Esr.Test.WorkspaceFixture.delete!("alice-default-ws")
-        Esr.Entity.User.Registry.load_snapshot_with_uuids(%{}, %{})
+        Esr.Test.UserFixture.load_snapshot(%{}, %{})
       end)
     end
   end

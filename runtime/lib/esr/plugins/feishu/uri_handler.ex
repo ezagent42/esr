@@ -3,12 +3,12 @@ defmodule Esr.Plugins.Feishu.UriHandler do
   Feishu plugin URI handler. Owns the `esr://localhost/users/feishu/<ou_xxx>`
   subtree.
 
-  PR-0 lifecycle note: today the handler calls the OLD
-  `Esr.Uri.Compat.username_for_feishu_id/1` directly (which still
-  exists in PR-0). PR-1 migrates User domain to URI store; at that point
-  this handler is rewritten to read entity data via Esr.Uri.get_entity/1
-  (still on the User canonical URI, not via the feishu alias — that
-  would infinite-loop).
+  PR-1 (2026-05-12 URI identity migration): User.Registry + User.NameIndex
+  were deleted. FileLoader now writes a per-feishu_id alias row
+  (`esr://localhost/users/feishu/<ou_id>` → canonical user URI) directly
+  to `Esr.Uri.Store`. This handler does a single ETS lookup against that
+  alias, no recursion through `Esr.Uri.resolve/1` (which would re-enter
+  this same handler and infinite-loop).
 
   Spec: docs/superpowers/specs/2026-05-12-uri-identity-design.md §6
   """
@@ -17,18 +17,9 @@ defmodule Esr.Plugins.Feishu.UriHandler do
 
   @impl Esr.Uri.Plugin
   def resolve(["ou_" <> _ = ou_id]) do
-    # PR-0: read the old registry directly to avoid infinite recursion.
-    case Esr.Uri.Compat.username_for_feishu_id(ou_id) do
-      {:ok, username} ->
-        # Translate username → UUID via the OLD NameIndex (PR-0 still
-        # has both registries; PR-1 deletes them).
-        case Esr.Uri.Compat.uuid_for_user_name(username) do
-          {:ok, uuid} -> {:ok, "esr://localhost/users/" <> uuid}
-          _ -> :not_found
-        end
-
-      _ ->
-        :not_found
+    case Esr.Uri.Store.lookup_raw("esr://localhost/users/feishu/" <> ou_id) do
+      {:ok, {:alias, "esr://localhost/users/" <> _ = canonical}} -> {:ok, canonical}
+      _ -> :not_found
     end
   end
 

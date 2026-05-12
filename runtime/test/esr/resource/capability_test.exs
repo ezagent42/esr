@@ -8,8 +8,8 @@ defmodule Esr.CapabilitiesTest do
   use ExUnit.Case, async: false
 
   setup do
-    if Process.whereis(Esr.Entity.User.Registry) == nil do
-      start_supervised!(Esr.Entity.User.Registry)
+    if Process.whereis(Esr.Uri.Store) == nil do
+      start_supervised!(Esr.Uri.Store)
     end
 
     prior_grants =
@@ -20,11 +20,11 @@ defmodule Esr.CapabilitiesTest do
       end
 
     Esr.Resource.Capability.Grants.load_snapshot(%{})
-    Esr.Entity.User.Registry.load_snapshot(%{})
+    Esr.Test.UserFixture.load_snapshot(%{})
 
     on_exit(fn ->
       Esr.Resource.Capability.Grants.load_snapshot(prior_grants)
-      Esr.Entity.User.Registry.load_snapshot(%{})
+      Esr.Test.UserFixture.load_snapshot(%{})
     end)
 
     :ok
@@ -40,7 +40,7 @@ defmodule Esr.CapabilitiesTest do
   end
 
   test "open_id resolves via Users.Registry to esr-username with cap" do
-    Esr.Entity.User.Registry.load_snapshot(%{
+    Esr.Test.UserFixture.load_snapshot(%{
       "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
         feishu_ids: ["ou_xyz"]
@@ -57,7 +57,7 @@ defmodule Esr.CapabilitiesTest do
   end
 
   test "raw open_id wins when both keyed (no double-counting)" do
-    Esr.Entity.User.Registry.load_snapshot(%{
+    Esr.Test.UserFixture.load_snapshot(%{
       "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
         feishu_ids: ["ou_xyz"]
@@ -93,24 +93,14 @@ defmodule Esr.CapabilitiesTest do
     assert Esr.Resource.Capability.has?("linyilun", "workspace.create")
   end
 
-  test "Users.Registry not running → falls back to direct-only (no crash)" do
-    # Simulate by stopping the registry. Note: in real runtime it's
-    # always up, but we want to verify the guard in
-    # maybe_resolve_to_username/1 handles the edge.
-    pid = Process.whereis(Esr.Entity.User.Registry)
-
-    if pid do
-      Process.exit(pid, :shutdown)
-      # Wait for it to actually stop; supervisor will restart but the
-      # Process.whereis check inside has?/2 has its own race-free
-      # guard so the call is safe regardless.
-      :timer.sleep(20)
-    end
-
+  test "URI store path: principal_id has no esr-user binding → falls back to direct grants" do
+    # PR-1 deleted User.Registry; the binding-resolution path now goes
+    # via Esr.Uri.Compat.username_for_feishu_id/1 which reads the URI
+    # store. With no users registered for the open_id, the path returns
+    # :not_found and Capability.has?/2 falls back to direct-grant lookup.
+    Esr.Test.UserFixture.load_snapshot(%{})
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_xyz" => ["workspace.create"]})
 
-    # Direct hit still works; binding-resolution path harmlessly returns
-    # :not_found since the registry might be transiently absent.
     assert Esr.Resource.Capability.has?("ou_xyz", "workspace.create")
   end
 end

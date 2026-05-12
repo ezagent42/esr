@@ -6,11 +6,11 @@ defmodule Esr.Commands.Workspace.NewTest do
   setup do
     assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
 
-    if Process.whereis(Esr.Entity.User.Registry) == nil do
-      start_supervised!(Esr.Entity.User.Registry)
+    if Process.whereis(Esr.Uri.Store) == nil do
+      start_supervised!(Esr.Uri.Store)
     end
 
-    Esr.Entity.User.Registry.load_snapshot(%{
+    Esr.Test.UserFixture.load_snapshot(%{
       "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
         feishu_ids: ["ou_known"]
@@ -30,7 +30,7 @@ defmodule Esr.Commands.Workspace.NewTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      Esr.Entity.User.Registry.load_snapshot(%{})
+      Esr.Test.UserFixture.load_snapshot(%{})
       Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
     end)
