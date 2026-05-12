@@ -628,22 +628,22 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   # exist in production today. The fallback is retained for forward
   # compatibility.
   defp resolve_pty_actor_id(session_id) do
-    case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
-      {:ok, name} ->
-        case Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(session_id, name) do
-          {:ok, aid} ->
-            aid
-
-          :not_found ->
-            session_id
+    # PR-4 URI identity migration (2026-05-12): primary returns UUID now,
+    # not name. Chain agent_by_uuid/1 to recover the %Instance{} and read
+    # actor_ids.pty directly — skips the (session_id, name) → pty lookup.
+    case Esr.Uri.Compat.primary_agent_uuid(session_id) do
+      {:ok, agent_uuid} ->
+        case Esr.Uri.Compat.agent_by_uuid(agent_uuid) do
+          {:ok, %{actor_ids: %{pty: aid}}} when is_binary(aid) -> aid
+          _ -> session_id
         end
 
       :not_found ->
         session_id
     end
   rescue
-    # Esr.Entity.Agent.InstanceRegistry GenServer not running in some
-    # isolated unit-test setups — fall back to session_id keying.
+    # URI store / InstanceRegistry not running in some isolated unit-test
+    # setups — fall back to session_id keying.
     _ -> session_id
   catch
     :exit, _ -> session_id

@@ -52,8 +52,8 @@ defmodule Esr.Commands.Agent.AddSession do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.Agent.InstanceRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
+  alias Esr.Uri.Compat
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   # Chat-current fallback for the SOURCE session: when operator omits
@@ -90,7 +90,7 @@ defmodule Esr.Commands.Agent.AddSession do
       when is_binary(target_sid) and target_sid != "" and
              is_binary(name) and name != "" and
              is_binary(source_sid) and source_sid != "" do
-    case InstanceRegistry.attach_to_session(name, source_sid, target_sid) do
+    case Compat.attach_to_session(name, source_sid, target_sid) do
       :ok ->
         {:ok,
          %{

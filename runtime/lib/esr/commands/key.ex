@@ -152,11 +152,13 @@ defmodule Esr.Commands.Key do
   # `actor_id ||= session_id` makes "pty:<session_id>" the lookup key
   # in that case).
   defp resolve_pty_actor_id(session_id) do
-    case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
-      {:ok, name} ->
-        case Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(session_id, name) do
-          {:ok, aid} -> aid
-          :not_found -> session_id
+    # PR-4 URI identity migration (2026-05-12): primary returns UUID now,
+    # not name. Chain agent_by_uuid/1 to read actor_ids.pty directly.
+    case Esr.Uri.Compat.primary_agent_uuid(session_id) do
+      {:ok, agent_uuid} ->
+        case Esr.Uri.Compat.agent_by_uuid(agent_uuid) do
+          {:ok, %{actor_ids: %{pty: aid}}} when is_binary(aid) -> aid
+          _ -> session_id
         end
 
       :not_found ->

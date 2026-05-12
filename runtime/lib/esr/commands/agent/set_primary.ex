@@ -29,12 +29,12 @@ defmodule Esr.Commands.Agent.SetPrimary do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.Agent.InstanceRegistry
+  alias Esr.Uri.Compat
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => %{"session_id" => sid, "name" => name}})
       when is_binary(sid) and sid != "" and is_binary(name) and name != "" do
-    case InstanceRegistry.set_primary(sid, name) do
+    case Compat.set_primary(sid, name) do
       :ok ->
         {:ok,
          %{

@@ -31,12 +31,12 @@ defmodule Esr.Commands.Agent.Remove do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.Agent.InstanceRegistry
+  alias Esr.Uri.Compat
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => %{"session_id" => sid, "name" => name}})
       when is_binary(sid) and sid != "" and is_binary(name) and name != "" do
-    case InstanceRegistry.remove_instance(sid, name) do
+    case Compat.remove_instance(sid, name) do
       :ok ->
         {:ok, %{"action" => "removed", "session_id" => sid, "name" => name}}
 
