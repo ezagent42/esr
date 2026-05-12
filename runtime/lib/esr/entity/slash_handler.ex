@@ -342,7 +342,7 @@ defmodule Esr.Entity.SlashHandler do
   Checks `text` for an `@<name>` mention that maps to a known agent in
   `session_id`. If one is found, returns `{:mention, agent_name,
   stripped_text}`. Otherwise returns `{:primary, primary_name}` using
-  `InstanceRegistry.primary/1`. Returns `{:error, :no_primary}` when
+  `Esr.Uri.Compat.primary_agent_uuid/1`. Returns `{:error, :no_primary}` when
   the session has no agents.
 
   This function is stateless (pure ETS reads) and may be called from any
@@ -360,16 +360,25 @@ defmodule Esr.Entity.SlashHandler do
           | {:error, :no_primary}
   def resolve_routing(text, session_id)
       when is_binary(text) and is_binary(session_id) do
-    agent_names = Esr.Entity.Agent.InstanceRegistry.names_for_session(session_id)
+    agent_names = Esr.Uri.Compat.agent_names_in_session(session_id)
 
     case Esr.Entity.Agent.MentionParser.parse(text, agent_names) do
       {:mention, name, rest} ->
         {:mention, name, rest}
 
       {:plain, _} ->
-        case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
-          {:ok, primary} -> {:primary, primary}
-          :not_found -> {:error, :no_primary}
+        # PR-4 URI identity migration (2026-05-12): primary_agent_uuid/1
+        # returns the agent UUID. resolve_routing is documented to return
+        # the DISPLAY NAME, so chain agent_by_uuid/1 + read .name.
+        case Esr.Uri.Compat.primary_agent_uuid(session_id) do
+          {:ok, agent_uuid} ->
+            case Esr.Uri.Compat.agent_by_uuid(agent_uuid) do
+              {:ok, %{name: name}} when is_binary(name) -> {:primary, name}
+              _ -> {:error, :no_primary}
+            end
+
+          :not_found ->
+            {:error, :no_primary}
         end
     end
   end

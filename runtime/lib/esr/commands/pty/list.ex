@@ -42,7 +42,7 @@ defmodule Esr.Commands.Pty.List do
       {:ok, sid} ->
         ptys =
           sid
-          |> Esr.Entity.Agent.InstanceRegistry.list()
+          |> Esr.Uri.Compat.list_agents_in_session()
           |> Enum.map(fn inst ->
             %{
               "agent_name" => inst.name,

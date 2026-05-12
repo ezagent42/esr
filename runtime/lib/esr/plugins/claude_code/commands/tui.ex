@@ -50,7 +50,7 @@ defmodule Esr.Plugins.ClaudeCode.Commands.Tui do
       when is_binary(name) and name != "" and is_binary(chat_id) and chat_id != "" and
              is_binary(app_id) and app_id != "" do
     with {:ok, sid} <- ChatRouting.current_session(chat_id, app_id),
-         {:ok, pty_id} <- Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for(sid, name) do
+         {:ok, pty_id} <- Esr.Uri.Compat.pty_actor_id_for(sid, name) do
       Esr.Commands.Pty.Attach.execute(%{
         "submitted_by" => submitter,
         "args" => Map.put(cmd["args"], "pty", pty_id)

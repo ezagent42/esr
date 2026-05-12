@@ -34,7 +34,7 @@ defmodule Esr.Commands.Agent.List do
     case ChatRouting.current_session(chat_id, app_id) do
       {:ok, sid} ->
         agents =
-          Esr.Entity.Agent.InstanceRegistry.list(sid)
+          Esr.Uri.Compat.list_agents_in_session(sid)
           |> Enum.map(fn inst ->
             %{
               "name" => inst.name,
