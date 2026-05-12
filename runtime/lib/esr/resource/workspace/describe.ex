@@ -41,9 +41,7 @@ defmodule Esr.Resource.Workspace.Describe do
   diffusion is gone — discovery is via ActorQuery + cap-grants now).
   """
 
-  alias Esr.Resource.Workspace.{NameIndex, Registry, Struct}
-
-  @name_index_table :esr_workspace_name_index
+  alias Esr.Resource.Workspace.Struct
 
   @type ok_data :: %{required(String.t()) => any()}
   @type result :: {:ok, ok_data()} | {:error, :unknown_workspace | :missing_workspace_name}
@@ -65,12 +63,13 @@ defmodule Esr.Resource.Workspace.Describe do
 
   ## Internals -------------------------------------------------------------
 
-  # Try NameIndex → UUID → new Struct. Falls through to :not_found when
-  # NameIndex ETS table is not started (ArgumentError) or name unknown.
+  # URI store lookup: by-name alias → canonical → %Struct{}.
+  # Falls through to :not_found when ETS table is not started
+  # (ArgumentError) or name unknown.
   defp lookup_struct(name) do
-    case NameIndex.id_for_name(@name_index_table, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> :not_found
         end
@@ -79,7 +78,6 @@ defmodule Esr.Resource.Workspace.Describe do
         :not_found
     end
   rescue
-    # NameIndex ETS tables not created (admin-CLI or test without Registry started)
     ArgumentError -> :not_found
   end
 
