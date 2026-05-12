@@ -197,7 +197,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
     setup do
       Esr.Entity.User.Registry.load_snapshot_with_uuids(
         %{
-          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+          "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
         },
         %{"alice" => "alice-uuid"}
       )

@@ -23,7 +23,7 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
     end
 
     Esr.Entity.User.Registry.load_snapshot(%{
-      "alice" => %Esr.Entity.User.Registry.User{
+      "alice" => %Esr.Entity.User.Struct{
         username: "alice",
         feishu_ids: ["ou_alice"]
       }

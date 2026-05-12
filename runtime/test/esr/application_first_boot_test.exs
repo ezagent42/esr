@@ -54,7 +54,7 @@ defmodule Esr.ApplicationFirstBootTest do
       # Seed a known user so Bootstrap can resolve the env id
       Esr.Entity.User.Registry.load_snapshot_with_uuids(
         %{
-          "bootstrapper" => %Esr.Entity.User.Registry.User{
+          "bootstrapper" => %Esr.Entity.User.Struct{
             username: "bootstrapper",
             feishu_ids: ["ou_boot"]
           }

@@ -2,7 +2,7 @@ defmodule Esr.Entity.User.RegistryTest do
   use ExUnit.Case, async: false
 
   alias Esr.Entity.User.Registry
-  alias Esr.Entity.User.Registry.User
+  alias Esr.Entity.User.Struct, as: User
   alias Esr.Entity.User.NameIndex
 
   setup do
@@ -99,8 +99,8 @@ defmodule Esr.Entity.User.RegistryTest do
   describe "UUID-keyed API" do
     setup do
       snapshot = %{
-        "linyilun" => %Esr.Entity.User.Registry.User{username: "linyilun", feishu_ids: ["ou_aaa"]},
-        "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: []}
+        "linyilun" => %Esr.Entity.User.Struct{username: "linyilun", feishu_ids: ["ou_aaa"]},
+        "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: []}
       }
       uuids = %{"linyilun" => "uuid-lyl-001", "alice" => "uuid-alice-002"}
       Esr.Entity.User.Registry.load_snapshot_with_uuids(snapshot, uuids)
@@ -175,13 +175,13 @@ defmodule Esr.Entity.User.RegistryTest do
 
   describe "User struct (M-5/D2)" do
     test "defaults default_workspace_id to nil" do
-      user = %Esr.Entity.User.Registry.User{username: "alice"}
+      user = %Esr.Entity.User.Struct{username: "alice"}
       assert user.default_workspace_id == nil
     end
 
     test "carries default_workspace_id when constructed" do
       uuid = "01ARZSTAB12345678901234567"
-      user = %Esr.Entity.User.Registry.User{username: "alice", default_workspace_id: uuid}
+      user = %Esr.Entity.User.Struct{username: "alice", default_workspace_id: uuid}
       assert user.default_workspace_id == uuid
     end
   end
@@ -191,7 +191,7 @@ defmodule Esr.Entity.User.RegistryTest do
       # Reset Registry between tests
       Esr.Entity.User.Registry.load_snapshot_with_uuids(
         %{
-          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+          "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
         },
         %{"alice" => "alice-uuid-1"}
       )

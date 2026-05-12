@@ -241,11 +241,11 @@ defmodule Esr.Integration.NewSessionSmokeTest do
     prior_users = Esr.Entity.User.Registry.list()
 
     Esr.Entity.User.Registry.load_snapshot(%{
-      "smoke_user" => %Esr.Entity.User.Registry.User{
+      "smoke_user" => %Esr.Entity.User.Struct{
         username: "smoke_user",
         feishu_ids: [@test_principal]
       },
-      "smoke_nocap_user" => %Esr.Entity.User.Registry.User{
+      "smoke_nocap_user" => %Esr.Entity.User.Struct{
         username: "smoke_nocap_user",
         feishu_ids: [@test_principal_nocap]
       }
@@ -259,7 +259,7 @@ defmodule Esr.Integration.NewSessionSmokeTest do
       # bounded because this is async: false).
       restored =
         prior_users
-        |> Enum.map(fn %Esr.Entity.User.Registry.User{username: u} = user -> {u, user} end)
+        |> Enum.map(fn %Esr.Entity.User.Struct{username: u} = user -> {u, user} end)
         |> Map.new()
 
       Esr.Entity.User.Registry.load_snapshot(restored)

@@ -372,7 +372,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
       # Bind ou_known_xyz to linyilun
       :ok =
         Esr.Entity.User.Registry.load_snapshot(%{
-          "linyilun" => %Esr.Entity.User.Registry.User{
+          "linyilun" => %Esr.Entity.User.Struct{
             username: "linyilun",
             feishu_ids: ["ou_known_xyz"]
           }

@@ -747,7 +747,7 @@ defmodule Esr.Commands.Session.NewTest do
       # Provide a User.Registry entry + per-user default workspace link.
       Esr.Entity.User.Registry.load_snapshot_with_uuids(
         %{
-          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_alice"]}
+          "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_alice"]}
         },
         %{"alice" => "alice-id"}
       )

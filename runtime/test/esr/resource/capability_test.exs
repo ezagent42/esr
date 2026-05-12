@@ -41,7 +41,7 @@ defmodule Esr.CapabilitiesTest do
 
   test "open_id resolves via Users.Registry to esr-username with cap" do
     Esr.Entity.User.Registry.load_snapshot(%{
-      "linyilun" => %Esr.Entity.User.Registry.User{
+      "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
         feishu_ids: ["ou_xyz"]
       }
@@ -58,7 +58,7 @@ defmodule Esr.CapabilitiesTest do
 
   test "raw open_id wins when both keyed (no double-counting)" do
     Esr.Entity.User.Registry.load_snapshot(%{
-      "linyilun" => %Esr.Entity.User.Registry.User{
+      "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
         feishu_ids: ["ou_xyz"]
       }

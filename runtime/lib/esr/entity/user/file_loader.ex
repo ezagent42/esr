@@ -40,7 +40,7 @@ defmodule Esr.Entity.User.FileLoader do
   require Logger
 
   alias Esr.Entity.User.Registry
-  alias Esr.Entity.User.Registry.User
+  alias Esr.Entity.User.Struct, as: User
 
   @username_re ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
