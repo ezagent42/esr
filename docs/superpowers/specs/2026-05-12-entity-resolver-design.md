@@ -1,5 +1,7 @@
 # Entity Resolver Design
 
+> ⚠️ **SUPERSEDED 2026-05-12** by [`2026-05-12-uri-identity-design.md`](2026-05-12-uri-identity-design.zh_cn.md). After a planning round exposed structural issues (cross-module `defp` impossible, fabricated function signatures during plan writing), the user proposed pivoting to a URI-as-canonical-name model: every actor's name IS its `esr://` URI, with plugin-domain identifiers as alias URIs that redirect to the canonical UUID URI. The successor spec replaces `Esr.Entity.resolve_by/3` with `Esr.Uri.resolve/1` + `Esr.Uri.alias/2`. This file is preserved for git history; do not implement against it.
+
 **Status:** approved 2026-05-12 (linyilun, Feishu chat oc_d9b47511b085e9d5b66c4595b3ef9bb9 — brainstorm transcript in same chat)
 **Author:** Claude Opus 4.7 (controller) + linyilun (decisions)
 
