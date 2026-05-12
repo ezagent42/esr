@@ -34,7 +34,6 @@ defmodule Esr.Commands.User.Remove do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.User.NameIndex
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -48,15 +47,23 @@ defmodule Esr.Commands.User.Remove do
     if not Map.has_key?(users, name) do
       Render.error(__MODULE__.command_meta(), :not_found, %{name: name})
     else
+      # Resolve UUID before removal so URI store can drop the entity row.
+      uuid_before = Esr.Uri.Compat.uuid_for_user_name(name)
+
       updated_users = Map.delete(users, name)
       updated_doc = Map.put(doc, "users", updated_users)
 
       case Esr.Yaml.Writer.write(path, updated_doc) do
         :ok ->
-          # Remove from NameIndex. Look up by name to get the UUID first.
-          case NameIndex.id_for_name(:esr_user_name_index, name) do
-            {:ok, uuid} -> NameIndex.delete_by_id(:esr_user_name_index, uuid)
-            :not_found -> :ok
+          # Drop URI store rows for this user. Best-effort: the next FileLoader
+          # reload would reconcile, but we want the deletion visible immediately.
+          case uuid_before do
+            {:ok, uuid} ->
+              _ = Esr.Uri.delete("esr://localhost/users/" <> uuid)
+              _ = Esr.Uri.delete("esr://localhost/users/by-name/" <> name)
+
+            _ ->
+              :ok
           end
 
           {:ok, %{"text" => "removed esr user #{name}"}}

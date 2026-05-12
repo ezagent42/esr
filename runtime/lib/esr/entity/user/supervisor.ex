@@ -1,12 +1,15 @@
 defmodule Esr.Entity.User.Supervisor do
   @moduledoc """
-  Supervises the esr-user subsystem (PR-21a):
+  Supervises the esr-user subsystem.
 
-  - `Esr.Entity.User.NameIndex` — bidirectional username↔UUID ETS index
-  - `Esr.Entity.User.Registry` — ETS snapshot (depends on NameIndex being
-    up so load_snapshot/load_snapshot_with_uuids can populate it)
-  - `Esr.Entity.User.Watcher` — `users.yaml` reload watcher (depends on
-    Registry being up so its `init/1` initial-load lands in real ETS)
+  PR-1 (URI identity migration, 2026-05-12): User.Registry + User.NameIndex
+  deleted; their ETS tables replaced by entries in `:esr_uri_store`
+  (owned by `Esr.Uri.Store`, started before this supervisor by the
+  Application). Only the file Watcher remains here.
+
+  - `Esr.Entity.User.Watcher` — `users.yaml` reload watcher.
+    On boot and on file change it invokes
+    `Esr.Entity.User.FileLoader.load/1`, which populates the URI store.
   """
 
   @behaviour Esr.Role.OTP
@@ -19,8 +22,6 @@ defmodule Esr.Entity.User.Supervisor do
     path = Keyword.get(opts, :path, Esr.Paths.users_yaml())
 
     children = [
-      {Esr.Entity.User.NameIndex, []},
-      Esr.Entity.User.Registry,
       {Esr.Entity.User.Watcher, path: path}
     ]
 

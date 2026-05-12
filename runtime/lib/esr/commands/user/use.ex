@@ -38,8 +38,6 @@ defmodule Esr.Commands.User.Use do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.User.NameIndex, as: UserNameIndex
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
 
@@ -50,7 +48,7 @@ defmodule Esr.Commands.User.Use do
       when is_binary(ws_name) and ws_name != "" do
     with {:ok, username} <- resolve_submitter(cmd),
          {:ok, ws_id} <- resolve_workspace_id(ws_name),
-         :ok <- UserRegistry.set_default_workspace(username, ws_id),
+         :ok <- Esr.Uri.Compat.set_default_workspace_for_user_name(username, ws_id),
          :ok <- persist_default_to_user_json(username, ws_id) do
       {:ok,
        %{
@@ -82,7 +80,7 @@ defmodule Esr.Commands.User.Use do
         {:ok, args["submitter_username"]}
 
       is_binary(cmd["submitted_by"]) and cmd["submitted_by"] != "" ->
-        case UserRegistry.lookup_by_feishu_id(cmd["submitted_by"]) do
+        case Esr.Uri.Compat.username_for_feishu_id(cmd["submitted_by"]) do
           {:ok, username} ->
             {:ok, username}
 
@@ -108,7 +106,7 @@ defmodule Esr.Commands.User.Use do
   # ETS write already succeeded, so the in-memory state is correct
   # within this boot; the disk-write is a best-effort durability layer.
   defp persist_default_to_user_json(username, ws_id) do
-    case UserNameIndex.id_for_name(:esr_user_name_index, username) do
+    case Esr.Uri.Compat.uuid_for_user_name(:esr_user_name_index, username) do
       {:ok, uuid} -> rewrite_user_json_default(uuid, ws_id)
       :not_found -> :ok
     end

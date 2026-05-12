@@ -245,14 +245,9 @@ defmodule Esr.Commands.Workspace.New do
   defp parse_bool(_), do: false
 
   defp owner_exists?(username) do
-    if Process.whereis(Esr.Entity.User.Registry) do
-      case Esr.Entity.User.Registry.get(username) do
-        {:ok, _} -> true
-        :not_found -> false
-      end
-    else
-      # Tests that don't bring up Users.Registry shouldn't crash here.
-      true
+    case Esr.Uri.Compat.user_by_name(username) do
+      {:ok, _} -> true
+      :not_found -> false
     end
   end
 end

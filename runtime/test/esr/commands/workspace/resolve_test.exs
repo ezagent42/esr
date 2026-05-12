@@ -2,15 +2,14 @@ defmodule Esr.Commands.Workspace.ResolveTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.Resolve
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScope
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
   alias Esr.Test.WorkspaceFixture
 
   setup do
-    UserRegistry.load_snapshot_with_uuids(
+    Esr.Test.UserFixture.load_snapshot(
       %{
-        "alice" => %UserRegistry.User{username: "alice", feishu_ids: ["ou_a"]}
+        "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
       },
       %{"alice" => "alice-uuid"}
     )
@@ -36,7 +35,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
       :ok = WsRegistry.put(ws_user)
 
       :ok = ChatScope.set_default_workspace("oc_x", "cli_a", ws_chat.id)
-      :ok = UserRegistry.set_default_workspace("alice", ws_user.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{
         "chat_id" => "oc_x",
@@ -50,7 +49,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
     test "user-default fires when no explicit + no chat-default" do
       ws_user = WorkspaceFixture.build(name: "user-ws", owner: "alice")
       :ok = WsRegistry.put(ws_user)
-      :ok = UserRegistry.set_default_workspace("alice", ws_user.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{"submitter_username" => "alice"}
       assert {:user_default, "user-ws"} = Resolve.resolve_workspace_for_args(args)
@@ -64,7 +63,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
     test "submitter_username resolved via lookup_by_feishu_id when only submitted_by present" do
       ws_user = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
       :ok = WsRegistry.put(ws_user)
-      :ok = UserRegistry.set_default_workspace("alice", ws_user.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{"submitted_by" => "ou_a"}
       assert {:user_default, "alice-ws"} = Resolve.resolve_workspace_for_args(args)

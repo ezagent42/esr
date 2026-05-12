@@ -18,12 +18,12 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
   alias Esr.Resource.Workspace.{NameIndex, Registry}
 
   setup do
-    if Process.whereis(Esr.Entity.User.Registry) == nil do
-      start_supervised!(Esr.Entity.User.Registry)
+    if Process.whereis(Esr.Uri.Store) == nil do
+      start_supervised!(Esr.Uri.Store)
     end
 
-    Esr.Entity.User.Registry.load_snapshot(%{
-      "alice" => %Esr.Entity.User.Registry.User{
+    Esr.Test.UserFixture.load_snapshot(%{
+      "alice" => %Esr.Entity.User.Struct{
         username: "alice",
         feishu_ids: ["ou_alice"]
       }
@@ -41,7 +41,7 @@ defmodule Esr.Commands.Workspace.LifecycleTest do
         else: System.delete_env("ESRD_HOME")
 
       File.rm_rf!(tmp)
-      Esr.Entity.User.Registry.load_snapshot(%{})
+      Esr.Test.UserFixture.load_snapshot(%{})
       Esr.Test.WorkspaceFixture.reset!()
       Esr.Resource.Workspace.Bootstrap.run()
     end)

@@ -279,9 +279,9 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
 
   describe "name= optional via Resolve chain (M-5/D5)" do
     setup do
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
-          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+          "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
         },
         %{"alice" => "alice-uuid"}
       )
@@ -316,7 +316,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     test "name= falls back to user-default when no chat-current" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
       :ok = Esr.Resource.Workspace.Registry.put(ws)
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       repo_path = make_tmp_git_repo!("addfolder-user-default")
 

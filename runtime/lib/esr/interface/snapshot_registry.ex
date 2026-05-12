@@ -5,10 +5,14 @@ defmodule Esr.Interface.SnapshotRegistry do
   entire snapshot is replaced atomically by `load_snapshot/1`.
 
   Implementers in ESR (post-R4):
-    - `Esr.Entity.User.Registry` (load_snapshot from users.yaml)
     - `Esr.Resource.Workspace.Registry` (load_from_file → load_snapshot)
     - `Esr.Resource.Capability.Grants` (load_snapshot from capabilities.yaml)
     - `Esr.Resource.SlashRoute.Registry` (load_snapshot from slash-routes.yaml)
+
+  PR-1 (2026-05-12 URI identity migration): `Esr.Entity.User.Registry`
+  was deleted; users.yaml now loads via `Esr.Entity.User.FileLoader`
+  directly into `Esr.Uri.Store`. The URI store does not implement this
+  interface — it is keyed per-URI rather than as a single snapshot map.
 
   Phase 6 (2026-05-10) note: the agents.yaml-cached
   `Esr.Entity.Agent.Registry` (planned Future R5) was dropped — agent

@@ -45,11 +45,7 @@ defmodule Esr.Resource.Capability do
   end
 
   defp maybe_resolve_to_username(principal_id) do
-    if Process.whereis(Esr.Entity.User.Registry) do
-      Esr.Entity.User.Registry.lookup_by_feishu_id(principal_id)
-    else
-      :not_found
-    end
+    Esr.Uri.Compat.username_for_feishu_id(principal_id)
   end
 
   @doc """

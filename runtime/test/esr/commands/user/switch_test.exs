@@ -9,17 +9,15 @@ defmodule Esr.Commands.User.SwitchTest do
 
   alias Esr.Commands.User.Add
   alias Esr.Commands.User.Switch
-  alias Esr.Entity.User.NameIndex
 
   setup do
-    # NameIndex GenServer must exist for Add → put + Switch → id_for_name.
-    case :ets.info(:esr_user_name_index_name_to_id) do
-      :undefined -> start_supervised!({NameIndex, []})
+    # PR-1: User.NameIndex is gone; lookups go through Esr.Uri.Store.
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
     end
 
-    :ets.delete_all_objects(:esr_user_name_index_name_to_id)
-    :ets.delete_all_objects(:esr_user_name_index_id_to_name)
+    Esr.Uri.Store.delete_all_by_kind(:user)
 
     # Isolated ESRD_HOME so operator.json writes don't escape the test.
     tmp_dir = System.tmp_dir!() |> Path.join("esr_switch_test_#{:rand.uniform(999_999)}")

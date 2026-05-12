@@ -1,7 +1,6 @@
 defmodule Esr.Resource.Workspace.BootstrapTest do
   use ExUnit.Case, async: false
 
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.Bootstrap
   alias Esr.Resource.Workspace.NameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
@@ -23,9 +22,9 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
   end
 
   test "creates <bootstrap_user>-default + sets it as user-default when env is set" do
-    UserRegistry.load_snapshot_with_uuids(
+    Esr.Test.UserFixture.load_snapshot(
       %{
-        "linyilun" => %UserRegistry.User{username: "linyilun", feishu_ids: ["ou_lin"]}
+        "linyilun" => %Esr.Entity.User.Struct{username: "linyilun", feishu_ids: ["ou_lin"]}
       },
       %{"linyilun" => "linyilun-uuid"}
     )
@@ -39,16 +38,16 @@ defmodule Esr.Resource.Workspace.BootstrapTest do
     assert {:ok, ws} = WsRegistry.get_by_id(ws_id)
     assert ws.owner == "linyilun"
 
-    assert {:ok, ^ws_id} = UserRegistry.get_default_workspace("linyilun")
+    assert {:ok, ^ws_id} = Esr.Uri.Compat.default_workspace_for_user_name("linyilun")
 
     # Negative assertion: literal "default" still does not exist
     assert :not_found = NameIndex.id_for_name(:esr_workspace_name_index, "default")
   end
 
   test "idempotent: re-running with the same user does not create a second workspace" do
-    UserRegistry.load_snapshot_with_uuids(
+    Esr.Test.UserFixture.load_snapshot(
       %{
-        "alice" => %UserRegistry.User{username: "alice", feishu_ids: ["ou_a"]}
+        "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
       },
       %{"alice" => "alice-uuid"}
     )

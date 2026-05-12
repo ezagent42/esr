@@ -3,7 +3,6 @@ defmodule Esr.Commands.Session.ShareTest do
 
   alias Esr.Commands.Session.Share
   alias Esr.Resource.Session.Registry, as: SessionRegistry
-  alias Esr.Entity.User.NameIndex
 
   @submitter "user-uuid-0000-0000-000000000030"
   @target_username "alice-share-#{:rand.uniform(999_999)}"
@@ -15,18 +14,14 @@ defmodule Esr.Commands.Session.ShareTest do
       _ -> :ok
     end
 
-    # Start the NameIndex GenServer if it isn't already running.
-    # The default table name is :esr_user_name_index.
-    case :ets.info(:esr_user_name_index_name_to_id) do
-      :undefined ->
-        start_supervised!({NameIndex, [table: :esr_user_name_index]})
-
-      _ ->
-        :ok
+    # PR-1: URI store replaces NameIndex.
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
+      _ -> :ok
     end
 
-    # Seed the user into NameIndex (idempotent: ignore :name_exists)
-    _ = NameIndex.put(@target_username, @target_uuid)
+    # Seed the user into URI store directly (idempotent).
+    Esr.Test.UserFixture.put(@target_username, @target_uuid)
 
     # Seed a session
     data_dir = Esr.Paths.runtime_home()

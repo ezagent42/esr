@@ -5,7 +5,6 @@ defmodule Esr.Interface.LookupRegistry do
 
   Implementers in ESR (post-R4):
     - `Esr.Entity.Registry` (actor_id → pid)
-    - `Esr.Entity.User.Registry` (username → User.t)
     - `Esr.Resource.Workspace.Registry` (name → Workspace.t)
     - `Esr.Resource.Capability.Grants` (principal → permissions)
     - `Esr.Resource.SlashRoute.Registry` (slash text → route data)

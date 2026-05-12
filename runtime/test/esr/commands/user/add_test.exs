@@ -3,21 +3,19 @@ defmodule Esr.Commands.User.AddTest do
 
   alias Esr.Commands.User.Add
   alias Esr.Commands.User.Remove
-  alias Esr.Entity.User.NameIndex
 
   # Unique prefix to isolate this test module's users.yaml writes from siblings.
   @prefix "addtest-#{System.system_time(:millisecond)}"
 
   setup do
-    # Ensure NameIndex GenServer is running with the default table.
-    case :ets.info(:esr_user_name_index_name_to_id) do
-      :undefined -> start_supervised!({NameIndex, []})
+    # PR-1: User.NameIndex is gone; the test reads identity state via
+    # Esr.Uri.Compat against :esr_uri_store.
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
     end
 
-    # Clear NameIndex state between tests.
-    :ets.delete_all_objects(:esr_user_name_index_name_to_id)
-    :ets.delete_all_objects(:esr_user_name_index_id_to_name)
+    Esr.Uri.Store.delete_all_by_kind(:user)
 
     # Point users.yaml to a temp dir so tests don't pollute real state.
     tmp_dir = System.tmp_dir!() |> Path.join("esr_add_test_#{:rand.uniform(999_999)}")
@@ -45,7 +43,7 @@ defmodule Esr.Commands.User.AddTest do
       uuid = result["id"]
       assert is_binary(uuid) and uuid != ""
 
-      assert {:ok, ^uuid} = NameIndex.id_for_name(:esr_user_name_index, name)
+      assert {:ok, ^uuid} = Esr.Uri.Compat.uuid_for_user_name(name)
     end
 
     test "/user:add returns already_exists without duplicate NameIndex entry" do
@@ -56,7 +54,7 @@ defmodule Esr.Commands.User.AddTest do
       assert {:error, %{"type" => "already_exists"}} = Add.execute(cmd)
 
       # NameIndex should still have exactly one entry for this user.
-      assert {:ok, _uuid} = NameIndex.id_for_name(:esr_user_name_index, name)
+      assert {:ok, _uuid} = Esr.Uri.Compat.uuid_for_user_name(name)
     end
   end
 
@@ -65,10 +63,10 @@ defmodule Esr.Commands.User.AddTest do
       name = "#{@prefix}-carol-#{:rand.uniform(9999)}"
 
       {:ok, %{"id" => uuid}} = Add.execute(%{"args" => %{"name" => name}})
-      assert {:ok, ^uuid} = NameIndex.id_for_name(:esr_user_name_index, name)
+      assert {:ok, ^uuid} = Esr.Uri.Compat.uuid_for_user_name(name)
 
       assert {:ok, _} = Remove.execute(%{"args" => %{"name" => name}})
-      assert :not_found = NameIndex.id_for_name(:esr_user_name_index, name)
+      assert :not_found = Esr.Uri.Compat.uuid_for_user_name(name)
     end
 
     test "/user:remove on unknown user returns not_found without touching NameIndex" do
@@ -135,7 +133,7 @@ defmodule Esr.Commands.User.AddTest do
       assert ws.owner == name
 
       # User-default link populated
-      assert {:ok, ^ws_id} = Esr.Entity.User.Registry.get_default_workspace(name)
+      assert {:ok, ^ws_id} = Esr.Uri.Compat.default_workspace_for_user_name(name)
     end
 
     test "user_add result map carries actor identity (Phase 4 contract)" do

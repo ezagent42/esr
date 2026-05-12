@@ -7,7 +7,7 @@ defmodule Esr.UriStoreTest do
   """
   use ExUnit.Case, async: false
 
-  alias Esr.Entity.User.Registry.User
+  alias Esr.Entity.User.Struct, as: User
 
   setup do
     # Reset table to a known-empty state between tests.
