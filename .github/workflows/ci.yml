@@ -61,6 +61,16 @@ jobs:
         working-directory: runtime
         run: mix esr.check_command_docs
 
+      - name: Check URI drift (PR-0 Task 0.6 L1' path-pattern gate)
+        # Spec: docs/superpowers/specs/2026-05-12-uri-identity-spec.md §10.
+        # Bans legacy identity-lookup API uses (User.Registry / NameIndex /
+        # Workspace.Registry / InstanceRegistry.primary / ...) outside
+        # runtime/lib/esr/uri/**, runtime/lib/esr/uri.ex, and
+        # runtime/lib/esr/plugins/*/uri_handler.ex. Each migration PR
+        # ratchets runtime/priv/uri-drift-baseline.txt down.
+        working-directory: runtime
+        run: mix esr.check_uri_drift
+
       - name: Check bundles (SessionTemplate + Channel migration drift gate)
         # Phase 8 Task 8.4 of spec
         # docs/superpowers/specs/2026-05-10-session-template-and-channel.md §10

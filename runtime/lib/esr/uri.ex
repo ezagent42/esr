@@ -345,4 +345,85 @@ defmodule Esr.Uri do
       [p, q] -> {p, URI.decode_query(q)}
     end
   end
+
+  # ───────────────────────────────────────────────────────────────
+  # URI STORE FACADE (spec 2026-05-12-uri-identity-design.md)
+  # ───────────────────────────────────────────────────────────────
+  #
+  # `Esr.Uri` serves two purposes:
+  #   (1) `parse/1`, `build*/3` — pure parser/builder for esr:// grammar
+  #   (2) `resolve/1`, `alias/2`, `put_entity/3`, `get_entity/1`, `delete/1`
+  #       — store facade dispatching to `Esr.Uri.Store` GenServer + plugin handlers.
+  #
+  # `def alias/2` is legal Elixir despite `alias` being a kernel
+  # directive — directives are recognized only at module-body top
+  # level, not as function names.
+  #
+  # All canonical/alias URIs use the `esr://localhost/<kind>/...` form
+  # so that `parse/1` (which requires a host) accepts them.
+
+  @core_kinds ~w(users workspaces sessions agents)
+
+  @spec resolve(String.t()) :: {:ok, canonical :: String.t()} | :not_found
+  def resolve(uri) when is_binary(uri) do
+    case Esr.Uri.Store.lookup_raw(uri) do
+      {:ok, {:entity, _, _}} -> {:ok, uri}
+      {:ok, {:alias, canonical}} -> {:ok, canonical}
+      :not_found -> dispatch_to_plugin(uri)
+    end
+  end
+
+  def resolve(_), do: :not_found
+
+  @spec alias(canonical :: String.t(), alias_uri :: String.t()) ::
+          :ok | {:error, atom()}
+  def alias(canonical_uri, alias_uri)
+      when is_binary(canonical_uri) and is_binary(alias_uri) do
+    Esr.Uri.Store.put_alias(alias_uri, canonical_uri)
+  end
+
+  @spec put_entity(String.t(), atom(), struct()) :: :ok
+  def put_entity(canonical_uri, kind, data)
+      when is_binary(canonical_uri) and is_atom(kind) and is_struct(data) do
+    Esr.Uri.Store.put_entity(canonical_uri, kind, data)
+  end
+
+  @spec get_entity(String.t()) :: {:ok, atom(), struct()} | :not_found
+  def get_entity(uri) when is_binary(uri) do
+    with {:ok, canonical} <- resolve(uri),
+         {:ok, {:entity, kind, data}} <- Esr.Uri.Store.lookup_raw(canonical) do
+      {:ok, kind, data}
+    else
+      _ -> :not_found
+    end
+  end
+
+  @spec delete(String.t()) :: :ok
+  def delete(uri) when is_binary(uri) do
+    Esr.Uri.Store.delete(uri)
+  end
+
+  # Dispatch a non-stored URI to a plugin handler if its (kind, prefix)
+  # is registered. Used as a fallback in resolve/1.
+  defp dispatch_to_plugin(uri) do
+    case parse(uri) do
+      {:ok, %__MODULE__{segments: [kind, plugin_seg | rest]}}
+          when kind in @core_kinds and plugin_seg not in ["by-name", "by-uuid"] ->
+        handlers = :persistent_term.get({__MODULE__, :plugin_handlers}, %{})
+
+        case Map.fetch(handlers, kind <> "/" <> plugin_seg) do
+          {:ok, handler_mod} ->
+            case handler_mod.resolve(rest) do
+              {:ok, canonical} -> {:ok, canonical}
+              _ -> :not_found
+            end
+
+          :error ->
+            :not_found
+        end
+
+      _ ->
+        :not_found
+    end
+  end
 end

@@ -33,6 +33,14 @@ description: |
 # unchanged. SessionTemplate loaders (Phase 4) instantiate one ChatProxy
 # Channel per session. Spec
 # 2026-05-10-session-template-and-channel.md, Phase 3.
+# Top-level `uri_subtrees:` block — registered by Esr.Plugin.Loader at
+# boot into `:persistent_term {Esr.Uri, :plugin_handlers}`. The feishu
+# plugin owns the `users/feishu/<ou_xxx>` URI subtree. Spec:
+# docs/superpowers/specs/2026-05-12-uri-identity-design.md §6.
+uri_subtrees:
+  - prefix: "users/feishu"
+    handler: Esr.Plugins.Feishu.UriHandler
+
 channels:
   - name: chat_proxy
     module: Esr.Plugins.Feishu.Channels.ChatProxy
