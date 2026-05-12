@@ -745,4 +745,370 @@ defmodule Esr.Uri.Compat do
         {:error, {:session_json_missing, reason}}
     end
   end
+
+  # ────────────────────────────────────────────────────────────
+  # Agent wrappers (PR-4)
+  # ────────────────────────────────────────────────────────────
+  #
+  # The Agent domain still uses `Esr.Entity.Agent.InstanceRegistry` as
+  # its backing GenServer + ETS store. PR-4 (2026-05-12) migrates every
+  # external caller to these wrappers, which:
+  #
+  #   * Read through the URI store first when possible
+  #     (`agent_in_session/2`, `agent_by_uuid/1`) using the canonical
+  #     `esr://localhost/agents/<uuid>` row + `agents/by-name/<sid>/<name>`
+  #     alias. The wrappers fall back to the InstanceRegistry ETS read so
+  #     legacy state populated before URI mirroring is reachable.
+  #   * Mirror every mutation to the URI store so URI-store-first reads
+  #     stay consistent with InstanceRegistry's authoritative state.
+  #   * Implement the documented BREAKING change on `primary/2`: the new
+  #     `primary_agent_uuid/1` returns `{:ok, agent_uuid}` (the
+  #     `%Instance{}.id`) instead of `{:ok, name}`. Display callers must
+  #     chain `agent_by_uuid/1` to recover the name.
+  #
+  # PR-5 will delete `Esr.Entity.Agent.InstanceRegistry` after the URI-
+  # store rows + a thin pid registry replace its remaining responsibilities.
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.get/3`
+  (by session_id + name). URI-store-first; falls back to InstanceRegistry
+  for rows that haven't been mirrored yet.
+  """
+  @spec agent_in_session(String.t(), String.t()) :: {:ok, struct()} | :not_found
+  def agent_in_session(session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    case Esr.Uri.get_entity("esr://localhost/agents/by-name/#{session_id}/#{name}") do
+      {:ok, :agent, data} ->
+        {:ok, data}
+
+      _ ->
+        # Fallback: InstanceRegistry still owns rows that haven't been
+        # mirrored to the URI store. Mirror on read so subsequent reads
+        # skip the GenServer call.
+        case Esr.Entity.Agent.InstanceRegistry.get(session_id, name) do
+          {:ok, inst} ->
+            _ = mirror_instance_to_uri_store(inst)
+            {:ok, inst}
+
+          :not_found ->
+            :not_found
+        end
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.get_by_uuid/1`
+  (by instance_id). URI-store-first.
+  """
+  @spec agent_by_uuid(String.t()) :: {:ok, struct()} | :not_found
+  def agent_by_uuid(uuid) when is_binary(uuid) do
+    case Esr.Uri.get_entity("esr://localhost/agents/" <> uuid) do
+      {:ok, :agent, data} -> {:ok, data}
+      _ -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.primary/2`.
+
+  **BREAKING (PR-4, 2026-05-12)**: returns the agent UUID
+  (`%Instance{}.id`), NOT the name. Callers that need the display name
+  must chain `agent_by_uuid/1` and read `.name`.
+  """
+  @spec primary_agent_uuid(String.t()) :: {:ok, String.t()} | :not_found
+  def primary_agent_uuid(session_id) when is_binary(session_id) do
+    case Esr.Uri.resolve("esr://localhost/agents/by-primary-for/" <> session_id) do
+      {:ok, "esr://localhost/agents/" <> uuid} ->
+        {:ok, uuid}
+
+      _ ->
+        # Fallback to InstanceRegistry — translate name → uuid by
+        # consulting the instance row, then mirror to the URI store.
+        case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+          {:ok, name} ->
+            case Esr.Entity.Agent.InstanceRegistry.get(session_id, name) do
+              {:ok, inst} ->
+                _ = mirror_instance_to_uri_store(inst)
+                _ = mirror_primary_alias(session_id, inst.id)
+                {:ok, inst.id}
+
+              :not_found ->
+                :not_found
+            end
+
+          :not_found ->
+            :not_found
+        end
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.list/2`
+  (list agents in session).
+  """
+  @spec list_agents_in_session(String.t()) :: [struct()]
+  def list_agents_in_session(session_id) when is_binary(session_id) do
+    # InstanceRegistry is still the authoritative source for the
+    # per-session list (it tracks `session_ids` arrays). Mirror each
+    # entry to the URI store on read so subsequent point-lookups skip
+    # the GenServer.
+    instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
+    Enum.each(instances, &mirror_instance_to_uri_store/1)
+    instances
+  rescue
+    _ -> []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.names_for_session/2`.
+  """
+  @spec agent_names_in_session(String.t()) :: [String.t()]
+  def agent_names_in_session(session_id) when is_binary(session_id) do
+    list_agents_in_session(session_id) |> Enum.map(& &1.name)
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.pty_actor_id_for/3`.
+  """
+  @spec pty_actor_id_for(String.t(), String.t()) :: {:ok, String.t()} | :not_found
+  def pty_actor_id_for(session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    case agent_in_session(session_id, name) do
+      {:ok, %{actor_ids: %{pty: pty_id}}} when is_binary(pty_id) -> {:ok, pty_id}
+      _ -> :not_found
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.add_instance/2`.
+
+  Delegates to the InstanceRegistry GenServer (authoritative state)
+  then mirrors the resulting `%Instance{}` rows into the URI store.
+  """
+  @spec add_instance(map()) :: :ok | {:error, {:duplicate_agent_name, String.t()}}
+  def add_instance(attrs) when is_map(attrs) do
+    case Esr.Entity.Agent.InstanceRegistry.add_instance(attrs) do
+      :ok ->
+        _ = mirror_session_to_uri_store(extract_session_id(attrs))
+        :ok
+
+      err ->
+        err
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.add_instance_and_spawn/2`.
+  """
+  @spec add_instance_and_spawn(map()) ::
+          {:ok, %{cc_pid: pid(), pty_pid: pid(), actor_ids: map()}}
+          | {:error, term()}
+  def add_instance_and_spawn(attrs) when is_map(attrs) do
+    case Esr.Entity.Agent.InstanceRegistry.add_instance_and_spawn(attrs) do
+      {:ok, _result} = ok ->
+        _ = mirror_session_to_uri_store(extract_session_id(attrs))
+        ok
+
+      err ->
+        err
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.attach_to_session/4`.
+  """
+  @spec attach_to_session(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | {:name_taken_in_target, String.t()}}
+  def attach_to_session(name, source_sid, target_sid)
+      when is_binary(name) and is_binary(source_sid) and is_binary(target_sid) do
+    case Esr.Entity.Agent.InstanceRegistry.attach_to_session(name, source_sid, target_sid) do
+      :ok ->
+        _ = mirror_session_to_uri_store(source_sid)
+        _ = mirror_session_to_uri_store(target_sid)
+        :ok
+
+      err ->
+        err
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.remove_instance/3`.
+  """
+  @spec remove_instance(String.t(), String.t()) ::
+          :ok | {:error, :cannot_remove_primary | :not_found}
+  def remove_instance(session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    case Esr.Entity.Agent.InstanceRegistry.remove_instance(session_id, name) do
+      :ok ->
+        # Drop the by-name alias for this (session_id, name) pair. The
+        # canonical entity row may still be valid (instance attached to
+        # other sessions); list_agents_in_session/1 below will re-mirror.
+        _ = Esr.Uri.delete("esr://localhost/agents/by-name/#{session_id}/#{name}")
+        _ = mirror_session_to_uri_store(session_id)
+        :ok
+
+      err ->
+        err
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.set_primary/3`.
+  """
+  @spec set_primary(String.t(), String.t()) :: :ok | {:error, :not_found}
+  def set_primary(session_id, name)
+      when is_binary(session_id) and is_binary(name) do
+    case Esr.Entity.Agent.InstanceRegistry.set_primary(session_id, name) do
+      :ok ->
+        case Esr.Entity.Agent.InstanceRegistry.get(session_id, name) do
+          {:ok, inst} ->
+            _ = mirror_instance_to_uri_store(inst)
+            _ = mirror_primary_alias(session_id, inst.id)
+            :ok
+
+          :not_found ->
+            :ok
+        end
+
+      err ->
+        err
+    end
+  end
+
+  @doc """
+  Replaces `Esr.Entity.Agent.InstanceRegistry.rename_instance/4`.
+  """
+  @spec rename_instance(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :duplicate_agent_name}
+  def rename_instance(session_id, name, new_name)
+      when is_binary(session_id) and is_binary(name) and is_binary(new_name) do
+    case Esr.Entity.Agent.InstanceRegistry.rename_instance(session_id, name, new_name) do
+      :ok ->
+        # Drop the old by-name alias on every session the instance is
+        # attached to (rename is global across `session_ids`); the new
+        # name's aliases are populated by mirror_session_to_uri_store/1
+        # via the InstanceRegistry's authoritative session_ids list.
+        case Esr.Entity.Agent.InstanceRegistry.get(session_id, new_name) do
+          {:ok, inst} ->
+            Enum.each(inst.session_ids, fn s ->
+              _ = Esr.Uri.delete("esr://localhost/agents/by-name/#{s}/#{name}")
+              _ = mirror_session_to_uri_store(s)
+            end)
+
+            :ok
+
+          :not_found ->
+            :ok
+        end
+
+      err ->
+        err
+    end
+  end
+
+  # ── private mirror helpers ──
+
+  # Write the %Instance{} record at the canonical agent URI + the
+  # per-session by-name aliases. Idempotent.
+  defp mirror_instance_to_uri_store(%Esr.Entity.Agent.Instance{} = inst) do
+    if Process.whereis(Esr.Uri.Store) && is_binary(inst.id) do
+      canonical = "esr://localhost/agents/" <> inst.id
+      _ = Esr.Uri.put_entity(canonical, :agent, inst)
+
+      Enum.each(inst.session_ids || [], fn sid ->
+        if is_binary(sid) and is_binary(inst.name) do
+          _ = put_or_ignore_agent_alias(canonical, "esr://localhost/agents/by-name/#{sid}/#{inst.name}")
+        end
+      end)
+
+      :ok
+    else
+      :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp mirror_instance_to_uri_store(_), do: :ok
+
+  defp mirror_primary_alias(session_id, agent_uuid)
+       when is_binary(session_id) and is_binary(agent_uuid) do
+    if Process.whereis(Esr.Uri.Store) do
+      canonical = "esr://localhost/agents/" <> agent_uuid
+      alias_uri = "esr://localhost/agents/by-primary-for/" <> session_id
+
+      # by-primary is a 1-of-N alias — drop any prior alias before
+      # re-pointing it at the new canonical.
+      _ = Esr.Uri.delete(alias_uri)
+      _ = put_or_ignore_agent_alias(canonical, alias_uri)
+      :ok
+    else
+      :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp mirror_primary_alias(_, _), do: :ok
+
+  # Re-mirror every instance attached to `session_id` + refresh the
+  # primary alias to the new primary's UUID (the InstanceRegistry's
+  # `:primary` ETS row holds the name; resolve to UUID via the
+  # instance lookup).
+  defp mirror_session_to_uri_store(session_id) when is_binary(session_id) do
+    if Process.whereis(Esr.Uri.Store) do
+      instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
+      Enum.each(instances, &mirror_instance_to_uri_store/1)
+
+      case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+        {:ok, primary_name} ->
+          case Esr.Entity.Agent.InstanceRegistry.get(session_id, primary_name) do
+            {:ok, inst} -> mirror_primary_alias(session_id, inst.id)
+            :not_found -> :ok
+          end
+
+        :not_found ->
+          _ = Esr.Uri.delete("esr://localhost/agents/by-primary-for/" <> session_id)
+          :ok
+      end
+    else
+      :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp mirror_session_to_uri_store(_), do: :ok
+
+  defp put_or_ignore_agent_alias(canonical, alias_uri) do
+    case Esr.Uri.alias(canonical, alias_uri) do
+      :ok -> :ok
+      {:error, :alias_exists} -> :ok
+      other -> other
+    end
+  end
+
+  defp extract_session_id(attrs) when is_map(attrs) do
+    cond do
+      is_binary(Map.get(attrs, :session_id)) ->
+        Map.get(attrs, :session_id)
+
+      is_list(Map.get(attrs, :session_ids)) ->
+        List.first(Map.get(attrs, :session_ids))
+
+      true ->
+        nil
+    end
+  end
 end

@@ -29,14 +29,14 @@ defmodule Esr.Commands.Agent.Rename do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.Agent.InstanceRegistry
+  alias Esr.Uri.Compat
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => %{"session_id" => sid, "name" => name, "new_name" => new_name}})
       when is_binary(sid) and sid != "" and
              is_binary(name) and name != "" and
              is_binary(new_name) and new_name != "" do
-    case InstanceRegistry.rename_instance(sid, name, new_name) do
+    case Compat.rename_instance(sid, name, new_name) do
       :ok ->
         {:ok,
          %{

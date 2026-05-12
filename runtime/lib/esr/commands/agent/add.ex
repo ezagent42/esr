@@ -44,8 +44,8 @@ defmodule Esr.Commands.Agent.Add do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.Agent.InstanceRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatRouting
+  alias Esr.Uri.Compat
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   # Chat-current fallback: when operator omits `session_id=` but the
@@ -81,7 +81,7 @@ defmodule Esr.Commands.Agent.Add do
     config = Map.get(args, "config", %{})
 
     with :ok <- validate_agent_type(type) do
-      case InstanceRegistry.add_instance_and_spawn(%{
+      case Compat.add_instance_and_spawn(%{
              session_id: sid,
              type: type,
              name: name,

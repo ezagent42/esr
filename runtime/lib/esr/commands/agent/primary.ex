@@ -26,8 +26,12 @@ defmodule Esr.Commands.Agent.Primary do
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => %{"chat_id" => chat_id, "app_id" => app_id}})
       when is_binary(chat_id) and chat_id != "" and is_binary(app_id) and app_id != "" do
+    # PR-4 URI identity migration (2026-05-12): primary_agent_uuid/1
+    # returns the agent UUID; chain agent_by_uuid/1 to recover the
+    # display name for the operator-facing reply.
     with {:ok, sid} <- ChatRouting.current_session(chat_id, app_id),
-         {:ok, name} <- Esr.Entity.Agent.InstanceRegistry.primary(sid) do
+         {:ok, agent_uuid} <- Esr.Uri.Compat.primary_agent_uuid(sid),
+         {:ok, %{name: name}} <- Esr.Uri.Compat.agent_by_uuid(agent_uuid) do
       {:ok, %{"session_id" => sid, "primary" => name}}
     else
       :not_found ->

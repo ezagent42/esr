@@ -6,10 +6,18 @@ defmodule Esr.Entity.SlashHandler.MentionTest do
 
   use ExUnit.Case, async: false
   alias Esr.Entity.Agent.InstanceRegistry
+  alias Esr.Uri.Compat
 
   setup do
     case Process.whereis(InstanceRegistry) do
       nil -> start_supervised!(InstanceRegistry)
+      _ -> :ok
+    end
+
+    # PR-4 URI identity migration: ensure Esr.Uri.Store is up so Compat
+    # mirror writes have a backing table.
+    case Process.whereis(Esr.Uri.Store) do
+      nil -> start_supervised!(Esr.Uri.Store)
       _ -> :ok
     end
 
