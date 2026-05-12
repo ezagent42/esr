@@ -77,10 +77,14 @@ defmodule Esr.Commands.RegisterAdapter do
 
     case Esr.Adapters.add(name, "feishu", config) do
       :ok ->
-        case spawn_adapter(name, app_id, secret, opts) do
-          :ok ->
-            {:ok, %{"adapter_id" => name, "running" => true}}
-
+        # Half-state on run_startup_hooks failure is by design: the
+        # adapter config + sidecar persist, operator sees
+        # register_adapter_failed, and `adapter_refresh` reconciles
+        # idempotently. Same shape as pre-fix spawn-fail half-state.
+        with :ok <- spawn_adapter(name, app_id, secret, opts),
+             :ok <- run_startup_hooks(opts) do
+          {:ok, %{"adapter_id" => name, "running" => true}}
+        else
           {:error, reason} ->
             Render.error(__MODULE__.command_meta(), :register_adapter_failed, %{
               detail: inspect(reason)
@@ -120,6 +124,23 @@ defmodule Esr.Commands.RegisterAdapter do
       :ok -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_spawn_fn_return, other}}
+    end
+  end
+
+  # After the Python sidecar is up, re-run every enabled plugin's
+  # idempotent startup hook so the matching Elixir peer (e.g. feishu's
+  # FAA) spawns against the just-written adapters/<name>/config.yaml.
+  # Same path adapter_refresh takes. Without this step register_adapter
+  # leaves a half-wired plumb: sidecar up, FAA missing → inbound
+  # messages silently dropped with "no FeishuAppAdapter for app_id=...".
+  # Diagnosed 2026-05-12 (Feishu live test).
+  defp run_startup_hooks(opts) do
+    startup_fn = Keyword.get(opts, :startup_fn, &Esr.Plugin.Loader.run_startup/0)
+
+    case startup_fn.() do
+      :ok -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_startup_fn_return, other}}
     end
   end
 

@@ -46,6 +46,10 @@ esr-dev exec feishu_bind --name=linyilun --feishu_user_id=ou_xxx
 #    → 点 URL → 浏览器里的 xterm 打开你的 CC session
 ```
 
+**这个命令做了什么（原子的）**：写 `~/.esrd-dev/default/adapters/<name>/config.yaml`，
+spawn Python sidecar，**并且** spawn Elixir 端的 `FeishuAppAdapter` peer（处理 Feishu 入站事件）。
+三件事在一次 call 里完成 —— 不再需要 `esr exec adapter_refresh` 收尾。
+
 正是这条流程。下面的章节解释每一步、底层身份模型，以及出错时
 怎么排查。
 
