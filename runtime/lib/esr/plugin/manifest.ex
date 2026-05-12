@@ -48,7 +48,14 @@ defmodule Esr.Plugin.Manifest do
     # `<plugin>.<name>` into `Esr.Plugin.AgentKindRegistry` at boot.
     # Replaces the agents.yaml file. Spec:
     # 2026-05-10-session-template-and-channel.md, Phase 6.
-    agent_kinds: []
+    agent_kinds: [],
+    # Top-level `uri_subtrees:` block (sibling of `name:`/`version:`).
+    # Each entry: `%{prefix: String.t(), handler: module()}`. Loader
+    # writes the parsed `prefix → handler` map into
+    # `:persistent_term` keyed by `{Esr.Uri, :plugin_handlers}` at
+    # boot; `Esr.Uri.resolve/1` reads it for plugin dispatch.
+    # Spec: docs/superpowers/specs/2026-05-12-uri-identity-design.md §6.
+    uri_subtrees: []
   ]
 
   @type channel_entry :: %{
@@ -72,6 +79,8 @@ defmodule Esr.Plugin.Manifest do
           params: [map()]
         }
 
+  @type uri_subtree_entry :: %{prefix: String.t(), handler: module()}
+
   @type t :: %__MODULE__{
           name: String.t(),
           version: String.t(),
@@ -81,7 +90,8 @@ defmodule Esr.Plugin.Manifest do
           hot_reloadable: boolean(),
           path: Path.t() | nil,
           channels: [channel_entry()],
-          agent_kinds: [agent_kind_entry()]
+          agent_kinds: [agent_kind_entry()],
+          uri_subtrees: [uri_subtree_entry()]
         }
 
   # Allow lowercase + digits + `-` or `_` separators. Spec B §四
@@ -134,7 +144,8 @@ defmodule Esr.Plugin.Manifest do
          {:ok, config_schema} <- parse_config_schema(parsed["config_schema"] || %{}),
          {:ok, hot_reloadable} <- parse_hot_reloadable(parsed),
          {:ok, channels} <- parse_channels(parsed["channels"]),
-         {:ok, agent_kinds} <- parse_agent_kinds(parsed["agent_kinds"]) do
+         {:ok, agent_kinds} <- parse_agent_kinds(parsed["agent_kinds"]),
+         uri_subtrees <- parse_uri_subtrees(Map.get(parsed, "uri_subtrees", [])) do
       raw_declares = parsed["declares"] || %{}
       declares = atomize_declares(raw_declares)
       raw_media_types = raw_declares["media_types"] || raw_declares[:media_types]
@@ -155,7 +166,8 @@ defmodule Esr.Plugin.Manifest do
            hot_reloadable: hot_reloadable,
            path: nil,
            channels: channels,
-           agent_kinds: agent_kinds
+           agent_kinds: agent_kinds,
+           uri_subtrees: uri_subtrees
          }}
       end
     end
@@ -529,6 +541,35 @@ defmodule Esr.Plugin.Manifest do
       Enum.into(entry, %{}, fn {k, v} -> {to_string(k), v} end)
     end)
   end
+
+  # ---- uri_subtrees parser (PR-0 Task 0.5, URI identity subsystem) ----
+  #
+  # Top-level `uri_subtrees:` block. Each entry is a map with string
+  # `prefix:` (the kind/plugin-segment path like `"users/feishu"`)
+  # and string `handler:` (a module name resolvable via
+  # `Module.concat/1`). `Esr.Plugin.Loader` writes the parsed entries
+  # into `:persistent_term` under `{Esr.Uri, :plugin_handlers}` so
+  # `Esr.Uri.resolve/1` can dispatch URIs starting with the prefix
+  # to the handler module.
+  #
+  # We use `Module.concat/1` rather than `String.to_existing_atom/1`
+  # so the handler module doesn't need to be already-loaded at parse
+  # time (parse runs early in boot before plugin code may be available).
+  # Spec: docs/superpowers/specs/2026-05-12-uri-identity-design.md §6.
+  defp parse_uri_subtrees(raw) when is_list(raw) do
+    Enum.map(raw, fn entry ->
+      case entry do
+        %{"prefix" => prefix, "handler" => handler_str}
+            when is_binary(prefix) and is_binary(handler_str) ->
+          %{prefix: prefix, handler: Module.concat([handler_str])}
+
+        _ ->
+          raise ArgumentError, "uri_subtrees entry malformed: #{inspect(entry)}"
+      end
+    end)
+  end
+
+  defp parse_uri_subtrees(_), do: []
 
   # ---- validate/1 helpers ----
 
