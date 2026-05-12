@@ -17,9 +17,6 @@ defmodule Esr.Resource.Workspace.Bootstrap do
   use Task, restart: :transient
   require Logger
 
-  alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
-  alias Esr.Resource.Workspace.Registry, as: WsRegistry
-
   def start_link(_), do: Task.start_link(__MODULE__, :run, [])
 
   def run do
@@ -62,14 +59,14 @@ defmodule Esr.Resource.Workspace.Bootstrap do
     end
   rescue
     _ ->
-      # Registry / NameIndex ETS tables not running (e.g. early test setups). Skip.
+      # URI store ETS table not running (e.g. early test setups). Skip.
       :ok
   end
 
   defp create_user_default_for(username) do
     ws_name = "#{username}-default"
 
-    case WsNameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(ws_name) do
       {:ok, ws_id} ->
         # Workspace already exists (perhaps from a prior /user:add).
         # Just link it to the user-default.
@@ -96,7 +93,7 @@ defmodule Esr.Resource.Workspace.Bootstrap do
           location: {:esr_bound, dir}
         }
 
-        case WsRegistry.put(ws) do
+        case Esr.Uri.Compat.workspace_put(ws) do
           :ok ->
             _ = Esr.Uri.Compat.set_default_workspace_for_user_name(username, ws_uuid)
 

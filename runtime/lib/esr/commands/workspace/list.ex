@@ -29,14 +29,14 @@ defmodule Esr.Commands.Workspace.List do
 
   @behaviour Esr.Role.Control
 
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   @type result :: {:ok, map()}
 
   @spec execute(map()) :: result()
   def execute(_cmd) do
     text =
-      case Registry.list_all() do
+      case Esr.Uri.Compat.list_workspaces() do
         [] -> "no workspaces registered"
         workspaces -> render_yaml(workspaces)
       end

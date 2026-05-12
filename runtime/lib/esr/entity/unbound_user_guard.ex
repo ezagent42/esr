@@ -37,7 +37,7 @@ defmodule Esr.Entity.UnboundUserGuard do
       when is_binary(user_id) and user_id != "" and
              is_binary(chat_id) and chat_id != "" and
              is_binary(app_id) and app_id != "" do
-    with {:ok, _ws} <- Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id),
+    with {:ok, _ws} <- Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id),
          :not_found <- Esr.Uri.Compat.username_for_feishu_id(user_id) do
       case GenServer.call(__MODULE__, {:note_emit?, user_id}) do
         :emit -> {:emit, user_guide_text(user_id)}

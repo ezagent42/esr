@@ -41,7 +41,7 @@ defmodule Esr.Commands.Whoami do
       end
 
     workspace =
-      case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+      case Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id) do
         {:ok, ws} -> ws
         :not_found -> "(无)"
       end

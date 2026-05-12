@@ -180,7 +180,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     # exercises the broadcast path; the unbound-chat path has its own
     # test below.
     :ok =
-      Esr.Resource.Workspace.Registry.put(
+      Esr.Uri.Compat.workspace_put(
         Esr.Test.WorkspaceFixture.build(
           name: "ws_for_new_chat_thread_test",
           chats: [%{"chat_id" => "oc_new", "app_id" => "inst_nomatch", "kind" => "dm"}]
@@ -311,7 +311,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
     test "chat-bound + user-unbound emits user-guide DM", %{sup: sup} do
       # Pre: register a workspace bound to (oc_user_test, inst_user_guide)
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: "ws_for_user_guide_test",
             owner: "linyilun",
@@ -379,7 +379,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
         })
 
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: "ws_for_user_bound_test",
             owner: "linyilun",
@@ -465,7 +465,7 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
     test "second inbound from same unbound user is rate-limited", %{sup: sup} do
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: "ws_for_user_ratelimit",
             owner: "linyilun",

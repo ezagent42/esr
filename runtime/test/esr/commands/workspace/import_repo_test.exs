@@ -2,13 +2,13 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.ImportRepo
-  alias Esr.Resource.Workspace.Registry
+  # (PR-2: Registry deleted; use Esr.Uri.Compat.*)
   alias Esr.Paths
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_import_test_#{unique}")
@@ -63,8 +63,8 @@ defmodule Esr.Commands.Workspace.ImportRepoTest do
     assert result["id"] == id
     assert result["action"] == "imported"
 
-    # Verify Registry.refresh() picked it up
-    assert {:ok, ws} = Registry.get_by_id(id)
+    # Verify Esr.Resource.Workspace.FileLoader.populate_uri_store() picked it up
+    assert {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert ws.name == "myws"
   end
 

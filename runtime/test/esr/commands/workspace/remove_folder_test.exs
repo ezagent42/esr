@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.RemoveFolder, as: WorkspaceRemoveFolder
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_remove_folder_test_#{unique}")
@@ -56,7 +56,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -77,7 +77,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
       location: {:repo_bound, Path.expand(repo_path)}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -98,7 +98,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
              })
 
     # State is unchanged after the rejected removal.
-    assert {:ok, unchanged} = Registry.get_by_id(id)
+    assert {:ok, unchanged} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(unchanged.folders) == 1
   end
 
@@ -126,7 +126,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     assert Path.expand(repo_a) in paths
     assert Path.expand(repo_c) in paths
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.folders) == 2
   end
 
@@ -163,7 +163,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     assert length(result["folders"]) == 1
     assert hd(result["folders"])["path"] == Path.expand(repo)
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.folders) == 1
   end
 
@@ -291,9 +291,9 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
         })
 
       {:ok, wid} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, esr_name)
+        Esr.Uri.Compat.uuid_for_workspace_name(esr_name)
 
-      {:ok, ws} = Registry.get_by_id(wid)
+      {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(wid)
       [%{path: only_path}] = ws.folders
 
       assert {:error, %{"type" => "cannot_remove_last_folder"}} =

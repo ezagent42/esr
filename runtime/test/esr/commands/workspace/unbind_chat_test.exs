@@ -2,12 +2,12 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.Workspace.UnbindChat, as: WorkspaceUnbindChat
-  alias Esr.Resource.Workspace.{Struct, Registry}
+  alias Esr.Resource.Workspace.Struct
 
   # ── Setup / Teardown ──────────────────────────────────────────────────────────
 
   setup do
-    assert is_pid(Process.whereis(Registry))
+    assert is_pid(Process.whereis(Esr.Uri.Store))
 
     unique = System.unique_integer([:positive])
     tmp = Path.join(System.tmp_dir!(), "ws_unbind_chat_test_#{unique}")
@@ -47,7 +47,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
       location: {:esr_bound, dir}
     }
 
-    Registry.put(ws)
+    Esr.Uri.Compat.workspace_put(ws)
     ws
   end
 
@@ -74,7 +74,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
     assert result["removed_count"] == 1
     assert result["chats"] == []
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.chats == []
   end
 
@@ -105,7 +105,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
     [remaining] = result["chats"]
     assert remaining["chat_id"] == "oc_other"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.chats) == 1
   end
 
@@ -157,7 +157,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
     assert remaining["chat_id"] == "oc_shared"
     assert remaining["app_id"] == "cli_y"
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert length(updated.chats) == 1
     [saved] = updated.chats
     assert saved.app_id == "cli_y"
@@ -188,7 +188,7 @@ defmodule Esr.Commands.Workspace.UnbindChatTest do
     assert result["removed_count"] == 2
     assert result["chats"] == []
 
-    assert {:ok, updated} = Registry.get_by_id(id)
+    assert {:ok, updated} = Esr.Uri.Compat.workspace_by_uuid(id)
     assert updated.chats == []
   end
 

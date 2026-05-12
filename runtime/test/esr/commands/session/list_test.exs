@@ -134,7 +134,7 @@ defmodule Esr.Commands.Session.ListTest do
   describe "execute/1 PR-21j workspace-scoped path" do
     test "returns sessions filtered by (env, username, workspace) URI tuple" do
       assert is_pid(Process.whereis(Esr.Session.ChatRouting.Registry))
-      assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+      assert is_pid(Process.whereis(Esr.Uri.Store))
 
       unique = System.unique_integer([:positive])
       ws_name = "esr-dev-scope-list-#{unique}"
@@ -142,7 +142,7 @@ defmodule Esr.Commands.Session.ListTest do
 
       # Workspace must exist in registry for the existence check to pass.
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: ws_name,
             owner: "linyilun",
@@ -221,13 +221,13 @@ defmodule Esr.Commands.Session.ListTest do
     end
 
     test "no matching sessions → empty list (workspace must exist)" do
-      assert is_pid(Process.whereis(Esr.Resource.Workspace.Registry))
+      assert is_pid(Process.whereis(Esr.Uri.Store))
 
       ws_name = "scope-list-test-ws-#{System.unique_integer([:positive])}"
       env = "empty-#{System.unique_integer([:positive])}"
 
       :ok =
-        Esr.Resource.Workspace.Registry.put(
+        Esr.Uri.Compat.workspace_put(
           Esr.Test.WorkspaceFixture.build(
             name: ws_name,
             owner: "linyilun",

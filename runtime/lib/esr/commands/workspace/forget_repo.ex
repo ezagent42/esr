@@ -36,7 +36,7 @@ defmodule Esr.Commands.Workspace.ForgetRepo do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Registry, RepoRegistry}
+  alias Esr.Resource.Workspace.{FileLoader, RepoRegistry}
   alias Esr.Paths
 
   @type result :: {:ok, map()} | {:error, map()}
@@ -54,7 +54,7 @@ defmodule Esr.Commands.Workspace.ForgetRepo do
         if Enum.any?(entries, &(&1.path == path)) do
           # Path is registered; unregister it
           with :ok <- RepoRegistry.unregister(yaml_path, path),
-               :ok <- Registry.refresh() do
+               :ok <- FileLoader.populate_uri_store() do
             {:ok, %{"path" => path, "action" => "forgotten"}}
           end
         else

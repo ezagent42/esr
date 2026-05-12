@@ -124,12 +124,10 @@ defmodule Esr.Commands.User.AddTest do
 
       # Workspace exists in registry
       {:ok, ws_id} =
-        Esr.Resource.Workspace.NameIndex.id_for_name(
-          :esr_workspace_name_index,
-          "#{name}-default"
+        Esr.Uri.Compat.uuid_for_workspace_name("#{name}-default"
         )
 
-      assert {:ok, ws} = Esr.Resource.Workspace.Registry.get_by_id(ws_id)
+      assert {:ok, ws} = Esr.Uri.Compat.workspace_by_uuid(ws_id)
       assert ws.owner == name
 
       # User-default link populated
@@ -173,9 +171,7 @@ defmodule Esr.Commands.User.AddTest do
       end
 
       assert :not_found =
-               Esr.Resource.Workspace.NameIndex.id_for_name(
-                 :esr_workspace_name_index,
-                 "#{name}-default"
+               Esr.Uri.Compat.uuid_for_workspace_name("#{name}-default"
                )
     end
 

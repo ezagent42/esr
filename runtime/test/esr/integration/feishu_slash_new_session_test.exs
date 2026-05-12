@@ -203,7 +203,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
         chats: [%{"chat_id" => @chat_id, "app_id" => test_app_id}]
       )
 
-    Esr.Resource.Workspace.Registry.put(workspace)
+    Esr.Uri.Compat.workspace_put(workspace)
 
     Esr.Test.UserFixture.load_snapshot(%{
       "t3_user" => %Esr.Entity.User.Struct{

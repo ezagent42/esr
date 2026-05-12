@@ -61,7 +61,7 @@ defmodule Esr.Commands.Workspace.Remove do
 
   alias Esr.Commands.Render
   alias Esr.Paths
-  alias Esr.Resource.Workspace.{Struct, Registry, NameIndex, RepoRegistry}
+  alias Esr.Resource.Workspace.{Struct, RepoRegistry}
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -112,7 +112,7 @@ defmodule Esr.Commands.Workspace.Remove do
     # ESR owns the entire directory tree; wholesale delete is safe.
     File.rm_rf!(dir)
 
-    Registry.delete_by_id(id)
+    Esr.Uri.Compat.workspace_delete_by_id(id)
 
     {:ok,
      %{
@@ -145,7 +145,7 @@ defmodule Esr.Commands.Workspace.Remove do
       end)
 
     RepoRegistry.unregister(yaml_path, repo)
-    Registry.delete_by_id(id)
+    Esr.Uri.Compat.workspace_delete_by_id(id)
 
     {:ok,
      %{
@@ -158,9 +158,9 @@ defmodule Esr.Commands.Workspace.Remove do
 
   # Workspace lookup (mirrors edit.ex pattern)
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> workspace_not_found(name)
         end

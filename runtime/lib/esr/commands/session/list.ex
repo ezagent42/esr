@@ -140,12 +140,12 @@ defmodule Esr.Commands.Session.List do
   # ------------------------------------------------------------------
 
   defp workspace_exists?(ws_name) do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, ws_name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(ws_name) do
       {:ok, _} -> true
       :not_found -> false
     end
   rescue
-    # NameIndex ETS tables not created (admin-CLI use without full app boot)
+    # URI store ETS table not created (admin-CLI use without full app boot)
     ArgumentError -> true
   end
 

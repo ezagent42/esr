@@ -45,7 +45,6 @@ defmodule Esr.Commands.Workspace.UnbindChat do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Resource.Workspace.{Registry, NameIndex}
 
   @type result :: {:ok, map()} | {:error, map()}
 
@@ -64,7 +63,7 @@ defmodule Esr.Commands.Workspace.UnbindChat do
       else
         updated_ws = %{ws | chats: remaining}
 
-        with :ok <- Registry.put(updated_ws) do
+        with :ok <- Esr.Uri.Compat.workspace_put(updated_ws) do
           {:ok,
            %{
              "name" => name,
@@ -102,9 +101,9 @@ defmodule Esr.Commands.Workspace.UnbindChat do
   end
 
   defp lookup_struct_by_name(name) do
-    case NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        case Registry.get_by_id(id) do
+        case Esr.Uri.Compat.workspace_by_uuid(id) do
           {:ok, ws} -> {:ok, ws}
           :not_found -> workspace_not_found(name)
         end

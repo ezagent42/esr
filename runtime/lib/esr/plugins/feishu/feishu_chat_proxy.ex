@@ -1002,7 +1002,7 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   #   * unknown_app — no FeishuAppAdapter pid registered in
   #     Entity.Registry under "feishu_app_adapter_<app_id>".
   defp dispatch_cross_app_reply(chat_id, app_id, text, req_id, channel_pid, state) do
-    case Esr.Resource.Workspace.Registry.workspace_for_chat(chat_id, app_id) do
+    case Esr.Uri.Compat.workspace_name_for_chat(chat_id, app_id) do
       {:ok, target_ws} ->
         perm = "workspace:#{target_ws}/msg.send"
 

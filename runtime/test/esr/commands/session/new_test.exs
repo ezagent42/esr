@@ -671,7 +671,7 @@ defmodule Esr.Commands.Session.NewTest do
           folders: [%{path: "/tmp/test-cc-repo"}]
         )
 
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
 
       test_pid = self()
 
@@ -741,7 +741,7 @@ defmodule Esr.Commands.Session.NewTest do
           folders: [%{path: "/tmp/alice-default-repo"}]
         )
 
-      :ok = Esr.Resource.Workspace.Registry.put(ws)
+      :ok = Esr.Uri.Compat.workspace_put(ws)
 
       # The M-5 user-default lookup keys off `username`, not `submitted_by`.
       # Provide a User.Registry entry + per-user default workspace link.

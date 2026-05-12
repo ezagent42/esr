@@ -1,7 +1,8 @@
 defmodule Esr.Test.WorkspaceFixture do
   @moduledoc """
-  M-4 — drop-in replacement for the deleted legacy
-  `%Esr.Resource.Workspace.Registry.Workspace{}` struct constructor.
+  PR-2 (2026-05-12 URI identity migration) drop-in replacement for the
+  pre-M-4 `%Esr.Resource.Workspace.Registry.Workspace{}` struct
+  constructor + Workspace.Registry-touching cleanup helpers.
 
   Tests previously built workspaces like:
 
@@ -15,18 +16,18 @@ defmodule Esr.Test.WorkspaceFixture do
         metadata: %{"purpose" => "test"}
       }
 
-  After M-4 the legacy struct is gone. Tests now build the canonical
-  `%Esr.Resource.Workspace.Struct{}` — but threading an `id`, an `agent`,
-  a `folders` list, etc. by hand at every callsite is noisy and easy
-  to drift. This fixture takes the same legacy-shape kwargs and emits
-  a properly populated `%Struct{}`.
+  After M-4 the legacy struct is gone; after PR-2 the legacy ETS tables
+  (`:esr_workspaces_uuid`, `:esr_workspace_name_index{,_name_to_id,_id_to_name}`)
+  are gone too. Workspaces live in `:esr_uri_store` as `(:entity, :workspace, %Struct{})`
+  rows plus by-name + by-chat aliases. This fixture mirrors the disk →
+  URI store population that `Esr.Resource.Workspace.FileLoader.populate_uri_store/0`
+  does at boot, but driven from a struct in test setup blocks.
 
   Conversions:
     * `:role` / `:start_cmd` / `:metadata` go into `settings` under their
-      plain key (no `_legacy.` prefix — that prefix was M-3/M-4 dead code).
-    * `:chats` accepts both legacy string-keyed maps
-      (`%{"chat_id" => ..., "app_id" => ..., "kind" => "dm"}`) and the
-      new atom-keyed shape; output is always atom-keyed.
+      plain key.
+    * `:chats` accepts both legacy string-keyed maps and atom-keyed shape;
+      output is always atom-keyed.
     * `:id` defaults to a fresh UUID v4 if not supplied.
     * `:agent` defaults to "cc"; `:owner` defaults to "test".
     * `:transient` and `:location` honored if supplied.
@@ -91,19 +92,52 @@ defmodule Esr.Test.WorkspaceFixture do
   defp normalize_chat(other), do: other
 
   @doc """
-  Tear down a workspace registered under `name` via the public Registry
-  API. Replaces the M-3-era `:ets.delete(:esr_workspaces, name)` cleanup
-  pattern (which targeted the deleted `@legacy_table`).
+  Insert (or replace) the given workspace into the URI store. Mirrors
+  what `Esr.Resource.Workspace.FileLoader.populate_uri_store/0` does at
+  boot, scoped to a single struct so tests can seed deterministic
+  fixtures without touching disk.
 
-  Idempotent — returns `:ok` whether or not the workspace exists; a
-  missing NameIndex ETS table is also tolerated (admin-CLI / unit
-  setups that don't boot the Registry).
+  Writes:
+    - canonical:  esr://localhost/workspaces/<id>          → %Struct{}
+    - by-name:    esr://localhost/workspaces/by-name/<name> → alias
+    - by-chat:    esr://localhost/workspaces/by-chat/<cid>/<aid> → alias (each chat)
+
+  Raises if `Esr.Uri.Store` isn't running (caller must
+  `start_supervised!({Esr.Uri.Store, []})` in setup or rely on the
+  Application supervisor).
+  """
+  @spec put!(WSStruct.t()) :: :ok
+  def put!(%WSStruct{} = ws) do
+    ensure_uri_store!()
+    :ok = Esr.Uri.Compat.workspace_put(ws)
+    :ok
+  rescue
+    # workspace_put writes to disk too; tests that don't care about disk
+    # may have set location: nil — that path is a no-op so this rescue
+    # only triggers on truly broken setups. Re-raise loudly.
+    err -> reraise err, __STACKTRACE__
+  end
+
+  @doc """
+  Build + put! in one call. Returns the inserted %Struct{}.
+  """
+  @spec build_and_put!(kwarg_input()) :: WSStruct.t()
+  def build_and_put!(args) do
+    ws = build(args)
+    :ok = put!(ws)
+    ws
+  end
+
+  @doc """
+  Tear down a workspace registered under `name`. Replaces the M-3-era
+  `:ets.delete(:esr_workspaces, name)` cleanup pattern. Idempotent —
+  returns `:ok` whether or not the workspace exists.
   """
   @spec delete!(String.t()) :: :ok
   def delete!(name) when is_binary(name) do
-    case Esr.Resource.Workspace.NameIndex.id_for_name(:esr_workspace_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_workspace_name(name) do
       {:ok, id} ->
-        _ = Esr.Resource.Workspace.Registry.delete_by_id(id)
+        _ = Esr.Uri.Compat.workspace_delete_by_id(id)
         :ok
 
       :not_found ->
@@ -116,32 +150,33 @@ defmodule Esr.Test.WorkspaceFixture do
   end
 
   @doc """
-  Wipe both the UUID-keyed `:esr_workspaces_uuid` ETS table and the
-  matching `:esr_workspace_name_index` NameIndex. Replaces the M-3-era
-  `:ets.delete_all_objects(:esr_workspaces)` cleanup pattern that
-  targeted the deleted legacy table.
+  Wipe every `:workspace` entity row + its aliases from the URI store.
+  Replaces the M-3-era `:ets.delete_all_objects(:esr_workspaces)` pattern.
 
-  Idempotent — survives missing tables (admin-CLI / unit setups that
-  don't boot the Registry).
+  Idempotent — survives missing tables.
   """
   @spec reset!() :: :ok
   def reset! do
-    try do
-      :ets.delete_all_objects(:esr_workspaces_uuid)
-    rescue
-      ArgumentError -> :ok
-    end
-
-    try do
-      :esr_workspace_name_index
-      |> Esr.Resource.Workspace.NameIndex.all()
-      |> Enum.each(fn {_name, id} ->
-        Esr.Resource.Workspace.NameIndex.delete_by_id(:esr_workspace_name_index, id)
-      end)
-    rescue
-      ArgumentError -> :ok
+    if Process.whereis(Esr.Uri.Store) do
+      Esr.Uri.Store.delete_all_by_kind(:workspace)
     end
 
     :ok
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp ensure_uri_store! do
+    case Process.whereis(Esr.Uri.Store) do
+      pid when is_pid(pid) ->
+        :ok
+
+      _ ->
+        raise "Esr.Uri.Store not running; tests using Esr.Test.WorkspaceFixture must " <>
+                "either start_supervised!({Esr.Uri.Store, []}) in setup, or run " <>
+                "with the application supervisor up"
+    end
   end
 end

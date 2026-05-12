@@ -110,7 +110,7 @@ defmodule Esr.SessionRouterTest do
     # Seed a workspace that owns (oc_T11b2, cli_test) so workspace_for_chat
     # resolves to it; peers' init callbacks receive the enriched params.
     :ok =
-      Esr.Resource.Workspace.Registry.put(
+      Esr.Uri.Compat.workspace_put(
         Esr.Test.WorkspaceFixture.build(
           name: "T11b2_ws",
           role: "dev",
