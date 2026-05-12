@@ -844,7 +844,7 @@ defmodule Esr.Plugins.Feishu.FeishuChatProxy do
   # per-call Task spawned by the `"submit_slash"` clause above; the Task
   # owns the mailbox the RawCollector sends to (`caller: self()`).
   defp run_submit_slash(sid, cmd_str, principal_id) do
-    case Esr.Resource.Session.Registry.get_by_id(sid) do
+    case Esr.Uri.Compat.session_by_uuid(sid) do
       {:ok, session} ->
         case pick_origin_chat(session) do
           {:ok, chat} ->

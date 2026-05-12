@@ -4,7 +4,9 @@ defmodule Esr.Session.ChatRouting.Registry do
 
   Split from `Esr.Resource.ChatScope.Registry` (R5) per the cleanup-PR spec
   rev-3 §0: chat-routing concerns live here; URI-uniqueness concerns live
-  in `Esr.Session.NameIndex.Registry`.
+  in the URI store under `esr://localhost/sessions/by-name/...` aliases
+  (PR-3 URI identity migration, 2026-05-12 — previously
+  `Esr.Session.NameIndex.Registry`, now deleted).
 
   ## Responsibilities
 
@@ -151,8 +153,8 @@ defmodule Esr.Session.ChatRouting.Registry do
 
   Persists to disk when `ESRD_HOME` is set. Idempotent (no-op when sid
   appears nowhere). Also releases the URI claim via
-  `Esr.Session.NameIndex.Registry.release_uri/1` for parity with the
-  legacy contract — tolerates NameIndex not being started.
+  `Esr.Uri.Compat.release_session_uri/1` for parity with the legacy
+  contract — tolerates the URI store not being started.
   """
   @spec detach_session_by_id(String.t()) :: :ok
   def detach_session_by_id(sid) when is_binary(sid) do
@@ -174,7 +176,7 @@ defmodule Esr.Session.ChatRouting.Registry do
 
   defp safe_release(session_id) do
     try do
-      Esr.Session.NameIndex.Registry.release_uri(session_id)
+      Esr.Uri.Compat.release_session_uri(session_id)
     catch
       :exit, _ -> :error
     rescue

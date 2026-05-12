@@ -17,10 +17,10 @@ defmodule Esr.TestSupport.AppSingletons do
     for mod <- [
           Esr.Plugin.AgentKindRegistry,
           Esr.Session.ChatRouting.Registry,
-          Esr.Session.NameIndex.Registry,
           Esr.Session.Admin.Process,
           Esr.Session.Supervisor,
-          Esr.Session.Registry
+          Esr.Session.Registry,
+          Esr.Uri.Store
         ] do
       assert is_pid(Process.whereis(mod)),
              "Esr.Application singleton #{inspect(mod)} not running"

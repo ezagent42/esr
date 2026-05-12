@@ -147,9 +147,9 @@ defmodule Esr.Commands.Session.EndTest do
           agent_def: cc_def
         })
 
-      # Stage URI claim so lookup_by_name resolves to sid.
+      # Stage URI claim so session_uuid_in_scope resolves to sid (PR-3).
       :ok =
-        Esr.Session.NameIndex.Registry.claim_uri(sid, %{
+        Esr.Uri.Compat.claim_session_uri(sid, %{
           env: env,
           username: "linyilun",
           workspace: "esr-dev",
@@ -171,7 +171,7 @@ defmodule Esr.Commands.Session.EndTest do
 
       # URI claim cleared by unregister_session under the hood
       assert :not_found =
-               Esr.Session.NameIndex.Registry.lookup_by_name(env, "linyilun", "esr-dev", "feature-foo")
+               Esr.Uri.Compat.session_uuid_in_scope(env, "linyilun", "esr-dev", "feature-foo")
     end
 
     test "args.name without args.username → invalid_args" do

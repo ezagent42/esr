@@ -805,7 +805,7 @@ defmodule Esr.Commands.Session.NewTest do
   #
   #   1. `<data_dir>/sessions/<sid>/session.json` write
   #   2. `(owner_user, name)` uniqueness gate via
-  #      `:esr_resource_session_name_index` ETS
+  #      :session entity rows in :esr_uri_store (PR-3 URI identity)
   #   3. Explicit chat-attach (subsumed by Router's `register_session/3`
   #      for the chat-bound path; gated to fire only when Router didn't
   #      already bind so peer refs aren't clobbered)
@@ -838,8 +838,11 @@ defmodule Esr.Commands.Session.NewTest do
       # (`Esr.Paths.runtime_home/0`), so no reload is required — the
       # next `create_session/2` call picks up the new env. Just clear
       # the name-index ETS so prior tests don't bleed name conflicts in.
+      # PR-3 (URI identity): the old `:esr_resource_session_name_index`
+      # ETS is gone. Session entities now live as URI store rows; clear
+      # the entire :session kind to mimic the legacy wipe.
       try do
-        :ets.delete_all_objects(:esr_resource_session_name_index)
+        if Process.whereis(Esr.Uri.Store), do: Esr.Uri.Store.delete_all_by_kind(:session)
       rescue
         ArgumentError -> :ok
       end
@@ -910,7 +913,7 @@ defmodule Esr.Commands.Session.NewTest do
       }
 
       assert {:ok, %{"session_id" => sid}} = SessionNew.execute(cmd)
-      assert {:ok, struct} = Esr.Resource.Session.Registry.get_by_id(sid)
+      assert {:ok, struct} = Esr.Uri.Compat.session_by_uuid(sid)
       assert struct.id == sid
       assert struct.owner_user == "ou_persist"
       assert struct.name == name
@@ -937,8 +940,11 @@ defmodule Esr.Commands.Session.NewTest do
       File.mkdir_p!(session_dir)
       File.write!(Path.join(session_dir, "config.yaml"), ~s(default_template: "feishu-cc"\n))
 
+      # PR-3 (URI identity): the old `:esr_resource_session_name_index`
+      # ETS is gone. Session entities now live as URI store rows; clear
+      # the entire :session kind to mimic the legacy wipe.
       try do
-        :ets.delete_all_objects(:esr_resource_session_name_index)
+        if Process.whereis(Esr.Uri.Store), do: Esr.Uri.Store.delete_all_by_kind(:session)
       rescue
         ArgumentError -> :ok
       end

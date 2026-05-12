@@ -384,8 +384,365 @@ defmodule Esr.Uri.Compat do
   end
 
   # ────────────────────────────────────────────────────────────
-  # Session + Agent wrappers — added in PR-3 / PR-4 as those domains
-  # migrate. Not needed by PR-0 callers (no session/agent migration
-  # work scheduled in PR-0).
+  # Session wrappers (PR-3)
   # ────────────────────────────────────────────────────────────
+
+  @doc """
+  Replaces Esr.Resource.Session.Registry.get_by_id/1.
+
+  Returns `{:ok, %Session.Struct{}}` or `:not_found`.
+  """
+  @spec session_by_uuid(String.t()) :: {:ok, struct()} | :not_found
+  def session_by_uuid(uuid) when is_binary(uuid) do
+    case Esr.Uri.get_entity("esr://localhost/sessions/" <> uuid) do
+      {:ok, :session, data} -> {:ok, data}
+      _ -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Replaces Esr.Resource.Session.Registry.list_all/0.
+
+  Returns every Session struct stored in the URI store entity rows
+  (kind: :session), unsorted.
+  """
+  @spec list_sessions() :: [struct()]
+  def list_sessions do
+    :esr_uri_store
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {_uri, {:entity, :session, data}} -> [data]
+      _ -> []
+    end)
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc """
+  Replaces Esr.Session.NameIndex.Registry.lookup_by_name/4.
+
+  Returns `{:ok, session_uuid}` for the session URI tuple
+  `(env, username, workspace, name)`, or `:not_found`.
+  """
+  @spec session_uuid_in_scope(String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | :not_found
+  def session_uuid_in_scope(env, username, workspace, name)
+      when is_binary(env) and is_binary(username) and is_binary(workspace) and is_binary(name) do
+    uri = "esr://localhost/sessions/by-name/#{env}/#{username}/#{workspace}/#{name}"
+
+    case Esr.Uri.resolve(uri) do
+      {:ok, "esr://localhost/sessions/" <> uuid} -> {:ok, uuid}
+      _ -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  @doc """
+  Replaces Esr.Session.NameIndex.Registry.list_uris/3.
+
+  Returns `[{name, session_uuid}]` for every session URI claimed under
+  the `(env, username, workspace)` prefix in the URI store.
+  """
+  @spec list_session_uris_in_scope(String.t(), String.t(), String.t()) ::
+          [{String.t(), String.t()}]
+  def list_session_uris_in_scope(env, username, workspace)
+      when is_binary(env) and is_binary(username) and is_binary(workspace) do
+    prefix = "esr://localhost/sessions/by-name/#{env}/#{username}/#{workspace}/"
+    prefix_len = byte_size(prefix)
+
+    :esr_uri_store
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {uri, {:alias, "esr://localhost/sessions/" <> sid}} ->
+        if is_binary(uri) and byte_size(uri) > prefix_len and
+             :binary.part(uri, 0, prefix_len) == prefix do
+          name = :binary.part(uri, prefix_len, byte_size(uri) - prefix_len)
+
+          # Skip worktree-branch aliases (encoded with a "by-worktree/"
+          # nested key — see claim_session_uri/2 below).
+          if String.starts_with?(name, "by-worktree/") do
+            []
+          else
+            [{name, sid}]
+          end
+        else
+          []
+        end
+
+      _ ->
+        []
+    end)
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc """
+  Replaces Esr.Session.NameIndex.Registry.claim_uri/2.
+
+  Atomically claims both the `name` and the `worktree_branch` aliases
+  under `(env, username, workspace, …)` against the freshly-spawned
+  session UUID. Rejects with `{:error, {:name_taken, sid}}` or
+  `{:error, {:worktree_taken, sid}}` on collision.
+
+  The canonical entity row for the session must already exist in the
+  URI store (callers `persist_session_record/4` does this via
+  `Esr.Resource.Session.Registry.create_session/2`'s post-PR-3
+  replacement, which writes the entity row before claiming the
+  scope alias).
+  """
+  @spec claim_session_uri(
+          String.t(),
+          %{
+            required(:env) => String.t(),
+            required(:username) => String.t(),
+            required(:workspace) => String.t(),
+            required(:name) => String.t(),
+            optional(:worktree_branch) => String.t()
+          }
+        ) :: :ok | {:error, term()}
+  def claim_session_uri(session_uuid, %{env: env, username: u, workspace: w, name: n} = uri_components)
+      when is_binary(session_uuid) and is_binary(env) and is_binary(u) and is_binary(w) and
+             is_binary(n) do
+    canonical = "esr://localhost/sessions/" <> session_uuid
+    name_alias = "esr://localhost/sessions/by-name/#{env}/#{u}/#{w}/#{n}"
+
+    worktree_alias =
+      case Map.get(uri_components, :worktree_branch) do
+        wb when is_binary(wb) and wb != "" ->
+          "esr://localhost/sessions/by-name/#{env}/#{u}/#{w}/by-worktree/#{wb}"
+
+        _ ->
+          nil
+      end
+
+    # Pre-check for collisions so we can return semantic error tuples
+    # like the legacy NameIndex.Registry.claim_uri did.
+    name_owner = resolve_session_alias(name_alias)
+    wt_owner = if worktree_alias, do: resolve_session_alias(worktree_alias), else: :not_found
+
+    cond do
+      match?({:ok, _}, name_owner) and name_owner != {:ok, session_uuid} ->
+        {:ok, taken_by} = name_owner
+        {:error, {:name_taken, taken_by}}
+
+      match?({:ok, _}, wt_owner) and wt_owner != {:ok, session_uuid} ->
+        {:ok, taken_by} = wt_owner
+        {:error, {:worktree_taken, taken_by}}
+
+      true ->
+        # Ensure canonical entity row exists (idempotent — if it's
+        # already a full Session struct, this is a no-op via the
+        # claim path's perspective). If not, create a placeholder
+        # struct so put_alias's "canonical must be entity" invariant
+        # holds.
+        ensure_session_canonical(canonical, session_uuid)
+
+        # Write aliases (idempotent on re-claim of same sid).
+        _ = put_or_ignore_alias(name_alias, canonical)
+        if worktree_alias, do: put_or_ignore_alias(worktree_alias, canonical)
+        :ok
+    end
+  end
+
+  def claim_session_uri(_sid, _bad),
+    do: {:error, {:invalid_args, "claim_session_uri requires env/username/workspace/name"}}
+
+  defp resolve_session_alias(uri) do
+    case Esr.Uri.resolve(uri) do
+      {:ok, "esr://localhost/sessions/" <> sid} -> {:ok, sid}
+      _ -> :not_found
+    end
+  rescue
+    ArgumentError -> :not_found
+  end
+
+  defp ensure_session_canonical(canonical, session_uuid) do
+    case Esr.Uri.Store.lookup_raw(canonical) do
+      {:ok, {:entity, :session, _}} ->
+        :ok
+
+      _ ->
+        Esr.Uri.put_entity(canonical, :session, %Esr.Resource.Session.Struct{id: session_uuid})
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp put_or_ignore_alias(alias_uri, canonical) do
+    case Esr.Uri.alias(canonical, alias_uri) do
+      :ok -> :ok
+      {:error, :alias_exists} -> :ok
+      other -> other
+    end
+  end
+
+  @doc """
+  Replaces Esr.Session.NameIndex.Registry.release_uri/1.
+
+  Drops every alias whose target is the session's canonical URI.
+  Idempotent — returns :ok whether or not any alias exists.
+  """
+  @spec release_session_uri(String.t()) :: :ok
+  def release_session_uri(session_uuid) when is_binary(session_uuid) do
+    canonical = "esr://localhost/sessions/" <> session_uuid
+
+    try do
+      :esr_uri_store
+      |> :ets.tab2list()
+      |> Enum.each(fn
+        {alias_uri, {:alias, ^canonical}} -> Esr.Uri.delete(alias_uri)
+        _ -> :ok
+      end)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    :ok
+  end
+
+  @doc """
+  Replaces Esr.Resource.Session.Registry.create_session/2.
+
+  Writes `<data_dir>/sessions/<sid>/session.json` AND inserts a
+  canonical `:session` entity row into the URI store. Returns
+  `{:ok, sid}` mirroring the legacy contract.
+  """
+  @spec create_session(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def create_session(data_dir, attrs) when is_binary(data_dir) and is_map(attrs) do
+    uuid =
+      Map.get(attrs, :session_id) || Map.get(attrs, "session_id") ||
+        Esr.Resource.Session.Id.new()
+
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    session = %Esr.Resource.Session.Struct{
+      id: uuid,
+      name: Map.get(attrs, :name) || Map.get(attrs, "name", ""),
+      owner_user: Map.get(attrs, :owner_user) || Map.get(attrs, "owner_user", ""),
+      workspace_id: Map.get(attrs, :workspace_id) || Map.get(attrs, "workspace_id", ""),
+      agent_ids: [],
+      primary_agent: nil,
+      attached_chats: [],
+      created_at: now,
+      transient: Map.get(attrs, :transient, false)
+    }
+
+    session_dir = Path.join([data_dir, "sessions", uuid])
+    File.mkdir_p!(session_dir)
+    session_json_path = Path.join(session_dir, "session.json")
+
+    case Esr.Resource.Session.JsonWriter.write(session_json_path, session) do
+      :ok ->
+        # In-memory: write the canonical :session entity row so the
+        # rest of the URI-store-backed lookups (session_by_uuid/1,
+        # list_sessions/0, capability translator) see it.
+        if Process.whereis(Esr.Uri.Store) do
+          _ = Esr.Uri.put_entity("esr://localhost/sessions/" <> uuid, :session, session)
+        end
+
+        {:ok, uuid}
+
+      {:error, reason} ->
+        {:error, {:write_failed, reason}}
+    end
+  end
+
+  @doc """
+  Replaces Esr.Resource.Session.Registry.add_agent_to_session/5.
+
+  Delegates the in-memory write to Esr.Entity.Agent.InstanceRegistry
+  + persists per-instance JSON + updates session.json's agent_ids,
+  then refreshes the canonical :session entity row in the URI store.
+  """
+  @spec add_agent_to_session(String.t(), String.t(), String.t(), String.t(), map()) ::
+          :ok | {:error, term()}
+  def add_agent_to_session(data_dir, session_id, type, name, config)
+      when is_binary(data_dir) and is_binary(session_id) and is_binary(type) and
+             is_binary(name) and is_map(config) do
+    case Esr.Entity.Agent.InstanceRegistry.add_instance(%{
+           session_id: session_id,
+           type: type,
+           name: name,
+           config: config
+         }) do
+      :ok -> persist_session_agents(data_dir, session_id)
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Replaces Esr.Resource.Session.Registry.remove_agent_from_session/3.
+  """
+  @spec remove_agent_from_session(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
+  def remove_agent_from_session(session_id, name, data_dir)
+      when is_binary(session_id) and is_binary(name) and is_binary(data_dir) do
+    case Esr.Entity.Agent.InstanceRegistry.remove_instance(session_id, name) do
+      :ok -> persist_session_agents(data_dir, session_id)
+      {:error, _} = err -> err
+    end
+  end
+
+  # Shared post-mutator: rewrite per-instance JSON + agent_ids in
+  # session.json + URI store canonical entity row. Mirrors what the
+  # deleted Registry's persist_agents/2 did.
+  defp persist_session_agents(data_dir, session_id) do
+    alias Esr.Entity.Agent.InstanceJson
+
+    instances = Esr.Entity.Agent.InstanceRegistry.list(session_id)
+
+    primary =
+      case Esr.Entity.Agent.InstanceRegistry.primary(session_id) do
+        {:ok, n} -> n
+        :not_found -> nil
+      end
+
+    Enum.each(instances, fn inst ->
+      canonical_sid = List.first(inst.session_ids) || session_id
+      path = Path.join([data_dir, "sessions", canonical_sid, "agents", inst.id <> ".json"])
+      _ = InstanceJson.write(path, inst)
+    end)
+
+    agent_ids = Enum.map(instances, & &1.id)
+    session_json_path = Path.join([data_dir, "sessions", session_id, "session.json"])
+
+    case File.read(session_json_path) do
+      {:ok, raw} ->
+        doc =
+          raw
+          |> Jason.decode!()
+          |> Map.put("agent_ids", agent_ids)
+          |> Map.put("primary_agent", primary)
+          |> Map.delete("agents")
+
+        tmp_path = session_json_path <> ".tmp"
+        File.write!(tmp_path, Jason.encode!(doc, pretty: true))
+        File.rename!(tmp_path, session_json_path)
+
+        # Also refresh the URI store canonical entity row.
+        case session_by_uuid(session_id) do
+          {:ok, s} ->
+            updated = %{s | agent_ids: agent_ids, primary_agent: primary}
+
+            if Process.whereis(Esr.Uri.Store) do
+              _ =
+                Esr.Uri.put_entity(
+                  "esr://localhost/sessions/" <> session_id,
+                  :session,
+                  updated
+                )
+            end
+
+            :ok
+
+          :not_found ->
+            :ok
+        end
+
+      {:error, reason} ->
+        {:error, {:session_json_missing, reason}}
+    end
+  end
 end

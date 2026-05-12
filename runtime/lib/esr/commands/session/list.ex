@@ -18,8 +18,8 @@ defmodule Esr.Commands.Session.List do
           ]
         }}
 
-  Reads `Esr.Session.NameIndex.Registry.list_uris/3` — the URI-keyed live-session
-  table claimed at /new-session time (PR-21g). Independent of the
+  Reads `Esr.Uri.Compat.list_session_uris_in_scope/3` — the URI-store
+  alias rows claimed at /new-session time (PR-21g). Independent of the
   legacy routing.yaml / branches.yaml shape below.
 
   ### Legacy (pre-PR-21j)
@@ -76,7 +76,7 @@ defmodule Esr.Commands.Session.List do
 
       true ->
         sessions =
-          Esr.Session.NameIndex.Registry.list_uris(env, username, ws)
+          Esr.Uri.Compat.list_session_uris_in_scope(env, username, ws)
           |> Enum.map(fn {name, sid} ->
             %{"name" => name, "session_id" => sid}
           end)
