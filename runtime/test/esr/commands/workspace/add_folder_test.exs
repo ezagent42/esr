@@ -316,7 +316,7 @@ defmodule Esr.Commands.Workspace.AddFolderTest do
     test "name= falls back to user-default when no chat-current" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
       :ok = Esr.Resource.Workspace.Registry.put(ws)
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       repo_path = make_tmp_git_repo!("addfolder-user-default")
 

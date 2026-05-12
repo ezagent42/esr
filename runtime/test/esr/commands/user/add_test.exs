@@ -135,7 +135,7 @@ defmodule Esr.Commands.User.AddTest do
       assert ws.owner == name
 
       # User-default link populated
-      assert {:ok, ^ws_id} = Esr.Entity.User.Registry.get_default_workspace(name)
+      assert {:ok, ^ws_id} = Esr.Uri.Compat.default_workspace_for_user_name(name)
     end
 
     test "user_add result map carries actor identity (Phase 4 contract)" do

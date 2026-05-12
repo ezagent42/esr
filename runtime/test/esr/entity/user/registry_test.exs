@@ -108,12 +108,12 @@ defmodule Esr.Entity.User.RegistryTest do
     end
 
     test "get_by_id returns the user struct" do
-      assert {:ok, user} = Esr.Entity.User.Registry.get_by_id("uuid-lyl-001")
+      assert {:ok, user} = Esr.Uri.Compat.user_by_uuid("uuid-lyl-001")
       assert user.username == "linyilun"
     end
 
     test "get_by_id returns :not_found for unknown uuid" do
-      assert :not_found = Esr.Entity.User.Registry.get_by_id("00000000-0000-4000-8000-000000000000")
+      assert :not_found = Esr.Uri.Compat.user_by_uuid("00000000-0000-4000-8000-000000000000")
     end
 
     test "list_all returns all users" do
@@ -200,23 +200,23 @@ defmodule Esr.Entity.User.RegistryTest do
     end
 
     test "set then get returns the bound workspace_id" do
-      assert :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-1")
-      assert {:ok, "ws-uuid-1"} = Esr.Entity.User.Registry.get_default_workspace("alice")
+      assert :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", "ws-uuid-1")
+      assert {:ok, "ws-uuid-1"} = Esr.Uri.Compat.default_workspace_for_user_name("alice")
     end
 
     test "get returns :not_found when nothing set" do
-      assert :not_found = Esr.Entity.User.Registry.get_default_workspace("alice")
+      assert :not_found = Esr.Uri.Compat.default_workspace_for_user_name("alice")
     end
 
     test "set on unknown user returns {:error, :not_found}" do
       assert {:error, :not_found} =
-               Esr.Entity.User.Registry.set_default_workspace("ghost", "ws-uuid-1")
+               Esr.Uri.Compat.set_default_workspace_for_user_name("ghost", "ws-uuid-1")
     end
 
     test "overwrite replaces the previous binding" do
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-1")
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", "ws-uuid-2")
-      assert {:ok, "ws-uuid-2"} = Esr.Entity.User.Registry.get_default_workspace("alice")
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", "ws-uuid-1")
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", "ws-uuid-2")
+      assert {:ok, "ws-uuid-2"} = Esr.Uri.Compat.default_workspace_for_user_name("alice")
     end
   end
 end

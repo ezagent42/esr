@@ -6,7 +6,7 @@ defmodule Esr.Resource.Workspace.Bootstrap do
     * If `ESR_BOOTSTRAP_PRINCIPAL_ID` is set AND that principal resolves
       to an esr user AND the user has no `default_workspace_id`, create
       `<username>-default` and link it via
-      `Esr.Entity.User.Registry.set_default_workspace/2`.
+      `Esr.Uri.Compat.set_default_workspace_for_user_name/2`.
 
   No literal `default` workspace is created. After M-5 the resolver
   chain (Esr.Commands.Workspace.Resolve) walks chat-default →
@@ -17,7 +17,6 @@ defmodule Esr.Resource.Workspace.Bootstrap do
   use Task, restart: :transient
   require Logger
 
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
 
@@ -50,8 +49,8 @@ defmodule Esr.Resource.Workspace.Bootstrap do
   defp ensure_bootstrap_user_default do
     with bootstrap_id when is_binary(bootstrap_id) and bootstrap_id != "" <-
            System.get_env("ESR_BOOTSTRAP_PRINCIPAL_ID"),
-         {:ok, username} <- UserRegistry.lookup_by_feishu_id(bootstrap_id),
-         :not_found <- UserRegistry.get_default_workspace(username) do
+         {:ok, username} <- Esr.Uri.Compat.username_for_feishu_id(bootstrap_id),
+         :not_found <- Esr.Uri.Compat.default_workspace_for_user_name(username) do
       create_user_default_for(username)
     else
       {:ok, _ws_id} ->
@@ -74,7 +73,7 @@ defmodule Esr.Resource.Workspace.Bootstrap do
       {:ok, ws_id} ->
         # Workspace already exists (perhaps from a prior /user:add).
         # Just link it to the user-default.
-        _ = UserRegistry.set_default_workspace(username, ws_id)
+        _ = Esr.Uri.Compat.set_default_workspace_for_user_name(username, ws_id)
         :ok
 
       :not_found ->
@@ -99,7 +98,7 @@ defmodule Esr.Resource.Workspace.Bootstrap do
 
         case WsRegistry.put(ws) do
           :ok ->
-            _ = UserRegistry.set_default_workspace(username, ws_uuid)
+            _ = Esr.Uri.Compat.set_default_workspace_for_user_name(username, ws_uuid)
 
             Logger.info(
               "workspace.bootstrap: created #{ws_name} at #{dir} (id=#{ws_uuid}) + linked as user-default"

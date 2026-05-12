@@ -80,7 +80,7 @@ defmodule Esr.ApplicationFirstBootTest do
       assert ws.name == "bootstrapper-default"
 
       assert {:ok, ^id} =
-               Esr.Entity.User.Registry.get_default_workspace("bootstrapper")
+               Esr.Uri.Compat.default_workspace_for_user_name("bootstrapper")
     end
 
     test "is idempotent — running twice does not create a second workspace" do

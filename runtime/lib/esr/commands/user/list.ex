@@ -26,7 +26,7 @@ defmodule Esr.Commands.User.List do
   @spec execute(map()) :: result()
   def execute(_cmd) do
     text =
-      Esr.Entity.User.Registry.list()
+      Esr.Uri.Compat.list_users()
       |> Enum.sort_by(& &1.username)
       |> Enum.map_join("\n", &format_row/1)
 

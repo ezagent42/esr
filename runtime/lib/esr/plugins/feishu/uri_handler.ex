@@ -4,7 +4,7 @@ defmodule Esr.Plugins.Feishu.UriHandler do
   subtree.
 
   PR-0 lifecycle note: today the handler calls the OLD
-  `Esr.Entity.User.Registry.lookup_by_feishu_id/1` directly (which still
+  `Esr.Uri.Compat.username_for_feishu_id/1` directly (which still
   exists in PR-0). PR-1 migrates User domain to URI store; at that point
   this handler is rewritten to read entity data via Esr.Uri.get_entity/1
   (still on the User canonical URI, not via the feishu alias — that
@@ -18,11 +18,11 @@ defmodule Esr.Plugins.Feishu.UriHandler do
   @impl Esr.Uri.Plugin
   def resolve(["ou_" <> _ = ou_id]) do
     # PR-0: read the old registry directly to avoid infinite recursion.
-    case Esr.Entity.User.Registry.lookup_by_feishu_id(ou_id) do
+    case Esr.Uri.Compat.username_for_feishu_id(ou_id) do
       {:ok, username} ->
         # Translate username → UUID via the OLD NameIndex (PR-0 still
         # has both registries; PR-1 deletes them).
-        case Esr.Entity.User.NameIndex.id_for_name(username) do
+        case Esr.Uri.Compat.uuid_for_user_name(username) do
           {:ok, uuid} -> {:ok, "esr://localhost/users/" <> uuid}
           _ -> :not_found
         end

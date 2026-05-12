@@ -216,7 +216,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
     test "user-default wins when chat-default absent" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
       :ok = Esr.Resource.Workspace.Registry.put(ws)
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       args = %{"submitter_username" => "alice"}
       assert {:ok, "alice-ws"} = Esr.Commands.Session.New.resolve_workspace_if_needed(args)

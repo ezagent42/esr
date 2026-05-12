@@ -37,7 +37,6 @@ defmodule Esr.Commands.User.Add do
   require Logger
 
   alias Esr.Commands.Render
-  alias Esr.Entity.User.NameIndex
 
   @username_regex ~r/^[A-Za-z0-9][A-Za-z0-9_\-]*$/
 
@@ -45,7 +44,7 @@ defmodule Esr.Commands.User.Add do
 
   # Default for the last step's registry call. Tests inject a stub via
   # execute/2 opts to exercise rollback when the binding fails.
-  @default_set_default_fn &Esr.Entity.User.Registry.set_default_workspace/2
+  @default_set_default_fn &Esr.Uri.Compat.set_default_workspace_for_user_name/2
 
   @spec execute(map()) :: result()
   def execute(cmd), do: execute(cmd, [])
@@ -93,7 +92,8 @@ defmodule Esr.Commands.User.Add do
 
           case result do
             :ok ->
-              populate_name_index(name, uuid)
+              # URI store population happens via FileLoader.load during
+              # sync_reload_user_registry in the with-chain above.
               auto_admin = maybe_grant_admin(uuid, name)
 
               {:ok,
@@ -247,18 +247,6 @@ defmodule Esr.Commands.User.Add do
       Logger.warning(
         "User.Add rollback step #{inspect(label)} crashed: #{inspect(e)}"
       )
-  end
-
-  defp populate_name_index(name, uuid) do
-    case NameIndex.put(:esr_user_name_index, name, uuid) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "User.Add: NameIndex.put failed for #{inspect(name)} / #{inspect(uuid)}: #{inspect(reason)}"
-        )
-    end
   end
 
   # Audit follow-up #2 / "first-user-auto-admin" (capabilities spec §9.1

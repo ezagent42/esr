@@ -752,7 +752,7 @@ defmodule Esr.Commands.Session.NewTest do
         %{"alice" => "alice-id"}
       )
 
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       test_pid = self()
 

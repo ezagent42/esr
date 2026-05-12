@@ -95,6 +95,65 @@ defmodule Esr.Uri.Compat do
     end
   end
 
+  @doc """
+  Replaces Esr.Entity.User.Registry.list/0. Returns every User struct
+  stored in the URI store entity rows (kind: :user), unsorted.
+  """
+  @spec list_users() :: [struct()]
+  def list_users do
+    :esr_uri_store
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {_uri, {:entity, :user, data}} -> [data]
+      _ -> []
+    end)
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc """
+  Replaces Esr.Entity.User.Registry.list_all/0. Returns `[{uuid, %User{}}]`.
+  """
+  @spec list_users_with_uuid() :: [{String.t(), struct()}]
+  def list_users_with_uuid do
+    :esr_uri_store
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {"esr://localhost/users/" <> uuid, {:entity, :user, data}} ->
+        if String.contains?(uuid, "/") do
+          []
+        else
+          [{uuid, data}]
+        end
+
+      _ ->
+        []
+    end)
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc """
+  Replaces Esr.Entity.User.Registry.set_default_workspace/2.
+
+  Updates the User struct in the URI store entity row. Disk durability is
+  the caller's responsibility (it normally writes `user.json` + invokes
+  FileLoader); this only updates the in-memory store so subsequent reads
+  see the new value within the same boot.
+  """
+  @spec set_default_workspace_for_user_name(String.t(), String.t()) ::
+          :ok | {:error, :not_found}
+  def set_default_workspace_for_user_name(name, ws_id)
+      when is_binary(name) and is_binary(ws_id) do
+    with {:ok, uuid} <- uuid_for_user_name(name),
+         {:ok, user} <- user_by_uuid(uuid) do
+      updated = %{user | default_workspace_id: ws_id}
+      Esr.Uri.put_entity("esr://localhost/users/" <> uuid, :user, updated)
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
   # ────────────────────────────────────────────────────────────
   # Workspace wrappers
   # ────────────────────────────────────────────────────────────

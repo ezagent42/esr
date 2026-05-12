@@ -15,7 +15,7 @@ defmodule Esr.Commands.Session.Share do
 
     1. Validate `session` is a UUID v4.
     2. Resolve `user` username → UUID via
-       `Esr.Entity.User.NameIndex.id_for_name/2`.
+       `Esr.Uri.Compat.uuid_for_user_name/2`.
     3. Map `perm` → cap string:
          `"attach"` → `"session:<uuid>/attach"`
          `"admin"`  → `"session:<uuid>/admin"`
@@ -47,7 +47,6 @@ defmodule Esr.Commands.Session.Share do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.User.NameIndex
   alias Esr.Commands.Cap.Grant
 
   @uuid_re ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -117,7 +116,7 @@ defmodule Esr.Commands.Session.Share do
   end
 
   defp lookup_user(username) do
-    case NameIndex.id_for_name(username) do
+    case Esr.Uri.Compat.uuid_for_user_name(username) do
       {:ok, uuid} ->
         {:ok, uuid}
 
