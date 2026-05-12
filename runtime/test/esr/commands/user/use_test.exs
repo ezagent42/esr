@@ -2,14 +2,13 @@ defmodule Esr.Commands.User.UseTest do
   use ExUnit.Case, async: false
 
   alias Esr.Commands.User.Use, as: UserUse
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
   alias Esr.Test.WorkspaceFixture
 
   setup do
-    UserRegistry.load_snapshot_with_uuids(
+    Esr.Test.UserFixture.load_snapshot(
       %{
-        "alice" => %UserRegistry.User{username: "alice", feishu_ids: ["ou_a"]}
+        "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
       },
       %{"alice" => "alice-uuid-1"}
     )
@@ -32,7 +31,7 @@ defmodule Esr.Commands.User.UseTest do
              UserUse.execute(cmd)
 
     ws_id = ws.id
-    assert {:ok, ^ws_id} = UserRegistry.get_default_workspace("alice")
+    assert {:ok, ^ws_id} = Esr.Uri.Compat.default_workspace_for_user_name("alice")
   end
 
   test "unknown workspace → unknown_workspace error" do
@@ -65,16 +64,14 @@ defmodule Esr.Commands.User.UseTest do
 
   describe "user.json persistence (yellow-fix #1)" do
     alias Esr.Commands.User.Add, as: UserAdd
-    alias Esr.Entity.User.NameIndex
 
     setup do
-      case :ets.info(:esr_user_name_index_name_to_id) do
-        :undefined -> start_supervised!({NameIndex, []})
+      case Process.whereis(Esr.Uri.Store) do
+        nil -> start_supervised!(Esr.Uri.Store)
         _ -> :ok
       end
 
-      :ets.delete_all_objects(:esr_user_name_index_name_to_id)
-      :ets.delete_all_objects(:esr_user_name_index_id_to_name)
+      Esr.Uri.Store.delete_all_by_kind(:user)
 
       tmp_dir = System.tmp_dir!() |> Path.join("esr_use_persist_#{:rand.uniform(999_999)}")
       File.mkdir_p!(tmp_dir)

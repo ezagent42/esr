@@ -54,6 +54,21 @@ defmodule Esr.Uri.Store do
     GenServer.call(__MODULE__, {:delete, uri})
   end
 
+  @doc """
+  Delete every entity row of the given `kind`, plus every alias whose
+  canonical points at one of those rows.
+
+  Used by FileLoader-style callers that own a "snapshot" of a yaml file
+  and want to replace it atomically. Note: not strictly atomic w.r.t.
+  concurrent reads (the GenServer call serializes the deletes, but a
+  reader between handle_call iterations may see partial state). For
+  PR-1's boot-time semantics this is acceptable.
+  """
+  @spec delete_all_by_kind(atom()) :: :ok
+  def delete_all_by_kind(kind) when is_atom(kind) do
+    GenServer.call(__MODULE__, {:delete_all_by_kind, kind})
+  end
+
   # ──────────────────────────────────────────────────────────────────
 
   @impl true
@@ -90,6 +105,32 @@ defmodule Esr.Uri.Store do
 
   def handle_call({:delete, uri}, _from, state) do
     :ets.delete(@table, uri)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:delete_all_by_kind, kind}, _from, state) do
+    # Two passes: (1) collect canonical entity URIs of this kind;
+    # (2) delete those rows + every alias whose target is in the set.
+    canonical_uris =
+      :ets.tab2list(@table)
+      |> Enum.flat_map(fn
+        {uri, {:entity, ^kind, _}} -> [uri]
+        _ -> []
+      end)
+
+    canonical_set = MapSet.new(canonical_uris)
+
+    Enum.each(:ets.tab2list(@table), fn
+      {uri, {:entity, ^kind, _}} ->
+        :ets.delete(@table, uri)
+
+      {uri, {:alias, target}} ->
+        if MapSet.member?(canonical_set, target), do: :ets.delete(@table, uri)
+
+      _ ->
+        :ok
+    end)
+
     {:reply, :ok, state}
   end
 end

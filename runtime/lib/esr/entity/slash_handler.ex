@@ -869,11 +869,8 @@ defmodule Esr.Entity.SlashHandler do
       not is_binary(open_id) or open_id == "" ->
         nil
 
-      Process.whereis(Esr.Entity.User.Registry) == nil ->
-        nil
-
       true ->
-        case Esr.Entity.User.Registry.lookup_by_feishu_id(open_id) do
+        case Esr.Uri.Compat.username_for_feishu_id(open_id) do
           {:ok, username} -> username
           :not_found -> nil
         end

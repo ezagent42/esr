@@ -195,9 +195,9 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
   describe "resolve_workspace_if_needed/1 — M-5 chain (user-default replaces system default)" do
     setup do
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
-          "alice" => %Esr.Entity.User.Registry.User{username: "alice", feishu_ids: ["ou_a"]}
+          "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
         },
         %{"alice" => "alice-uuid"}
       )
@@ -216,7 +216,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
     test "user-default wins when chat-default absent" do
       ws = Esr.Test.WorkspaceFixture.build(name: "alice-ws", owner: "alice")
       :ok = Esr.Resource.Workspace.Registry.put(ws)
-      :ok = Esr.Entity.User.Registry.set_default_workspace("alice", ws.id)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
 
       args = %{"submitter_username" => "alice"}
       assert {:ok, "alice-ws"} = Esr.Commands.Session.New.resolve_workspace_if_needed(args)

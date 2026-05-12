@@ -6,10 +6,11 @@ defmodule Esr.Interface.Identity do
   > - `MemberInterface` — 加入 Scope 时
   > - `IdentityInterface` — username 唯一性、外部平台 ID 解析
 
-  Current implementer (post-R11): aspirational. `Esr.Entity.User.*`
-  has these concepts (username + feishu_id binding) but as
-  data-shape methods on `Esr.Entity.User.Registry`, not via a single
-  Identity module declaring `@behaviour`. Future R-batch may extract.
+  Current implementer (post-R11): aspirational. The user identity
+  state (username + feishu_id binding) now lives in the URI store
+  (`:esr_uri_store`); read via `Esr.Uri.Compat.*` wrappers or
+  `Esr.Uri.get_entity/1` directly. Future R-batch may extract a
+  proper `@behaviour` declaration.
 
   See session.md §七 (IdentityInterface).
   """

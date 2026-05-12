@@ -52,9 +52,9 @@ defmodule Esr.ApplicationFirstBootTest do
   describe "bootstrap user-default workspace" do
     setup do
       # Seed a known user so Bootstrap can resolve the env id
-      Esr.Entity.User.Registry.load_snapshot_with_uuids(
+      Esr.Test.UserFixture.load_snapshot(
         %{
-          "bootstrapper" => %Esr.Entity.User.Registry.User{
+          "bootstrapper" => %Esr.Entity.User.Struct{
             username: "bootstrapper",
             feishu_ids: ["ou_boot"]
           }
@@ -80,7 +80,7 @@ defmodule Esr.ApplicationFirstBootTest do
       assert ws.name == "bootstrapper-default"
 
       assert {:ok, ^id} =
-               Esr.Entity.User.Registry.get_default_workspace("bootstrapper")
+               Esr.Uri.Compat.default_workspace_for_user_name("bootstrapper")
     end
 
     test "is idempotent — running twice does not create a second workspace" do

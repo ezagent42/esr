@@ -299,12 +299,12 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
 
   describe "PR-21i: unbound-user guide DM" do
     setup do
-      # Ensure Esr.Entity.User.Registry is up + empty for these tests.
-      if Process.whereis(Esr.Entity.User.Registry) == nil do
-        start_supervised!(Esr.Entity.User.Registry)
+      # Ensure URI store is up + empty for these tests.
+      if Process.whereis(Esr.Uri.Store) == nil do
+        start_supervised!(Esr.Uri.Store)
       end
 
-      Esr.Entity.User.Registry.load_snapshot(%{})
+      Esr.Test.UserFixture.load_snapshot(%{})
       :ok
     end
 
@@ -371,8 +371,8 @@ defmodule Esr.Entity.FeishuAppAdapterTest do
          %{sup: sup} do
       # Bind ou_known_xyz to linyilun
       :ok =
-        Esr.Entity.User.Registry.load_snapshot(%{
-          "linyilun" => %Esr.Entity.User.Registry.User{
+        Esr.Test.UserFixture.load_snapshot(%{
+          "linyilun" => %Esr.Entity.User.Struct{
             username: "linyilun",
             feishu_ids: ["ou_known_xyz"]
           }

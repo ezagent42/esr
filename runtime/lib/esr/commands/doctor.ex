@@ -63,7 +63,7 @@ defmodule Esr.Commands.Doctor do
 
   defp system_snapshot_data do
     workers = Esr.WorkerSupervisor.list()
-    user_count = length(Esr.Entity.User.Registry.list())
+    user_count = length(Esr.Uri.Compat.list_users())
 
     workspace_count =
       try do
@@ -107,16 +107,12 @@ defmodule Esr.Commands.Doctor do
   end
 
   defp check_user(principal_id) do
-    if Process.whereis(Esr.Entity.User.Registry) do
-      case Esr.Entity.User.Registry.lookup_by_feishu_id(principal_id) do
-        {:ok, username} ->
-          {"  ✅ 用户身份: 已绑定 esr user `#{username}`", true}
+    case Esr.Uri.Compat.username_for_feishu_id(principal_id) do
+      {:ok, username} ->
+        {"  ✅ 用户身份: 已绑定 esr user `#{username}`", true}
 
-        :not_found ->
-          {"  ❌ 用户身份: 未绑定 (你的 open_id: `#{principal_id}`)", false}
-      end
-    else
-      {"  ⚠️ 用户身份: Esr.Entity.User.Registry 未运行", false}
+      :not_found ->
+        {"  ❌ 用户身份: 未绑定 (你的 open_id: `#{principal_id}`)", false}
     end
   end
 

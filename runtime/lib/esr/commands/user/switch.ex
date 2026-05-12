@@ -33,11 +33,10 @@ defmodule Esr.Commands.User.Switch do
   @behaviour Esr.Role.Control
 
   alias Esr.Commands.Render
-  alias Esr.Entity.User.NameIndex
 
   @spec execute(map()) :: {:ok, map()} | {:error, map()}
   def execute(%{"args" => %{"name" => name}}) when is_binary(name) and name != "" do
-    case NameIndex.id_for_name(:esr_user_name_index, name) do
+    case Esr.Uri.Compat.uuid_for_user_name(name) do
       {:ok, uuid} ->
         write_operator_json(uuid, name)
         {:ok, %{"action" => "switched", "username" => name, "target_principal_id" => uuid}}

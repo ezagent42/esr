@@ -19,7 +19,6 @@ defmodule Esr.Commands.Workspace.Resolve do
   `args["submitted_by"]`.
   """
 
-  alias Esr.Entity.User.Registry, as: UserRegistry
   alias Esr.Session.ChatRouting.Registry, as: ChatScope
   alias Esr.Resource.Workspace.NameIndex, as: WsNameIndex
   alias Esr.Resource.Workspace.Registry, as: WsRegistry
@@ -60,7 +59,7 @@ defmodule Esr.Commands.Workspace.Resolve do
 
   defp lookup_user_default(args) do
     with {:ok, username} <- resolve_submitter(args),
-         {:ok, ws_uuid} <- UserRegistry.get_default_workspace(username),
+         {:ok, ws_uuid} <- Esr.Uri.Compat.default_workspace_for_user_name(username),
          {:ok, ws} <- WsRegistry.get_by_id(ws_uuid) do
       ws.name
     else
@@ -73,7 +72,7 @@ defmodule Esr.Commands.Workspace.Resolve do
        do: {:ok, username}
 
   defp resolve_submitter(%{"submitted_by" => ou_id}) when is_binary(ou_id) and ou_id != "" do
-    UserRegistry.lookup_by_feishu_id(ou_id)
+    Esr.Uri.Compat.username_for_feishu_id(ou_id)
   end
 
   defp resolve_submitter(_), do: :not_found

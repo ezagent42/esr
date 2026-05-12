@@ -258,12 +258,12 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
     test "removing the only folder fails (created via New.execute, repo-bound)" do
       # Use Esr.Commands.Workspace.New end-to-end so the test exercises the
       # production path; the new workspace has exactly 1 folder.
-      if Process.whereis(Esr.Entity.User.Registry) == nil do
-        start_supervised!(Esr.Entity.User.Registry)
+      if Process.whereis(Esr.Uri.Store) == nil do
+        start_supervised!(Esr.Uri.Store)
       end
 
-      Esr.Entity.User.Registry.load_snapshot(%{
-        "alice" => %Esr.Entity.User.Registry.User{
+      Esr.Test.UserFixture.load_snapshot(%{
+        "alice" => %Esr.Entity.User.Struct{
           username: "alice",
           feishu_ids: ["ou_alice"]
         }
@@ -307,7 +307,7 @@ defmodule Esr.Commands.Workspace.RemoveFolderTest do
                  "args" => %{"name" => name, "path" => repo}
                })
 
-      Esr.Entity.User.Registry.load_snapshot(%{})
+      Esr.Test.UserFixture.load_snapshot(%{})
     end
   end
 end

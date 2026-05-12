@@ -36,7 +36,7 @@ defmodule Esr.Resource.Permission.Bootstrap do
     # plugin and switched to `feishu/user-bind` (declared by the
     # feishu manifest's `capabilities:`). `user.manage` is now
     # identity-only. Read-only `user_list` is permission-less.
-    {"user.manage", Esr.Entity.User.Registry},
+    {"user.manage", Esr.Entity.User.Supervisor},
     # 2026-05-05 cli-channel→slash migration: runtime.deadletter gates
     # deadletter_list / deadletter_flush. runtime.debug gates
     # debug_pause / debug_resume (actor :sys.suspend toggles).
