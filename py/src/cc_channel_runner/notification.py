@@ -20,11 +20,6 @@ from __future__ import annotations
 
 from typing import Any
 
-# Internal envelope fields that never reach the user-visible meta
-# (they're transport-layer detail). Matches `take_meta/1` exclusion
-# in the Elixir helper.
-_INTERNAL_FIELDS = ("msg_type", "media_uri", "content", "kind")
-
 # Meta fields surfaced to CC. Order doesn't matter (JSON object), but
 # keeping the tuple aligned with `take_meta/1` in Elixir aids audit.
 _META_FIELDS = (
