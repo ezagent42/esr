@@ -45,24 +45,28 @@ async def main():
     mcp_server.set_phx_client(client)
     mcp_server.set_session_id(args.session_id)
 
-    try:
+    # MCP stdio loop must start IMMEDIATELY — CC sends `initialize` over
+    # the pipe as soon as it spawns us. Waiting on WS connect (~300ms+)
+    # before responding makes CC time out with "no MCP server configured
+    # with that name". Run MCP server + WS lifecycle concurrently;
+    # whichever completes first triggers shutdown.
+
+    async def ws_lifecycle() -> None:
         await client.connect()
         await client.join(f"cli:channel/{args.session_id}")
-        log.info("phx_join acked; starting MCP stdio loop + envelope dispatch")
+        log.info("phx_join acked; envelope dispatch live")
+        await phx_receive_loop(client, mcp_server)
 
-        # Run both directions concurrently. If either ends (CC closes
-        # stdio → mcp_server.start returns; or WS dies → recv loop
-        # raises), cancel the other for clean shutdown.
+    try:
         mcp_task = asyncio.create_task(mcp_server.start())
-        recv_task = asyncio.create_task(phx_receive_loop(client, mcp_server))
+        ws_task = asyncio.create_task(ws_lifecycle())
         done, pending = await asyncio.wait(
-            {mcp_task, recv_task},
+            {mcp_task, ws_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
             task.cancel()
         for task in done:
-            # Surface any exception from the completed side.
             # BridgeShutdown is the explicit graceful-shutdown signal
             # raised by phx_receive_loop on a session_killed envelope
             # — swallow it, the bridge exits zero. Everything else
