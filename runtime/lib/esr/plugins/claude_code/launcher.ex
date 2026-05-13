@@ -174,11 +174,31 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
          {:ok, mcp_path} <-
            write_mcp_json(
              session_id: session_id,
-             esrd_url: config["esrd_url"] || ""
+             # 2026-05-12: plugin config rarely sets esrd_url explicitly;
+             # fall back to the live Endpoint config so per-session
+             # mcp.json carries a real `http://host:port` URL instead of
+             # an unrooted `/mcp/<sid>` (which CC silently rejects with
+             # "no MCP server configured" — observed live).
+             esrd_url: config["esrd_url"] || default_esrd_url()
            ) do
       cmd = build_cmd(binary, dir, role, mcp_path)
       env = build_env(plugin_config: config, session_id: session_id)
       {:ok, %{cmd: cmd, env: env}}
+    end
+  end
+
+  # Returns the local esrd's ws:// base URL by reading the live Endpoint
+  # config. Same shape as pty_process.ex's channel_ws_url/0.
+  defp default_esrd_url do
+    case Application.get_env(:esr, EsrWeb.Endpoint) do
+      nil ->
+        "ws://localhost:4001"
+
+      cfg ->
+        url = Keyword.get(cfg, :url, [])
+        host = Keyword.get(url, :host, "localhost")
+        port = Keyword.get(url, :port) || Keyword.get(cfg, :http, [])[:port] || 4001
+        "ws://#{host}:#{port}"
     end
   end
 
@@ -255,7 +275,36 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         :error      -> flags
       end
 
-    [binary | flags]
+    # 2026-05-12 opt-in diagnostic (Bug B — CC API 403): when
+    # ESR_PTY_PROXY_DIAG=1, wrap the spawn in a shell that prints
+    # proxy + key auth env vars to the PTY before exec'ing claude.
+    # Output is visible in the chat (PTY raw_stdout → Feishu). Default
+    # off so tests + happy-path spawns are unaffected.
+    case System.get_env("ESR_PTY_PROXY_DIAG") do
+      "1" ->
+        diag =
+          "echo '── PROXY DEBUG ──';" <>
+            "echo http_proxy=\"${http_proxy:-<unset>}\";" <>
+            "echo HTTP_PROXY=\"${HTTP_PROXY:-<unset>}\";" <>
+            "echo https_proxy=\"${https_proxy:-<unset>}\";" <>
+            "echo HTTPS_PROXY=\"${HTTPS_PROXY:-<unset>}\";" <>
+            "echo no_proxy=\"${no_proxy:-<unset>}\";" <>
+            "echo NO_PROXY=\"${NO_PROXY:-<unset>}\";" <>
+            "echo HOME=\"${HOME:-<unset>}\";" <>
+            "echo PATH=\"${PATH:-<unset>}\";" <>
+            "echo ANTHROPIC_API_KEY=\"${ANTHROPIC_API_KEY:+set}\";" <>
+            "echo ANTHROPIC_BASE_URL=\"${ANTHROPIC_BASE_URL:-<unset>}\";" <>
+            "echo CLAUDE_CODE_USE_BEDROCK=\"${CLAUDE_CODE_USE_BEDROCK:-<unset>}\";" <>
+            "echo CLAUDE_CODE_USE_VERTEX=\"${CLAUDE_CODE_USE_VERTEX:-<unset>}\";" <>
+            "echo '─────────────────';" <>
+            "sleep 1;" <>
+            "exec \"$0\" \"$@\""
+
+        ["/bin/bash", "-c", diag, binary | flags]
+
+      _ ->
+        [binary | flags]
+    end
   end
 
   defp maybe_put(env, _key, value) when is_nil(value), do: env

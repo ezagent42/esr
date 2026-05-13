@@ -135,6 +135,46 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
     end
   end
 
+  describe "prepare_spawn/1 esrd_url fallback (2026-05-12 live-bug regression)" do
+    setup do
+      cwd =
+        System.tmp_dir!()
+        |> Path.join("prepare-spawn-esrd-url-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+      {:ok, cwd: cwd}
+    end
+
+    test "missing plugin esrd_url falls back to Endpoint config (no unrooted /mcp/<sid>)", %{cwd: cwd} do
+      # The live bug 2026-05-12: plugin config had no `esrd_url` set, so
+      # `prepare_spawn` passed `""` to write_mcp_json, which wrote
+      # `"url": "/mcp/<sid>"` (no host) — CC silently rejected it with
+      # "no MCP server configured with that name". Fix: derive from
+      # Application.get_env(:esr, EsrWeb.Endpoint).
+      sid = "fallback-sid-#{System.unique_integer([:positive])}"
+
+      {:ok, _} =
+        Launcher.prepare_spawn(
+          session_id: sid,
+          dir: cwd,
+          plugin_config: %{},
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      mcp_path = Esr.Paths.session_mcp_json(sid)
+      {:ok, body} = File.read(mcp_path)
+      decoded = Jason.decode!(body)
+
+      url = decoded["mcpServers"]["esr-channel"]["url"]
+      # Must be a fully-qualified http(s) URL — not an unrooted path.
+      assert String.starts_with?(url, "http://") or String.starts_with?(url, "https://"),
+             "esr-channel url must be fully qualified; got #{inspect(url)}"
+
+      assert String.ends_with?(url, "/mcp/#{sid}")
+    end
+  end
+
   describe "prepare_spawn/1 — sole entry (PR-2)" do
     setup do
       cwd =

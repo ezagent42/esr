@@ -186,32 +186,16 @@ defmodule Esr.Commands.Session.NewTest do
   end
 
   describe "execute/1 arg validation" do
-    test "missing workspace + agent + no user-default → no_workspace_target (Phase 6 M-5)" do
-      # Pre-M-5 (Phase 5.1 + 6.1): the resolution chain fell through to a
-      # literal "default" workspace, so this case reached the capability
-      # gate. M-5 (Phase 6) removed the literal-default layer — submitters
-      # without a user-default now error out at resolution instead.
-      #
-      # ou_alice has no user-default link → :no_match → no_workspace_target.
-      # (Renamed from no_workspace_resolvable in fix/chat-envelope-arg-fallback
-      # so the error type matches the parallel /agent:add no_session_target.)
+    test "missing workspace + no dir + no user-default → no_workspace_target (Phase 6 M-5)" do
+      # The M-5 user-default chain is the only remaining workspace
+      # discovery path (2026-05-12 cutover removed the "agent given →
+      # skip resolution" backdoor). With no explicit workspace, no
+      # explicit dir, and no user-default for the submitter, every layer
+      # of the fallback ladder misses → no_workspace_target.
       Grants.load_snapshot(%{"ou_alice" => []})
 
-      cmd = %{"submitted_by" => "ou_alice", "args" => %{"dir" => "/tmp/x"}}
-      assert {:error, %{"type" => "no_workspace_target"}} = SessionNew.execute(cmd)
-    end
-
-    test "missing dir + agent=cc → succeeds (dir optional after Phase 5)" do
-      # Pre-fix (2026-05-10): the with-chain ran `validate_args(agent, dir)`
-      # FIRST and returned `invalid_args "dir required"` here. Phase 5 made
-      # the SessionTemplate authoritative for the spawn pipeline, so `dir`
-      # is now metadata that may legitimately be `nil` (legacy admin-CLI
-      # path that doesn't supply one). Regression guard for the fix.
-      Grants.load_snapshot(%{"ou_alice" => ["*"]})
-
       cmd = %{"submitted_by" => "ou_alice", "args" => %{"agent" => "cc"}}
-      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} = SessionNew.execute(cmd)
-      assert is_binary(sid)
+      assert {:error, %{"type" => "no_workspace_target"}} = SessionNew.execute(cmd)
     end
 
     test "malformed command (no args) → invalid_args" do
@@ -698,30 +682,6 @@ defmodule Esr.Commands.Session.NewTest do
       assert_receive {:create_session_called, %{dir: "/tmp/test-cc-repo"}}
 
       on_exit(fn -> Esr.Test.WorkspaceFixture.delete!("test-cc-ws") end)
-    end
-
-    test "args carry only template= (no workspace, no dir) → succeeds; dir = nil" do
-      # `/session:new template=feishu-cc` from an admin-CLI submit (no chat
-      # context, no workspace). Post-fix this should resolve the explicit
-      # template, accept `dir = nil`, and start the session via the
-      # admin-CLI fallback (start_session_fn). Verifies that the
-      # template-driven spawn no longer trips on the legacy validate_args
-      # gate.
-      Grants.load_snapshot(%{"ou_admin" => ["*"]})
-
-      cmd = %{
-        "submitted_by" => "ou_admin",
-        "args" => %{
-          "agent" => "cc",
-          "template" => "feishu-cc",
-          "name" => "tpl-only-#{:rand.uniform(99_999)}"
-        }
-      }
-
-      assert {:ok, %{"session_id" => sid, "agent" => "cc"}} = SessionNew.execute(cmd)
-      state = Esr.Session.Process.state(sid)
-      assert state.dir == nil
-      assert state.agent_name == "cc"
     end
 
     test "default template auto-elected: `/session:new name=foo` (no agent, no template) succeeds when workspace resolves" do

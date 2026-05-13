@@ -66,6 +66,15 @@ defmodule Esr.Commands.Workspace.Resolve do
     end
   end
 
+  # 2026-05-12 register/lookup key parity fix: slash_handler.ex:759
+  # injects `args["username"]` for session_new (and session_end /
+  # session_list / workspace_info) — that's the actual production key.
+  # `submitter_username` is the test fixture's key. Accept both so the
+  # M-5 user-default chain works for both inbound paths.
+  defp resolve_submitter(%{"username" => username})
+       when is_binary(username) and username != "",
+       do: {:ok, username}
+
   defp resolve_submitter(%{"submitter_username" => username})
        when is_binary(username) and username != "",
        do: {:ok, username}
