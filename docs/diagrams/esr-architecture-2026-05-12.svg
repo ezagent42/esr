@@ -1,49 +1,76 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 780" width="1400" height="780">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 870" width="1240" height="870">
 <!-- svg-source:excalidraw -->
 <metadata></metadata>
 <defs>
 <marker id="arr-137333" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#137333"/></marker>
 <marker id="arr-1e1e1e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1e1e1e"/></marker>
+<marker id="arr-666" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#666"/></marker>
 <style>
 text { font-family: "Excalifont","Xiaolai","PingFang SC",-apple-system,"Helvetica Neue",sans-serif; }
 </style>
 </defs>
-<rect width="1400" height="780" fill="#ffffff"/>
-<text x="40" y="41.099999999999994" font-size="18" fill="#555" text-anchor="start" font-weight="600">ESR — core components + flow  (origin/dev, 2026-05-12)</text>
-<rect x="60" y="90" width="220" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
-<text x="170.0" y="137.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Plugin Loader</text>
-<rect x="1100" y="90" width="240" height="100" rx="10" fill="#fde7ec" stroke="#b91c1c" stroke-width="2"/>
-<text x="1220.0" y="147.9" font-size="22" fill="#111" text-anchor="middle" font-weight="600">URI Store</text>
-<rect x="60" y="270" width="240" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
-<text x="180.0" y="317.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">SessionTemplate</text>
-<rect x="60" y="460" width="220" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
-<text x="170.0" y="507.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Workspace</text>
-<rect x="490" y="270" width="220" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
-<text x="600.0" y="317.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Session</text>
-<rect x="890" y="270" width="220" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
-<text x="1000.0" y="317.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Proxy (peer)</text>
-<rect x="490" y="460" width="220" height="90" rx="10" fill="#e6f7ec" stroke="#137333" stroke-width="2"/>
-<text x="600.0" y="512.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Adapter</text>
-<rect x="890" y="460" width="220" height="90" rx="10" fill="#f1ebff" stroke="#5a3aa8" stroke-width="2"/>
-<text x="1000.0" y="512.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Handler</text>
-<rect x="490" y="680" width="620" height="60" rx="10" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
-<text x="800.0" y="715.2" font-size="16" fill="#111" text-anchor="middle" font-weight="400">external systems  (Feishu, Claude Code, …)</text>
-<line x1="300" y1="310" x2="490" y2="310" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
-<text x="405.0" y="293.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">instantiate</text>
-<line x1="280" y1="480" x2="490" y2="340" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
-<text x="400.0" y="423.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">bound to</text>
-<line x1="710" y1="310" x2="890" y2="310" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
-<text x="805.0" y="293.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">owns</text>
-<line x1="950" y1="350" x2="650" y2="460" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
-<text x="805.0" y="403.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">directive</text>
-<line x1="1000" y1="350" x2="1000" y2="460" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
-<text x="1075.0" y="413.3" font-size="14" fill="#5a3aa8" text-anchor="middle" font-weight="400">invoke</text>
-<line x1="600" y1="550" x2="600" y2="680" stroke="#137333" stroke-width="2" marker-end="url(#arr-137333)"/>
-<text x="650.0" y="618.3" font-size="14" fill="#137333" text-anchor="middle" font-weight="400">I/O</text>
-<text x="170.0" y="186.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">registers all kinds on boot</text>
-<text x="1220.0" y="206.4" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="400">identifies every entity</text>
+<rect width="1240" height="870" fill="#ffffff"/>
+<text x="40" y="41.099999999999994" font-size="18" fill="#555" text-anchor="start" font-weight="600">ESR — core components + flow  (origin/dev, 2026-05-13)</text>
+<rect x="60" y="90" width="200" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="160.0" y="137.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Plugin Loader</text>
+<rect x="330" y="70" width="580" height="250" rx="10" fill="#fffbf0" stroke="#a78a00" stroke-width="2"/>
+<text x="620.0" y="199.3" font-size="14" fill="#111" text-anchor="middle" font-weight="400"></text>
+<text x="620.0" y="97.3" font-size="14" fill="#a78a00" text-anchor="middle" font-weight="400">what a plugin contributes  (manifest.yaml)</text>
+<text x="350" y="128.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  capabilities          →  Permission.Registry</text>
+<text x="350" y="148.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  python_sidecars       →  Sidecar.Registry      (adapter+handler workers)</text>
+<text x="350" y="168.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  entities              →  Agent.StatefulRegistry  (peer types, e.g. PtyProcess)</text>
+<text x="350" y="188.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  channels              →  Channel.Registry</text>
+<text x="350" y="208.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  agent_kinds           →  Plugin.AgentKindRegistry</text>
+<text x="350" y="228.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  slash_routes          →  SlashRoute.Registry</text>
+<text x="350" y="248.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  media_types           →  Media.PluginRegistry</text>
+<text x="350" y="268.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  uri_subtrees          →  Esr.Uri  (resolve fallback)</text>
+<text x="350" y="288.35" font-size="13" fill="#333" text-anchor="start" font-weight="400">•  startup callbacks     →  :persistent_term</text>
+<text x="620.0" y="307.4" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="400">note: SessionTemplate is shipped by Bundles or inline yaml, not by plugins</text>
+<rect x="960" y="90" width="220" height="100" rx="10" fill="#fde7ec" stroke="#b91c1c" stroke-width="2"/>
+<text x="1070.0" y="147.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">URI Store</text>
+<text x="1070.0" y="209.4" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="400">identifies every entity</text>
+<rect x="60" y="380" width="240" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="180.0" y="427.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">SessionTemplate</text>
+<text x="180.0" y="477.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">channels + agents + flow</text>
+<rect x="60" y="540" width="240" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="180.0" y="587.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Workspace</text>
+<text x="180.0" y="637.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">folders[0].path</text>
+<rect x="490" y="380" width="220" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="600.0" y="427.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Session</text>
+<rect x="890" y="380" width="290" height="80" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1035.0" y="427.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Proxy  (per-session peer)</text>
+<text x="1035.0" y="477.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">FeishuChatProxy · CCProxy · PtyProcess</text>
+<rect x="490" y="540" width="220" height="90" rx="10" fill="#e6f7ec" stroke="#137333" stroke-width="2"/>
+<text x="600.0" y="592.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Adapter</text>
+<text x="600.0" y="646.4" font-size="12" fill="#137333" text-anchor="middle" font-weight="400">Python sidecar</text>
+<rect x="890" y="540" width="290" height="90" rx="10" fill="#f1ebff" stroke="#5a3aa8" stroke-width="2"/>
+<text x="1035.0" y="592.0" font-size="20" fill="#111" text-anchor="middle" font-weight="600">Handler</text>
+<text x="1035.0" y="646.4" font-size="12" fill="#5a3aa8" text-anchor="middle" font-weight="400">Python sidecar  ·  pure</text>
+<rect x="40" y="730" width="470" height="80" rx="10" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
+<text x="275.0" y="775.65" font-size="17" fill="#111" text-anchor="middle" font-weight="400">Feishu cloud</text>
+<text x="275.0" y="804.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">outbound WebSocket  (lark_oapi → open.feishu.cn)</text>
+<rect x="540" y="730" width="640" height="80" rx="10" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
+<text x="860.0" y="775.65" font-size="17" fill="#111" text-anchor="middle" font-weight="400">Claude Code binary  (or gemini-cli, codex, …)</text>
+<text x="860.0" y="804.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">spawned by PtyProcess  ·  reaches esrd via MCP-over-HTTP</text>
+<line x1="260" y1="130" x2="330" y2="195" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="265" y="117.35" font-size="13" fill="#1d4ed8" text-anchor="start" font-weight="400">registers</text>
+<line x1="300" y1="420" x2="490" y2="420" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="400.0" y="405.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">instantiate</text>
+<line x1="300" y1="570" x2="490" y2="440" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="405.0" y="503.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">bound to</text>
+<text x="405.0" y="520.45" font-size="11" fill="#666" text-anchor="middle" font-weight="400">path → :cd of spawned subproc</text>
+<line x1="710" y1="420" x2="890" y2="420" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="805.0" y="408.3" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="400">owns</text>
+<line x1="950" y1="460" x2="650" y2="540" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="805.0" y="503.3" font-size="14" fill="#137333" text-anchor="middle" font-weight="400">directive</text>
+<line x1="1020" y1="460" x2="1020" y2="540" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr-1e1e1e)"/>
+<text x="1095.0" y="503.3" font-size="14" fill="#5a3aa8" text-anchor="middle" font-weight="400">invoke</text>
+<line x1="560" y1="630" x2="280" y2="730" stroke="#137333" stroke-width="2" marker-end="url(#arr-137333)"/>
+<text x="455.0" y="672.35" font-size="13" fill="#137333" text-anchor="middle" font-weight="400">ws</text>
+<line x1="1030" y1="470" x2="860" y2="730" stroke="#666" stroke-width="1.5" marker-end="url(#arr-666)"/>
+<text x="1000.0" y="671.4" font-size="12" fill="#666" text-anchor="middle" font-weight="400">spawn + mcp/http</text>
 </svg>
-<!-- payload-start -->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<!-- payload-end -->
+<!-- payload-start -->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<!-- payload-end -->
 <!-- payload-version:2 -->
 <!-- payload-type:application/vnd.excalidraw+json -->
