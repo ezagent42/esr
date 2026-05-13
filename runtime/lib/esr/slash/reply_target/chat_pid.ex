@@ -159,8 +159,23 @@ defmodule Esr.Slash.ReplyTarget.ChatPid do
   def format_result({:error, %{"type" => "missing_capabilities", "caps" => caps}}),
     do: "error: missing caps — " <> Enum.join(caps, ", ")
 
-  def format_result({:error, %{"type" => t}}) when is_binary(t),
-    do: "error: " <> t
+  def format_result({:error, %{"type" => t} = err}) when is_binary(t) do
+    case Map.drop(err, ["type"]) do
+      empty when map_size(empty) == 0 ->
+        "error: " <> t
+
+      fields ->
+        kv =
+          fields
+          |> Enum.map(fn {k, v} -> "#{k}=#{format_value(v)}" end)
+          |> Enum.join(", ")
+
+        "error: " <> t <> " — " <> kv
+    end
+  end
 
   def format_result(other), do: "result: " <> inspect(other)
+
+  defp format_value(v) when is_binary(v), do: v
+  defp format_value(v), do: inspect(v)
 end
