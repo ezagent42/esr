@@ -76,28 +76,9 @@ defmodule Esr.Entity.CCProcess do
   def init(args) do
     sid = Map.fetch!(args, :session_id)
 
-    # PR-9 T12-comms-3c: subscribe to the cc_mcp-ready control topic so
-    # we can flush buffered send_input notifications as soon as cc_mcp
-    # joins cli:channel/<sid>. Phoenix.PubSub drops broadcasts with no
-    # subscribers, so dispatch_action(send_input) fired during the
-    # ~10s window between pipeline spawn and cc_mcp join would be lost
-    # — scenario 01's first user inbound was vanishing this way.
-    # See docs/notes/cc-mcp-pubsub-race.md.
-    _ = maybe_subscribe("cc_mcp_ready/" <> sid)
-
     proxy_ctx = Map.get(args, :proxy_ctx, %{})
 
     name = Map.get(args, :name) || ("cc-" <> sid)
-
-    # Phase A.4b: PtyProcess registers under "pty:<actor_id>" (Phase A.4
-    # migrated away from "pty:<session_id>"). For multi-agent spawns
-    # InstanceRegistry.build_cc_args/6 threads `:pty_actor_id` through.
-    # Single-agent spawns via AgentSpawner/Factory.spawn_peer don't set
-    # `:pty_actor_id` AND don't set PtyProcess's `:actor_id` — the PTY
-    # peer's init/1 falls back to `actor_id ||= session_id` so the lookup
-    # key remains "pty:<session_id>". Mirror that fallback here so both
-    # spawn paths agree on the lookup key.
-    pty_actor_id = Map.get(args, :pty_actor_id) || sid
 
     # M-1.5: register in Index 2 (`{sid, name}`) and Index 3
     # (`{sid, role}`) so `Esr.ActorQuery.find_by_name/2` and
@@ -119,25 +100,12 @@ defmodule Esr.Entity.CCProcess do
     {:ok,
      %{
        session_id: sid,
-       pty_actor_id: pty_actor_id,
        handler_module: Map.fetch!(args, :handler_module),
        cc_state: Map.get(args, :initial_state, %{}),
        proxy_ctx: proxy_ctx,
        handler_override: nil,
-       pending_notifications: [],
-       cc_mcp_ready: false,
        name: name
      }}
-  end
-
-  # Phoenix.PubSub isn't running in every unit-test setup (some call
-  # init/1 directly without booting EsrWeb.PubSub). Swallow the
-  # :not_running-style errors so tests keep working.
-  defp maybe_subscribe(topic) do
-    case Process.whereis(EsrWeb.PubSub) do
-      nil -> :ok
-      _pid -> Phoenix.PubSub.subscribe(EsrWeb.PubSub, topic)
-    end
   end
 
   @impl Esr.Entity.Stateful
@@ -192,21 +160,6 @@ defmodule Esr.Entity.CCProcess do
 
   def handle_info({:text, _, _meta} = msg, state),
     do: Esr.Entity.Stateful.dispatch_upstream(msg, state, __MODULE__)
-
-  # T12-comms-3c: ChannelChannel's join-for-this-session broadcasts
-  # {:cc_mcp_ready, session_id} on the "cc_mcp_ready/<sid>" topic.
-  # When we receive it, flush every buffered send_input envelope that
-  # couldn't broadcast earlier (no subscribers) and flip the state
-  # flag so subsequent send_input actions broadcast immediately.
-  def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
-    # pending_notifications was prepended (O(1)); reverse to preserve
-    # the original `send_input` order on flush.
-    for envelope <- Enum.reverse(state.pending_notifications) do
-      broadcast_notification(sid, envelope)
-    end
-
-    {:noreply, %{state | pending_notifications: [], cc_mcp_ready: true}}
-  end
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -289,8 +242,9 @@ defmodule Esr.Entity.CCProcess do
   end
 
   # Every `dispatch_action/2` clause returns the (possibly updated)
-  # state — keeps the reduce trivial. Only `send_input` actually
-  # mutates state today (buffering when cc_mcp hasn't joined yet).
+  # state — keeps the reduce trivial. No clauses mutate state today;
+  # the unused accumulator slot is preserved so future actions (e.g.
+  # cached attribution) can thread state without re-shaping the reduce.
   defp dispatch_actions(actions, state),
     do: Enum.reduce(actions, state, &dispatch_action/2)
 
@@ -307,36 +261,16 @@ defmodule Esr.Entity.CCProcess do
   # cc_mcp's inbound handler re-maps these into the `notifications/claude/channel`
   # params/meta shape CC's channels listener expects.
   defp dispatch_action(%{"type" => "send_input", "text" => text}, state) do
-    if state.cc_mcp_ready do
-      # Phase 7 (2026-05-10): the broadcast topic key is the
-      # current_session_id from the inbound's meta — for multi-session-
-      # per-instance, the CCProcess pid is shared across N sessions and
-      # `state.session_id` only names the originating (primary) session.
-      # When the inbound came from another attached session, its
-      # cli:channel/<sid> topic is the one cc_mcp listens on for that
-      # session's chat, so the reply must broadcast there.
-      envelope = build_channel_notification(state, text)
-      broadcast_notification(current_session_id_or_primary(state), envelope)
-      state
-    else
-      # PR-24 step 2: route Feishu inbound directly to claude's PTY
-      # stdin during the boot bridge window. Operator becomes their
-      # own channel: their text in chat → keystrokes in claude TUI →
-      # FCP's `:pty_stdout` mirror sends claude's response back into
-      # the same chat. Once cc_mcp_ready fires, all future inbounds
-      # take the normal `notifications/claude/channel` path above.
-      #
-      # Pre-PR-24, this branch buffered into `pending_notifications`
-      # for cc_mcp to flush on ready (T12-comms-3c). The buffer was
-      # the right model when cc_mcp was guaranteed to come up — but
-      # claude can hang at boot dialogs (live-debugged 2026-05-02:
-      # `--dangerously-load-development-channels` warning). Routing
-      # to PTY directly lets the operator unblock claude themselves
-      # via Feishu, no `/attach` required for the simple cases.
-      keystrokes = text <> "\r"
-      _ = Esr.Entity.PtyProcess.write(state.pty_actor_id, keystrokes)
-      state
-    end
+    # Phase 7 (2026-05-10): the broadcast topic key is the
+    # current_session_id from the inbound's meta — for multi-session-
+    # per-instance, the CCProcess pid is shared across N sessions and
+    # `state.session_id` only names the originating (primary) session.
+    # When the inbound came from another attached session, its
+    # cli:channel/<sid> topic is the one cc_mcp listens on for that
+    # session's chat, so the reply must broadcast there.
+    envelope = build_channel_notification(state, text)
+    broadcast_notification(current_session_id_or_primary(state), envelope)
+    state
   end
 
   defp dispatch_action(%{"type" => "reply", "text" => text} = action, state) do
