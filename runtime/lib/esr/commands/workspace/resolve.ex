@@ -16,8 +16,21 @@ defmodule Esr.Commands.Workspace.Resolve do
   mocking layer.
 
   Submitter is sourced from `args["submitter_username"]` when present,
-  otherwise resolved via `Esr.Uri.Compat.username_for_feishu_id/1`
-  from `args["submitted_by"]`.
+  otherwise resolved from `args["submitted_by"]` which can carry any
+  of the three principal forms:
+
+    * Feishu `ou_*` open_id   → `username_for_feishu_id/1`
+    * UUID                    → `name_for_user_uuid/1`
+    * username (CLI shorthand) → trusted as-is
+
+  The UUID branch is what makes CLI submits work: `operator.json`
+  writes `caller_principal_id` as the user's UUID (`b31e9dcc-...`)
+  after `user_add`, so every subsequent `esr exec <slash>` invocation
+  threads UUID into `submitted_by`. Pre-fix the resolver only knew
+  `ou_*` form, so `submitted_by=<uuid>` quietly returned `:not_found`
+  and the user-default workspace fallback never fired — operators
+  saw `no_workspace_target` on bare `/session:new name=test-cc`
+  (team todo `resolve-submitter-format-agnostic`, walkthrough-4 #349).
   """
 
   alias Esr.Session.ChatRouting.Registry, as: ChatScope
@@ -79,11 +92,37 @@ defmodule Esr.Commands.Workspace.Resolve do
        when is_binary(username) and username != "",
        do: {:ok, username}
 
-  defp resolve_submitter(%{"submitted_by" => ou_id}) when is_binary(ou_id) and ou_id != "" do
-    Esr.Uri.Compat.username_for_feishu_id(ou_id)
+  defp resolve_submitter(%{"submitted_by" => id}) when is_binary(id) and id != "" do
+    resolve_principal_to_username(id)
   end
 
   defp resolve_submitter(_), do: :not_found
+
+  # Walkthrough-4 #349. Detect the form of an inbound principal id
+  # string and resolve it to the canonical esr username.
+  #
+  # Order of detection matters only for ambiguous inputs; in practice
+  # `ou_*` and UUID shapes are disjoint and a bare username never
+  # starts with `ou_` nor matches the UUID regex. So `cond do` falls
+  # through to the username branch for anything that doesn't match
+  # the structured forms — treating it as a username is the right
+  # default for admin-queue submits that already carry the canonical
+  # handle.
+  defp resolve_principal_to_username(id) do
+    cond do
+      String.starts_with?(id, "ou_") ->
+        Esr.Uri.Compat.username_for_feishu_id(id)
+
+      looks_like_uuid?(id) ->
+        Esr.Uri.Compat.name_for_user_uuid(id)
+
+      true ->
+        {:ok, id}
+    end
+  end
+
+  @uuid_re ~r/\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z/
+  defp looks_like_uuid?(s) when is_binary(s), do: Regex.match?(@uuid_re, s)
 
   # Convenience for callers that only need a name and don't care which
   # layer hit — used by /workspace:add-folder.
