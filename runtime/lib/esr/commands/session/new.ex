@@ -73,7 +73,21 @@ defmodule Esr.Commands.Session.New do
     requires_workspace_binding false
 
     arg :name,     required: true,  doc: "session 名"
-    arg :agent,    required: false, default: "cc", doc: "agent 名(默认 cc)"
+    # Walkthrough-4: removed `default: "cc"` from agent — pre-fix this
+    # made `parse_route_args/2` inject `args["agent"]="cc"` for EVERY
+    # chat envelope (even bare-name `/session:new name=X`). That
+    # auto-injected agent fired the legacy "agent-only" short-circuit
+    # in `resolve_workspace_if_needed/1` clause (b) before the
+    # user-default workspace fallback could run. The chat-bare-name
+    # path then collapsed to `workspace_name: "default"` + `dir: nil`
+    # downstream (walkthrough-4 dir-nil symptom).
+    #
+    # The user-visible "session_new defaults to cc when a workspace
+    # is resolved" UX is preserved by the existing post-resolve
+    # logic: `agent = args["agent"] || (if args["workspace"], do: "cc", else: nil)`.
+    # Tests that pass `agent=` explicitly (legacy admin-CLI mode) still
+    # hit clause (b)'s short-circuit unchanged.
+    arg :agent,    required: false, doc: "agent 名(默认 cc when workspace resolved)"
     arg :template, required: false, doc: "session template name (defaults to operator-configured default)"
 
     error :invalid_args,            "session_new %{detail}"
