@@ -270,5 +270,128 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       assert contents =~ "submit_slash",
              "admin skill prompt must mention submit_slash so the agent knows when to use it"
     end
+
+    # walkthrough-4 C18: --dangerously-load-development-channels was an
+    # early-prototype flag that current claude binaries ignore (printing
+    # "Channels are not currently available" at boot). MCP server
+    # discovery happens via --mcp-config. Asserts the flag is gone from
+    # argv so operators don't see the spurious warning.
+    test "argv does NOT contain --dangerously-load-development-channels (C18)", %{cwd: cwd} do
+      {:ok, %{cmd: cmd}} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          plugin_config: %{"esrd_url" => "ws://127.0.0.1:4001"},
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      refute Enum.member?(cmd, "--dangerously-load-development-channels"),
+             "deprecated dev-channels flag must not be in argv (C18)"
+
+      refute Enum.member?(cmd, "server:esr-channel"),
+             "dev-channels arg `server:esr-channel` must not be in argv (C18)"
+    end
+
+    # walkthrough-4 C22: when plugin config doesn't set esrd_url (the
+    # zero-config bootstrap case — operator never wrote
+    # plugins/claude_code/config.yaml), write_mcp_json was passed `""`
+    # and produced a relative-URL mcp.json (`/mcp/<sid>`, no scheme/host)
+    # that claude's HTTP MCP client cannot dial. Fix: fall back to
+    # Esr.Paths.channel_ws_url/0 which reads the running Endpoint config
+    # (same source PtyProcess.os_env/1 uses for ESR_ESRD_URL env).
+    test "C22: mcp.json url has scheme + host when plugin config omits esrd_url", %{cwd: cwd} do
+      # plugin_config without `esrd_url` key — simulates zero-config bootstrap.
+      {:ok, _} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          plugin_config: %{},
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      mcp_path = Esr.Paths.session_mcp_json(@session_id)
+      {:ok, body} = File.read(mcp_path)
+      decoded = Jason.decode!(body)
+      url = decoded["mcpServers"]["esr-channel"]["url"]
+
+      assert url =~ ~r"\Ahttp://[^/]+/mcp/#{@session_id}\z",
+             "mcp.json url must have full scheme+host+path; got: #{inspect(url)}"
+
+      # Specifically not a relative path
+      refute String.starts_with?(url, "/mcp/"),
+             "url must not be a host-less relative path (C22 regression)"
+    end
+
+    test "C22: explicit plugin config esrd_url overrides Endpoint fallback", %{cwd: cwd} do
+      {:ok, _} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          plugin_config: %{"esrd_url" => "ws://10.20.30.40:9999"},
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      mcp_path = Esr.Paths.session_mcp_json(@session_id)
+      {:ok, body} = File.read(mcp_path)
+      decoded = Jason.decode!(body)
+
+      assert decoded["mcpServers"]["esr-channel"]["url"] ==
+               "http://10.20.30.40:9999/mcp/#{@session_id}"
+    end
+  end
+
+  # walkthrough-4 C24: pre-fix `resolve_plugin_config` passed
+  # `[:user_uuid, :workspace_id]` to `Plugin.Config.resolve/2`, but
+  # `resolve/2` accepts `[:global_path, :user_path, :workspace_path]` —
+  # so every layer read_layer(nil) returned `%{}`, and the global-layer
+  # `plugins/claude_code/config.yaml` was silently never loaded. Verify
+  # the fix by writing a config.yaml and asserting it lands in the
+  # config map that flows into build_env (the only externally
+  # observable use of the resolved config in this test).
+  describe "prepare_spawn/1 reads global plugin config (C24)" do
+    setup do
+      cwd =
+        System.tmp_dir!()
+        |> Path.join("c24-test-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+      {:ok, cwd: cwd}
+    end
+
+    test "global plugin config.yaml flows into env (proves resolve_plugin_config opt keys are correct)",
+         %{cwd: cwd} do
+      # Write the global config yaml at the expected
+      # `$ESRD_HOME/<inst>/plugins/claude_code/config.yaml` location.
+      plugin_dir = Esr.Paths.plugin_global_dir("claude_code")
+      File.mkdir_p!(plugin_dir)
+
+      File.write!(
+        Path.join(plugin_dir, "config.yaml"),
+        ~s(http_proxy: "http://test.example:3128"\nesrd_url: "ws://from-disk:5555"\n)
+      )
+
+      {:ok, %{env: env}} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          # NOTE: no :plugin_config opt; force resolve_plugin_config to
+          # read from disk via Plugin.Config.resolve/2.
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      assert Keyword.get(env, :http_proxy) == "http://test.example:3128",
+             "global config http_proxy must flow into env (C24)"
+
+      assert Keyword.get(env, :ESR_ESRD_URL) == "ws://from-disk:5555",
+             "global config esrd_url must flow into env (C24)"
+
+      # And the same source feeds the mcp.json url (C22 + C24 join).
+      mcp_path = Esr.Paths.session_mcp_json(@session_id)
+      decoded = Jason.decode!(File.read!(mcp_path))
+
+      assert decoded["mcpServers"]["esr-channel"]["url"] ==
+               "http://from-disk:5555/mcp/#{@session_id}"
+    end
   end
 end
