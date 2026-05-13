@@ -314,5 +314,61 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       assert contents =~ "submit_slash",
              "admin skill prompt must mention submit_slash so the agent knows when to use it"
     end
+
+    # Walkthrough-4 C18: `--dangerously-load-development-channels` was an
+    # early-prototype flag claude binaries now ignore (printing "Channels
+    # are not currently available") AND prompt for a redundant
+    # confirmation. MCP server discovery happens via `--mcp-config`,
+    # which we already pass.
+    test "C18: argv does NOT contain --dangerously-load-development-channels" do
+      cwd = Path.join(System.tmp_dir!(), "wt4-c18-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+
+      {:ok, %{cmd: cmd}} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      refute Enum.member?(cmd, "--dangerously-load-development-channels"),
+             "deprecated dev-channels flag must not be in argv (C18)"
+
+      refute Enum.member?(cmd, "server:esr-channel"),
+             "dev-channels arg `server:esr-channel` must not be in argv (C18)"
+    end
+
+    # Walkthrough-4 C24: `resolve_plugin_config` passed `[:user_uuid,
+    # :workspace_id]` to `Plugin.Config.resolve/2`, but that function
+    # accepts `[:global_path, :user_path, :workspace_path]`. The mismatch
+    # produced an all-nil-paths call where every layer's `read_layer(nil)`
+    # returned `%{}`, so operator-written `plugins/claude_code/config.yaml`
+    # was silently ignored at every spawn.
+    test "C24: global plugin config.yaml flows into env (proves opt keys are correct)" do
+      plugin_dir = Esr.Paths.plugin_global_dir("claude_code")
+      File.mkdir_p!(plugin_dir)
+
+      File.write!(
+        Path.join(plugin_dir, "config.yaml"),
+        ~s(http_proxy: "http://test.example:3128"\n)
+      )
+
+      cwd = Path.join(System.tmp_dir!(), "wt4-c24-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+
+      # No :plugin_config opt — force resolve_plugin_config to read from
+      # disk via Plugin.Config.resolve/2.
+      {:ok, %{env: env}} =
+        Launcher.prepare_spawn(
+          session_id: @session_id,
+          dir: cwd,
+          claude_binary: "/tmp/mock-claude.sh"
+        )
+
+      assert Keyword.get(env, :http_proxy) == "http://test.example:3128",
+             "global config http_proxy must flow into env (C24)"
+    end
   end
 end
