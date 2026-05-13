@@ -18,12 +18,11 @@ defmodule Esr.Entity.CCProcessTest do
 
   @handler_module "cc_adapter_runner"
 
-  # The pre-PR-24 "buffer send_input + flush on cc_mcp_ready" assertion
-  # that used to live here was rewritten in
-  # test/esr/entity/cc_process_inbound_regression_test.exs to match
-  # production: post-PR-24 dispatch_action routes not-ready send_input
-  # to PtyProcess.write (boot-bridge fallback), no buffer-then-flush.
-  # See companion RCA in feature/cc-inbound-regression-tests.
+  # Historical note: the pre-PR-24 "buffer send_input + flush on
+  # cc_mcp_ready" path and the PR-24 PTY-fallback path were both
+  # deleted in Phase 5.1 of the stdio-bridge migration. CCProcess now
+  # has a single broadcast path; readiness is inherent to the bridge.
+  # See cc_process_inbound_regression_test.exs for the broadcast pin.
 
   test "on {:legacy_output, bytes}, drops silently (legacy diagnostic — production never sends this)" do
     # Post-T11b the conversation path runs through cli:channel MCP

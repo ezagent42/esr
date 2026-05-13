@@ -1,9 +1,10 @@
 defmodule Esr.CapabilitiesTest do
   @moduledoc """
-  PR-21s 2026-04-29 — `Esr.Resource.Capability.has?/2` resolves a Feishu
-  `ou_*` principal_id to the bound esr-username and consults BOTH
-  cap tables. Lets operators grant caps by username without
-  invalidating PR-21q's bootstrap auto-grant on raw open_id.
+  `Esr.Resource.Capability.has?/2` keys caps by UUID (since PR-348 /
+  Cap.UuidTranslator). For Feishu inbounds carrying `ou_*` as principal_id,
+  the URI store alias `feishu/<ou>` → canonical user URI yields the UUID,
+  and the cap check retries against that UUID. Direct check on raw open_id
+  still runs first (PR-21q bootstrap auto-grant before user_add).
   """
   use ExUnit.Case, async: false
 
@@ -39,7 +40,9 @@ defmodule Esr.CapabilitiesTest do
     refute Esr.Resource.Capability.has?("ou_xyz", "session.list")
   end
 
-  test "open_id resolves via Users.Registry to esr-username with cap" do
+  test "open_id resolves via URI store to canonical UUID with cap" do
+    # UserFixture.load_snapshot/1 synthesizes UUID "test-uuid-linyilun"
+    # and registers the alias feishu/ou_xyz → users/test-uuid-linyilun.
     Esr.Test.UserFixture.load_snapshot(%{
       "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
@@ -48,15 +51,15 @@ defmodule Esr.CapabilitiesTest do
     })
 
     Esr.Resource.Capability.Grants.load_snapshot(%{
-      "linyilun" => ["workspace.create"]
+      "test-uuid-linyilun" => ["workspace.create"]
     })
 
-    # Inbound carries `principal_id = ou_xyz`; cap was granted to
-    # `linyilun`. PR-21s makes this work.
+    # Inbound carries principal_id = ou_xyz; cap is keyed by UUID.
+    # Resolver retries against the UUID and finds the grant.
     assert Esr.Resource.Capability.has?("ou_xyz", "workspace.create")
   end
 
-  test "raw open_id wins when both keyed (no double-counting)" do
+  test "raw open_id and UUID grants compose for the same user" do
     Esr.Test.UserFixture.load_snapshot(%{
       "linyilun" => %Esr.Entity.User.Struct{
         username: "linyilun",
@@ -66,41 +69,59 @@ defmodule Esr.CapabilitiesTest do
 
     Esr.Resource.Capability.Grants.load_snapshot(%{
       "ou_xyz" => ["workspace.create"],
-      "linyilun" => ["session.list"]
+      "test-uuid-linyilun" => ["session.list"]
     })
 
-    # Both lookups succeed for their respective caps.
+    # Direct open_id hit.
     assert Esr.Resource.Capability.has?("ou_xyz", "workspace.create")
+    # Falls through to UUID resolution.
     assert Esr.Resource.Capability.has?("ou_xyz", "session.list")
   end
 
   test "no binding + no direct grant → false" do
     Esr.Resource.Capability.Grants.load_snapshot(%{
-      "linyilun" => ["workspace.create"]
+      "test-uuid-linyilun" => ["workspace.create"]
     })
 
-    # Nobody bound `ou_unbound` to any esr user; raw lookup fails too.
+    # `ou_unbound` is not aliased to any canonical user URI, and isn't
+    # in Grants directly either.
     refute Esr.Resource.Capability.has?("ou_unbound", "workspace.create")
   end
 
-  test "username-typed principal_id (admin queue path) still works directly" do
-    # Admin CLI submits sometimes carry `principal_id = "linyilun"`
-    # already (no resolution needed). Direct lookup still fires first.
+  test "UUID-typed principal_id (admin queue path) hits directly" do
+    # Admin CLI submits (after Cap.UuidTranslator on the input side) carry
+    # principal_id = the UUID. Direct lookup fires first.
     Esr.Resource.Capability.Grants.load_snapshot(%{
-      "linyilun" => ["workspace.create"]
+      "test-uuid-linyilun" => ["workspace.create"]
     })
 
-    assert Esr.Resource.Capability.has?("linyilun", "workspace.create")
+    assert Esr.Resource.Capability.has?("test-uuid-linyilun", "workspace.create")
   end
 
-  test "URI store path: principal_id has no esr-user binding → falls back to direct grants" do
-    # PR-1 deleted User.Registry; the binding-resolution path now goes
-    # via Esr.Uri.Compat.username_for_feishu_id/1 which reads the URI
-    # store. With no users registered for the open_id, the path returns
-    # :not_found and Capability.has?/2 falls back to direct-grant lookup.
+  test "URI store path: principal_id has no user alias → falls back to direct grants" do
     Esr.Test.UserFixture.load_snapshot(%{})
     Esr.Resource.Capability.Grants.load_snapshot(%{"ou_xyz" => ["workspace.create"]})
 
+    # No alias → resolver returns :not_found → only direct grant lookup runs.
     assert Esr.Resource.Capability.has?("ou_xyz", "workspace.create")
+  end
+
+  test "regression: Feishu inbound /session:new with UUID-keyed wildcard grant" do
+    # The exact shape of the 2026-05-12 live-test failure:
+    # - user_add seeded capabilities.yaml with principal_id = UUID and caps ["*"]
+    # - /feishu:bind aliased feishu/<ou> → canonical user URI carrying that UUID
+    # - Inbound /session:new carries principal_id = ou_*, expects wildcard to apply
+    Esr.Test.UserFixture.load_snapshot(%{
+      "linyilun" => %Esr.Entity.User.Struct{
+        username: "linyilun",
+        feishu_ids: ["ou_97f164"]
+      }
+    })
+
+    Esr.Resource.Capability.Grants.load_snapshot(%{
+      "test-uuid-linyilun" => ["*"]
+    })
+
+    assert :ok = Esr.Resource.Capability.has_all?("ou_97f164", ["session.new", "agent.spawn"])
   end
 end

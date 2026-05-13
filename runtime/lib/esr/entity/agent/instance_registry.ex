@@ -230,7 +230,13 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
           type: Map.fetch!(attrs, :type),
           name: name,
           config: Map.get(attrs, :config, %{}),
-          created_at: iso_now()
+          created_at: iso_now(),
+          # 2026-05-13 Bug C-new fix: accept optional actor_ids from
+          # callers that spawned the pipeline themselves (legacy
+          # AgentSpawner.do_create path). Defaults to nil to preserve
+          # the pre-existing caller contract (those add an Instance
+          # record but don't track actor_ids).
+          actor_ids: Map.get(attrs, :actor_ids)
         }
 
         :ets.insert(state.table, {instance_id, inst})

@@ -178,6 +178,7 @@ defmodule Esr.Commands.Session.New do
                  chat_id,
                  thread_id,
                  app_id,
+                 args["workspace"],
                  create_session_fn,
                  start_session_fn
                ),
@@ -491,9 +492,13 @@ defmodule Esr.Commands.Session.New do
       is_binary(args["workspace"]) and args["workspace"] != "" ->
         :no_resolution_needed
 
-      # (b) agent explicitly given — legacy "no workspace, agent-only" mode
-      #     (admin-CLI tests, direct agent spawns without a workspace context)
-      is_binary(args["agent"]) and args["agent"] != "" ->
+      # (b) caller supplied an explicit cwd (`dir` or `cwd`) — they know
+      #     where to run; workspace lookup is just a cwd-discovery mechanism
+      #     so no resolution needed. The 2026-05-12 cutover removed the
+      #     "agent given → skip resolution" backdoor: slash-routes default-
+      #     inject agent=cc, which made M-5 unreachable for the Feishu flow.
+      (is_binary(args["dir"]) and args["dir"] != "") or
+          (is_binary(args["cwd"]) and args["cwd"] != "") ->
         :no_resolution_needed
 
       # (c) neither: walk the M-5 fallback chain via the shared Resolve helper
@@ -675,6 +680,7 @@ defmodule Esr.Commands.Session.New do
          chat_id,
          thread_id,
          app_id,
+         workspace_name,
          create_session_fn,
          _start_session_fn
        )
@@ -688,6 +694,11 @@ defmodule Esr.Commands.Session.New do
       # PR-21λ-fix: thread app_id so Scope.Router registers under the
       # adapter instance id that inbound messages will look up with.
       app_id: app_id,
+      # 2026-05-12 cutover: thread the resolved workspace_name from
+      # resolve_workspace_if_needed so agent_spawner.enrich_params does
+      # not need to guess (the previous hardcoded "default" fallback
+      # masked missing-workspace bugs in the slash-route flow).
+      workspace_name: workspace_name,
       # Phase 5 cut-over: agent_def is now required by AgentSpawner.do_create/1
       # (no longer re-fetched from the retired agents.yaml cache). Source
       # is `Esr.SessionTemplate.Registry.materialize/2` (Phase 6: the
@@ -726,6 +737,7 @@ defmodule Esr.Commands.Session.New do
          chat_id,
          _thread_id,
          _app_id,
+         _workspace_name,
          _create_session_fn,
          start_session_fn
        ) do

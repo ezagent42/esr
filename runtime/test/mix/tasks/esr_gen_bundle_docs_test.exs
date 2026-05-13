@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Esr.GenBundleDocsTest do
       output = GenBundleDocs.emit()
 
       assert output =~ "alias `in` → kind `feishu.chat_proxy`"
-      assert output =~ "alias `cc_mcp` → kind `claude_code.mcp_http`"
+      assert output =~ "alias `cc_mcp` → kind `claude_code.mcp_stdio`"
     end
 
     test "renders feishu-cc's agent kind + consumes" do

@@ -12,14 +12,14 @@ version: 0.1.0
 hot_reloadable: true
 
 # Top-level `channels:` block — populated by Esr.Plugin.Loader at boot
-# into Esr.Channel.Registry under `claude_code.mcp_http`. The module
-# wraps the existing EsrWeb.McpController + `cli:channel/<sid>` PubSub
-# plumbing under the Esr.Channel behaviour; SessionTemplate loaders
-# (Phase 4) instantiate one per session. Spec
-# 2026-05-10-session-template-and-channel.md, Phase 2.
+# into Esr.Channel.Registry under `claude_code.mcp_stdio`. The module
+# wraps the per-session stdio MCP bridge (Python `cc_channel_runner`
+# spawned by CC as an MCP subprocess) under the Esr.Channel behaviour;
+# SessionTemplate loaders instantiate one per session.
+# Spec 2026-05-13-cc-channel-stdio-bridge-design.md.
 channels:
-  - name: mcp_http
-    module: Esr.Plugins.ClaudeCode.Channels.McpHttp
+  - name: mcp_stdio
+    module: Esr.Plugins.ClaudeCode.Channels.Mcp
     config_schema:
       type: object
       properties:
@@ -70,10 +70,11 @@ description: |
   CCProxy streams reply directives. Spawns a claude binary inside a
   core-provided PtyProcess; the cc agent_kind (above) wires the
   per-plugin pipeline contribution (cc_proxy → cc_process →
-  pty_process). The MCP server claude uses to push notifications
-  and accept tool calls is hosted by `EsrWeb.McpController`
-  (PR-3.5, 2026-05-05) — no separate Python sidecar; .mcp.json
-  points claude at the esrd HTTP endpoint directly.
+  pty_process). The MCP server claude uses to push notifications and
+  accept tool calls runs as a stdio subprocess of claude itself
+  (Python `cc_channel_runner` at `py/src/cc_channel_runner/`); the
+  per-session .mcp.json points claude at it. Spec
+  `docs/superpowers/specs/2026-05-13-cc-channel-stdio-bridge-design.md`.
 
 depends_on:
   core: ">= 0.1.0"
@@ -87,8 +88,9 @@ declares:
     - module: Esr.Entity.CCProxy
       kind: proxy
 
-  # No python_sidecars — PR-3.5 (2026-05-05) deleted adapters/cc_mcp/.
-  # The MCP server is now esrd-hosted (Elixir, EsrWeb.McpController).
+  # No python_sidecars declared here — CC spawns the stdio MCP bridge
+  # (py/src/cc_channel_runner) itself as a child process per its
+  # per-session .mcp.json.
 
   # Multi-media content protocol participation (per spec
   # 2026-05-08-multimedia-content-protocol-design.md §4.1, D5).

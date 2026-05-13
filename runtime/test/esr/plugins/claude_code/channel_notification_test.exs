@@ -1,6 +1,7 @@
-defmodule EsrWeb.McpControllerTest do
+defmodule Esr.Plugins.ClaudeCode.ChannelNotificationTest do
   use ExUnit.Case, async: false
 
+  alias Esr.Plugins.ClaudeCode.ChannelNotification
   alias Esr.Resource.Media
 
   # ------------------------------------------------------------------
@@ -45,7 +46,7 @@ defmodule EsrWeb.McpControllerTest do
         "message_id" => "om_zzz"
       }
 
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
 
       assert params["content"] == "[image attachment]"
       assert params["meta"]["kind"] == "image"
@@ -70,7 +71,7 @@ defmodule EsrWeb.McpControllerTest do
         "chat_id" => "oc_x"
       }
 
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       assert params["content"] == "[file attachment]"
       assert params["meta"]["kind"] == "file"
       assert params["meta"]["path"] == real_path
@@ -78,7 +79,7 @@ defmodule EsrWeb.McpControllerTest do
 
     test "text envelope unchanged (no msg_type)" do
       envelope = %{"content" => "hello world", "chat_id" => "oc_x"}
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       assert params["content"] == "hello world"
       refute Map.has_key?(params["meta"], "kind")
       refute Map.has_key?(params["meta"], "path")
@@ -87,7 +88,7 @@ defmodule EsrWeb.McpControllerTest do
 
     test "msg_type=text is treated as text path (kind/path absent)" do
       envelope = %{"content" => "hello", "msg_type" => "text", "chat_id" => "oc_x"}
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       assert params["content"] == "hello"
       refute Map.has_key?(params["meta"], "kind")
       refute Map.has_key?(params["meta"], "path")
@@ -106,7 +107,7 @@ defmodule EsrWeb.McpControllerTest do
         "chat_id" => "oc_x"
       }
 
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       # Must not crash; content reflects the failure
       assert is_binary(params["content"])
       assert params["content"] =~ "unavailable"
@@ -124,7 +125,7 @@ defmodule EsrWeb.McpControllerTest do
   describe "build_notification_params/1 text baseline" do
     test "applies default runtime_mode and source when absent" do
       envelope = %{"content" => "hi", "chat_id" => "oc_1"}
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       assert params["meta"]["runtime_mode"] == "discussion"
       assert params["meta"]["source"] == "feishu"
     end
@@ -144,7 +145,7 @@ defmodule EsrWeb.McpControllerTest do
         "workspace" => "my_ws"
       }
 
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       meta = params["meta"]
       assert meta["chat_id"] == "oc_1"
       assert meta["app_id"] == "cli_1"
@@ -160,7 +161,7 @@ defmodule EsrWeb.McpControllerTest do
 
     test "nil and empty-string meta values are filtered out" do
       envelope = %{"content" => "x", "chat_id" => nil, "app_id" => ""}
-      params = EsrWeb.McpController.build_notification_params(envelope)
+      params = ChannelNotification.build_notification_params(envelope)
       refute Map.has_key?(params["meta"], "chat_id")
       refute Map.has_key?(params["meta"], "app_id")
     end

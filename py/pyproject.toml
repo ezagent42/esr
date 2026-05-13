@@ -20,6 +20,11 @@ dependencies = [
     "anyio>=4.0",
     "ruamel.yaml>=0.18",
     "python-ulid>=3.0",
+    # cc_channel_runner: Phoenix Channel WS client + MCP stdio server.
+    # websockets was previously transitive via lark-oapi; promoting to
+    # direct dep so cc_channel_runner has a guaranteed pin.
+    "websockets>=14",
+    "mcp>=1.0",
 ]
 
 [build-system]

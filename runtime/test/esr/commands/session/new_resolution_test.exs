@@ -18,7 +18,9 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
   Short-circuits:
     * When `args["workspace"]` is already set → `:no_resolution_needed`.
-    * When `args["agent"]` is set (legacy agent-only mode) → `:no_resolution_needed`.
+    * When `args["dir"]` or `args["cwd"]` is set (caller supplied an
+      explicit cwd; workspace lookup is just a cwd-discovery mechanism so
+      no resolution needed) → `:no_resolution_needed`.
 
   Returns `{:error, %{"type" => "no_workspace_target", ...}}` when none match.
   """
@@ -110,8 +112,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
 
       args = %{
         "chat_id" => "oc_chat",
-        "app_id" => "cli_chat",
-        "dir" => "/tmp/x"
+        "app_id" => "cli_chat"
       }
 
       assert {:ok, "ws-chatdef"} = SessionNew.resolve_workspace_if_needed(args)
@@ -130,7 +131,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # user-default layer skips. M-5 chain ends in :no_match — even if
       # a literal "default" workspace exists in registry, it's no longer
       # preferred (specificity ladder: chat-default → user-default → error).
-      args = %{"dir" => "/tmp/x"}
+      args = %{}
 
       assert {:error, %{"type" => "no_workspace_target"}} =
                SessionNew.resolve_workspace_if_needed(args)
@@ -150,7 +151,7 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # No explicit workspace, no chat context, no user-default link.
       # Even if a literal "default" workspace happens to exist on the
       # registry from prior state, M-5 no longer falls through to it.
-      args = %{"dir" => "/tmp/x"}
+      args = %{}
 
       assert {:error,
               %{
@@ -170,21 +171,39 @@ defmodule Esr.Commands.Session.NewResolutionTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Test 5: no workspace + no chat default + agent given → :no_resolution_needed
-  #         (legacy "agent-only" mode — admin-CLI paths)
+  # Test 5: explicit dir/cwd short-circuits the M-5 chain.
+  #
+  # 2026-05-12 cutover replaced the legacy "agent-only" short-circuit
+  # with a "caller-supplied cwd" short-circuit. Workspace lookup's only
+  # purpose is to discover a default cwd; if the caller already supplied
+  # one, the chain has nothing to do.
   # ---------------------------------------------------------------------------
 
-  describe "legacy agent-only mode (no workspace)" do
-    test "explicit agent short-circuits resolution chain" do
+  describe "explicit cwd short-circuits (no workspace lookup)" do
+    test "explicit dir= short-circuits resolution chain" do
       clean_workspace("default")
 
       args = %{"agent" => "cc", "dir" => "/tmp/x"}
 
-      # With an agent given and no workspace, resolution is skipped entirely.
-      # The downstream execute/2 will proceed with the agent, possibly failing
-      # at validate_args(agent, nil) for missing dir or at verify_caps — but
-      # NOT with no_workspace_target.
       assert :no_resolution_needed = SessionNew.resolve_workspace_if_needed(args)
+    end
+
+    test "explicit cwd= short-circuits resolution chain" do
+      args = %{"agent" => "cc", "cwd" => "/tmp/y"}
+
+      assert :no_resolution_needed = SessionNew.resolve_workspace_if_needed(args)
+    end
+
+    test "agent alone (no dir, no cwd, no workspace) does NOT short-circuit" do
+      # Regression for the live-bug from 2026-05-12: slash-route's
+      # `default: cc` for the agent field used to trip the legacy
+      # "agent-only" backdoor, bypassing M-5. With (b) replaced by
+      # cwd-only, an args map with agent but no dir/cwd MUST walk M-5.
+      args = %{"agent" => "cc"}
+
+      # No chat-default, no user-default for this anonymous args → :no_match.
+      assert {:error, %{"type" => "no_workspace_target"}} =
+               SessionNew.resolve_workspace_if_needed(args)
     end
   end
 
@@ -230,6 +249,22 @@ defmodule Esr.Commands.Session.NewResolutionTest do
       # alice has NO user-default link. No chat context.
       args = %{"submitter_username" => "alice"}
       assert {:error, %{"type" => "no_workspace_target"}} =
+               Esr.Commands.Session.New.resolve_workspace_if_needed(args)
+    end
+
+    test "regression: resolver accepts `username` key from slash_handler" do
+      # 2026-05-12 register/lookup key parity fix: slash_handler.ex:759
+      # injects args["username"] for session_new, but the resolver used
+      # to only accept args["submitter_username"]. The mismatch caused
+      # the M-5 user-default chain to silently miss for every Feishu
+      # /session:new — exactly the live-test failure that day.
+      ws = Esr.Test.WorkspaceFixture.build(name: "alice-via-username-key", owner: "alice")
+      :ok = Esr.Uri.Compat.workspace_put(ws)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws.id)
+
+      args = %{"username" => "alice"}
+
+      assert {:ok, "alice-via-username-key"} =
                Esr.Commands.Session.New.resolve_workspace_if_needed(args)
     end
   end

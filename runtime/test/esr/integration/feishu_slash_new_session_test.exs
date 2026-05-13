@@ -89,8 +89,8 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
 
     Esr.Channel.Registry.register(
       "claude_code",
-      "mcp_http",
-      Esr.Plugins.ClaudeCode.Channels.McpHttp,
+      "mcp_stdio",
+      Esr.Plugins.ClaudeCode.Channels.Mcp,
       %{pipeline_contributions: [], proxies: []}
     )
 
@@ -125,7 +125,7 @@ defmodule Esr.Integration.FeishuSlashNewSessionTest do
         dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
         channels: [
           %{alias: "in", kind: "feishu.chat_proxy", config: %{}},
-          %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{}}
+          %{alias: "cc_mcp", kind: "claude_code.mcp_stdio", config: %{}}
         ],
         agents: [%{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}],
         flow: %{inbound: [], outbound: []}

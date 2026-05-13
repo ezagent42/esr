@@ -2,7 +2,7 @@ defmodule Esr.Plugins.Feishu.Channels.ChatProxy do
   @moduledoc """
   Per-session Feishu chat Channel — the addressable lifecycle peer that
   SessionTemplate (Phase 4) will spawn under the per-session
-  `AgentInstanceSupervisor`. Mirrors the `Esr.Plugins.ClaudeCode.Channels.McpHttp`
+  `AgentInstanceSupervisor`. Mirrors the `Esr.Plugins.ClaudeCode.Channels.Mcp`
   pattern: a SEPARATE GenServer adapter under the `Esr.Channel` behaviour
   that wraps existing transport infrastructure without moving it.
 
@@ -37,8 +37,8 @@ defmodule Esr.Plugins.Feishu.Channels.ChatProxy do
   ## Naming
 
   `feishu.chat_proxy` matches the `<plugin>.<channel_name>` convention
-  used by `Esr.Channel.Registry` and the McpHttp impl
-  (`claude_code.mcp_http`).
+  used by `Esr.Channel.Registry` and the Mcp impl
+  (`claude_code.mcp_stdio`).
 
   History: 2026-05-10 spec
   `docs/superpowers/specs/2026-05-10-session-template-and-channel.md`,

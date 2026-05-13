@@ -12,14 +12,14 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
   |------------------------------------------|-------------------------------------------|
   | `http_proxy` / `https_proxy` / `no_proxy` | `build_env/1` via plugin config          |
   | `ESR_ESRD_URL`                            | `build_env/1` via plugin config           |
-  | `.mcp.json` write                         | `write_mcp_json/1`                        |
+  | `.mcp.json` write                         | `write_channel_mcp_config/1`              |
   | `mkdir -p "$cwd"`                         | `prepare_spawn/1` calls `File.mkdir_p/1`  |
   | `exec claude` binary                      | `prepare_spawn/1`'s `:cmd` argv           |
 
   ## PR-2 (2026-05-11 spec rev-3) — `prepare_spawn/1` is the sole entry
 
   Pre-PR-2 the production path went through a separate `spawn_cmd/1`
-  helper which ONLY built argv and skipped `write_mcp_json/1` — so
+  helper which ONLY built argv and skipped `write_channel_mcp_config/1` — so
   `.mcp.json` never got written in live spawns and claude refused to
   start. PR-2 deletes `spawn_cmd/1` outright and routes every call site
   (`PtyProcess.os_cmd/1`) through `prepare_spawn/1`, which:
@@ -70,47 +70,46 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
   Write the per-session `.mcp.json` at the absolute path resolved by
   `Esr.Paths.session_mcp_json/1`.
 
-  The written file uses the HTTP transport (scheme flip from `ws://` →
-  `http://` / `wss://` → `https://`) so Claude Code's MCP client can
-  reach esrd's HTTP MCP endpoint.
+  CC spawns the Python `cc_channel_runner` module as a stdio MCP subprocess
+  (Claude Code's documented requirement — see
+  https://code.claude.com/docs/en/channels). The bridge connects to esrd's
+  Phoenix Channel at `cli:channel/<session_id>` and proxies between MCP
+  stdio ↔ Channel WebSocket.
 
   ## Options
 
-    * `:session_id` — session UUID string. Required (used for path AND for
-      the `mcp/<sid>` URL segment).
-    * `:esrd_url`   — WebSocket URL of the ESRD host (e.g. `ws://127.0.0.1:4001`). Required.
+    * `:session_id` — session UUID string. Required (used for path AND
+      passed via `--session-id` to the bridge).
+    * `:esrd_url`   — WebSocket URL of the ESRD host (e.g.
+      `ws://127.0.0.1:4001`). Required, forwarded verbatim to the bridge
+      via `--esrd-url`.
 
   Returns the absolute path written on success so callers can wire it
   into the `--mcp-config` flag.
   """
-  @spec write_mcp_json(keyword()) :: {:ok, String.t()} | {:error, term()}
-  def write_mcp_json(opts) do
+  @spec write_channel_mcp_config(keyword()) :: {:ok, String.t()} | {:error, term()}
+  def write_channel_mcp_config(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
     esrd_url   = Keyword.fetch!(opts, :esrd_url)
 
-    # Flip ws:// → http:// (wss:// → https://) for the HTTP MCP transport.
-    http_base =
-      esrd_url
-      |> String.replace(~r/^ws:\/\//, "http://")
-      |> String.replace(~r/^wss:\/\//, "https://")
-
-    content =
-      Jason.encode!(
-        %{
-          "mcpServers" => %{
-            "esr-channel" => %{
-              "type" => "http",
-              "url"  => "#{http_base}/mcp/#{session_id}"
-            }
+    config =
+      %{
+        "mcpServers" => %{
+          "esr-channel" => %{
+            "command" => python_bin_path(),
+            "args" => [
+              "-m", "cc_channel_runner",
+              "--session-id", session_id,
+              "--esrd-url", esrd_url
+            ]
           }
-        },
-        pretty: true
-      )
+        }
+      }
 
     mcp_path = Esr.Paths.session_mcp_json(session_id)
 
     with :ok <- File.mkdir_p(Path.dirname(mcp_path)),
-         :ok <- File.write(mcp_path, content) do
+         :ok <- File.write(mcp_path, Jason.encode!(config, pretty: true)) do
       {:ok, mcp_path}
     end
   end
@@ -172,13 +171,56 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
          {:ok, binary} <- ensure_claude_binary(opts),
          config        <- resolve_plugin_config(opts),
          {:ok, mcp_path} <-
-           write_mcp_json(
+           write_channel_mcp_config(
              session_id: session_id,
-             esrd_url: config["esrd_url"] || ""
+             # 2026-05-12: plugin config rarely sets esrd_url explicitly;
+             # fall back to the live Endpoint config so the bridge's
+             # `--esrd-url` flag carries a real `ws://host:port` instead
+             # of "" (which would crash the Python bridge on connect).
+             esrd_url: config["esrd_url"] || default_esrd_url()
            ) do
       cmd = build_cmd(binary, dir, role, mcp_path)
       env = build_env(plugin_config: config, session_id: session_id)
       {:ok, %{cmd: cmd, env: env}}
+    end
+  end
+
+  # Resolves the venv-installed Python interpreter that hosts the
+  # `cc_channel_runner` module. Pattern mirrors
+  # `Esr.Workers.AdapterProcess.python_bin/0`.
+  defp python_bin_path do
+    Path.join(py_project_dir(), ".venv/bin/python")
+  end
+
+  defp py_project_dir do
+    case Application.get_env(:esr, :py_project_dir) do
+      path when is_binary(path) ->
+        path
+
+      _ ->
+        try do
+          app = Application.app_dir(:esr)
+          repo = app |> Path.split() |> Enum.reverse() |> Enum.drop(4) |> Enum.reverse() |> Path.join()
+          candidate = Path.join(repo, "py")
+          if File.dir?(candidate), do: candidate, else: Path.expand("../py", File.cwd!())
+        rescue
+          _ -> Path.expand("../py", File.cwd!())
+        end
+    end
+  end
+
+  # Returns the local esrd's ws:// base URL by reading the live Endpoint
+  # config. Same shape as pty_process.ex's channel_ws_url/0.
+  defp default_esrd_url do
+    case Application.get_env(:esr, EsrWeb.Endpoint) do
+      nil ->
+        "ws://localhost:4001"
+
+      cfg ->
+        url = Keyword.get(cfg, :url, [])
+        host = Keyword.get(url, :host, "localhost")
+        port = Keyword.get(url, :port) || Keyword.get(cfg, :http, [])[:port] || 4001
+        "ws://#{host}:#{port}"
     end
   end
 
@@ -255,7 +297,36 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         :error      -> flags
       end
 
-    [binary | flags]
+    # 2026-05-12 opt-in diagnostic (Bug B — CC API 403): when
+    # ESR_PTY_PROXY_DIAG=1, wrap the spawn in a shell that prints
+    # proxy + key auth env vars to the PTY before exec'ing claude.
+    # Output is visible in the chat (PTY raw_stdout → Feishu). Default
+    # off so tests + happy-path spawns are unaffected.
+    case System.get_env("ESR_PTY_PROXY_DIAG") do
+      "1" ->
+        diag =
+          "echo '── PROXY DEBUG ──';" <>
+            "echo http_proxy=\"${http_proxy:-<unset>}\";" <>
+            "echo HTTP_PROXY=\"${HTTP_PROXY:-<unset>}\";" <>
+            "echo https_proxy=\"${https_proxy:-<unset>}\";" <>
+            "echo HTTPS_PROXY=\"${HTTPS_PROXY:-<unset>}\";" <>
+            "echo no_proxy=\"${no_proxy:-<unset>}\";" <>
+            "echo NO_PROXY=\"${NO_PROXY:-<unset>}\";" <>
+            "echo HOME=\"${HOME:-<unset>}\";" <>
+            "echo PATH=\"${PATH:-<unset>}\";" <>
+            "echo ANTHROPIC_API_KEY=\"${ANTHROPIC_API_KEY:+set}\";" <>
+            "echo ANTHROPIC_BASE_URL=\"${ANTHROPIC_BASE_URL:-<unset>}\";" <>
+            "echo CLAUDE_CODE_USE_BEDROCK=\"${CLAUDE_CODE_USE_BEDROCK:-<unset>}\";" <>
+            "echo CLAUDE_CODE_USE_VERTEX=\"${CLAUDE_CODE_USE_VERTEX:-<unset>}\";" <>
+            "echo '─────────────────';" <>
+            "sleep 1;" <>
+            "exec \"$0\" \"$@\""
+
+        ["/bin/bash", "-c", diag, binary | flags]
+
+      _ ->
+        [binary | flags]
+    end
   end
 
   defp maybe_put(env, _key, value) when is_nil(value), do: env
