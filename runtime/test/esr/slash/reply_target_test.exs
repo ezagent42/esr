@@ -148,6 +148,55 @@ defmodule Esr.Slash.ReplyTargetTest do
       assert_receive {:reply, text, ^ref}
       assert text =~ "result:"
     end
+
+    # Walkthrough-4 #348. Pre-fix `format_result/1` rendered any
+    # `{:error, %{"type" => _, "message" => _}}` as just `"error: <type>"`
+    # — the canonical interpolated message produced by
+    # `Esr.Commands.Render.error/3` was silently dropped on the chat
+    # path. Operators saw `error: session_start_failed` with no idea
+    # what failed and had to drop to CLI to see the full details.
+    test "format_result with {:error, type + message} prepends type AND keeps the message body (#348)" do
+      result =
+        {:error,
+         %{
+           "type" => "no_workspace_target",
+           "message" =>
+             "no explicit workspace= and no chat-current binding and no user-default workspace"
+         }}
+
+      rendered = ChatPid.format_result(result)
+
+      assert rendered =~ "error: no_workspace_target",
+             "type tag must still be visible for grep / log matching"
+
+      assert rendered =~ "no explicit workspace=",
+             "message body must be appended so operator sees the actionable detail"
+    end
+
+    test "format_result with {:error, type only} (no message) still uses type-only render" do
+      # Backwards-compat: commands that emit type without an explicit
+      # message (rare, but legal) keep the short render.
+      rendered = ChatPid.format_result({:error, %{"type" => "internal_error"}})
+      assert rendered == "error: internal_error"
+    end
+
+    test "respond delivers the multi-line message body to subscriber" do
+      ref = make_ref()
+
+      assert :ok =
+               ChatPid.respond(
+                 self(),
+                 {:error,
+                  %{
+                    "type" => "session_start_failed",
+                    "message" => "session start failed: details_here"
+                  }},
+                 ref
+               )
+
+      assert_receive {:reply, text, ^ref}
+      assert text =~ "details_here"
+    end
   end
 
   describe "IO impl" do
