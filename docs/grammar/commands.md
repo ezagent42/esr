@@ -459,6 +459,27 @@ _internal kind only — not slash-callable_
 **errors:**
   - `invalid_args` — /pty:attach requires pty=<actor_id>
 
+### `pty_input`
+
+**slash:** `/pty:input`
+
+**module:** `Esr.Commands.Pty.Input`
+
+**permission:** `null`
+
+**bindings:** requires_user_binding=`true` requires_workspace_binding=`false`
+
+**description:** 把任意文本写入指定 agent 的 PTY stdin（不附加 \r；如需提交配合 /pty:key enter）
+
+**args:**
+  - `name` (required) — agent name (resolved to PTY actor via chat-current session)
+  - `text` (required) — free-form text written to PTY stdin literally
+
+**errors:**
+  - `no_session_target` — no chat-current session; bind via /session:bind-chat first
+  - `not_found` — no agent '%{name}' in chat-current session
+  - `invalid_args` — /pty:input requires name=<agent> and text=<...>
+
 ### `pty_key`
 
 **slash:** `/pty:key`
@@ -928,6 +949,7 @@ _internal kind only — not slash-callable_
   - `template_materialize_failed` — session template '%{template}' could not be materialized: %{details}
   - `missing_capabilities` — missing capabilities: %{caps}
   - `session_start_failed` — session start failed: %{details}
+  - `pipeline_incomplete` — session 启动失败:声明的 pipeline stage 未全部 spawn(spec rev-3 §PR-2 invariant)
 
 ### `session_share`
 
@@ -1334,6 +1356,7 @@ _internal kind only — not slash-callable_
   - `unknown_workspace` — workspace %{name} not found
   - `folder_not_in_workspace` — path %{path} is not in this workspace's folders
   - `cannot_remove_root_folder` — cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead
+  - `cannot_remove_last_folder` — workspace %{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace
 
 ### `workspace_rename`
 
