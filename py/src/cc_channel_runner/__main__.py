@@ -36,7 +36,7 @@ async def main():
 
     from cc_channel_runner.mcp_server import BridgeMCPServer
     from cc_channel_runner.phx_client import PhoenixChannelClient
-    from cc_channel_runner.phx_receive import phx_receive_loop
+    from cc_channel_runner.phx_receive import BridgeShutdown, phx_receive_loop
 
     client = PhoenixChannelClient(
         f"{args.esrd_url}/channel/socket/websocket?vsn=2.0.0"
@@ -63,9 +63,14 @@ async def main():
             task.cancel()
         for task in done:
             # Surface any exception from the completed side.
+            # BridgeShutdown is the explicit graceful-shutdown signal
+            # raised by phx_receive_loop on a session_killed envelope
+            # — swallow it, the bridge exits zero. Everything else
+            # propagates so non-zero exit codes flag real failure.
             exc = task.exception()
-            if exc is not None and not isinstance(exc, SystemExit):
-                raise exc
+            if exc is None or isinstance(exc, BridgeShutdown | SystemExit):
+                continue
+            raise exc
     finally:
         await client.close()
 
