@@ -5,28 +5,23 @@ defmodule Esr.Resource.Capability do
   Permission = action name (e.g. "msg.send").
   Capability = (principal_id, permission) binding.
 
-  PR-21s (2026-04-29): when `principal_id` is a Feishu `ou_*` open_id
-  AND the open_id is bound to an esr user via `Esr.Entity.User.Registry`,
-  cap checks ALSO consult the bound esr-username's caps. This lets
-  operators grant caps by esr-username (`esr cap grant linyilun admin`)
-  and have them apply to inbound envelopes that still carry the raw
-  open_id as principal_id. Pre-PR-21s, caps were strictly indexed by
-  principal_id string with no resolution.
+  When `principal_id` is a Feishu `ou_*` open_id bound to an esr user,
+  cap checks resolve open_id → canonical UUID via the URI store and retry
+  against the UUID. capabilities.yaml stores caps keyed by UUID (since
+  PR-348 / Cap.UuidTranslator translates `esr cap grant <name>` to UUID
+  at write time), so the fallback must produce a UUID, not a username.
   """
 
   @doc """
   Check whether principal holds the given permission (possibly via wildcard).
 
-  Two-step lookup (PR-21s):
+  Two-step lookup:
   1. Direct check on `principal_id` (catches caps granted by raw open_id
-     during bootstrap, e.g. PR-21q's auto-grant).
-  2. If miss AND `Esr.Entity.User.Registry` resolves `principal_id` to an esr
-     username, retry the cap check against the username (catches caps
-     granted by `esr cap grant <username> <perm>`).
+     during bootstrap, e.g. PR-21q's auto-grant before user_add).
+  2. If miss AND the URI store resolves `esr://localhost/users/feishu/<id>`
+     to a canonical user URI, retry against the embedded UUID.
 
-  Falls through to `false` only when both miss. The Users.Registry
-  lookup is skipped when the registry isn't running (tests / boot edge),
-  preserving backward-compat with the pre-PR-21s direct-only behaviour.
+  Falls through to `false` only when both miss.
   """
   @spec has?(String.t(), String.t()) :: boolean()
   def has?(principal_id, permission)
@@ -34,9 +29,9 @@ defmodule Esr.Resource.Capability do
     if Esr.Resource.Capability.Grants.has?(principal_id, permission) do
       true
     else
-      case maybe_resolve_to_username(principal_id) do
-        {:ok, username} when username != principal_id ->
-          Esr.Resource.Capability.Grants.has?(username, permission)
+      case maybe_resolve_to_uuid(principal_id) do
+        {:ok, uuid} when uuid != principal_id ->
+          Esr.Resource.Capability.Grants.has?(uuid, permission)
 
         _ ->
           false
@@ -44,8 +39,11 @@ defmodule Esr.Resource.Capability do
     end
   end
 
-  defp maybe_resolve_to_username(principal_id) do
-    Esr.Uri.Compat.username_for_feishu_id(principal_id)
+  defp maybe_resolve_to_uuid(principal_id) do
+    case Esr.Uri.resolve("esr://localhost/users/feishu/" <> principal_id) do
+      {:ok, "esr://localhost/users/" <> uuid} -> {:ok, uuid}
+      _ -> :not_found
+    end
   end
 
   @doc """
