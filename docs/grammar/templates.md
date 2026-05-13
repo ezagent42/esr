@@ -27,7 +27,7 @@ Channel concept layering.
 
 **channels:**
   - alias `in` → kind `feishu.chat_proxy` (config: app_id=`<runtime>`, chat_id=`<runtime>`)
-  - alias `cc_mcp` → kind `claude_code.mcp_http` (config: port=`ephemeral`)
+  - alias `cc_mcp` → kind `claude_code.mcp_stdio` (config: port=`ephemeral`)
 
 **agents:**
   - kind `claude_code.cc` name `<runtime>` consumes `cc_mcp`

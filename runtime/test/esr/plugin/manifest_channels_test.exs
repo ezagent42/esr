@@ -27,7 +27,7 @@ defmodule Esr.Plugin.ManifestChannelsTest do
     channels:
       - name: chat_proxy
         module: Esr.Entity.Server
-      - name: mcp_http
+      - name: mcp_stdio
         module: Esr.Entity.PtyProcess
         config_schema:
           type: object
@@ -39,7 +39,7 @@ defmodule Esr.Plugin.ManifestChannelsTest do
 
     assert length(manifest.channels) == 2
     assert Enum.find(manifest.channels, &(&1.name == "chat_proxy"))
-    assert Enum.find(manifest.channels, &(&1.name == "mcp_http")).config_schema != nil
+    assert Enum.find(manifest.channels, &(&1.name == "mcp_stdio")).config_schema != nil
   end
 
   test "parse with channels: block referencing missing module returns error" do

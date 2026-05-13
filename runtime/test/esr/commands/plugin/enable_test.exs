@@ -62,7 +62,7 @@ defmodule Esr.Commands.Plugin.EnableTest do
         kind: feishu.chat_proxy
         config: {}
       - alias: cc_mcp
-        kind: claude_code.mcp_http
+        kind: claude_code.mcp_stdio
         config: {}
     agents:
       - kind: claude_code.cc

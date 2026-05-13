@@ -189,7 +189,7 @@ defmodule Esr.Plugin.LoaderTest do
         declares: %{},
         channels: [
           %{name: "chat_proxy", module: Esr.Entity.Server, config_schema: nil},
-          %{name: "mcp_http", module: Esr.Entity.PtyProcess, config_schema: %{"k" => "v"}}
+          %{name: "mcp_stdio", module: Esr.Entity.PtyProcess, config_schema: %{"k" => "v"}}
         ]
       }
 

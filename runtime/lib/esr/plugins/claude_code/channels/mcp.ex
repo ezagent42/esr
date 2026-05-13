@@ -1,34 +1,26 @@
-defmodule Esr.Plugins.ClaudeCode.Channels.McpHttp do
+defmodule Esr.Plugins.ClaudeCode.Channels.Mcp do
   @moduledoc """
-  Wraps the existing Elixir MCP HTTP transport (`EsrWeb.McpController` +
-  `cli:channel/<sid>` PubSub topic) under the `Esr.Channel` behaviour.
+  Wraps the CC stdio MCP bridge under the `Esr.Channel` behaviour.
 
   Per-session lifecycle peer; supervised under per-session
-  `AgentInstanceSupervisor` once Phase 4's SessionTemplate loader spawns
-  it. Until then the module is callable directly via `start_link/1` for
-  tests + ad-hoc use.
-
-  ## Adapter discipline
-
-  No new transport code. `EsrWeb.McpController` continues to handle
-  HTTP/SSE; `cc_mcp` (Python side) continues to subscribe to
-  `cli:channel/<sid>` and announce readiness on `cc_mcp_ready/<sid>`.
-  This module is the addressable Channel pid for SessionTemplate loaders
-  (Phase 4) — `dispatch/2` forwards to the existing PubSub topic;
-  `subscribe/3` registers a listener pid + topic key in state and the
-  GenServer forwards lifecycle events (today: `:ready`).
+  `AgentInstanceSupervisor`. Dispatches addressed to this Channel forward
+  via the `cli:channel/<sid>` PubSub topic — the same topic the Python
+  bridge (`py/src/cc_channel_runner`) subscribes to through its Phoenix
+  Channel WebSocket connection (`EsrWeb.ChannelChannel`). Readiness
+  arrives as a `cc_mcp_ready/<sid>` broadcast emitted by
+  `ChannelChannel.handle_in("cc_mcp_ready", ...)` after the bridge joins.
 
   ## Naming
 
   Registered via `{:via, Registry, {Esr.Channel.Instances,
-  "claude_code.mcp_http:<session_id>"}}` so the SessionTemplate loader
+  "claude_code.mcp_stdio:<session_id>"}}` so the SessionTemplate loader
   can `Registry.lookup/2` the live pid for any session. Mirrors how
   `Esr.Session.supervisor_name/1` resolves a session_sup pid via
   `Esr.Session.Registry`.
 
-  History: 2026-05-10 spec
-  `docs/superpowers/specs/2026-05-10-session-template-and-channel.md`,
-  Phase 2.
+  History: 2026-05-10 spec `session-template-and-channel.md` Phase 2
+  (original under HTTP MCP); 2026-05-13 spec
+  `cc-channel-stdio-bridge-design.md` (rename + stdio transport pivot).
   """
 
   @behaviour Esr.Channel
@@ -106,7 +98,7 @@ defmodule Esr.Plugins.ClaudeCode.Channels.McpHttp do
 
   @impl GenServer
   def handle_info({:cc_mcp_ready, sid}, %{session_id: sid} = state) do
-    Logger.info("McpHttp channel: cc_mcp ready for session #{sid}")
+    Logger.info("Mcp channel: cc_mcp ready for session #{sid}")
 
     for listener <- Map.get(state.subscribers, :ready, []) do
       send(listener, {:cc_mcp_ready, sid})
@@ -122,6 +114,6 @@ defmodule Esr.Plugins.ClaudeCode.Channels.McpHttp do
   # ------------------------------------------------------------------
 
   defp name_for(session_id) when is_binary(session_id) do
-    {:via, Registry, {Esr.Channel.Instances, "claude_code.mcp_http:" <> session_id}}
+    {:via, Registry, {Esr.Channel.Instances, "claude_code.mcp_stdio:" <> session_id}}
   end
 end

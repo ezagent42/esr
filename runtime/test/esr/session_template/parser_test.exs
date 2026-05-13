@@ -44,7 +44,7 @@ defmodule Esr.SessionTemplate.ParserTest do
           app_id: <runtime>
           chat_id: <runtime>
       - alias: cc_mcp
-        kind: claude_code.mcp_http
+        kind: claude_code.mcp_stdio
         config:
           port: ephemeral
     agents:
@@ -71,7 +71,7 @@ defmodule Esr.SessionTemplate.ParserTest do
       assert t.description == "Feishu chat → CC"
       assert length(t.channels) == 2
       assert Enum.map(t.channels, & &1.alias) == ["in", "cc_mcp"]
-      assert Enum.map(t.channels, & &1.kind) == ["feishu.chat_proxy", "claude_code.mcp_http"]
+      assert Enum.map(t.channels, & &1.kind) == ["feishu.chat_proxy", "claude_code.mcp_stdio"]
       assert length(t.agents) == 1
       assert hd(t.agents) == %{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}
       assert length(t.flow.inbound) == 1
@@ -156,7 +156,7 @@ defmodule Esr.SessionTemplate.ParserTest do
         - alias: in
           kind: feishu.chat_proxy
         - alias: in
-          kind: claude_code.mcp_http
+          kind: claude_code.mcp_stdio
       agents: []
       flow: {}
       """
@@ -263,7 +263,7 @@ defmodule Esr.SessionTemplate.ParserTest do
       schema_version: 1
       channels:
         - alias: real
-          kind: claude_code.mcp_http
+          kind: claude_code.mcp_stdio
       agents:
         - kind: claude_code.cc
           name: a

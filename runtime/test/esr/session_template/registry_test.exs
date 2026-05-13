@@ -21,7 +21,7 @@ defmodule Esr.SessionTemplate.RegistryTest do
     # Phase 6 (2026-05-10): materialize/2 reads channel +
     # agent_kind contributions from the plugin registries. The
     # `materialize/2` describe-block below references `feishu.chat_proxy`,
-    # `claude_code.mcp_http`, and `claude_code.cc` — register them here
+    # `claude_code.mcp_stdio`, and `claude_code.cc` — register them here
     # so the builder finds them. Stub modules `Esr.Entity.Server` /
     # `Esr.Entity.PtyProcess` are core-shipped + always loaded.
     case start_supervised(Esr.Channel.Registry) do
@@ -50,7 +50,7 @@ defmodule Esr.SessionTemplate.RegistryTest do
       ]
     })
 
-    Esr.Channel.Registry.register("claude_code", "mcp_http", Esr.Entity.PtyProcess, %{
+    Esr.Channel.Registry.register("claude_code", "mcp_stdio", Esr.Entity.PtyProcess, %{
       pipeline_contributions: [],
       proxies: []
     })
@@ -153,7 +153,7 @@ defmodule Esr.SessionTemplate.RegistryTest do
         dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
         channels: [
           %{alias: "in", kind: "feishu.chat_proxy", config: %{"app_id" => "<runtime>", "chat_id" => "<runtime>"}},
-          %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{"port" => "ephemeral"}}
+          %{alias: "cc_mcp", kind: "claude_code.mcp_stdio", config: %{"port" => "ephemeral"}}
         ],
         agents: [
           %{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}

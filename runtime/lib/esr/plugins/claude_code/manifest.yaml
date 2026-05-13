@@ -12,14 +12,14 @@ version: 0.1.0
 hot_reloadable: true
 
 # Top-level `channels:` block — populated by Esr.Plugin.Loader at boot
-# into Esr.Channel.Registry under `claude_code.mcp_http`. The module
+# into Esr.Channel.Registry under `claude_code.mcp_stdio`. The module
 # wraps the existing EsrWeb.McpController + `cli:channel/<sid>` PubSub
 # plumbing under the Esr.Channel behaviour; SessionTemplate loaders
 # (Phase 4) instantiate one per session. Spec
 # 2026-05-10-session-template-and-channel.md, Phase 2.
 channels:
-  - name: mcp_http
-    module: Esr.Plugins.ClaudeCode.Channels.McpHttp
+  - name: mcp_stdio
+    module: Esr.Plugins.ClaudeCode.Channels.Mcp
     config_schema:
       type: object
       properties:

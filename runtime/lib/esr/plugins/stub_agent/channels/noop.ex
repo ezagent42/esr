@@ -2,7 +2,7 @@ defmodule Esr.Plugins.StubAgent.Channels.NoOp do
   @moduledoc """
   No-op Channel impl for the `stub_agent` plugin (Phase 8 Task 8.5).
 
-  Mirrors `Esr.Plugins.ClaudeCode.Channels.McpHttp`'s minimal structure:
+  Mirrors `Esr.Plugins.ClaudeCode.Channels.Mcp`'s minimal structure:
   `start_link/1`, `dispatch/2` (no-op), `subscribe/3` (records listener),
   `config_schema/0`. State is intentionally trivial — this Channel exists
   to prove the abstraction is generic, not to do real I/O.
