@@ -11,7 +11,7 @@ defmodule Esr.Commands.Workspace.ResolveTest do
       %{
         "alice" => %Esr.Entity.User.Struct{username: "alice", feishu_ids: ["ou_a"]}
       },
-      %{"alice" => "alice-uuid"}
+      %{"alice" => "aaaaaaaa-1111-4222-8333-cccccccccccc"}
     )
 
     on_exit(fn -> WorkspaceFixture.reset!() end)
@@ -66,6 +66,34 @@ defmodule Esr.Commands.Workspace.ResolveTest do
       :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
 
       args = %{"submitted_by" => "ou_a"}
+      assert {:user_default, "alice-ws"} = Resolve.resolve_workspace_for_args(args)
+    end
+
+    # Walkthrough-4 #349 (team todo `resolve-submitter-format-agnostic`).
+    # Pre-fix `resolve_submitter` only knew `submitted_by=ou_xxx` form
+    # (Feishu open_id), so CLI submits where operator.json carries the
+    # caller's UUID landed in `submitted_by=<uuid>` and the resolver
+    # quietly returned `:not_found` — user-default workspace fallback
+    # never fired, operators saw `no_workspace_target` on bare
+    # `/session:new name=test-cc` even though the workspace was on disk.
+    test "submitted_by=<uuid> resolves to user-default workspace (#349)" do
+      ws_user = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
+      :ok = Esr.Uri.Compat.workspace_put(ws_user)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
+
+      # alice's UUID per the setup block's UserFixture seed.
+      args = %{"submitted_by" => "aaaaaaaa-1111-4222-8333-cccccccccccc"}
+
+      assert {:user_default, "alice-ws"} = Resolve.resolve_workspace_for_args(args),
+             "submitted_by=<uuid> must resolve to user-default workspace"
+    end
+
+    test "submitted_by=<username> is trusted as-is (admin-queue path)" do
+      ws_user = WorkspaceFixture.build(name: "alice-ws", owner: "alice")
+      :ok = Esr.Uri.Compat.workspace_put(ws_user)
+      :ok = Esr.Uri.Compat.set_default_workspace_for_user_name("alice", ws_user.id)
+
+      args = %{"submitted_by" => "alice"}
       assert {:user_default, "alice-ws"} = Resolve.resolve_workspace_for_args(args)
     end
   end
