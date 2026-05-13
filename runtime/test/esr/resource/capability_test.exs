@@ -103,4 +103,85 @@ defmodule Esr.CapabilitiesTest do
 
     assert Esr.Resource.Capability.has?("ou_xyz", "workspace.create")
   end
+
+  # Walkthrough-4 C16 (= team todo `chat-cap-check-username-to-uuid-hop`):
+  # the previous 2-hop chain (open_id → username) couldn't reach grants
+  # keyed by UUID. The `user_add` auto-admin path (#282) keys cap rows
+  # by the user's UUID, so chat-side `/session:new` got
+  # `missing_capabilities` even with admin grants on file.
+  #
+  # New behaviour: resolve to canonical user (whatever form arrives),
+  # collect every identifier form (UUID, username, every bound ou_*),
+  # check Grants against each. The cases below exercise every cell of
+  # the 3-form principal × 3-form grant matrix.
+
+  describe "C16 — N-form identifier resolution" do
+    @uuid_yao "b31e9dcc-e2dd-4c4e-8c8e-ef87ead83bb9"
+
+    setup do
+      Esr.Test.UserFixture.load_snapshot(
+        %{
+          "yao" => %Esr.Entity.User.Struct{
+            username: "yao",
+            feishu_ids: ["ou_yao_app1", "ou_yao_app2"]
+          }
+        },
+        %{"yao" => @uuid_yao}
+      )
+
+      :ok
+    end
+
+    test "open_id principal hits UUID-keyed grant (the auto-admin scenario)" do
+      Esr.Resource.Capability.Grants.load_snapshot(%{
+        @uuid_yao => ["session:default/create"]
+      })
+
+      assert Esr.Resource.Capability.has?("ou_yao_app1", "session:default/create"),
+             "open_id → username → UUID chain must reach UUID-keyed grants"
+    end
+
+    test "open_id principal hits open_id-keyed grant from a DIFFERENT app" do
+      # The user has two bound ou_* (e.g. they're in two Feishu apps).
+      # A cap granted via raw open_id during one app's bootstrap should
+      # still apply when the user shows up via the other app's open_id.
+      Esr.Resource.Capability.Grants.load_snapshot(%{"ou_yao_app2" => ["msg.send"]})
+
+      assert Esr.Resource.Capability.has?("ou_yao_app1", "msg.send"),
+             "alternate-app open_id must reach the user's other open_id-keyed grants"
+    end
+
+    test "username principal hits UUID-keyed grant" do
+      # Admin-queue path sometimes carries `principal_id = "yao"` already.
+      # The username → UUID hop is needed to see the auto-admin row.
+      Esr.Resource.Capability.Grants.load_snapshot(%{
+        @uuid_yao => ["session:default/create"]
+      })
+
+      assert Esr.Resource.Capability.has?("yao", "session:default/create")
+    end
+
+    test "UUID principal hits username-keyed grant" do
+      # `esr cap grant yao msg.send` writes a username-keyed row. If
+      # principal_id arrives as UUID (CLI submit path), we still need
+      # to see that grant via UUID → username hop.
+      Esr.Resource.Capability.Grants.load_snapshot(%{"yao" => ["msg.send"]})
+
+      assert Esr.Resource.Capability.has?(@uuid_yao, "msg.send")
+    end
+
+    test "UUID principal hits open_id-keyed grant from any bound app" do
+      Esr.Resource.Capability.Grants.load_snapshot(%{"ou_yao_app1" => ["workspace.create"]})
+
+      assert Esr.Resource.Capability.has?(@uuid_yao, "workspace.create"),
+             "UUID → feishu_ids hop must surface open_id-keyed grants"
+    end
+
+    test "missing permission still returns false across all forms" do
+      Esr.Resource.Capability.Grants.load_snapshot(%{@uuid_yao => ["msg.send"]})
+
+      refute Esr.Resource.Capability.has?("ou_yao_app1", "session:default/create"),
+             "cap not granted in any form must remain false"
+    end
+  end
 end
