@@ -75,7 +75,7 @@ defmodule Esr.Commands.Plugin.InstallTest do
         kind: feishu.chat_proxy
         config: {}
       - alias: cc
-        kind: claude_code.mcp_http
+        kind: claude_code.mcp_stdio
         config: {}
     agents:
       - kind: claude_code.cc
@@ -158,7 +158,7 @@ defmodule Esr.Commands.Plugin.InstallTest do
       version: 0.1.0
       channels:
         - name: foo
-          module: Esr.Plugins.ClaudeCode.Channels.McpHttp
+          module: Esr.Plugins.ClaudeCode.Channels.Mcp
       """)
 
       File.write!(Path.join(src, "template.yaml"), "schema_version: 1\nchannels: []\nagents: []\nflow: {}\n")

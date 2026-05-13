@@ -12,14 +12,14 @@ defmodule Esr.Integration.RealClaudeBootTest do
   ## What this verifies
 
     1. `Esr.Paths.session_mcp_json/1` exists on disk after session
-       create (Launcher.write_mcp_json ran)
+       create (Launcher.write_channel_mcp_config ran)
     2. The session's `:feishu_chat_proxy` role pid is registered in
        Entity.Registry (FCP supervised + alive)
     3. The session's `:cc_process` role pid is registered (CCProcess
        supervised + alive)
     4. The `cc_mcp_ready/<sid>` PubSub topic on `EsrWeb.PubSub` fires —
-       confirming claude's MCP client successfully connected to the
-       ESRD HTTP MCP endpoint and the controller broadcast readiness.
+       confirming claude's MCP client successfully connected (via the
+       stdio bridge) and ChannelChannel broadcast readiness.
 
   The follow-up chat-reply round-trip step from the plan sketch is
   intentionally NOT asserted: it requires a real Feishu app credential

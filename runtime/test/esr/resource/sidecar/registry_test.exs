@@ -41,9 +41,10 @@ defmodule Esr.Resource.Sidecar.RegistryTest do
     # feishu, python_module: feishu_adapter_runner}]`; Esr.Plugin.Loader
     # registers it during plugin start at Application boot.
     #
-    # The cc_mcp adapter_type registration was deleted in PR-3.5
-    # (2026-05-05) — the MCP server is now esrd-hosted via
-    # EsrWeb.McpController; no Python sidecar.
+    # The legacy cc_mcp adapter_type registration was deleted in
+    # PR-3.5; today's MCP transport is a Python stdio bridge
+    # (py/src/cc_channel_runner) spawned by CC itself, not registered
+    # as a sidecar adapter here.
     assert {:ok, "feishu_adapter_runner"} == Registry.lookup("feishu")
     assert :error == Registry.lookup("cc_mcp")
   end

@@ -75,7 +75,7 @@ defmodule Esr.Bundle.LoaderTest do
           app_id: <runtime>
           chat_id: <runtime>
       - alias: cc_mcp
-        kind: claude_code.mcp_http
+        kind: claude_code.mcp_stdio
         config:
           port: ephemeral
     agents:

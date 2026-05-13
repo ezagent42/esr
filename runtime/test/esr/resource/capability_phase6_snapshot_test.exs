@@ -45,7 +45,7 @@ defmodule Esr.Resource.CapabilityPhase6SnapshotTest do
       dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
       channels: [
         %{alias: "in", kind: "feishu.chat_proxy", config: %{}},
-        %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{}}
+        %{alias: "cc_mcp", kind: "claude_code.mcp_stdio", config: %{}}
       ],
       agents: [
         %{kind: "claude_code.cc", name: "alice", consumes: ["cc_mcp"]}

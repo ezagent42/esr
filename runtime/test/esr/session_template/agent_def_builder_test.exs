@@ -8,7 +8,7 @@ defmodule Esr.SessionTemplate.AgentDefBuilderTest do
   from `Esr.Channel.Registry` + `Esr.Plugin.AgentKindRegistry` instead
   of the Phase 5 hardcoded table. Tests now seed both registries in
   `setup` so the builder finds `feishu.chat_proxy`,
-  `claude_code.mcp_http`, and `claude_code.cc`.
+  `claude_code.mcp_stdio`, and `claude_code.cc`.
 
   `async: false` because the registries' ETS tables are
   application-singletons; concurrent tests would race on `clear/0`.
@@ -29,7 +29,7 @@ defmodule Esr.SessionTemplate.AgentDefBuilderTest do
       dependencies: %{plugins: ["feishu", "claude_code"], bundles: []},
       channels: [
         %{alias: "in", kind: "feishu.chat_proxy", config: %{"app_id" => "<runtime>", "chat_id" => "<runtime>"}},
-        %{alias: "cc_mcp", kind: "claude_code.mcp_http", config: %{"port" => "ephemeral"}}
+        %{alias: "cc_mcp", kind: "claude_code.mcp_stdio", config: %{"port" => "ephemeral"}}
       ],
       agents: [
         %{kind: "claude_code.cc", name: "<runtime>", consumes: ["cc_mcp"]}
@@ -72,7 +72,7 @@ defmodule Esr.SessionTemplate.AgentDefBuilderTest do
       ]
     })
 
-    Esr.Channel.Registry.register("claude_code", "mcp_http", Esr.Entity.PtyProcess, %{
+    Esr.Channel.Registry.register("claude_code", "mcp_stdio", Esr.Entity.PtyProcess, %{
       pipeline_contributions: [],
       proxies: []
     })

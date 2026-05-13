@@ -46,13 +46,14 @@ defmodule Esr.Commands.Session.NewNoWorkspaceTargetTest do
   end
 
   describe "no_workspace_target — full resolver chain miss" do
-    test "no workspace= AND no chat binding AND no user-default → no_workspace_target" do
+    test "no workspace= AND no dir/cwd AND no chat binding AND no user-default → no_workspace_target" do
       # ou_no_target has no user-default link. No chat_id/app_id in args
-      # → chat-default layer skips. No explicit workspace=. All three
-      # layers miss → :no_match → structured `no_workspace_target`.
+      # → chat-default layer skips. No explicit workspace= and no
+      # explicit dir/cwd. All three M-5 layers miss → :no_match →
+      # structured `no_workspace_target`.
       Grants.load_snapshot(%{"ou_no_target" => []})
 
-      cmd = %{"submitted_by" => "ou_no_target", "args" => %{"dir" => "/tmp/x"}}
+      cmd = %{"submitted_by" => "ou_no_target", "args" => %{"agent" => "cc"}}
 
       assert {:error, %{"type" => "no_workspace_target", "message" => msg}} =
                SessionNew.execute(cmd)
@@ -73,25 +74,6 @@ defmodule Esr.Commands.Session.NewNoWorkspaceTargetTest do
       # "args present, resolver chain fully exhausted" so callers can
       # distinguish "bind a workspace" from "fix your command shape".
       assert {:error, %{"type" => "invalid_args"}} = SessionNew.execute(%{})
-    end
-
-    test "missing dir + agent given → falls through dir gate (Phase 5 fix 2026-05-10)" do
-      # Pre-fix: when the resolver SUCCEEDED (agent given short-circuits
-      # the chain), the legacy `validate_args(agent, dir)` gate fired
-      # `invalid_args "dir required"` here. Phase 5 made the
-      # SessionTemplate authoritative for the spawn pipeline so `dir` is
-      # no longer mandatory — the with-chain proceeds past it and stops
-      # at the capability gate when the principal lacks grants. The
-      # error type therefore moves from `invalid_args` (shape) to
-      # `missing_capabilities` (auth) for this fixture, which is the
-      # correct semantic: the args ARE shaped fine; the principal just
-      # can't spawn a CC session.
-      cmd = %{"submitted_by" => "ou_no_target", "args" => %{"agent" => "cc"}}
-
-      assert {:error, %{"type" => "missing_capabilities", "message" => msg}} =
-               SessionNew.execute(cmd)
-
-      assert msg =~ "session:default/create"
     end
   end
 end

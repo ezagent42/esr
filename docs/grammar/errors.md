@@ -106,6 +106,9 @@ Generated from `command_meta/0`; do not edit directly.
 | `user_uuid_required` | `plugin_unset` | layer=user requires user_uuid |
 | `workspace_id_required` | `plugin_unset` | layer=workspace requires workspace_id |
 | `invalid_args` | `pty_attach` | /pty:attach requires pty=<actor_id> |
+| `invalid_args` | `pty_input` | /pty:input requires name=<agent> and text=<...> |
+| `no_session_target` | `pty_input` | no chat-current session; bind via /session:bind-chat first |
+| `not_found` | `pty_input` | no agent '%{name}' in chat-current session |
 | `invalid_args` | `pty_list` | /pty:list requires chat context |
 | `invalid_args` | `register_adapter` | register_adapter requires args.{type="feishu", name, app_id, app_secret} |
 | `register_adapter_failed` | `register_adapter` | %{detail} |
@@ -138,6 +141,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `name_collision` | `session_new` | session name '%{name}' already used by another live session in workspace %{workspace} |
 | `no_default_template` | `session_new` | no default session template configured + no template= arg; available: %{available} — set via `/plugin:set plugin=session key=default_template value=<name>` |
 | `no_workspace_target` | `session_new` | no explicit workspace= and no chat-current binding and no user-default workspace; bind first with /workspace:bind-chat or /user:use, or pass workspace=<name> |
+| `pipeline_incomplete` | `session_new` | session 启动失败:声明的 pipeline stage 未全部 spawn(spec rev-3 §PR-2 invariant) |
 | `session_name_taken` | `session_new` | a session named '%{name}' already exists for owner '%{owner_user}' |
 | `session_persist_failed` | `session_new` | failed to write session.json for %{session_id}: %{details} |
 | `session_start_failed` | `session_new` | session start failed: %{details} |
@@ -209,6 +213,7 @@ Generated from `command_meta/0`; do not edit directly.
 | `invalid_args` | `workspace_remove` | workspace_remove requires args.name (non-empty string) |
 | `unknown_workspace` | `workspace_remove` | workspace %{name} not found |
 | `workspace_in_use` | `workspace_remove` | workspace %{name} has %{count} active session(s); use force=true to remove anyway |
+| `cannot_remove_last_folder` | `workspace_remove_folder` | workspace %{name} 只剩 1 个 folder；用 /workspace:remove 删整个 workspace |
 | `cannot_remove_root_folder` | `workspace_remove_folder` | cannot remove the root folder of a repo-bound workspace; use /workspace forget-repo instead |
 | `folder_not_in_workspace` | `workspace_remove_folder` | path %{path} is not in this workspace's folders |
 | `invalid_args` | `workspace_remove_folder` | workspace_remove_folder requires args.name and args.path |

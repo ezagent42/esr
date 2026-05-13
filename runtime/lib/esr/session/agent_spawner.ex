@@ -186,9 +186,47 @@ defmodule Esr.Session.AgentSpawner do
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
          :ok <- verify_pipeline_complete(session_id, agent_def),
          :ok <- register(session_id, params, refs_map),
+         :ok <- register_primary_agent(session_id, agent_name),
          :ok <- start_lifecycle_observer(session_id, session_sup_pid, params) do
       {:ok, session_id, mon}
     end
+  end
+
+  # 2026-05-13 Bug C-new fix: do_create historically spawned the pipeline
+  # but never registered an Agent.Instance — so /pty:list, /agent:list,
+  # and ActorQuery.fcp_for_session (used by FAA's chat→CC forwarding)
+  # all saw the session as "no agents", masking the real pipeline as
+  # ghost peers. This reconciles by registering a "primary" Instance
+  # record reflecting what spawn_pipeline produced.
+  #
+  # PtyProcess + CCProcess both fall back to `actor_id = sid` (their
+  # init/1 sees no `:actor_id` in args from the legacy spawn path), so
+  # actor_ids accurately reports sid for both. Future refactor: thread
+  # distinct UUIDs through spawn_args, unify with add_instance_and_spawn.
+  defp register_primary_agent(session_id, agent_name)
+       when is_binary(session_id) and is_binary(agent_name) do
+    attrs = %{
+      session_ids: [session_id],
+      name: agent_name,
+      type: agent_name,
+      actor_ids: %{cc: session_id, pty: session_id}
+    }
+
+    case Esr.Entity.Agent.InstanceRegistry.add_instance(attrs) do
+      :ok ->
+        :ok
+
+      {:error, {:duplicate_agent_name, _}} ->
+        # Idempotent: if a prior call already registered (e.g. retry
+        # after a partial failure), treat as success.
+        :ok
+    end
+  rescue
+    # InstanceRegistry not running (unit-test boot without full app
+    # supervisor) — keep do_create resilient to that path.
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # PR-3 Task 3.7: spawn a per-session LifecycleObserver under the
@@ -291,10 +329,14 @@ defmodule Esr.Session.AgentSpawner do
 
   # PR-9 T11b.2: thread `session_id` and `workspace_name` into the params
   # map so downstream peers' `spawn_args/1` callbacks can read them
-  # without having to re-derive. `workspace_name` is resolved via
-  # `Esr.Uri.Compat.workspace_name_for_chat/2` when the caller
-  # didn't supply one explicitly. Falls back to `"default"` — not nil —
-  # so peers downstream always see a string.
+  # without having to re-derive.
+  #
+  # `workspace_name` is purely a label here (used downstream for env-var
+  # tagging in pty_process.ex). The load-bearing spawn arg is `:dir` —
+  # Session.New is responsible for resolving that via the M-5 chain
+  # before calling here. When the caller didn't supply `:workspace_name`
+  # AND no chat-bound workspace exists, fall through to `"default"` so
+  # peers downstream always see a string (pty_process expects that).
   defp enrich_params(params, session_id) do
     chat_id = get_param(params, :chat_id) || ""
     app_id = get_param(params, :app_id) || "default"

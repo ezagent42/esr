@@ -400,6 +400,19 @@ slashes:
     permission:
     requires_user_binding: true
     requires_workspace_binding: false
+  /pty:input:
+    args:
+      - name: name
+        required: true
+      - name: text
+        required: true
+    category: PTY
+    command_module: Esr.Commands.Pty.Input
+    description: 把任意文本写入指定 agent 的 PTY stdin（不附加 \r；如需提交配合 /pty:key enter）
+    kind: pty_input
+    permission:
+    requires_user_binding: true
+    requires_workspace_binding: false
   /pty:key:
     args:
       - name: keys

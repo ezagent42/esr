@@ -21,7 +21,7 @@ defmodule Esr.Entity.CCProcess.MultiSessionTest do
 
   See also:
     * `cc_process_test.exs` — base contract
-    * `cc_process_inbound_regression_test.exs` — boot-bridge fallback path
+    * `cc_process_inbound_regression_test.exs` — single-session broadcast path
   """
 
   use ExUnit.Case, async: false
@@ -45,10 +45,6 @@ defmodule Esr.Entity.CCProcess.MultiSessionTest do
         handler_module: @handler_module,
         proxy_ctx: %{}
       })
-
-    # Flip cc_mcp_ready so send_input takes the broadcast path
-    # (not the boot-bridge PTY fallback).
-    send(pid, {:cc_mcp_ready, originating_sid})
 
     # Echo handler: send_input mirrors the upstream event text.
     :ok =

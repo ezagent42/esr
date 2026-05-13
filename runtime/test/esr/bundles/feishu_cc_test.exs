@@ -55,7 +55,7 @@ defmodule Esr.Bundles.FeishuCcTest do
     assert template.schema_version == 1
     assert template.name == "feishu-cc"
 
-    # Channels: in (feishu.chat_proxy) + cc_mcp (claude_code.mcp_http).
+    # Channels: in (feishu.chat_proxy) + cc_mcp (claude_code.mcp_stdio).
     assert length(template.channels) == 2
     aliases = Enum.map(template.channels, & &1.alias)
     assert "in" in aliases
@@ -67,7 +67,7 @@ defmodule Esr.Bundles.FeishuCcTest do
     assert in_channel.config["chat_id"] == "<runtime>"
 
     cc_channel = Enum.find(template.channels, &(&1.alias == "cc_mcp"))
-    assert cc_channel.kind == "claude_code.mcp_http"
+    assert cc_channel.kind == "claude_code.mcp_stdio"
 
     # Single agent: cc, consumes cc_mcp.
     assert length(template.agents) == 1

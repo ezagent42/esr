@@ -189,7 +189,7 @@ defmodule Esr.Plugin.LoaderTest do
         declares: %{},
         channels: [
           %{name: "chat_proxy", module: Esr.Entity.Server, config_schema: nil},
-          %{name: "mcp_http", module: Esr.Entity.PtyProcess, config_schema: %{"k" => "v"}}
+          %{name: "mcp_stdio", module: Esr.Entity.PtyProcess, config_schema: %{"k" => "v"}}
         ]
       }
 
@@ -200,7 +200,7 @@ defmodule Esr.Plugin.LoaderTest do
 
       assert {:ok, _} = Loader.start_plugin("demo", manifest)
       assert {:ok, Esr.Entity.Server} == Esr.Channel.Registry.lookup("demo.chat_proxy")
-      assert {:ok, Esr.Entity.PtyProcess} == Esr.Channel.Registry.lookup("demo.mcp_http")
+      assert {:ok, Esr.Entity.PtyProcess} == Esr.Channel.Registry.lookup("demo.mcp_stdio")
 
       # cleanup
       :ok = Esr.Channel.Registry.clear()
