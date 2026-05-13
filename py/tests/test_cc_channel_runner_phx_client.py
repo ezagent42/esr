@@ -18,7 +18,7 @@ async def test_phx_join_acked():
         async for msg in ws:
             frame = json.loads(msg)
             received.append(frame)
-            join_ref, ref, topic, event, payload = frame
+            join_ref, ref, topic, event, _payload = frame
             if event == "phx_join":
                 reply = [
                     join_ref,
