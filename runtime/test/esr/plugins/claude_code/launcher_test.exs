@@ -102,10 +102,10 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
     end
   end
 
-  describe "write_mcp_json/1" do
+  describe "write_channel_mcp_config/1" do
     test "writes .mcp.json at session-scoped path under ESRD_HOME" do
       {:ok, mcp_path} =
-        Launcher.write_mcp_json(
+        Launcher.write_channel_mcp_config(
           session_id: @session_id,
           esrd_url: "ws://127.0.0.1:4001"
         )
@@ -117,21 +117,25 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       assert is_map(decoded["mcpServers"])
     end
 
-    test "written .mcp.json contains esr-channel server entry" do
+    test "written .mcp.json contains esr-channel stdio command + bridge args" do
       {:ok, mcp_path} =
-        Launcher.write_mcp_json(
+        Launcher.write_channel_mcp_config(
           session_id: @session_id,
           esrd_url: "ws://127.0.0.1:4001"
         )
 
       {:ok, body} = File.read(mcp_path)
       decoded = Jason.decode!(body)
-      assert Map.has_key?(decoded["mcpServers"], "esr-channel"),
-             "mcpServers must contain esr-channel key"
+      entry = decoded["mcpServers"]["esr-channel"]
+      assert entry, "mcpServers must contain esr-channel key"
 
-      # URL flips ws:// → http:// for the HTTP MCP transport.
-      assert decoded["mcpServers"]["esr-channel"]["url"] ==
-               "http://127.0.0.1:4001/mcp/#{@session_id}"
+      # Stdio shape: command + args (no url, no type).
+      assert entry["command"] =~ "python"
+      assert "cc_channel_runner" in entry["args"]
+      assert "--session-id" in entry["args"]
+      assert @session_id in entry["args"]
+      assert "--esrd-url" in entry["args"]
+      assert "ws://127.0.0.1:4001" in entry["args"]
     end
   end
 
@@ -146,11 +150,11 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       {:ok, cwd: cwd}
     end
 
-    test "missing plugin esrd_url falls back to Endpoint config (no unrooted /mcp/<sid>)", %{cwd: cwd} do
-      # The live bug 2026-05-12: plugin config had no `esrd_url` set, so
-      # `prepare_spawn` passed `""` to write_mcp_json, which wrote
-      # `"url": "/mcp/<sid>"` (no host) — CC silently rejected it with
-      # "no MCP server configured with that name". Fix: derive from
+    test "missing plugin esrd_url falls back to Endpoint config (no empty --esrd-url)", %{cwd: cwd} do
+      # The live bug 2026-05-12 (under HTTP transport): plugin config had
+      # no `esrd_url` set, so `prepare_spawn` passed `""` through to
+      # mcp.json. Under stdio transport that empty would crash the Python
+      # bridge on connect. Same fix applies: derive from
       # Application.get_env(:esr, EsrWeb.Endpoint).
       sid = "fallback-sid-#{System.unique_integer([:positive])}"
 
@@ -166,12 +170,12 @@ defmodule Esr.Plugins.ClaudeCode.LauncherTest do
       {:ok, body} = File.read(mcp_path)
       decoded = Jason.decode!(body)
 
-      url = decoded["mcpServers"]["esr-channel"]["url"]
-      # Must be a fully-qualified http(s) URL — not an unrooted path.
-      assert String.starts_with?(url, "http://") or String.starts_with?(url, "https://"),
-             "esr-channel url must be fully qualified; got #{inspect(url)}"
+      args = decoded["mcpServers"]["esr-channel"]["args"]
+      esrd_url = Enum.at(args, Enum.find_index(args, &(&1 == "--esrd-url")) + 1)
 
-      assert String.ends_with?(url, "/mcp/#{sid}")
+      # Must be a fully-qualified ws(s):// URL — not "".
+      assert String.starts_with?(esrd_url, "ws://") or String.starts_with?(esrd_url, "wss://"),
+             "--esrd-url must be a fully-qualified ws(s):// URL; got #{inspect(esrd_url)}"
     end
   end
 
