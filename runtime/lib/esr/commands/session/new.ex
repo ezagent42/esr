@@ -112,6 +112,18 @@ defmodule Esr.Commands.Session.New do
   @spec execute(map(), keyword()) :: result()
   def execute(%{"submitted_by" => submitter, "args" => raw_args}, opts)
       when is_binary(submitter) and is_map(raw_args) and is_list(opts) do
+    # Walkthrough-4: SlashHandler.dispatch puts `submitted_by` on the
+    # command's top level (line 283) but does NOT inject it into args.
+    # `Esr.Commands.Workspace.Resolve.resolve_submitter/1` reads
+    # `args["submitted_by"]` (or `args["submitter_username"]`); without
+    # the injection it always falls through to `:not_found` on the chat
+    # path, and the user-default workspace fallback never fires. Bare
+    # `/session:new name=test-cc` (chat) then returned `:no_match` or
+    # silently produced a "default"-fallback workspace_name in
+    # AgentSpawner.enrich_params. Together with PR-C's UUID-form
+    # recognition this closes the chat-bare-name session_new path.
+    raw_args = Map.put_new(raw_args, "submitted_by", submitter)
+
     # Phase 5.1/5.3: resolve workspace via 3-step fallback chain before
     # downstream processing. Short-circuits when:
     #   (a) workspace is already explicit in args, OR
@@ -178,6 +190,7 @@ defmodule Esr.Commands.Session.New do
                  chat_id,
                  thread_id,
                  app_id,
+                 args["workspace"],
                  create_session_fn,
                  start_session_fn
                ),
@@ -675,6 +688,7 @@ defmodule Esr.Commands.Session.New do
          chat_id,
          thread_id,
          app_id,
+         workspace_name,
          create_session_fn,
          _start_session_fn
        )
@@ -688,6 +702,14 @@ defmodule Esr.Commands.Session.New do
       # PR-21λ-fix: thread app_id so Scope.Router registers under the
       # adapter instance id that inbound messages will look up with.
       app_id: app_id,
+      # Walkthrough-4: also thread `workspace_name` so
+      # `AgentSpawner.enrich_params/2` doesn't fall back to the
+      # literal string "default" when chat hasn't been bound to a
+      # workspace yet but the user-default fallback chain resolved
+      # one. Pre-fix this surfaced as `ESR_WORKSPACE=default` in the
+      # PTY env even though dir pointed at the correct user-default
+      # workspace folder.
+      workspace_name: workspace_name,
       # Phase 5 cut-over: agent_def is now required by AgentSpawner.do_create/1
       # (no longer re-fetched from the retired agents.yaml cache). Source
       # is `Esr.SessionTemplate.Registry.materialize/2` (Phase 6: the
@@ -726,6 +748,7 @@ defmodule Esr.Commands.Session.New do
          chat_id,
          _thread_id,
          _app_id,
+         _workspace_name,
          _create_session_fn,
          start_session_fn
        ) do
