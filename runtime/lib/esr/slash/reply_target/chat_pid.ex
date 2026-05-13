@@ -159,6 +159,17 @@ defmodule Esr.Slash.ReplyTarget.ChatPid do
   def format_result({:error, %{"type" => "missing_capabilities", "caps" => caps}}),
     do: "error: missing caps — " <> Enum.join(caps, ", ")
 
+  # Walkthrough-4 #348 (team todo `session-start-failed-no-detail-visible`).
+  # Pre-fix, errors with a message body got rendered as just
+  # `"error: <type>"` — the canonical interpolated message produced by
+  # `Esr.Commands.Render.error/3` was dropped on the chat path. Operators
+  # saw `error: session_start_failed` with no clue why, and had to
+  # switch to CLI to see the full message. Now: prepend the type for
+  # the structured tag, append the human-readable body.
+  def format_result({:error, %{"type" => t, "message" => msg}})
+      when is_binary(t) and is_binary(msg) and msg != "",
+      do: "error: " <> t <> "\n" <> msg
+
   def format_result({:error, %{"type" => t}}) when is_binary(t),
     do: "error: " <> t
 
