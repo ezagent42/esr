@@ -7,6 +7,21 @@ defmodule Esr.Entity.User.Watcher do
   same macOS basename-comparison quirk — the system rewrites paths
   through `/private/var` so we compare basenames rather than full
   paths).
+
+  ## Watch-on-create (walkthrough-4 C5-A)
+
+  Pre-fix, when `users.yaml` was absent at boot (clean-state `~/.esrd`,
+  zero-config bootstrap), the watcher logged `will not watch` and
+  permanently stopped listening. Subsequent file creation (the very
+  next `user_add` writing the yaml) fired no events into the watcher,
+  so any hot-reload of the URI store relied on the writer explicitly
+  calling `FileLoader.load/1` — and operators who hand-edited the file
+  with esrd already running got silently stale in-memory state.
+
+  Fix: always subscribe to the **parent directory** (creating it if
+  absent). FSEvents emits `:created` events when the yaml first lands;
+  the same `handle_info/2` clause that handles `:modified` events
+  triggers the reload via basename match.
   """
 
   @behaviour Esr.Role.Control
@@ -22,16 +37,21 @@ defmodule Esr.Entity.User.Watcher do
     path = Keyword.fetch!(opts, :path)
     FileLoader.load(path)
 
-    case File.exists?(path) do
-      true ->
-        {:ok, pid} = FileSystem.start_link(dirs: [Path.dirname(path)])
-        FileSystem.subscribe(pid)
-        {:ok, %{path: path, fs_pid: pid}}
+    dir = Path.dirname(path)
+    File.mkdir_p!(dir)
 
-      false ->
-        Logger.info("users: file not present at #{path}; will not watch")
-        {:ok, %{path: path, fs_pid: nil}}
+    {:ok, pid} = FileSystem.start_link(dirs: [dir])
+    FileSystem.subscribe(pid)
+
+    if File.exists?(path) do
+      Logger.info("users: watching #{dir} (loaded #{Path.basename(path)})")
+    else
+      Logger.info(
+        "users: watching #{dir} for #{Path.basename(path)} creation (file absent at boot)"
+      )
     end
+
+    {:ok, %{path: path, fs_pid: pid}}
   end
 
   @impl true
