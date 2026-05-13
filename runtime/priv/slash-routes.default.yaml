@@ -459,8 +459,7 @@ slashes:
     args:
       - name: name
         required: true
-      - default: cc
-        name: agent
+      - name: agent
         required: false
       - name: template
         required: false
