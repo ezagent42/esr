@@ -25,8 +25,14 @@ async def test_list_tools_returns_three_tools():
 
 
 @pytest.mark.asyncio
-async def test_call_tool_stubs_return_not_implemented():
-    """Stub tool handlers return the not_implemented error payload."""
+async def test_call_tool_without_phx_client_returns_error():
+    """Tool handlers fail closed when phx_client isn't configured.
+
+    Task 2.3 only wired stubs (`not_implemented`); Task 2.5 replaced
+    them with real dispatch that requires a phx_client. With no
+    phx_client set the dispatch path returns `phx_client_not_configured`
+    — this guards the "scaffold without state" boundary.
+    """
     server = BridgeMCPServer()
 
     from mcp.types import CallToolRequest, CallToolRequestParams
@@ -37,11 +43,9 @@ async def test_call_tool_stubs_return_not_implemented():
         params=CallToolRequestParams(name="reply", arguments={"chat_id": "oc_x", "text": "hi"}),
     )
     result = await handler(req)
-    # Handler returns a list[TextContent] which the SDK wraps in
-    # ServerResult(root=CallToolResult(content=...)). Reach into it.
     content = result.root.content
     assert len(content) == 1
-    assert "not_implemented" in content[0].text
+    assert "phx_client_not_configured" in content[0].text
 
 
 def test_unknown_tool_returns_error_payload():

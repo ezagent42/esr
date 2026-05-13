@@ -19,7 +19,9 @@ Spec: docs/superpowers/specs/2026-05-13-cc-channel-stdio-bridge-design.md
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from mcp.server import NotificationOptions, Server
@@ -53,6 +55,12 @@ _INSTRUCTIONS = (
     "Reply with the `reply` MCP tool, passing the chat_id from the tag. "
     "For file output, use the `send_file` tool with the same chat_id."
 )
+
+# Max wait for a tool_result envelope after pushing a tool_invoke.
+# Matches `mcp_controller.ex @tool_call_timeout_ms` so the bridge and
+# the HTTP controller fail with the same wall-clock when CC -> peer
+# tool execution stalls.
+_TOOL_CALL_TIMEOUT_SECS = 30.0
 
 # Tool schemas mirror `Esr.Plugins.ClaudeCode.Mcp.Tools.list/1` (BEAM side).
 # Per plan Task 2.5 step 2: Option A — hardcoded for rev-7. The spec
@@ -285,16 +293,98 @@ class BridgeMCPServer:
         return await self._dispatch_tool("submit_slash", arguments)
 
     async def _dispatch_tool(
-        self, _tool: str, _arguments: dict[str, Any]
+        self, tool: str, arguments: dict[str, Any]
     ) -> list[TextContent]:
-        """Stub for Task 2.5. Returns a not-implemented error payload.
+        """Forward a tool call to BEAM via the Phoenix channel.
 
-        Overridden by `mcp_server_tools.attach_tool_dispatch` once the
-        actual envelope-push + tool_result-await behavior is wired.
+        Mirrors `EsrWeb.McpController.invoke_tool_via_peer/3`:
+
+        1. Mint a `req_id` (uuid4 hex — opaque to the peer).
+        2. Push `event="envelope"`, kind="tool_invoke" to
+           `cli:channel/<sid>`. `EsrWeb.ChannelChannel.handle_in/3`
+           looks up `thread:<sid>` and forwards
+           `{:tool_invoke, req_id, tool, args, self(), principal_id}`
+           to the peer.
+        3. Register an `asyncio.Future` keyed by `req_id`. The
+           `phx_receive_loop` resolves it when the matching
+           `kind="tool_result"` envelope arrives.
+        4. Translate the result to MCP's CallToolResult shape:
+           `{"ok": true, "data": d}` → text TextContent with
+             `json.dumps(d)`.
+           `{"ok": false, "error": e}` → text TextContent with
+             `json.dumps({"ok": false, "error": e})`. Note: the
+           low-level Server.call_tool decorator only takes a list of
+           content items; the isError flag from the HTTP controller
+           is not exposed at this layer. CC's tool-call parser still
+           treats the JSON body as the canonical result and
+           surfaces errors from the payload.
         """
-        return [
-            TextContent(
-                type="text",
-                text='{"ok": false, "error": "not_implemented"}',
+        if self._phx_client is None or self._topic is None:
+            return _err_content("phx_client_not_configured")
+
+        req_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._pending_tool_calls[req_id] = future
+
+        envelope = {
+            "kind": "tool_invoke",
+            "req_id": req_id,
+            "tool": tool,
+            "args": arguments,
+        }
+
+        try:
+            # phx push returns the phx_reply (ack of receipt). The
+            # actual tool result comes in as a separate envelope
+            # frame routed to `future` by phx_receive_loop.
+            reply_payload = await self._phx_client.push(
+                self._topic, "envelope", envelope
             )
-        ]
+            if reply_payload.get("status") == "error":
+                self._pending_tool_calls.pop(req_id, None)
+                return _err_content(
+                    "phx_push_error", reply_payload.get("response")
+                )
+
+            try:
+                result = await asyncio.wait_for(
+                    future, timeout=_TOOL_CALL_TIMEOUT_SECS
+                )
+            except asyncio.TimeoutError:
+                self._pending_tool_calls.pop(req_id, None)
+                return _err_content(
+                    "tool_result_timeout",
+                    {"tool": tool, "timeout_secs": _TOOL_CALL_TIMEOUT_SECS},
+                )
+        finally:
+            # Defensive: ensure no future leaks if we crash above.
+            self._pending_tool_calls.pop(req_id, None)
+
+        return _tool_result_to_content(result)
+
+
+def _tool_result_to_content(envelope: dict[str, Any]) -> list[TextContent]:
+    """Mirror `mcp_controller.ex tool_result_to_jsonrpc/1` translation.
+
+    The peer sends `{"kind": "tool_result", "req_id": ..., "ok": bool,
+    "data" | "error": ...}`. MCP expects content as a list of
+    TextContent objects. We serialize to JSON so CC's tool-call parser
+    can re-parse uniformly (the existing HTTP path does the same).
+    """
+    if envelope.get("ok") is True:
+        body = json.dumps(envelope.get("data"))
+    elif envelope.get("ok") is False:
+        body = json.dumps({"ok": False, "error": envelope.get("error")})
+    else:
+        # Unexpected shape — pass through verbatim so debugging is easy.
+        body = json.dumps(envelope)
+    return [TextContent(type="text", text=body)]
+
+
+def _err_content(code: str, detail: Any = None) -> list[TextContent]:
+    """Build the JSON error TextContent payload for bridge-side failures."""
+    err: dict[str, Any] = {"ok": False, "error": {"type": code}}
+    if detail is not None:
+        err["error"]["detail"] = detail
+    return [TextContent(type="text", text=json.dumps(err))]
