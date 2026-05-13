@@ -186,9 +186,117 @@ defmodule Esr.Session.AgentSpawner do
          {:ok, refs_map, mon} <- spawn_pipeline(session_id, agent_def, params),
          :ok <- verify_pipeline_complete(session_id, agent_def),
          :ok <- register(session_id, params, refs_map),
+         :ok <- register_default_agent_instance(session_id, agent_name, agent_def),
          :ok <- start_lifecycle_observer(session_id, session_sup_pid, params) do
       {:ok, session_id, mon}
     end
+  end
+
+  # Walkthrough-4 C23. `/session:new` spawns the default agent
+  # (Scope.Router → spawn_pipeline) but pre-fix never wrote it into
+  # `Esr.Entity.Agent.InstanceRegistry`. Symptom: `/agent:list` and
+  # `/claude_code:tui name=<X>` couldn't see the auto-spawned agent —
+  # operators saw "no agents" right after a successful session_new and
+  # had to issue a redundant `/agent:add` just to get a name they could
+  # attach to.
+  #
+  # Fix (walkthrough-4 method Y): after the pipeline is live, register
+  # the default agent in InstanceRegistry with `name = agent_name`
+  # (== session.name in the chat-bound path) and `actor_ids` resolved
+  # from the live ActorQuery role index. The agent is fully
+  # operator-visible without a second slash invocation.
+  #
+  # The :one_for_all (CC, PTY) supervision invariant means both
+  # actor_ids resolve at the same point in the spawn lifecycle; if
+  # either is missing we still register (with nil for the missing
+  # entry) so `/agent:list` at least surfaces the agent — a missing
+  # role here would already have surfaced as `:pipeline_incomplete`
+  # in `verify_pipeline_complete/2` above.
+  #
+  # Best-effort: failure to register (e.g. InstanceRegistry GenServer
+  # not running in narrow unit-test setups) must NOT roll back the
+  # session_create. Log + carry on.
+  defp register_default_agent_instance(session_id, agent_name, agent_def) do
+    case Process.whereis(Esr.Entity.Agent.InstanceRegistry) do
+      nil ->
+        Logger.debug(
+          "agent_spawner: InstanceRegistry not running — skipping default-agent register for #{session_id}"
+        )
+
+        :ok
+
+      _pid ->
+        type = agent_kind_from_def(agent_def)
+        actor_ids = collect_default_agent_actor_ids(session_id)
+
+        attrs = %{
+          session_id: session_id,
+          type: type,
+          name: agent_name,
+          config: %{},
+          actor_ids: actor_ids
+        }
+
+        case Esr.Entity.Agent.InstanceRegistry.add_instance(attrs) do
+          :ok ->
+            :ok
+
+          {:error, {:duplicate_agent_name, _}} ->
+            # Already registered (e.g. a prior failed-then-retried
+            # session_new that left state behind). Treat as success
+            # rather than failing the create.
+            Logger.debug(
+              "agent_spawner: default agent name=#{agent_name} already registered for session=#{session_id}"
+            )
+
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "agent_spawner: default-agent register failed for session=#{session_id}: #{inspect(reason)}"
+            )
+
+            # Non-fatal — session is still operational; just won't be
+            # visible to `/agent:list`. Operator can `/agent:add` a
+            # replacement.
+            :ok
+        end
+    end
+  end
+
+  # Best-effort kind extraction from the materialized agent_def. The
+  # field name varies across template versions; try the canonical
+  # locations and fall back to "cc" so the instance row carries
+  # *something* meaningful even when an exotic template lands here.
+  defp agent_kind_from_def(%{} = agent_def) do
+    Map.get(agent_def, :kind) ||
+      Map.get(agent_def, "kind") ||
+      Map.get(agent_def, :type) ||
+      Map.get(agent_def, "type") ||
+      "cc"
+  end
+
+  defp agent_kind_from_def(_), do: "cc"
+
+  # Read the two canonical CC-agent actor_ids straight off the
+  # `:esr_actor_role_index` ETS table (the same table ActorQuery
+  # reads). We need the actor_id (UUID string), not the pid, for the
+  # Instance struct so `/claude_code:tui name=` can resolve via
+  # `find_by_id/1`.
+  defp collect_default_agent_actor_ids(session_id) do
+    %{
+      cc: first_actor_id_for_role(session_id, :cc_process),
+      pty: first_actor_id_for_role(session_id, :pty_process)
+    }
+  end
+
+  defp first_actor_id_for_role(session_id, role) do
+    case :ets.lookup(:esr_actor_role_index, {session_id, role}) do
+      [{_, {_pid, actor_id}} | _] -> actor_id
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
   end
 
   # PR-3 Task 3.7: spawn a per-session LifecycleObserver under the
@@ -284,6 +392,14 @@ defmodule Esr.Session.AgentSpawner do
   # directly with a synthetic session_id.
   def verify_pipeline_complete_for_test(sid, agent_def),
     do: verify_pipeline_complete(sid, agent_def)
+
+  @doc false
+  # Test-only shim: lets PR-E (walkthrough-4 C23) ExUnit reach the
+  # private `register_default_agent_instance/3` without standing up a
+  # full session pipeline. Caller seeds the `:esr_actor_role_index`
+  # ETS table directly to simulate post-spawn state.
+  def register_default_agent_instance_for_test(sid, agent_name, agent_def),
+    do: register_default_agent_instance(sid, agent_name, agent_def)
 
   # ------------------------------------------------------------------
   # Private — pipeline spawning (extracted unchanged from Scope.Router)

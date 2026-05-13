@@ -230,6 +230,13 @@ defmodule Esr.Entity.Agent.InstanceRegistry do
           type: Map.fetch!(attrs, :type),
           name: name,
           config: Map.get(attrs, :config, %{}),
+          # Walkthrough-4 C23: callers (notably `AgentSpawner.do_create/1`
+          # registering the post-pipeline default agent) supply
+          # actor_ids gathered from the role index. Pre-PR-E only
+          # `add_instance_and_spawn` populated this field, so default
+          # agents from `/session:new` lost their CC/PTY UUIDs and
+          # `/claude_code:tui name=` couldn't resolve.
+          actor_ids: Map.get(attrs, :actor_ids),
           created_at: iso_now()
         }
 
