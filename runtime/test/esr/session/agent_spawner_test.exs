@@ -148,4 +148,85 @@ defmodule Esr.Session.AgentSpawnerTest do
                AgentSpawner.verify_pipeline_complete_for_test(sid, agent_def)
     end
   end
+
+  # Walkthrough-4 C23. After `do_create/1` spawns the default agent
+  # pipeline, `register_default_agent_instance/3` must write a row into
+  # `Esr.Entity.Agent.InstanceRegistry` so `/agent:list` and
+  # `/claude_code:tui name=<X>` can resolve the agent by name.
+  describe "register_default_agent_instance/3 — C23 method Y" do
+    setup do
+      # The shim reads ETS directly so we must seed both the role
+      # index AND start the InstanceRegistry. The function tolerates
+      # InstanceRegistry-absent (logs + ok), so we cover both branches:
+      # registry-present (this setup) and registry-absent (separate
+      # test below).
+      if Process.whereis(Esr.Entity.Agent.InstanceRegistry) == nil do
+        start_supervised!(Esr.Entity.Agent.InstanceRegistry)
+      end
+
+      :ok
+    end
+
+    test "registers the default agent under session.name with actor_ids from role index" do
+      sid = "c23-#{System.unique_integer([:positive])}"
+      cc_actor_id = "cc-uuid-1"
+      pty_actor_id = "pty-uuid-1"
+
+      # Seed the role index as if CCProcess + PtyProcess had already
+      # registered themselves post-spawn.
+      :ets.insert(:esr_actor_role_index, {{sid, :cc_process}, {self(), cc_actor_id}})
+      :ets.insert(:esr_actor_role_index, {{sid, :pty_process}, {self(), pty_actor_id}})
+
+      agent_def = %{kind: "cc"}
+
+      assert :ok =
+               AgentSpawner.register_default_agent_instance_for_test(sid, "test-cc", agent_def)
+
+      assert {:ok, inst} =
+               Esr.Entity.Agent.InstanceRegistry.get(sid, "test-cc")
+
+      assert inst.name == "test-cc"
+      assert inst.type == "cc"
+      assert inst.actor_ids == %{cc: cc_actor_id, pty: pty_actor_id}
+
+      assert sid in inst.session_ids, "instance must be attached to the session"
+
+      # Cleanup the synthetic role entries so other tests don't trip.
+      :ets.delete(:esr_actor_role_index, {sid, :cc_process})
+      :ets.delete(:esr_actor_role_index, {sid, :pty_process})
+    end
+
+    test "actor_ids are nil for roles not present in role index (defensive)" do
+      sid = "c23-nil-#{System.unique_integer([:positive])}"
+      agent_def = %{kind: "cc"}
+
+      assert :ok =
+               AgentSpawner.register_default_agent_instance_for_test(sid, "lonely", agent_def)
+
+      assert {:ok, inst} = Esr.Entity.Agent.InstanceRegistry.get(sid, "lonely")
+      assert inst.actor_ids == %{cc: nil, pty: nil}
+    end
+
+    test "duplicate name from a prior leftover row treats as success (idempotent)" do
+      sid = "c23-dup-#{System.unique_integer([:positive])}"
+
+      # First registration succeeds.
+      assert :ok =
+               AgentSpawner.register_default_agent_instance_for_test(sid, "dup-name", %{kind: "cc"})
+
+      # Same name registered again — should NOT fail the create.
+      assert :ok =
+               AgentSpawner.register_default_agent_instance_for_test(sid, "dup-name", %{kind: "cc"})
+    end
+
+    test "fallback agent kind = 'cc' when agent_def doesn't carry one" do
+      sid = "c23-default-kind-#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               AgentSpawner.register_default_agent_instance_for_test(sid, "anon", %{})
+
+      {:ok, inst} = Esr.Entity.Agent.InstanceRegistry.get(sid, "anon")
+      assert inst.type == "cc"
+    end
+  end
 end
