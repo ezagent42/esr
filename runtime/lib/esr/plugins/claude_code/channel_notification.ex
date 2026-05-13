@@ -2,16 +2,11 @@ defmodule Esr.Plugins.ClaudeCode.ChannelNotification do
   @moduledoc """
   Pure data transform that turns broadcast envelope payloads into the
   `notifications/claude/channel` MCP params shape consumed by Claude Code's
-  experimental `claude/channel` capability.
+  experimental `claude/channel` capability. Used by the Python stdio bridge
+  (`py/src/cc_channel_runner`) — its `notification.py` port mirrors this
+  module exactly.
 
-  Lifted out of `EsrWeb.McpController` ahead of that module's deletion per
-  rev-7 of spec `docs/superpowers/specs/2026-05-13-cc-channel-stdio-bridge-design.md`.
-  The HTTP SSE controller is being replaced by a Python stdio bridge; the
-  payload-building logic is reused by the new bridge and therefore needs to
-  survive the controller's removal.
-
-  No behavior change: helpers are byte-identical to the originals in
-  `EsrWeb.McpController` (which will be deleted in Phase 6 of the plan).
+  Spec: `docs/superpowers/specs/2026-05-13-cc-channel-stdio-bridge-design.md`.
   """
 
   require Logger
@@ -68,7 +63,7 @@ defmodule Esr.Plugins.ClaudeCode.ChannelNotification do
         %{"content" => "[#{kind} attachment]", "meta" => meta}
 
       {:error, reason} ->
-        Logger.warning("mcp_controller: phaser transform failed",
+        Logger.warning("channel_notification: phaser transform failed",
           reason: inspect(reason),
           uri: uri,
           kind: kind

@@ -420,9 +420,9 @@ defmodule Esr.Entity.CCProcess do
       "user_id" => sender_id,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "content" => text,
-      # Task 2.4: pass msg_type + media_uri through so mcp_controller's
-      # SSE handler can construct kind + path fields (Task 2.5).
-      # nil values are dropped so the text-only path stays clean.
+      # Pass msg_type + media_uri through so the channel bridge can
+      # construct kind + path fields. nil values are dropped so the
+      # text-only path stays clean.
       "msg_type" => Map.get(last, :msg_type),
       "media_uri" => Map.get(last, :media_uri)
     }
