@@ -191,4 +191,35 @@ defmodule Esr.Paths do
   are conflated manifest+template form per spec §5.3.
   """
   def session_templates_dir, do: Path.join(runtime_home(), "session_templates")
+
+  @doc """
+  Base WebSocket URL of the running esrd Phoenix endpoint.
+
+  Returns `ws://<host>:<port>` (no path suffix) — callers append their
+  own path (e.g. cc_mcp's ws_client appends `/channel/socket/websocket`;
+  the HTTP MCP transport flips scheme to `http://` and appends `/mcp/<sid>`).
+
+  Reads `Application.get_env(:esr, EsrWeb.Endpoint)`. Falls back to
+  `ws://localhost:4001` when the Endpoint config is absent (test boot
+  paths without the full app).
+
+  Shared by `Esr.Entity.PtyProcess.os_env/1` (ESR_ESRD_URL env injection)
+  and `Esr.Plugins.ClaudeCode.Launcher.prepare_spawn/1` (per-session
+  .mcp.json url fallback when plugin config doesn't set `esrd_url`).
+  Both paths MUST agree on this value or the dynamic port (e.g. 4000
+  when 4001 is taken) won't be reflected in the .mcp.json the claude
+  binary reads.
+  """
+  def channel_ws_url do
+    case Application.get_env(:esr, EsrWeb.Endpoint) do
+      nil ->
+        "ws://localhost:4001"
+
+      cfg ->
+        url = Keyword.get(cfg, :url, [])
+        host = Keyword.get(url, :host, "localhost")
+        port = Keyword.get(url, :port) || Keyword.get(cfg, :http, [])[:port] || 4001
+        "ws://#{host}:#{port}"
+    end
+  end
 end

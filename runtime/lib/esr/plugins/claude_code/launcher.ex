@@ -122,9 +122,9 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
     1. Validate workspace `dir` (must be a non-empty string; `mkdir_p`'d)
     2. Validate `claude` binary is on PATH
     3. Write per-session `.mcp.json` to the ESRD-rooted absolute path
-    4. Build argv (`--permission-mode auto`,
-       `--dangerously-load-development-channels`, `--mcp-config <abs>`,
-       `--add-dir <dir>`, optional role `--settings`)
+    4. Build argv (`--permission-mode auto`, `--mcp-config <abs>`,
+       `--add-dir <dir>`, optional role `--settings`,
+       optional `--append-system-prompt-file <admin skill>`)
     5. Build env (proxy vars + ESR_ESRD_URL via plugin config + ESR_SESSION_ID)
 
   Accepts both keyword-list opts (legacy/test callers) and a state map
@@ -174,11 +174,29 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
          {:ok, mcp_path} <-
            write_mcp_json(
              session_id: session_id,
-             esrd_url: config["esrd_url"] || ""
+             esrd_url: esrd_url_for_mcp(config)
            ) do
       cmd = build_cmd(binary, dir, role, mcp_path)
       env = build_env(plugin_config: config, session_id: session_id)
       {:ok, %{cmd: cmd, env: env}}
+    end
+  end
+
+  # Resolve the esrd WebSocket URL for the per-session .mcp.json write:
+  # plugin config wins (operator override); otherwise fall back to the
+  # live Endpoint URL via `Esr.Paths.channel_ws_url/0` — same source
+  # `PtyProcess.os_env/1` uses for the `ESR_ESRD_URL` env var, so the
+  # two stay consistent.
+  #
+  # Pre-fix, an unset plugin config produced `""` here, which yielded
+  # mcp.json url `/mcp/<sid>` (no scheme/host) — claude's HTTP MCP
+  # client cannot dial that, so `esr-channel` failed to load even
+  # though `--mcp-config <abs>` pointed at a file the launcher itself
+  # wrote (walkthrough-4 C22 finding).
+  defp esrd_url_for_mcp(config) do
+    case config["esrd_url"] do
+      url when is_binary(url) and url != "" -> url
+      _ -> Esr.Paths.channel_ws_url()
     end
   end
 
@@ -222,9 +240,15 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
   end
 
   defp build_cmd(binary, dir, role, mcp_path) do
+    # `--dangerously-load-development-channels server:esr-channel` was
+    # an early-prototype flag that loaded esr-channel as a "development
+    # channel". Current claude binaries ignore the flag (printing
+    # `Channels are not currently available` at boot) and instead
+    # discover MCP servers via `--mcp-config`, which we already pass.
+    # Dropped per walkthrough-4 C18: claude no longer prints the
+    # warning + the operator gets a second confirm prompt removed.
     flags = [
       "--permission-mode", "auto",
-      "--dangerously-load-development-channels", "server:esr-channel",
       "--mcp-config", mcp_path
     ]
 
@@ -268,7 +292,22 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         cfg
 
       :error ->
-        Config.resolve("claude_code", Keyword.take(opts, [:user_uuid, :workspace_id]))
+        # Pre-fix, this passed `[:user_uuid, :workspace_id]` keys —
+        # but `Plugin.Config.resolve/2` accepts `[:global_path,
+        # :user_path, :workspace_path]`. Mismatched keys produced an
+        # all-`nil`-paths call, every layer read_layer(nil) returned
+        # `%{}`, and config was always empty (walkthrough-4 C24
+        # finding — operator-written `plugins/claude_code/config.yaml`
+        # was silently never loaded).
+        #
+        # Build the global path from the plugin name; thread
+        # user_uuid / workspace_id through ONLY when their respective
+        # roots are derivable. (User/workspace override layers are
+        # latent future-work — at this site we only need the global
+        # layer to satisfy zero-config + operator override.)
+        Config.resolve("claude_code",
+          global_path: Esr.Paths.plugin_global_dir("claude_code")
+        )
     end
   end
 
