@@ -138,17 +138,19 @@ fi
 seed_capabilities
 seed_workspaces
 seed_adapters
-# Pre-seed users.yaml BEFORE start_esrd so Esr.Entity.User.Watcher's
-# init/1 finds the file and FileLoader.load/1 populates the
-# `:esr_users_by_feishu_id` ETS index. Without this the chat-side
-# `requires_user_binding: true` check (slash_handler.resolve_username/1)
-# returns nil for the first chat message after CLI feishu_bind because
-# the file watcher only subscribes when users.yaml exists at boot —
-# see runtime/lib/esr/entity/user/watcher.ex `case File.exists?(path)`.
+# Pre-seed users.yaml AND users/<uuid>/user.json BEFORE start_esrd so
+# Esr.Entity.User.Watcher's init/1 finds the files and FileLoader.load/1
+# populates the URI store. Both files are required after PR-356 (URI
+# store migration): file_loader.ex `populate_uri_store/3` SKIPS users
+# without a UUID — UUIDs are read from `users/<uuid>/user.json`. With
+# only users.yaml, the chat-side `requires_user_binding: true` check
+# (slash_handler.resolve_username/1) returns nil because the URI store
+# alias `feishu/<ou_id> → users/<uuid>` was never registered.
 # Each USER_MAP_JSON entry gets one row so multi-user guides work
 # uniformly.
 seed_users_for_replay() {
-  local path="${ESRD_HOME}/${ESRD_INSTANCE}/users.yaml"
+  local yaml_path="${ESRD_HOME}/${ESRD_INSTANCE}/users.yaml"
+  local users_dir="${ESRD_HOME}/${ESRD_INSTANCE}/users"
   local body="users:"
   # bash-3.2 has no built-in JSON parser; emit one line per (name, open_id)
   # tuple via jq.
@@ -156,7 +158,27 @@ seed_users_for_replay() {
     [[ -z "${name}" ]] && continue
     body+=$'\n'"  ${name}:"$'\n'"    feishu_ids: [${open_id}]"
   done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${USER_MAP_JSON}")
-  printf '%s\n' "${body}" > "${path}"
+  printf '%s\n' "${body}" > "${yaml_path}"
+
+  # Per-uuid user.json — synthesized UUID `e2e-uuid-<name>` matches the
+  # fixture convention used by Esr.Test.UserFixture in unit tests, and
+  # is stable across replays so identity-cap grants below stay valid.
+  while IFS=$'\t' read -r name open_id; do
+    [[ -z "${name}" ]] && continue
+    local uuid="e2e-uuid-${name}"
+    mkdir -p "${users_dir}/${uuid}"
+    cat > "${users_dir}/${uuid}/user.json" <<EOF
+{
+  "schema_version": 1,
+  "id": "${uuid}",
+  "username": "${name}",
+  "display_name": "",
+  "feishu_ids": ["${open_id}"],
+  "default_workspace_id": null,
+  "created_at": "2026-05-14T00:00:00Z"
+}
+EOF
+  done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${USER_MAP_JSON}")
 }
 seed_users_for_replay
 
