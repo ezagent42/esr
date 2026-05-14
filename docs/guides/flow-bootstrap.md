@@ -262,7 +262,7 @@ project. Create one from chat with `/workspace:new`:
 ```
 
 ```chat-output
-ok: %{"action" => "created", "chats" => [%{"app_id" => "feishu_app_e2e-mock", "chat_id" => "oc_mock_single", "kind" => "dm"}], "folders" => [], "id" => "<UUID>", "location" => "esr:<...>/workspaces/demo", "name" => "demo", "owner" => "linyilun"}
+ok: %{"action" => "created", "chats" => [%{"app_id" => "feishu_app_e2e-mock", "chat_id" => "oc_mock_single", "kind" => "dm"}], "folders" => [%{"name" => "demo", "path" => "<...>/workspaces/demo"}], "id" => "<UUID>", "location" => "esr:<...>/workspaces/demo", "name" => "demo", "owner" => "linyilun"}
 ```
 
 The chat automatically gets bound to the new workspace as a side
