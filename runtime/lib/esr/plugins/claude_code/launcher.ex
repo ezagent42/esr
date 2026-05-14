@@ -264,9 +264,18 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
   end
 
   defp build_cmd(binary, dir, role, mcp_path) do
+    # Walkthrough-4 C18: `--dangerously-load-development-channels server:esr-channel`
+    # was an early-prototype hook for loading esr-channel as a "development
+    # channel". Current claude binaries print `Channels are not currently
+    # available` at boot when they see this flag, ignore the listed channel,
+    # AND prompt the operator for a second confirmation
+    # ("I am using this for local development"). MCP server discovery now
+    # happens via `--mcp-config`, which we already pass with the absolute
+    # per-session path (post-#362 the mcp.json contents are the stdio
+    # bridge command instead of the old HTTP transport — but the flag's
+    # uselessness predates that refactor).
     flags = [
       "--permission-mode", "auto",
-      "--dangerously-load-development-channels", "server:esr-channel",
       "--mcp-config", mcp_path
     ]
 
@@ -339,7 +348,23 @@ defmodule Esr.Plugins.ClaudeCode.Launcher do
         cfg
 
       :error ->
-        Config.resolve("claude_code", Keyword.take(opts, [:user_uuid, :workspace_id]))
+        # Walkthrough-4 C24: pre-fix this passed `[:user_uuid, :workspace_id]`
+        # keys, but `Plugin.Config.resolve/2` accepts `[:global_path,
+        # :user_path, :workspace_path]`. The mismatch produced an
+        # all-nil-paths call where every layer's `read_layer(nil)`
+        # returned `%{}`, so the resolved config was always empty —
+        # operator-written `plugins/claude_code/config.yaml` was
+        # silently ignored at every spawn (proxy, claude binary path,
+        # etc. couldn't be customized via yaml).
+        #
+        # Reference impl: `Esr.Commands.Plugin.ListConfig`
+        # (`runtime/lib/esr/commands/plugin/list_config.ex:32`) — the
+        # same call shape `global_path: Esr.Paths.plugin_global_dir/1`.
+        # User and workspace overlays stay latent here until a real
+        # call site needs them.
+        Config.resolve("claude_code",
+          global_path: Esr.Paths.plugin_global_dir("claude_code")
+        )
     end
   end
 
