@@ -3,6 +3,20 @@ defmodule Esr.Entity.User.FileLoader do
   Parse `users.yaml` + per-uuid `users/<uuid>/user.json` and populate
   the URI store (`:esr_uri_store`) with user entity rows + aliases.
 
+  ## Single source of truth
+
+  `users/<uuid>/user.json` is the **canonical** per-user record (UUID,
+  username, feishu_ids, default_workspace_id, timestamps). `users.yaml`
+  is the human-editable **index** — it carries usernames + an optional
+  `feishu_ids:` hint. When a yaml entry has no matching `user.json`
+  (legacy hand-edits, fixture seeds, half-finished bootstraps), this
+  loader **auto-mints a UUID, writes `user.json` to disk, and proceeds**
+  — there is no silent-skip path. This is the behavior Phase 1b.3's
+  `Esr.Entity.User.Migration` was designed for but never wired up;
+  the gap caused PR-356's `populate_uri_store/3` `nil -> :ok` branch
+  which left chat-side `requires_user_binding` checks broken under
+  fixture-seeded or hand-edited yaml.
+
   PR-1 (URI identity migration, 2026-05-12) replaced the previous
   `Esr.Entity.User.Registry.load_snapshot_with_uuids/2` + NameIndex
   population with direct `Esr.Uri.put_entity/3` + `Esr.Uri.alias/2`
@@ -59,7 +73,10 @@ defmodule Esr.Entity.User.FileLoader do
       true ->
         with {:ok, yaml} <- parse(path),
              {:ok, snapshot} <- build_snapshot(yaml) do
-          uuids = read_uuids_from_dir(users_dir)
+          uuids =
+            read_uuids_from_dir(users_dir)
+            |> ensure_uuids_for_all(snapshot, users_dir)
+
           defaults = read_default_workspaces_from_dir(users_dir)
           populate_uri_store(snapshot, uuids, defaults)
           Logger.info("users: loaded #{map_size(snapshot)} users from #{path}")
@@ -89,10 +106,16 @@ defmodule Esr.Entity.User.FileLoader do
       Enum.each(snapshot, fn {username, %User{feishu_ids: ids} = user} ->
         case Map.get(uuids, username) do
           nil ->
-            # No UUID assigned yet — user is in yaml but has no user.json.
-            # Skip URI store population; the next /user:add or external write
-            # of user.json will close the gap.
-            :ok
+            # Defensive safety net: ensure_uuids_for_all/3 is supposed to
+            # mint UUIDs for every yaml entry before we get here, so this
+            # branch should never trigger. If it does, an upstream write
+            # failed (e.g. read-only users dir); log loudly so operators
+            # see it instead of silently dropping the user from the URI
+            # store.
+            Logger.warning(
+              "users: '#{username}' has no UUID even after ensure_uuids_for_all/3 " <>
+                "(disk write likely failed); skipping URI store population for this entry"
+            )
 
           uuid ->
             # Merge default_workspace_id from defaults map if present
@@ -128,6 +151,80 @@ defmodule Esr.Entity.User.FileLoader do
       pid when is_pid(pid) -> true
       _ -> false
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Auto-mint: close the yaml-without-user.json gap
+  # ---------------------------------------------------------------------------
+
+  # For every username in `snapshot` that has no matching `users/<uuid>/user.json`
+  # on disk, synthesize a UUID v4, persist `user.json`, and merge the new
+  # mapping into `uuids`. This is the live counterpart to Phase 1b.3's
+  # `Esr.Entity.User.Migration` (which was written but never called) —
+  # idempotent: subsequent loads find the user.json and skip the mint.
+  #
+  # Returns the merged `%{username => uuid}` map. Disk-write failures are
+  # logged at error level and the entry is dropped from the returned map;
+  # `populate_uri_store/3`'s defensive nil-branch then surfaces the same
+  # username as a warning rather than silently disappearing.
+  @spec ensure_uuids_for_all(map(), map(), Path.t()) :: map()
+  defp ensure_uuids_for_all(existing_uuids, snapshot, users_dir) do
+    Enum.reduce(snapshot, existing_uuids, fn {username, %User{feishu_ids: ids}}, acc ->
+      case Map.get(acc, username) do
+        nil ->
+          uuid = UUID.uuid4()
+
+          case write_user_json(users_dir, uuid, username, ids) do
+            :ok ->
+              Logger.info(
+                "users: auto-minted UUID for '#{username}' (#{uuid}); wrote #{users_dir}/#{uuid}/user.json"
+              )
+
+              Map.put(acc, username, uuid)
+
+            {:error, reason} ->
+              Logger.error(
+                "users: failed to write user.json for '#{username}' " <>
+                  "(uuid=#{uuid}): #{inspect(reason)}; will retry next reload"
+              )
+
+              acc
+          end
+
+        _uuid ->
+          acc
+      end
+    end)
+  end
+
+  # Same shape as `Esr.Commands.User.Add.write_user_json/3` so the file is
+  # interchangeable with the canonical write path. Atomic via .tmp + rename.
+  @spec write_user_json(Path.t(), String.t(), String.t(), [String.t()]) ::
+          :ok | {:error, term()}
+  defp write_user_json(users_dir, uuid, username, feishu_ids) do
+    dir = Path.join(users_dir, uuid)
+
+    with :ok <- File.mkdir_p(dir) do
+      path = Path.join(dir, "user.json")
+      tmp = path <> ".tmp"
+
+      doc = %{
+        "schema_version" => 1,
+        "id" => uuid,
+        "username" => username,
+        "display_name" => "",
+        "feishu_ids" => feishu_ids,
+        "default_workspace_id" => nil,
+        "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+
+      with :ok <- File.write(tmp, Jason.encode!(doc, pretty: true)),
+           :ok <- File.rename(tmp, path) do
+        :ok
+      end
+    end
+  rescue
+    e -> {:error, e}
   end
 
   # ---------------------------------------------------------------------------

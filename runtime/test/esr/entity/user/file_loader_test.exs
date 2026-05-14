@@ -157,4 +157,91 @@ defmodule Esr.Entity.User.FileLoaderTest do
                Esr.Uri.Compat.user_by_name("alice")
     end
   end
+
+  describe "auto-mint UUID for yaml entries missing user.json (closes PR-356 silent-skip)" do
+    test "yaml entry with no matching user.json gets a UUID minted + persisted",
+         %{tmp_dir: tmp_dir} do
+      # Setup: users.yaml has 'fixture_user', no users/<uuid>/user.json on disk.
+      # This is the e2e fixture seed path (and the legacy hand-edit path).
+      path = Path.join(tmp_dir, "users.yaml")
+
+      File.write!(path, """
+      users:
+        fixture_user:
+          feishu_ids:
+            - ou_fixture_seed
+      """)
+
+      assert :ok = FileLoader.load(path)
+
+      # URI store is populated: feishu alias resolves to canonical user.
+      assert {:ok, "fixture_user"} =
+               Esr.Uri.Compat.username_for_feishu_id("ou_fixture_seed")
+
+      assert {:ok, %{username: "fixture_user", feishu_ids: ["ou_fixture_seed"]}} =
+               Esr.Uri.Compat.user_by_name("fixture_user")
+
+      # And the user.json was actually written to disk.
+      users_dir = Path.join(tmp_dir, "users")
+      [uuid_dir] = File.ls!(users_dir)
+      json_path = Path.join([users_dir, uuid_dir, "user.json"])
+      assert File.exists?(json_path)
+
+      doc = json_path |> File.read!() |> Jason.decode!()
+      assert doc["username"] == "fixture_user"
+      assert doc["id"] == uuid_dir
+      assert doc["feishu_ids"] == ["ou_fixture_seed"]
+      assert doc["schema_version"] == 1
+    end
+
+    test "auto-mint is idempotent across reloads (no UUID churn)",
+         %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "users.yaml")
+
+      File.write!(path, """
+      users:
+        stable_user:
+          feishu_ids: []
+      """)
+
+      assert :ok = FileLoader.load(path)
+
+      users_dir = Path.join(tmp_dir, "users")
+      uuid_first_load = File.ls!(users_dir) |> hd()
+
+      assert :ok = FileLoader.load(path)
+
+      # Same UUID dir; second load reads it from disk instead of minting again.
+      assert File.ls!(users_dir) == [uuid_first_load]
+    end
+
+    test "mixed yaml: some entries have user.json, others get auto-minted",
+         %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "users.yaml")
+
+      # 'alice' already has a UUID dir; 'bob' is yaml-only.
+      write_user_json(tmp_dir, "uuid-alice-preexisting", "alice", ["ou_A"])
+
+      File.write!(path, """
+      users:
+        alice:
+          feishu_ids:
+            - ou_A
+        bob:
+          feishu_ids:
+            - ou_B
+      """)
+
+      assert :ok = FileLoader.load(path)
+
+      # Pre-existing UUID is preserved.
+      assert {:ok, "alice"} = Esr.Uri.Compat.username_for_feishu_id("ou_A")
+      users_dir = Path.join(tmp_dir, "users")
+      assert "uuid-alice-preexisting" in File.ls!(users_dir)
+
+      # Auto-minted user is also resolvable.
+      assert {:ok, "bob"} = Esr.Uri.Compat.username_for_feishu_id("ou_B")
+      assert {:ok, %{username: "bob"}} = Esr.Uri.Compat.user_by_name("bob")
+    end
+  end
 end
