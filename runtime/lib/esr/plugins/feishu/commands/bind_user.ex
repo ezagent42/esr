@@ -65,7 +65,25 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
         updated_doc = Map.put(doc, "users", updated_users)
 
         case Esr.Yaml.Writer.write(path, updated_doc) do
-          :ok -> {:ok, %{"text" => "bound #{fid} to esr user #{name}"}}
+          :ok ->
+            # Walkthrough-4 C10: keep the per-user `user.json` in sync.
+            # users.yaml is the SOT for routing, but consumers that look
+            # at user.json directly (e.g. operator inspection) see stale
+            # `feishu_ids: []` without this step. Non-fatal — bind still
+            # succeeds even if user.json sync fails, but we log so it's
+            # visible.
+            sync_user_json(name, fid)
+
+            # Walkthrough-4 C5-B: pre-fix this handler wrote yaml and
+            # returned without touching the URI store, so the in-memory
+            # NameIndex / Registry was stale until either FSEvents
+            # fired the watcher (race-y) or the operator restarted
+            # esrd. Force a synchronous reload so subsequent `/doctor`
+            # and inbound envelopes see the new binding immediately.
+            _ = Esr.Entity.User.FileLoader.load(path)
+
+            {:ok, %{"text" => "bound #{fid} to esr user #{name}"}}
+
           {:error, reason} ->
             Render.error(__MODULE__.command_meta(), :write_failed, %{detail: inspect(reason)})
         end
@@ -109,5 +127,80 @@ defmodule Esr.Plugins.Feishu.Commands.BindUser do
     row = Map.get(users, name) || %{}
     ids = Map.get(row, "feishu_ids") || []
     Map.put(users, name, Map.put(row, "feishu_ids", ids ++ [fid]))
+  end
+
+  # Walkthrough-4 C10. users.yaml is the routing SOT but `user.json`
+  # under `users/<uuid>/` mirrors the same fields for operator
+  # inspection + future read paths that prefer the per-user file.
+  # Find the user's `user.json` by scanning `users/` (the canonical
+  # path uses UUID-as-dirname, which we don't know from `name` alone
+  # without the URI store), update `feishu_ids`, atomically replace.
+  #
+  # Idempotent: if `fid` is already in the list, no-op (skips the
+  # write). Returns `:ok | {:error, reason}` but the caller logs +
+  # discards the result — keep the bind successful even if disk sync
+  # fails on this side path.
+  defp sync_user_json(name, fid) do
+    case find_user_json_path(name) do
+      {:ok, json_path} ->
+        update_user_json(json_path, fid)
+
+      :not_found ->
+        require Logger
+
+        Logger.warning(
+          "feishu_bind: cannot sync user.json for #{name}: no users/<uuid>/user.json with matching username"
+        )
+
+        {:error, :user_json_not_found}
+    end
+  end
+
+  defp find_user_json_path(target_name) do
+    users_dir = Esr.Paths.users_dir()
+
+    if File.dir?(users_dir) do
+      users_dir
+      |> File.ls!()
+      |> Enum.find_value(:not_found, fn entry ->
+        json_path = Path.join([users_dir, entry, "user.json"])
+
+        with true <- File.exists?(json_path),
+             {:ok, content} <- File.read(json_path),
+             {:ok, %{"username" => ^target_name}} <- Jason.decode(content) do
+          {:ok, json_path}
+        else
+          _ -> nil
+        end
+      end)
+    else
+      :not_found
+    end
+  rescue
+    _ -> :not_found
+  end
+
+  defp update_user_json(json_path, fid) do
+    with {:ok, content} <- File.read(json_path),
+         {:ok, %{} = doc} <- Jason.decode(content) do
+      existing_ids = Map.get(doc, "feishu_ids") || []
+
+      if fid in existing_ids do
+        :ok
+      else
+        updated = Map.put(doc, "feishu_ids", existing_ids ++ [fid])
+        encoded = Jason.encode!(updated, pretty: true)
+
+        # Atomic write — tmp + rename — to match `user_add`'s pattern.
+        tmp = json_path <> ".tmp.#{:rand.uniform(999_999_999)}"
+
+        with :ok <- File.write(tmp, encoded),
+             :ok <- File.rename(tmp, json_path) do
+          :ok
+        end
+      end
+    end
+  rescue
+    e -> {:error, e}
   end
 end
